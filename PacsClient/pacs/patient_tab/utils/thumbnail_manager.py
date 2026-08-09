@@ -36,6 +36,104 @@ import os as _os
 # Default ON; AIPACS_THUMB_DL_PROGRESS_BAR=0 = byte-identical legacy (no bar).
 _THUMB_DL_PROGRESS_BAR = (_os.getenv("AIPACS_THUMB_DL_PROGRESS_BAR", "1") or "1").strip() != "0"
 
+# UX-1 (2026-08-09): red "active series" line in the SAME bottom strip as the
+# download bar. Strip semantics: blue filling bar = downloading/caching,
+# red line = this series is the ACTIVE one in a viewport. While a download is
+# running the blue bar owns the strip (transfer state is the more urgent
+# information); the red line takes over the moment the bar is hidden again.
+# Default ON; AIPACS_THUMB_ACTIVE_BAR=0 = no red line (bar behaviour unchanged).
+_THUMB_ACTIVE_BAR = (_os.getenv("AIPACS_THUMB_ACTIVE_BAR", "1") or "1").strip() != "0"
+
+# Bottom-strip geometry, expressed RELATIVE to the card's live size so the
+# strip lands identically in every layout / card size instead of assuming the
+# 190x215 default (UX-1: the old hard-coded y=215-11 silently drifted whenever
+# a card was not exactly 215 px tall).
+_STRIP_SIDE_INSET = 8      # px from each side edge (clears the rounded corners)
+_STRIP_BOTTOM_GAP = 7      # px from the bottom edge (clears the border stroke)
+_STRIP_HEIGHT = 4          # px thickness of both the bar and the active line
+
+
+def _card_strip_rect(card):
+    """(x, y, w, h) of the bottom status strip for ``card``, from its LIVE size."""
+    try:
+        cw = int(card.width()) or 190
+        ch = int(card.height()) or 215
+    except Exception:
+        cw, ch = 190, 215
+    x = _STRIP_SIDE_INSET
+    w = max(1, cw - 2 * _STRIP_SIDE_INSET)
+    y = max(0, ch - _STRIP_BOTTOM_GAP - _STRIP_HEIGHT)
+    return x, y, w, _STRIP_HEIGHT
+
+
+class _CardStripKeeper(QObject):
+    """Keeps a card's bottom status strip correctly placed AND on top.
+
+    Why (UX-1, 2026-08-09): the strip widgets (download bar, active line) are
+    absolutely-positioned direct children of the card, but the card's
+    ``CircularProgressborder`` is added to the card's LAYOUT *after* them.
+    ``QLayout.addWidget`` re-parents the border, and re-parenting puts a widget
+    at the TOP of the sibling stack — so the opaque card content ended up ABOVE
+    the strip and covered it (measured 2026-08-09: 4 of the bar's 4 rows hidden;
+    only the 1 px below the content was ever painted → the "progress bar is
+    partially hidden behind the thumbnail" report).
+
+    A raise_() at build time is not enough on its own: any later re-parent,
+    style re-polish or card resize can re-stack or displace the strip. This
+    filter re-applies BOTH geometry and z-order on Show/Resize/ChildAdded/
+    LayoutRequest, so the strip is always fully visible, never clipped, and in
+    the same place in every layout. Cheap: a couple of setGeometry/raise calls
+    on events that are already rare, and only when something actually changed.
+    """
+
+    def __init__(self, card):
+        super().__init__(card)
+        self._card = card
+
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt signature)
+        try:
+            from PySide6.QtCore import QEvent
+            if event.type() in (
+                QEvent.Type.Show,
+                QEvent.Type.Resize,
+                QEvent.Type.ChildAdded,
+                QEvent.Type.LayoutRequest,
+                QEvent.Type.PolishRequest,
+            ):
+                apply_card_strip_layout(self._card)
+        except Exception:
+            pass
+        return False  # never consume
+
+
+def apply_card_strip_layout(card):
+    """Place the card's strip widgets along the bottom edge and raise them.
+
+    Idempotent, exception-proof, and safe on a half-built or deleted card — a
+    strip failure must never disturb the thumbnail itself.
+    """
+    if card is None:
+        return
+    try:
+        x, y, w, h = _card_strip_rect(card)
+    except Exception:
+        return
+    for attr in ("dl_progress_bar", "active_indicator"):
+        try:
+            strip = getattr(card, attr, None)
+            if strip is None:
+                continue
+            if not getattr(card, "_dl_bar_above_glass", False):
+                continue  # legacy in-layout bar: the layout owns its geometry
+            if strip.geometry().x() != x or strip.geometry().y() != y \
+                    or strip.geometry().width() != w or strip.geometry().height() != h:
+                strip.setGeometry(x, y, w, h)
+            strip.raise_()   # above the glass AND above the re-parented border
+        except (RuntimeError, AttributeError):
+            continue
+        except Exception:
+            continue
+
 
 class CircularProgressborder(QFrame):
     """
@@ -629,6 +727,25 @@ class DraggableButton(QPushButton):
         # ✅ CRITICAL FIX: Store series_number for drag-and-drop to avoid index confusion
         self.series_number = series_number if series_number is not None else thumbnail_index
 
+    def begin_drag_selection(self):
+        """Announce that a drag of THIS series has begun — unconditionally.
+
+        UX-2 (2026-08-09), the "active series gets stuck" fix. This used to be
+        inline in mouseMoveEvent and guarded by a check for the button's own
+        checked state, so it only ran on an unchecked button. Nothing in the app
+        ever un-checks a card, so after dragging A, then B, then A again, the
+        third drag found A still checked, skipped the signal entirely, and the
+        manager never moved ``selected_series`` back to A — A stayed on its green
+        "viewed" border instead of returning to the active one.
+
+        The signal is now emitted every time a drag starts, whatever the button's
+        current state. ``setChecked`` is idempotent; the emit is what actually
+        moves the active marker. Extracted as a method so the behaviour is
+        directly testable without spinning the native drag loop.
+        """
+        self.setChecked(True)
+        self.dragStarted.emit(self)
+
     def mousePressEvent(self, event: QMouseEvent):  # create signal 'click'
         if event.button() == Qt.LeftButton:
             self._drag_start_pos = event.pos()
@@ -639,10 +756,7 @@ class DraggableButton(QPushButton):
             if self._drag_start_pos is not None:
                 distance = (event.pos() - self._drag_start_pos).manhattanLength()
                 if distance >= QApplication.startDragDistance():
-                    # set check this button
-                    if not self.isChecked():
-                        self.setChecked(True)
-                        self.dragStarted.emit(self)  # publish signal with self button
+                    self.begin_drag_selection()
 
                     drag = QDrag(self)
                     mime_data = QMimeData()
@@ -1173,6 +1287,9 @@ class ThumbnailManager(QObject):
                             widget.progress_border._viewed = False
                             widget.progress_border._progress = 0
                             widget.progress_border.update()
+                        # UX-3: the red active line is part of the state being
+                        # reset — a new patient has no active series yet.
+                        self._sync_active_indicator(widget, False)
                     except (RuntimeError, AttributeError):
                         # Widget or progress_border has been deleted, remove from tracking
                         if key in self.series_widgets:
@@ -1333,11 +1450,19 @@ class ThumbnailManager(QObject):
                         is_selected = (self.selected_series == key)
                         is_viewed = key in self.viewed_series
 
-                        # Update progress border properties WITHOUT painting yet
+                        # Update progress border properties WITHOUT painting yet.
+                        # NOTE (UX-2): `_is_selected` is written here on EVERY
+                        # apply, from `selected_series` alone — so an active
+                        # series always re-asserts itself over an older viewed
+                        # (green) / ready (blue) mark. paintEvent ranks
+                        # selected first, so no stale state can win.
                         progress_border._is_ready = is_ready
                         progress_border._is_selected = is_selected
                         progress_border._viewed = is_viewed
-                        
+
+                        # UX-1/UX-3: red active line in the bottom strip.
+                        self._sync_active_indicator(w, is_selected)
+
                         if is_ready:
                             progress_border._downloading = False
                             progress_border._progress = 100
@@ -1700,13 +1825,45 @@ class ThumbnailManager(QObject):
                     """)
                     if _bar_above:
                         # bottom strip, inset from the rounded corners; clicks pass
-                        # through to the card (drag/retry).
-                        dl_bar.setGeometry(8, 215 - 11, 190 - 16, 4)
+                        # through to the card (drag/retry). Geometry is derived
+                        # from the card's LIVE size (UX-1) and re-applied by the
+                        # strip keeper on every show/resize, so it holds in any
+                        # layout instead of assuming a 215 px tall card.
+                        _sx, _sy, _sw, _sh = _card_strip_rect(widget)
+                        dl_bar.setGeometry(_sx, _sy, _sw, _sh)
                         dl_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                     else:
                         content_layout.addWidget(dl_bar)
                     widget.dl_progress_bar = dl_bar
                     widget._dl_bar_above_glass = _bar_above
+                except Exception:
+                    pass
+
+            # --- Red ACTIVE-SERIES line (same bottom strip as the bar) ---------
+            # UX-3 (2026-08-09): a second, unmistakable marker for "this series is
+            # the one in the viewport", on top of the active border. Shares the
+            # strip with the download bar under a simple precedence:
+            #   blue filling bar -> downloading / caching
+            #   red line         -> active series (shown once the bar is gone)
+            # Visibility is driven ONLY from `selected_series` via
+            # _sync_active_indicator(), so it can never get stuck on a card that
+            # is no longer active.
+            if _THUMB_ACTIVE_BAR:
+                try:
+                    active_line = QWidget(widget)
+                    active_line.setObjectName("seriesActiveBar")
+                    _sx, _sy, _sw, _sh = _card_strip_rect(widget)
+                    active_line.setGeometry(_sx, _sy, _sw, _sh)
+                    active_line.setStyleSheet("""
+                        QWidget#seriesActiveBar {
+                            background: #ef4444;
+                            border: none;
+                            border-radius: 2px;
+                        }
+                    """)
+                    active_line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                    active_line.setVisible(False)   # only while this card is active
+                    widget.active_indicator = active_line
                 except Exception:
                     pass
 
@@ -1785,20 +1942,46 @@ class ThumbnailManager(QObject):
             
             # Add progress border to main widget
             main_layout.addWidget(progress_border)
+
+            # UX-1 (2026-08-09) — THE z-order fix. `main_layout.addWidget()` above
+            # RE-PARENTS progress_border onto the card, and a re-parent moves a
+            # widget to the TOP of the sibling stack. That put the opaque card
+            # content above the bottom strip and hid it: measured before this fix,
+            # 4 of the download bar's 4 rows were covered and only the single row
+            # below the content ever painted blue — the reported "progress bar is
+            # partially hidden behind the thumbnail". The earlier raise_() ran
+            # BEFORE this addWidget, so it was always undone.
+            # Re-raise (and re-place) the strip here, then keep it correct for the
+            # card's whole life via the strip keeper.
+            apply_card_strip_layout(widget)
+            try:
+                widget._strip_keeper = _CardStripKeeper(widget)
+                widget.installEventFilter(widget._strip_keeper)
+            except Exception:
+                pass
             
             # Setup drag functionality
             def on_drag_started(_btn):
                 # ✅ Use real series_number, NOT thumbnail_index
-                self.selected_series = series_key
-                self.apply_border_states_new()
+                # UX-2: go through set_active_series so the active marker always
+                # overrides an older viewed/ready state and the other cards'
+                # checked flags are cleared (they used to drift and suppress the
+                # next drag of an already-dragged series).
+                self.set_active_series(series_key)
 
             image_button.dragStarted.connect(on_drag_started)
             
             # Setup click functionality
             def on_thumb_clicked():
+                # UX-2: a click on the ALREADY-active card un-checks it (Qt
+                # toggle) and used to fall through here doing nothing, leaving
+                # the card looking inactive. Re-assert the checked state so a
+                # click always means "make this series active".
+                if not image_button.isChecked():
+                    image_button.setChecked(True)
                 if image_button.isChecked():
                     # ✅ Use real series_number, NOT thumbnail_index
-                    self.selected_series = series_key
+                    self.set_active_series(series_key)
 
                     # 🔥 Emit priority download for series
                     study_uid = ''
@@ -2088,10 +2271,97 @@ class ThumbnailManager(QObject):
         except Exception as e:
             _tm_logger.debug("mark_series_viewed error: %s", e)
 
+    def set_active_series(self, series_number):
+        """Make ``series_number`` THE active series and repaint immediately.
+
+        UX-2 (2026-08-09). The active state is the highest-priority visual on a
+        card and must always win over every earlier state — in particular over
+        the green "viewed" mark a series keeps after it has been in a viewport
+        once. Re-dropping an already-viewed series therefore has to return it to
+        the active border, which is exactly the case that used to get stuck.
+
+        Two things make it stick:
+          * ``selected_series`` is set UNCONDITIONALLY (single source of truth —
+            ``apply_border_states_new`` derives ``_is_selected`` from it, and
+            ``CircularProgressborder.paintEvent`` already ranks selected above
+            viewed/ready/pending), and
+          * every OTHER card's drag button is un-checked, so the checkable state
+            can no longer drift out of sync with the active series and suppress
+            a later drag/click (the original stuck-state mechanism).
+
+        Repaints with ``immediate=True``: the active marker is a direct response
+        to a user action, so it must not sit in the 150 ms coalescing window.
+        Idempotent and exception-proof — never blocks the series switch.
+        """
+        try:
+            series_key = self._resolve_series_key(series_number)
+            if series_key is None or str(series_key) == "":
+                return False
+            series_key = str(series_key)
+            self.selected_series = series_key
+
+            # Keep the checkable drag buttons consistent with the active series.
+            for key, widget in list(self.series_widgets.items()):
+                try:
+                    btn = getattr(widget, 'image_button', None)
+                    if btn is None:
+                        continue
+                    want = (str(key) == series_key)
+                    if bool(btn.isChecked()) != want:
+                        btn.setChecked(want)
+                except (RuntimeError, AttributeError):
+                    self.series_widgets.pop(key, None)
+                except Exception:
+                    continue
+
+            self.apply_border_states_new(immediate=True)
+            return True
+        except Exception as e:
+            _tm_logger.debug("set_active_series error: %s", e)
+            return False
+
+    def _sync_active_indicator(self, widget, is_selected: bool) -> None:
+        """Show the red active line on the active card, hide it elsewhere.
+
+        Shares the bottom strip with the download bar under one precedence rule:
+        while a download is STILL FILLING (bar visible and value < maximum) the
+        blue bar owns the strip, because an in-flight transfer is the more
+        urgent fact. A finished bar stays full underneath and the red line —
+        raised last, same geometry — takes the strip over. So:
+            blue filling  -> downloading / caching
+            red           -> this series is the active one
+        Never raises.
+        """
+        if not _THUMB_ACTIVE_BAR:
+            return
+        try:
+            line = getattr(widget, 'active_indicator', None)
+            if line is None:
+                return
+            bar = getattr(widget, 'dl_progress_bar', None)
+            downloading = False
+            if bar is not None:
+                try:
+                    downloading = bool(bar.isVisible()) and (
+                        int(bar.maximum()) > 0 and int(bar.value()) < int(bar.maximum())
+                    )
+                except (RuntimeError, TypeError, ValueError):
+                    downloading = False
+            want = bool(is_selected) and not downloading
+            if bool(line.isVisible()) != want:
+                line.setVisible(want)
+            if want:
+                line.raise_()
+        except (RuntimeError, AttributeError):
+            return
+        except Exception:
+            return
+
     def update_widget_borders(self, selected_widget=None):
         # اگر selected_widget داریم از parentش سری را حدس بزنیم
         if selected_widget and hasattr(selected_widget, "series_number"):
-            self.selected_series = str(selected_widget.series_number)
+            self.set_active_series(selected_widget.series_number)
+            return
         self.apply_border_states_new()
 
     def highlight_priority_series(self, series_number):
@@ -2437,11 +2707,13 @@ class ThumbnailManager(QObject):
         """Keep the per-series download progress bar ABOVE the frosted-glass
         overlay (2026-07-29). The glass is re-raised whenever a download shows it,
         which would re-cover the bar; re-raise the bar right after so it stays
-        crisp. No-op when the bar is the legacy in-layout one. Never raises."""
+        crisp. No-op when the bar is the legacy in-layout one. Never raises.
+
+        UX-1 (2026-08-09): delegates to the shared strip layout so the red
+        active line is re-raised (and both re-placed) by the same call — one
+        code path owns "the bottom strip is correctly placed and on top"."""
         try:
-            bar = getattr(widget, 'dl_progress_bar', None)
-            if bar is not None and getattr(widget, '_dl_bar_above_glass', False):
-                bar.raise_()
+            apply_card_strip_layout(widget)
         except Exception:
             pass
 

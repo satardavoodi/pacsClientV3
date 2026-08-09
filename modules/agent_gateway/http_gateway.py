@@ -14,6 +14,8 @@ there is no cloud hop.
 from __future__ import annotations
 
 import logging
+import os
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
@@ -78,6 +80,37 @@ class _Handler(BaseHTTPRequestHandler):
         logger.debug("[AGENT_GATEWAY_HTTP] " + fmt, *args)
 
 
+# ── GW-1 (2026-08-05): skip reverse-DNS during server bind ──────────────────
+# stdlib ``HTTPServer.server_bind()`` calls ``socket.getfqdn(host)`` on the
+# bind address. With host "0.0.0.0" that is a reverse-DNS (PTR) lookup that
+# HANGS on networks whose DNS server won't answer it — measured live
+# 2026-08-05 20:35:45→20:35:56: ~11.5 s inside ``gethostbyaddr()`` ON THE GUI
+# THREAD (F11 stall-trace samples), because ``service.start()`` constructs
+# this server synchronously during home-widget construction. That was the
+# bulk of the 18.5 s "main window / patient list won't appear" startup stall
+# (STARTUP_STAGE home_widget ms=14203). ``server_name`` is cosmetic for our
+# handler (never emitted in responses), so we bind without the lookup.
+# Kill switch: ``AIPACS_GW_FAST_BIND=0`` restores the stdlib behaviour.
+def _fast_bind_enabled() -> bool:
+    return str(os.environ.get("AIPACS_GW_FAST_BIND", "1")).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+class _FastBindThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer whose bind never does a reverse-DNS lookup.
+
+    Byte-identical to the stdlib ``HTTPServer.server_bind`` except
+    ``socket.getfqdn(host)`` is replaced by the literal bind host.
+    """
+
+    def server_bind(self):  # noqa: N802 (stdlib signature)
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
+
+
 class GatewayHttpServer:
     def __init__(
         self,
@@ -98,7 +131,10 @@ class GatewayHttpServer:
         return self._port
 
     def start(self) -> None:
-        httpd = ThreadingHTTPServer((self._host, self._port), _Handler)
+        # GW-1: fast bind by default; AIPACS_GW_FAST_BIND=0 restores stdlib.
+        server_cls = (_FastBindThreadingHTTPServer if _fast_bind_enabled()
+                      else ThreadingHTTPServer)
+        httpd = server_cls((self._host, self._port), _Handler)
         httpd.daemon_threads = True
         httpd.core = self._core  # type: ignore[attr-defined]
         if self._ssl_context is not None:

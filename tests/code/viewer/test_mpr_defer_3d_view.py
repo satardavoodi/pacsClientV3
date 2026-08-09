@@ -102,7 +102,12 @@ def test_deferred_callback_is_teardown_safe():
     src = _views_src()
     fn = src.find("def _build_deferred_3d_view(self):")
     assert fn != -1
-    body = src[fn:fn + 1600]
+    # Bound the window at the NEXT def rather than a fixed character count: the
+    # 2026-08-01 loading-presentation work (busy dialog + repaint-suppressed swap)
+    # pushed `_create_3d_view` past the old 1600-char slice even though the call is
+    # still there. A positional window silently rots as the function grows.
+    _end = src.find("\n    def ", fn + 1)
+    body = src[fn:_end if _end != -1 else len(src)]
     assert "getattr(self, '_deferred_3d_pending', False)" in body   # bail if cleaned up
     assert "self._deferred_3d_pending = False" in body              # one-shot
     assert "self._create_3d_view(layout, 0, 1)" in body             # builds the real 3D into (0,1)

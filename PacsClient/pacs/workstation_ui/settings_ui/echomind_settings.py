@@ -128,6 +128,7 @@ def _mask_key(api_key: str) -> str:
 
 class EchoMindSettingsWidget(QWidget):
     _OPENAI_CHAT_MODELS = [
+        "gpt-5.6-terra",
         "gpt-5.4",
         "gpt-5.1",
         "gpt-5",
@@ -745,7 +746,7 @@ class EchoMindSettingsWidget(QWidget):
         whatever is selected here. Before 2026-07-13 the chat POSTed to a hard-coded
         ``{AI_BASE}/generate_transcript`` and ignored this section completely.
 
-        The two built-in AI-PACS servers are shown BY NAME ONLY — their addresses
+        The built-in Company servers are shown BY NAME ONLY — their addresses
         live in ``modules/EchoMind/voice_transcription.py`` and are never surfaced.
         """
         self.stt_group = QGroupBox("Voice to Text")
@@ -908,7 +909,7 @@ class EchoMindSettingsWidget(QWidget):
         self.openai_org_input.setText(str(cfg.get("organization") or ""))
         self.openai_project_input.setText(str(cfg.get("project") or ""))
         self._set_combo_value(self.openai_text_model_input, str(cfg.get("text_model") or "gpt-5-mini"))
-        self._set_combo_value(self.openai_report_model_input, str(cfg.get("report_model") or "gpt-5.4"))
+        self._set_combo_value(self.openai_report_model_input, str(cfg.get("report_model") or "gpt-5.6-terra"))
         self._set_combo_value(self.openai_vision_model_input, str(cfg.get("vision_model") or "gpt-5.4"))
         self._set_combo_value(self.openai_secretary_model_input, str(cfg.get("secretary_model") or "gpt-5-mini"))
         self._set_combo_value(
@@ -1070,7 +1071,7 @@ class EchoMindSettingsWidget(QWidget):
         elif provider == STT_PROVIDER_CUSTOM:
             text = "Send voice files to your own Whisper-compatible server."
         else:
-            text = ("Voice files are uploaded to this AI-PACS transcription server. "
+            text = ("Voice files are uploaded to this Company transcription server. "
                     "Used by both EchoMind Chat and Secretary EchoMind.")
         self.provider_help.setText(text)
 

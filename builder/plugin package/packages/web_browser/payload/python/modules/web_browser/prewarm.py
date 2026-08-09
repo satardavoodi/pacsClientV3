@@ -56,6 +56,10 @@ Tunables (ms): ``AIPACS_BROWSER_PREWARM_DELAY_MS`` (initial delay, default
 anyway, default 120000; 0 = legacy pre-input warm allowed).
 ``AIPACS_BROWSER_PREWARM_IDLE_ONLY=0`` restores the legacy fixed-delay warm.
 ``AIPACS_BROWSER_PREWARM_FILE_WARM=0`` disables the off-thread file pre-read.
+``AIPACS_BROWSER_PREWARM_RECENCY_VETO=0`` disables the construct-time
+input-recency re-check (IMP-3, 2026-08-07: the idle verdict went stale during
+kick()'s background phase and the ~19 s Chromium construct collided with a
+patient double-click; the idle gap must hold AT construct time).
 
 **Cold-boot economics (measured 2026-07-23, tools/dev/bench_webengine_boot.py).**
 On the reporting workstation a WARM Chromium boot is ~1.0 s total (construct+
@@ -204,6 +208,48 @@ def _idle_only() -> bool:
     return (os.environ.get("AIPACS_BROWSER_PREWARM_IDLE_ONLY", "1") or "1").strip() != "0"
 
 
+# ── IMP-1 (2026-08-05): busy-app veto ───────────────────────────────────────
+# The OPT-22 idle gate counts only discrete input (click/key/wheel), so a user
+# WAITING on a modal — import scan/copy progress, the import preview dialog, a
+# message box — looks "idle". Live 2026-08-05: the warm fired at 20:36:17
+# mid-import (clicks inside the NATIVE folder picker never reach the Qt event
+# filter), `_warm_webengine_files` then read 152 MB against the import copy's
+# I/O, and `_construct_warm_view` landed on the GUI thread at 20:36:23 —
+# one contiguous 39.7 s MAIN_THREAD_STALL over the whole copy (import
+# duration 40.9 s for 66 MB ≈ 1.6 MB/s from the same contention).
+# Veto = a modal/popup widget is open. Checked (a) in the idle poll, so the
+# warm never KICKS while a dialog is up, and (b) right before the GUI-thread
+# construct, so a construct queued earlier DEFERS until the modal closes
+# (bounded; gives up after _CONSTRUCT_DEFER_MAX_MS).
+# Kill switch: AIPACS_BROWSER_PREWARM_BUSY_VETO=0 restores OPT-22 behaviour.
+_CONSTRUCT_DEFER_POLL_MS = 2000
+_CONSTRUCT_DEFER_MAX_MS = 600000.0
+
+
+def _busy_veto_enabled() -> bool:
+    return (os.environ.get("AIPACS_BROWSER_PREWARM_BUSY_VETO", "1") or "1").strip() != "0"
+
+
+def _recency_veto_enabled() -> bool:
+    """IMP-3 kill switch: construct-time input-recency re-check (default on)."""
+    return (os.environ.get("AIPACS_BROWSER_PREWARM_RECENCY_VETO", "1") or "1").strip() != "0"
+
+
+def _app_is_busy() -> bool:
+    """True while a modal dialog / popup is open. GUI-thread callers only."""
+    if not _busy_veto_enabled():
+        return False
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return False
+        return (app.activeModalWidget() is not None
+                or app.activePopupWidget() is not None)
+    except Exception:
+        return False
+
+
 def schedule_prewarm(delay_ms: int | None = None) -> bool:
     """Schedule a one-time, idle, background QtWebEngine pre-warm.
 
@@ -243,6 +289,8 @@ def schedule_prewarm(delay_ms: int | None = None) -> bool:
             # 2026-07-23 click-lag fix: idle qualifies only BETWEEN interactions.
             self._seen_input = False
             self._untouched_ms = 120000.0
+            # IMP-1: construct-deferral deadline (0 = not yet deferring).
+            self._construct_deadline_ms = 0.0
 
         # ── heavy work: DLL load off-thread, construction on GUI thread ──
         def kick(self) -> None:
@@ -271,6 +319,44 @@ def schedule_prewarm(delay_ms: int | None = None) -> bool:
                              daemon=True).start()
 
         def _on_construct(self) -> None:
+            # IMP-1: never run the Chromium construct while a modal is open —
+            # live 2026-08-05 it landed mid-import-copy and blocked the GUI
+            # thread for 39.7 s. Defer in short steps until the modal closes;
+            # give up (skip this session's warm) past the deadline.
+            # IMP-3 (2026-08-07): ALSO require the idle gap to still hold AT
+            # CONSTRUCT TIME. The idle verdict is taken in _check_idle, but
+            # kick()'s background phase (DLL import + file warm) runs for
+            # seconds before this handler fires — live 21:28 the user
+            # double-clicked patient 53516 inside that window and the
+            # construct landed with the click already queued behind it:
+            # one 19.0 s MAIN_THREAD_STALL, the open processed only after.
+            # The input filter now stays installed through kick(), so a
+            # fresh click defers the construct instead of freezing behind it.
+            busy = _app_is_busy()
+            recent = (not busy and _recency_veto_enabled() and self._seen_input
+                      and (_now_ms() - self._last_input_ms) < self._idle_ms)
+            if busy or recent:
+                now = _now_ms()
+                if self._construct_deadline_ms <= 0:
+                    self._construct_deadline_ms = now + _CONSTRUCT_DEFER_MAX_MS
+                if now < self._construct_deadline_ms:
+                    try:
+                        from PySide6.QtCore import QTimer
+                        QTimer.singleShot(_CONSTRUCT_DEFER_POLL_MS,
+                                          self._on_construct)
+                        logger.debug("browser prewarm: %s -> construct deferred",
+                                     "app busy (modal open)" if busy
+                                     else "recent user input")
+                        return
+                    except Exception:
+                        logger.debug("browser prewarm: defer failed; "
+                                     "constructing now", exc_info=True)
+                else:
+                    logger.info("browser prewarm: app busy past construct "
+                                "deadline -> skipping warm view this session")
+                    self._remove_input_filter()
+                    return
+            self._remove_input_filter()
             _construct_warm_view()
 
         # ── idle gating (OPT-22) ─────────────────────────────────────────
@@ -298,6 +384,12 @@ def schedule_prewarm(delay_ms: int | None = None) -> bool:
         def _check_idle(self) -> None:
             try:
                 now = _now_ms()
+                # IMP-1: an open modal (import scan/copy progress, preview
+                # dialog, message box) means the user is mid-workflow even
+                # with zero clicks — count it as activity so the warm never
+                # kicks under a modal. max_wait still bounds the watch.
+                if _app_is_busy():
+                    self._last_input_ms = now
                 idle_for = now - self._last_input_ms
                 waited = now - self._start_ms
                 # A quiet stretch counts as idle ONLY once the user has actually
@@ -320,7 +412,12 @@ def schedule_prewarm(delay_ms: int | None = None) -> bool:
                                 "legacy mode) -> warming now", idle_for, self._idle_ms)
                     self._finish_watch(warm=True)
                     return
-                elif self._untouched_ms > 0 and waited >= self._untouched_ms:
+                elif (self._untouched_ms > 0 and waited >= self._untouched_ms
+                      and not _app_is_busy()):
+                    # IMP-1: the away-branch keys on `waited` (not idle_for),
+                    # so it must ALSO respect the busy veto — a zero-input
+                    # auto-import (CD media startup path) would otherwise
+                    # trip "user away" mid-copy.
                     logger.info(
                         "browser prewarm: no input at all for %.0fms (grace %.0fms) "
                         "-> user away, warming now", waited, self._untouched_ms)
@@ -348,14 +445,22 @@ def schedule_prewarm(delay_ms: int | None = None) -> bool:
                     self._poll_timer = None
             except Exception:
                 pass
+            # IMP-3: when warming, KEEP the input filter installed — kick()'s
+            # background phase takes seconds and _on_construct re-checks input
+            # recency at construct time. The filter is removed there (on
+            # construct or on skip). The give-up path removes it now.
+            if not warm:
+                self._remove_input_filter()
+            if warm:
+                self.kick()
+
+        def _remove_input_filter(self) -> None:
             try:
                 if self._filter is not None:
                     self._filter.removeEventFilter(self)
                     self._filter = None
             except Exception:
                 pass
-            if warm:
-                self.kick()
 
         def eventFilter(self, obj, event):  # noqa: N802 (Qt signature)
             # Record only DISCRETE user actions (click / key / wheel). Mouse-move
@@ -415,10 +520,13 @@ def _construct_warm_view() -> None:
         logger.debug("browser prewarm: widgets import failed", exc_info=True)
         return
     try:
+        start = _now_ms()
         view = QWebEngineView()           # offscreen, never shown
         view.setUrl(QUrl("about:blank"))
         _warm_view = view
-        logger.info("browser prewarm: Chromium engine warmed")
+        logger.info("browser prewarm: Chromium engine warmed "
+                    "(construct+setUrl %.0f ms on GUI thread)",
+                    _now_ms() - start)
     except Exception:
         logger.debug("browser prewarm: view construction failed", exc_info=True)
         return

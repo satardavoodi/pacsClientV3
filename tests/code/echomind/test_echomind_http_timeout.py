@@ -52,16 +52,20 @@ def _outbound_calls(src: str):
 
 
 def test_every_outbound_ai_call_has_a_timeout():
+    """2026-08-02: the OPT-33 invariant is now STRUCTURAL. The ten GapGPT sites
+    were folded into `echomind_http.post`, which always applies
+    `resolve_timeout()` (the same (connect, read) pair this test used to check
+    per-site) plus the retry/logging/SOCKS policy. So the guard is now: NO raw
+    requests.* call may exist in the module at all — a new one would be exactly
+    the timeout-less regression OPT-33 fixed — and the authority must be used."""
     src = _REPORTER.read_text(encoding="utf-8")
     calls = _outbound_calls(src)
-    assert calls, "expected outbound requests.* calls in openai_reporter"
-    missing = [
-        c.lineno for c in calls
-        if not any(kw.arg == "timeout" for kw in c.keywords)
-    ]
-    assert not missing, (
-        "requests.* call(s) WITHOUT timeout= at line(s) "
-        f"{missing} — a half-open link would hang the AI worker thread forever"
+    assert not calls, (
+        f"raw requests.* call(s) at line(s) {[c.lineno for c in calls]} — every\n"
+        "outbound AI call must go through echomind_http (which owns the timeout)"
+    )
+    assert src.count("echomind_http.post(") >= 10, (
+        "the GapGPT sites must call the echomind_http transport authority"
     )
 
 
@@ -101,9 +105,8 @@ def test_read_timeout_is_tunable(monkeypatch):
 def test_plugin_mirror_carries_the_fix():
     """openai_reporter.py IS plugin-mirrored — a stale payload would ship the
     hanging version to the installed build."""
-    mirror_calls = _outbound_calls(_MIRROR.read_text(encoding="utf-8"))
-    missing = [
-        c.lineno for c in mirror_calls
-        if not any(kw.arg == "timeout" for kw in c.keywords)
-    ]
-    assert not missing, "run tools/dev/sync_plugin_mirrors.py (on the Windows host)"
+    mirror_src = _MIRROR.read_text(encoding="utf-8")
+    mirror_calls = _outbound_calls(mirror_src)
+    assert not mirror_calls and mirror_src.count("echomind_http.post(") >= 10, (
+        "run tools/dev/sync_plugin_mirrors.py (on the Windows host)"
+    )

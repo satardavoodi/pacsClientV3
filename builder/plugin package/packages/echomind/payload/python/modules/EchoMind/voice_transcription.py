@@ -61,17 +61,17 @@ from .settings_store import (
 
 log = logging.getLogger(__name__)
 
-# ── The two built-in AI-PACS transcription servers ───────────────────────────
-# Shown in the UI ONLY as "AI-PACS Server 1" / "AI-PACS Server 2" — never as raw
+# ── Built-in Company transcription servers 1/2 ───────────────────────────
+# Shown in the UI ONLY as "Company Server 1" / "Company Server 2" — never as raw
 # addresses (product requirement).
 AIPACS_SERVER_1_BASE = "http://81.16.117.196:8082"   # A100 GPU
 AIPACS_SERVER_2_BASE = "http://80.210.31.214:8085"   # Windows server
 
-# ── AI-PACS Server 3 — an OpenAI-COMPATIBLE Whisper endpoint (GapGPT) ─────────
+# ── Company Server 3 — an OpenAI-COMPATIBLE Whisper endpoint (GapGPT) ─────────
 # Unlike Servers 1/2 (multipart ``audio_files`` + ``quality_mode`` at
 # ``/generate_transcript``), Server 3 speaks the OpenAI transcription REST API:
 # ``POST {base}/audio/transcriptions`` with ``model`` + ``file`` and a Bearer
-# key. Shown in the UI ONLY as "AI-PACS Server 3"; the base URL / key / model
+# key. Shown in the UI ONLY as "Company Server 3"; the base URL / key / model
 # live here and are never surfaced (same product rule as Servers 1/2). A token
 # entered in Settings would override the built-in key, but the field is hidden
 # for this name-only server, so the built-in key is used.
@@ -81,9 +81,9 @@ AIPACS_SERVER_3_KEY = "sk-WRCKo4GRoH4N7gCVVD1AeILMZe6DGsrLIHmF1ZVKZ2BzIP1k"
 
 #: (provider_id, display label) — the Settings combo renders exactly this.
 STT_PROVIDER_CHOICES = (
-    (STT_PROVIDER_AIPACS_1, "AI-PACS Server 1"),
-    (STT_PROVIDER_AIPACS_2, "AI-PACS Server 2"),
-    (STT_PROVIDER_AIPACS_3, "AI-PACS Server 3"),
+    (STT_PROVIDER_AIPACS_1, "Company Server 1"),
+    (STT_PROVIDER_AIPACS_2, "Company Server 2"),
+    (STT_PROVIDER_AIPACS_3, "Company Server 3"),
     (STT_PROVIDER_GOOGLE, "Google Speech"),
     (STT_PROVIDER_OPENAI, "OpenAI Transcription"),
     (STT_PROVIDER_CUSTOM, "Custom Server"),
@@ -245,10 +245,10 @@ class VoiceTranscriptionService:
             try:
                 r = echomind_http.get(f"{AIPACS_SERVER_3_BASE}/models", headers=headers, timeout=8)
                 if r.status_code < 500:
-                    return {"ok": True, "detail": f"AI-PACS Server 3 reachable (HTTP {r.status_code})."}
-                return {"ok": False, "detail": f"AI-PACS Server 3 error (HTTP {r.status_code})."}
+                    return {"ok": True, "detail": f"Company Server 3 reachable (HTTP {r.status_code})."}
+                return {"ok": False, "detail": f"Company Server 3 error (HTTP {r.status_code})."}
             except Exception as exc:
-                return {"ok": False, "detail": f"AI-PACS Server 3 not reachable: {exc}"}
+                return {"ok": False, "detail": f"Company Server 3 not reachable: {exc}"}
 
         endpoint = resolve_endpoint(cfg)
         if not endpoint:
@@ -323,6 +323,17 @@ class VoiceTranscriptionService:
 
     # -- non-HTTP providers reuse the existing implementations ---------------
     def _delegate(self, kind, paths, quality_mode, timeout, cfg) -> Dict[str, Any]:
+        # 2026-08-09: this route logs, like the HTTP ones already do. It used to be
+        # completely silent. `_post_audio` emits "[STT] upload provider=..." and
+        # echomind_http logs the response, so a Server 1/2/3 transcription leaves two
+        # lines in app.log -- Google and OpenAI left none. After switching the provider
+        # to Google we could not tell from the log whether a run had happened at all,
+        # let alone whether it succeeded. A route that cannot be observed cannot be
+        # verified, so it gets the same two lines.
+        log.info(
+            "[STT] upload provider=%s route=%s files=%d quality=%s",
+            cfg.get("provider"), kind, len(paths or []), quality_mode,
+        )
         # Lazy import: keeps this module free of the provider import chain (and
         # avoids a cycle, since NativeIrannobatProvider imports THIS module).
         try:
@@ -338,11 +349,21 @@ class VoiceTranscriptionService:
                 timeout=int(timeout or cfg.get("timeout_seconds") or DEFAULT_TIMEOUT_S),
             )
         except Exception as exc:
+            log.warning("[STT] route=%s raised: %s", kind, exc)
             return self._error(cfg, f"{kind} transcription failed: {exc}")
         out.setdefault("quality_report", [])   # chat reads this unconditionally
         out.setdefault("route_used", kind)
         out["endpoint"] = ""
         out["stt_provider"] = cfg.get("provider")
+        # Length, not content: the transcript is patient dictation and must never
+        # reach app.log. `chars=0 ok=False` is enough to tell "no speech recognised"
+        # apart from "the provider refused" apart from "it never ran".
+        log.info(
+            "[STT] result route=%s ok=%s chars=%d error=%s",
+            kind, bool(out.get("ok")),
+            len(str(out.get("transcript") or "")),
+            out.get("error") or "-",
+        )
         return out
 
     def _post_audio(self, paths, quality_mode, timeout, cfg) -> Dict[str, Any]:
@@ -464,7 +485,7 @@ class VoiceTranscriptionService:
 
         if not any(s.get("ok") for s in statuses):
             first_err = next((s.get("error") for s in statuses if s.get("error")), "upload failed")
-            return self._error(cfg, f"AI-PACS Server 3 transcription failed: {first_err}", statuses)
+            return self._error(cfg, f"Company Server 3 transcription failed: {first_err}", statuses)
 
         transcript = "\n".join(c for c in chunks if c).strip()
         return {
@@ -491,6 +512,30 @@ class VoiceTranscriptionService:
             "files": statuses or [],
             "endpoint": resolve_endpoint(cfg),
         }
+
+
+def quality_mode_supported(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """Does the ACTIVE provider act on ``quality_mode``?
+
+    Servers 1 and 2 send it with the upload (``data={"quality_mode": ...}``) and
+    the server changes its acceptance thresholds, so a "noisy" resend is a
+    genuinely different request. Server 3 and the OpenAI Whisper provider take a
+    file and a model name and nothing else — resending "in noisy mode" there is
+    the SAME request twice, which buys a duplicate failure and a wasted second.
+
+    Defaults to True on any error: an unknown provider keeps the old behaviour
+    rather than silently losing a retry that might have worked.
+    """
+    try:
+        provider = str((cfg if cfg is not None
+                        else VoiceTranscriptionService()._cfg()).get("provider") or "")
+    except Exception:                             # pragma: no cover - defensive
+        return True
+    # v2t joins them 2026-08-09: V2tGoogleProvider.transcribe_files opens with
+    # del quality_mode, timeout - it accepts the argument and ignores it, so a
+    # "noisy" resend on this route is the same request twice, exactly as on Server 3.
+    return provider not in (STT_PROVIDER_AIPACS_3, STT_PROVIDER_OPENAI,
+                            STT_PROVIDER_GOOGLE)
 
 
 def transcribe_voice_files(

@@ -48,6 +48,14 @@ from .db_manager import (
     ai_set_last_session,
     ai_get_last_session,
 
+    # reports (the structured store — WITHOUT these the EchoMind call site
+    # resolves getattr(U, "ai_insert_report", None) to None and no report is
+    # ever persisted; ai_reports sat at 0 rows because of this)
+    ai_insert_report,
+    ai_fetch_reports_for_session,
+    ai_fetch_reports_map_for_session,
+    ai_fetch_reports_for_study,
+
     # reassign / migrate
     ai_reassign_session,
     ai_reassign_sid,
@@ -61,6 +69,9 @@ from .database import (
     ai_update_reception_report_status,
     ai_delete_reception_report,
     ai_get_pending_reception_reports_count,
+    ai_save_reception_services,
+    ai_get_reception_services,
+    ai_get_reception_services_updated_at,
 )
 
 

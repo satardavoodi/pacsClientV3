@@ -2339,6 +2339,34 @@ the SAME study opened fine. THREE compounding causes — before editing `_create
   (The `vtkImageFlip` GUI-thread cost listed here was fixed by OPT-48 Phase 2 — it now runs
   off-thread via `build_lr_flipped_volume` + `_prepare_mpr_flip_offthread`.)
 
+### The MPR host viewport must stay VISIBLE until its replacement exists (2026-08-01)
+Reported: with two viewports open, starting MPR made the **other** viewport expand to nearly the
+whole screen while the reconstruction loaded, then snap back. Before editing the viewport swap in
+`toggle_zeta_mpr` / `_launch_dental_curve_vtk_host` / `toggle_new_curve_mpr` (`toolbar_manager.py`,
+NOT plugin-mirrored), read `docs/reports/MPR_DEFERRED_3D_LAYOUT_STABILITY_2026-08-01.md` §8.
+- **ROOT: `selected_widget.setVisible(False)` ran ~150 lines (SECONDS) before
+  `parent_layout.addWidget(zeta_widget, …)`** — with the volume load, the off-thread X-flip and the
+  whole `StandardMPRViewer` construction in between. **A `QGridLayout` gives a hidden widget ZERO
+  space** (nothing here calls `setRetainSizeWhenHidden`), so the host cell was empty for the entire
+  build and its lone visible sibling took the whole grid.
+- **THE RULE: never empty a viewport cell before its replacement exists.** The host now stays
+  visible (still showing its image) for the whole build, and hide + insert happen in ONE
+  repaint-suppressed step with `parent_layout.activate()` called **while painting is still off**
+  (`updateGeometry()` only POSTS a layout request — the repaint can beat the layout; same bracket as
+  the thumbnail sidebar), re-enabled in a `finally`. All three MPR entry points construct a
+  `StandardMPRViewer` between hide and insert and all three were fixed. One shared kill switch
+  `AIPACS_MPR_STABLE_VIEWPORT_SWAP=0`.
+- **DO NOT confuse this with the MPR's OWN internal 2×2 grid, which was MEASURED and does NOT move**
+  (0 px at 4 host sizes, ±the panes' 400×400 QVTK hints) — three of its four panes remain and still
+  span both rows and columns. Emptying one of TWO cells is what hands everything to the sibling. A
+  stretch pin was written for the 2×2, measured to be a no-op, and removed;
+  `test_no_stretch_pin_was_added_and_the_reason_is_recorded` fails if one is re-added.
+- Guard: `tests/code/viewer/test_mpr_viewport_swap_stability.py` (22) — its first test REPRODUCES
+  the bug on a real two-cell grid (sibling grows >1.8×), the second pins that the layout is
+  bit-identical while the host stays visible. It deliberately does NOT assert the pixel-exact final
+  swap: a synthetic stand-in models the real widget's parenting/show semantics badly enough that
+  such an assertion would mislead rather than protect.
+
 ### MPR/VTK LIFECYCLE — one open at a time, and close must be the inverse of open (OPT-49, 2026-08-01)
 Full audit of MPR init / threading / memory / shutdown for high-slice-count studies. Three defects;
 all fixed default-on. Before editing `toggle_zeta_mpr`, `_mpr_layout.cleanup()`, or the deferred
@@ -3783,3 +3811,2397 @@ Gate: `tests/code/echomind + reporting + database + network + gui` = **1118
 passed**, exit 0. **NEEDS live source-build verify** (import a real template
 file, search it, generate a report from a knee template with a lateral meniscal
 tear dictated, confirm the medial meniscus survives).
+
+### EchoMind — gpt-5.6-terra + the SOURCE FIDELITY contract (2026-08-02)
+
+Driven by a real customer failure on the **Turbo** path: the physician dictated
+a right **occipito-parietal** hypodensity with **no hemorrhage**; the model
+reported it in the **frontal** lobe, added **hyperdense areas** (an invented
+hemorrhage the physician had ruled out), dropped the sulcal effacement and the
+MRI recommendation, and wrote "gray-white differentiation preserved throughout"
+over the infarct. Root cause, confirmed by gap analysis: every modality prompt
+forbade inventing a new IMPRESSION but **none** forbade inventing a FINDING,
+changing the stated ANATOMY, or reversing a stated NEGATIVE — the preservation
+work governed conclusions, not observations.
+
+**MODEL.** All report-processing now runs on **gpt-5.6-terra** (`PRIMARY_REPORT_MODEL`
+in `openai_reporter.py`, env-overridable via `AIPACS_ECHOMIND_PRIMARY_MODEL`).
+Before this the Turbo report path ran on **gpt-4.1-mini** (the call-site default
+`_ai_model("report", "gpt-4.1-mini", …)`) and correction on gpt-5.4 — a mini
+model was generating clinical reports. Terra was verified (web) as a real July
+2026 OpenAI model that is newer, a stronger instruction-follower, and cheaper on
+every axis than the prior mix. Scope: `reporter` / `correction` / `standardize`
+/ `standard_assist_search` / `translate_report` function defaults → the constant;
+the two `_ai_model` call sites in `ai_chat_pages` → the constant; settings_store
+`report_model` default gpt-5.4 → gpt-5.6-terra, and the OpenAI-path feature map
+routes `standardize` + `translation` → `report_model` (so Standard and report
+translation move with report/correction, not with chat). **Left untouched on
+purpose:** chat/assist/search (`text_model`), **vision** (`vision_model` stays
+gpt-5.4 — terra may not be multimodal; do not sweep vision into a text-model
+change), transcription, secretary.
+
+**PROMPT — the SOURCE FIDELITY contract.** One lean, categorical, example-driven
+block, inlined as the `_fidelity` local in `build_report_system_prompt` and
+stated **once**, above the modality block, so it governs CT/MRI/US/X-ray/Mammo +
+the Normal-Template merge + Standard, and both backends (the twin calls the same
+builder). It closes the gap at the findings level: report only what was dictated;
+anatomy/laterality frozen; a stated negative stays negative; drop nothing; and
+**normal findings must not contradict the pathology** (property-level, not just
+CT's old region-level rule — unifies with the paired-structure split). It ships
+with the two real worked examples (occipito-parietal-not-frontal / no-hemorrhage,
+and the physician's gallbladder example), because examples beat prose.
+
+**The auto-normals contradiction is resolved, not removed.** The no-template
+branch used to say *"Construct Normal Findings automatically"* next to rules
+saying "don't invent" — a live contradiction, which the GPT-5.6 prompting
+guidance explicitly calls destabilising (it treats prompts as binding contracts).
+Auto-generated normals **stay** (physician's decision — they dictate only
+pathology) and keep the RSNA structure, but are now **bound by SOURCE FIDELITY**:
+never emit a normal statement for a structure/property the dictated pathology
+involves or calls into question. Do not re-add an unbound "construct normals"
+instruction.
+
+**Prompt style is now GPT-5.6-appropriate** for the fidelity block: lean,
+categorical, stated once, minimal shouting — per OpenAI's GPT-5.6 guidance that
+lean prompts and non-contradictory rules outperform elaborate scaffolding. The
+mature modality-specific content (BI-RADS lexicon, MRI vocabulary, ISUOG /
+sonography rules, per-region normal structures, the Normal-Template logic) was
+**preserved** — this pass added the missing cross-cutting contract and removed a
+contradiction; it did NOT rewrite the modality blocks. A deeper per-modality
+de-verbosing (the 31–40 KB ALL-CAPS walls) is a separate, radiologist-reviewed
+follow-up, not done here.
+
+Flags: `AIPACS_ECHOMIND_PRIMARY_MODEL` (model override). Guards:
+`tests/code/echomind/test_source_fidelity_contract.py` (contract present once per
+modality, all rules + worked examples, contradiction gone, auto-normals kept +
+bound, modality content preserved, twin parity) + `test_primary_model_default.py`
+(terra default, env override, per-function scope, vision untouched). Gate:
+`echomind + reporting + gui` = **950 passed**; `database + network` = **219
+passed**; 0 failed; mirrors **422/422**. **NEEDS live source-build verify**: press
+Turbo on a case like the CT-brain dictation and confirm the lobe, the absent
+hemorrhage, and no normal statement over the abnormal territory. The empirical
+eval harness (labelled cases scored on these exact defects, Terra vs Sol) is the
+proposed next step and is not built yet.
+
+### EchoMind — CT/MRI prompt refined against the physician's proven reference prompt (2026-08-02)
+
+Follow-up to the SOURCE FIDELITY work, using the radiologist's own 6-month
+ChatGPT CT/MRI prompt as the benchmark. **Scope: the Turbo / GapGPT path ONLY**
+— every change is in `build_report_system_prompt` (`openai_reporter.py`), the one
+builder both backends call; the US/OB prompts were explicitly out of scope and
+untouched. All additions go **once**, in the shared assembly next to
+`_fidelity`, so CT and MRI both inherit them with nothing duplicated per modality.
+
+**ADDED (additive, safe):**
+
+- **Certainty-preservation ladder** — appended to the `_fidelity` contract. A
+  hedge is a clinical claim, not loose wording: `'may represent'` must not become
+  `'represents'`, `'suspicious for'` ≠ `'consistent with'`, `'cannot be excluded'`
+  stays uncertain, `'favored to represent'` ≠ a definitive diagnosis, `'less
+  likely'` stays secondary. This was the single strongest thing the reference
+  prompt had that EchoMind lacked — the model's default failure on a clean-up task
+  is to firm up a radiologist's hedge because it "reads better," and hedge language
+  is medico-legally load-bearing.
+- **Standardized-systems block + classification guardrails** — a new `_standardized`
+  local, interpolated once after `_fidelity`. Lists the accepted systems (BI-RADS,
+  TI-RADS, PI-RADS, LI-RADS, O-RADS, Lung-RADS / Fleischner, Bosniak, CAD-RADS,
+  ACR/NASS spine) to **standardise wording**, fenced so they never become an
+  invention vector: apply a category ONLY when the dictated information meets its
+  criteria; never invent a measurement/descriptor/risk factor to assign one; when
+  the physician dictates a category, preserve it. Systems and fence ship together
+  — the reference prompt got that exactly right.
+- **Qualified-normal register** — into the no-template (auto-normals) branch.
+  Unless the physician signalled the rest of the study is normal, generated normals
+  are stated in a QUALIFIED register (*"No gross abnormality is identified in …"*,
+  *"Within the limits of the study …"*, *"Evaluation is limited on the provided
+  sequences"*) rather than as flat definitive normals — the exact discipline whose
+  absence produced "gray-white differentiation preserved" over an infarct. On an
+  explicit "rest is normal" / "complete report" signal it switches to definitive
+  normals, as before. This calibrates (does not remove) the auto-normals the
+  physician asked for; they still stay bound by SOURCE FIDELITY.
+
+**REMOVED (safe reduction):** the **duplicate MRI examples**. The MRI branch
+carried six worked examples for four cases — Brain and Knee each appeared twice,
+and the second pair was the redundant (and Impression-contradictory) copy. Kept
+the four distinct examples (Brain, Knee, Lumbar Spine, Breast), dropped the two
+duplicates. Net MRI prompt −~800 tokens even after the additions; CT +~450 (the
+shared additions only). Content-anchored deletion with hard guards that refuse to
+touch a distinct example or cross into the obstetric branch.
+
+**PRESERVED — do not "simplify" these away:** the JSON / `OUTPUT FORMAT (STRICT)`
+rules for CT/MRI/US/X-ray and MAMOGRAPHY's own stricter **REGEX-LOCKED JSON
+SCHEMA**, the `"Report Title"` key contract, the four distinct MRI examples, the
+CT/MRI per-region **normal-template libraries** (~16–19 KB), and every modality
+block (BI-RADS lexicon, ISUOG/sonography, MRI vocabulary). This pass added
+cross-cutting discipline and removed one duplication; it did **not** rewrite the
+modality blocks.
+
+Guard: `tests/code/echomind/test_ctmri_reference_additions.py` (**29** — certainty
+ladder present + inside the fidelity block, standardized systems + guardrails
+stated once, qualified register present and only on the auto-normals path, "rest
+is normal" → definitive, duplicate examples gone, four distinct kept, JSON/output
++ modality content preserved, twin parity carries all of it). Gate:
+`echomind + reporting + gui` = **979 passed** (15 skipped, 4 xfailed, 0 failed);
+mirrors **422/422**. **Still open (NOT done, needs radiologist sign-off):** the
+per-modality **normal-template-library slim** (region-gating the ~16–19 KB
+libraries) — subtractive, changes clinical wording, out of scope for this additive
+pass; and a live source-build Turbo verify on a real CT-brain dictation.
+
+### EchoMind — safe prompt reductions: X-ray dead-text + MRI example skeletons (2026-08-02)
+
+Follow-up to the CT/MRI refinement, after a **measured** audit of where the
+prompt length actually lives (delivered as `EchoMind_Prompt_Reduction_Plan.md`).
+Key measured facts: the dominant length driver in every modality is the
+**per-region clinical library** (CT ~22 KB / 61%, MRI ~17 KB / 43%), NOT examples
+or JSON; within-prompt duplication is minor (mostly decorative separators); CT has
+**zero** worked examples. Two reductions were approved and executed; the big lever
+(the region library) is being designed separately (region-gating, for review).
+
+**EXECUTED (user-approved, `build_report_system_prompt` only):**
+
+1. **Removed the X-ray developer commentary (−~2.2 KB).** The RADIOLOGY prompt
+   carried two dated `# ── 2026-08-01 ── # REMOVED … because …` note-blocks as
+   **live string content** (verified: present in the built prompt; compilation
+   strips real comments, so text surviving into the return value is string
+   content). They described already-removed instructions (inert) and re-quoted the
+   banned phrasing ("extreme exaggeration", "emulating a typist") back into the
+   model's context. The live `# 3./4./5.` section headers and the real
+   shallow-indent code comments (src ~2286/2435) were left. RADIOLOGY 25.5 KB →
+   23.3 KB.
+
+   *Rationale preserved (so it isn't lost with the note):* the 2026-08-01 edits
+   removed, from the radiography branch, (a) two instructions to **manufacture
+   pertinent negatives** on a plain film ("include all relevant normal findings
+   not mentioned…", "always state at least several normal points"), which
+   contradicted "zero speculation" and are unsupportable on a projection; and
+   (b) a `" • Use *extreme exaggeration*-vivid, dramatic phrasing."` line. Those
+   instructions **remain removed** — only the in-prompt *commentary about* them was
+   deleted this round.
+
+2. **Skeletonised the MRI Brain (Ex 1) and Spine (Ex 3) examples (−~0.4 KB).**
+   Kept the input, Pathological Findings, Recommendations and Impression (the
+   edge-case lesson — advanced sequences / per-level discs); shortened only the
+   verbose `"Normal Findings"` enumeration to a representative skeleton that still
+   teaches the "normals for un-involved structures, excluding the pathological
+   levels" pattern. **Knee (Ex 2) and Breast (Ex 4) stay full-fidelity** (the two
+   Essential examples — paired-structure split and BI-RADS). All four titles and
+   the JSON/output rules are unchanged. MRI 39.6 KB → 39.2 KB.
+
+**Untouched:** CT, SONOGRAPHY and MAMOGRAPHY built prompts are **byte-identical**.
+All JSON/`OUTPUT FORMAT`/`REGEX-LOCKED JSON SCHEMA` rules, the SOURCE FIDELITY +
+certainty ladder + standardized-systems additions, and both-backend parity are
+intact.
+
+**Follow-up flagged, NOT changed:** a real instruction survives in the X-ray
+Objective line — *"Transcribe and translate radiologic reports into English with a
+formal tone, emulating a typist and preparing a professional patient report."* The
+deleted commentary called this a creative-writing-scaffold leftover. It's a
+behaviour-changing edit (not dead text), so it was **left in place** pending a
+deliberate decision.
+
+Guard: `tests/code/echomind/test_prompt_reduction.py` (**8** — X-ray dead
+commentary gone + real instructions kept + only the commentary typist-mention
+removed; four MRI examples present; Brain/Spine compressed; Knee/Breast full;
+JSON + additions + other modalities intact; twin parity). Gate:
+`echomind + reporting + gui` = **987 passed** (0 failed); mirrors **422/422**.
+**Still the big lever, for review:** region-gating the per-region clinical
+libraries (send only the dictated region's block) — designed as a reviewable diff,
+not shipped.
+
+### EchoMind — the confirmed pipeline scoping: Turbo pinned, one transport, Company Servers (2026-08-02)
+
+Owner-confirmed implementation (A1–A7 of `EchoMind_Implementation_Plan.md`), ending
+the review-only phase. Five files changed + two test harnesses updated.
+
+- **A1 — Turbo is PINNED to the company GapGPT pipeline** (`ai_chat_pages.py::
+  _on_hq_all_modality_clicked`). It no longer reads `llm_backend`: `backend =
+  "company"`, model = `PRIMARY_REPORT_MODEL`, authorization = a validated center
+  key from the hardcoded `CENTERS` registry (`APIKeyManager.get_current_key()`,
+  falling back to validating the stored license key). **Behaviour change:** with
+  Send switched to OpenAI, Turbo used to silently run on the user's key/model/
+  endpoint; now, without an authorized company key it shows "Turbo requires an
+  authorized company key". `llm_backend` is a SEND-backend switch only. Do NOT
+  reintroduce `_resolve_active_ai_identity()` / `_ai_model(...)` into this handler.
+- **A2 — `_default_model_for_mode` is backend-gated.** It read the OpenAI
+  per-feature models UNCONDITIONALLY, so the user's OpenAI model choice leaked
+  into the company/GapGPT pipeline whenever the ChatGPT page ran in company mode.
+  Company mode now returns the company defaults (terra / gpt-4.1 / gpt-4.1-mini).
+- **A3 — transcription providers renamed** to **"Company Server 1/2/3"**
+  (labels + user-facing detail strings in `voice_transcription.py` and the
+  Settings hint text). Provider IDs stay `aipacs_1/2/3` so stored settings keep
+  resolving. OpenAI / Google / Custom unchanged.
+- **A4 — ONE transport.** The ten raw GapGPT `requests.post` sites in
+  `openai_reporter.py` now call `echomind_http.post` (same proxy/timeout values —
+  they already came from the authority's helpers — plus retry, `[EchoMind-HTTP]`
+  logging and the SOCKS guard), use the ONE `GAPGPT_API_URL` constant from
+  `ai_chat_config` (was re-hardcoded inline ×10), and check `status_code` BEFORE
+  `.json()` (a non-JSON error body used to crash with JSONDecodeError instead of
+  reporting the HTTP error). `import requests` is gone from the module — a new raw
+  call would be exactly the OPT-33 timeout-less regression, and
+  `test_echomind_http_timeout` now enforces zero raw calls + authority usage
+  (the OPT-33 invariant became structural).
+- **A5 — user-prompt composition order** (`openai_parallel_backend._compose_prompt`,
+  owner decision Q3): the user's custom prompt is now FENCED and placed AFTER the
+  shared header + workflow (`===== USER CUSTOM INSTRUCTIONS (additive) =====`,
+  "on any conflict, the rules above win"). It used to be PREPENDED, giving user
+  text priority over the parsing contract. Empty user prompt ⇒ byte-identical
+  prompt (backend parity preserved — parity tests unchanged and green).
+- **A6 — Normal-Template placeholder rule** (shared template branch of
+  `build_report_system_prompt`): dictated values are INSERTED into the template's
+  own placeholder sentences ("The uterus measures ___"); never invent a value for
+  a placeholder the physician did not provide. Template branch only.
+- **A7 — Settings model cleanup** (`PacsClient/.../echomind_settings.py`):
+  `_OPENAI_CHAT_MODELS` now offers `gpt-5.6-terra` (first); the stale `gpt-5.4`
+  report-model fallback → terra (matches the settings_store default); vision
+  fallback deliberately stays `gpt-5.4`. *(Secretary/Transcription model fields
+  kept — the Secretary subtree reads them.)*
+
+**Harness updates (not regressions):** `test_report_prompt_preservation`'s
+whitelist namespaces gained `echomind_http` + `GAPGPT_API_URL` (the exec'd
+reporter/correction now reference them); `test_echomind_http_timeout` asserts the
+new structural invariant; `test_voice_transcription_service` label assertions →
+"Company Server N".
+
+Guards: `tests/code/echomind/test_pipeline_scoping.py` (**16** — Turbo pin +
+registry auth + no active-backend gate; model gate; labels + stable IDs; transport
+authority + status-before-json + no requests import; fenced compose order + parity
++ user-layer-after-contract; NT placeholder in template branch only; settings UI
+terra-first + fallback). Gate: `echomind + reporting + gui` = **1002 passed, 0
+failed**; mirrors **422/422**. **Still open (next rounds, per the plan):**
+shared-core extraction (P3), region-gating (P5, awaits keyword-map validation),
+X-ray "emulating a typist" (P4, awaits decision), prompts/*.json loader (P6),
+modality-value fragility check (P7), STT server registry + transcription's own
+credential, Settings UI regrouping into the five buckets.
+
+### EchoMind — REPORT ORGANIZATION: anatomical sub-structure inside every section (2026-08-06)
+
+Driven by a live Turbo run (patient 53341, chest+abdomen+pelvis CT). The report
+correctly separated Pathological / Normal / Impression / Recommendations, but the
+content INSIDE each section was one flat paragraph — on a multi-region study the
+reader could not scan for an organ.
+
+**Root cause (verified, not assumed):** the ONLY grouping instruction in the whole
+prompt — `"• Use structured, grouped, RSNA-style anatomical organisation"` — sits
+inside **MODALITY LOGIC (CT)**, sandwiched between two lines that are both about
+Normal Findings ("Construct 'Normal Findings' using RSNA structured CT reporting
+standards…" above; "Exclude any anatomical region already described in
+Pathological Findings from the Normal Findings" below). The model therefore read
+it as a Normal-Findings rule — which is exactly what the live output showed:
+grouped normals, flat pathology.
+
+**Fix — one shared `_organization` block** in the shared assembly (between
+STANDARDIZED SYSTEMS and the modality block, so every modality inherits it and it
+governs the modality rules rather than being scoped by one of them):
+
+- Applies to **BOTH** `Pathological Findings` and `Normal Findings` — stated
+  explicitly, because the scoping ambiguity WAS the bug.
+- **Multi-region study → group by REGION first** (`Chest:` / `Abdomen:` /
+  `Pelvis:`), then by organ inside a region that carries several findings.
+  **Single-region study → group by ORGAN / STRUCTURE / SYSTEM** (knee MRI:
+  `Menisci:`, `Cruciate ligaments:`, `Collateral ligaments:`, `Cartilage:`,
+  `Bone marrow:`, `Joint effusion:`, `Extensor mechanism:`, `Soft tissues:`).
+- **Reuses the vocabulary already in the modality rules** — the per-region organ
+  groupings are already written there, so this adds guidance, not bulk, and the
+  model is told not to invent a parallel vocabulary.
+- Heading on its own line ending in a colon; the physician's numbering preserved.
+- A compact **worked example** of the multi-region shape (examples beat prose).
+
+**The guards that keep the rule from becoming a new defect:**
+
+- **No empty / uncovered headings** — "a heading is a claim that the region was
+  examined", which ties it back to SOURCE FIDELITY.
+- **Proportion** — a single-region study with one or two findings may skip
+  headings; never fragment a two-line report.
+- **Grouping never moves content between sections** (pathological stays
+  pathological).
+- **Impression is ordered by clinical importance, numbered — NOT regionally
+  grouped**, and only when the physician stated one (the presence-lock still rules).
+
+**JSON SAFETY — the critical invariant.** The rule arranges text INSIDE the
+existing string values and says so in capitals: *"do not add keys, do not rename
+keys, do not turn a string value into a nested object or a list."* The flat key
+set is what the renderer, `_validate_report_json`, Send-to-Reception and the
+correction KEY-SET MIRROR all depend on. **Do not "improve" this into a nested
+schema** — that is a pipeline-wide break, not a prompt change.
+
+**Two deferrals (both load-bearing):**
+1. **Modality-defined structure wins** — mammography's per-breast schema is not
+   given a second grouping on top.
+2. **A supplied NORMAL_TEMPLATE governs its own normals** — the physician's
+   template structure, headings, order and wording are kept; the rule must not
+   re-group it. It still applies to Pathological Findings and to normal content
+   the template does not cover.
+
+Cost: **+2,755 chars (~690 tokens) per modality**, identical across all five.
+
+Guard: `tests/code/echomind/test_report_organization.py` (**32** — present once
+per modality, in the shared assembly, covers both sections, region-vs-organ
+choice, worked example, no-empty-heading, proportion, no cross-section movement,
+impression ordering, **JSON key-set protection ×5**, both deferrals, prior
+contracts intact, twin parity). Gate: `echomind + reporting + gui` = **1035
+passed, 0 failed**; mirrors **422/422**.
+
+**Live-verify next Turbo run:** a chest+abdomen+pelvis CT should now come back
+with `Chest:` / `Abdomen:` / `Pelvis:` headings inside Pathological Findings, and
+organ groupings inside Normal Findings — with the JSON keys unchanged.
+
+### EchoMind — REPORT ORGANIZATION extended to EVERY modality branch (2026-08-06)
+
+Follow-up to the organization rule, on the owner's directive that it must cover
+MRI, ultrasound, radiography, mammography and **OB** — not just CT.
+
+**First, a branch-count correction.** `build_report_system_prompt` has **six**
+modality branches plus a generic fallback, not five:
+
+```
+ct | mri | obstetric-ultrasound | sonography/ultrasound | mammography | radiology | (generic)
+```
+
+**`obstetric ultrasound` / `ob ultrasound` / `pregnancy ultrasound` /
+`fetal ultrasound` is its OWN branch** with its own `JSON OUTPUT SCHEMA (ISUOG —
+STRICT)` and ten ISUOG sections — it is NOT the sonography branch (the sonography
+branch carries its own separate ISUOG normal-findings text). The first
+organization pass tested five UI values and missed it. Verified now: the shared
+rule reaches **all fourteen** modality strings tested, including every obstetric
+alias and the empty/unknown fallback.
+
+**Per-modality grouping vocabulary** — the shared rule's worked headings were
+CT-region and knee-MRI only, so the other modalities had to improvise. Each
+branch now carries its OWN compact vocabulary (and only its own — no
+cross-modality bulk):
+
+- **CT** — Chest / Abdomen / Pelvis / Brain / Neck / Spine / MSK organ lists.
+- **MRI** — Brain / Spine (level by level) / Knee / Shoulder / Hip-Ankle-Wrist /
+  Breast / Abdomen-Pelvis structure lists.
+- **Ultrasound (non-OB)** — per exam type: Abdominal / Renal-KUB / Thyroid /
+  Scrotal / Gynecologic / Doppler / Soft-tissue / Appendix-RIF.
+- **Radiography** — Chest / Abdomen / Extremity / Spine, with an explicit
+  "a projection cannot assess what it does not show" guard.
+
+**The two schema-owning branches take a deferral instead of a vocabulary** — they
+already ARE organized, and double-structuring them would be the failure mode:
+
+- **Mammography** — `SECTION 3b — REPORT ORGANIZATION (MAMMOGRAPHY)`: the
+  per-breast schema IS the organization; no regional headings on top.
+- **Obstetric** — `SECTION 7b — REPORT ORGANIZATION (OBSTETRIC)`: the ISUOG
+  section structure (biometry, anatomy survey, placenta/fluid, Doppler) IS the
+  organization; keep fetal anatomy grouped by system.
+
+Both deferral blocks repeat the JSON-key protection verbatim (*"do NOT add,
+rename or nest any JSON key to express grouping"*), because those two branches
+have the strictest schemas in the module.
+
+Cost (text only, no logic/JSON touched): CT +1,503 · MRI +1,653 · US +1,035 ·
+X-ray +970 · Mammography +585 · OB +662 chars. No vocabulary leaks across
+branches (pinned by test).
+
+Guard: `tests/code/echomind/test_report_organization.py` (**58**, was 32 — adds
+all-14-modality-strings coverage, per-modality vocabulary, every obstetric alias,
+both schema deferrals, and a no-cross-modality-leak test). Gate:
+`echomind + reporting + gui` = **1060 passed, 0 failed**; mirrors **422/422**.
+
+**Note for future work:** the obstetric branch fires only on those four exact
+strings. If the modality button ever stores something else ("OB", "Obstetrics"),
+the study silently falls through to the generic prompt — the same fragility the
+prompts/README flagged for X-ray (`modality.lower() == "radiology"` only). Worth
+auditing what `_current_modality` actually stores before relying on either branch.
+
+### EchoMind — backlog closeout: one modality list, Turbo logging, typist metaphor, P3 verdict (2026-08-06)
+
+**P7 — ONE modality list, and a real defect found.** The UI kept **THREE**
+independent copies of `["CT","MRI","SONOGRAPHY","RADIOLOGY","MAMOGRAPHY"]`
+(`ai_chat_pages` report-send menu, `ai_chat_pages` modality-button menu,
+`ai_chat_widgets` composer). Now ONE constant — `REPORT_MODALITIES` in
+`ai_chat_config.py`, re-exported through the `viewer_chat` shim. **Values
+unchanged.**
+
+The audit it enabled found: **the dedicated OBSTETRIC branch is unreachable from
+this UI.** `openai_reporter` has a full obstetric branch (`"obstetric
+ultrasound"` / `"ob ultrasound"` / `"pregnancy ultrasound"` / `"fetal
+ultrasound"`, ~23 KB, its own strict ISUOG JSON schema, trimester detection,
+biometry, anatomy survey, Doppler) and **no offered modality value reaches it**.
+Obstetric studies are currently reported through **SONOGRAPHY**, whose prompt does
+carry ISUOG obstetric + gynecologic content — so OB is handled, just not by the
+dedicated branch. Adding an obstetric entry to `REPORT_MODALITIES` would activate
+it; that is a **product/clinical decision and was deliberately NOT taken as part
+of a refactor.** The state is recorded in the constant's comment and pinned by a
+test (`test_obstetric_branch_is_documented_as_dormant`), plus a test that every
+offered modality actually reaches a real branch rather than the generic fallback.
+The equivalent X-ray concern from `prompts/README.md` is **resolved**: `RADIOLOGY`
+→ `"radiology"` matches correctly.
+
+**P4 — "emulating a typist" removed.** The X-ray Objective read *"…with a formal
+tone, emulating a typist and preparing a professional patient report."* A typist
+transcribes; it does **not** reorganize findings into anatomical sections — so
+after the REPORT ORGANIZATION rule this was a live contradiction, and GPT-5.6
+treats contradictory instructions as destabilising. Replaced with *"…in a formal,
+professional radiological register, producing a well-organized report."* Intent
+(transcribe + translate + formal register) preserved. **Only the radiography
+prompt changed** — every other modality is byte-identical (pinned).
+
+**Observability — Turbo diagnostics on the logger.** The handler's four
+`print()` calls became `_log.warning` / `_log.info` on the `echomind.chat`
+logger, and the send line now records the **model** as well as the backend.
+Verifying the live 53341 run required inferring the backend from the
+`[EchoMind-HTTP]` line plus `api_usage.json`; a Turbo run is now one grep.
+
+**P3 — shared-core prompt extraction: MEASURED, then DEFERRED with evidence.**
+The earlier review said the response contract was "re-typed in 6+ places", which
+implied copy-paste duplication. **Measurement says otherwise:** across the four
+general `OUTPUT FORMAT (STRICT)` blocks (CT / MRI / US / X-ray), pairwise
+similarity is only **0.18–0.61**, and exactly **2 lines** are shared verbatim
+(the header and a decorative rule) while each modality carries **16–24 unique
+lines**. They express the same *idea* in **independently authored wording** — so
+extracting one canonical core is **not a behaviour-preserving refactor, it is a
+rewrite of four clinical output contracts at once.** That needs radiologist review
+of the unified wording plus an eval harness proving no parsing/structure
+regression — not a blind dedup. **Do not attempt it as a "cleanup".**
+
+Guards: `tests/code/echomind/test_modality_list_and_diagnostics.py` (**16** — one
+list, three use sites wired, every offered modality reaches a real branch, OB
+dormancy recorded, Turbo logged-not-printed with model, typist gone, intent
+preserved, only-X-ray-changed). `test_prompt_reduction.py`'s typist test was
+**superseded in place** (it previously pinned that the real instruction stayed;
+the docstring records why that flipped). Gate: `echomind + reporting + gui` =
+**1076 passed, 0 failed**; mirrors **422/422**.
+
+**Still open — genuinely needs the physician, not more engineering:**
+- **Region-gating** the per-region libraries (CT ~19 KB / MRI ~17 KB, the single
+  biggest length lever) — designed, awaits validation of the Persian keyword map.
+- **`viewer_chat/prompts/*.json`** — a verbatim export with no loader; decide
+  whether to wire a loader or keep them as review artifacts.
+- **Transcription's own credential** (STT currently borrows the company GapGPT key
+  and the user's OpenAI key) and the **STT server registry** (Servers 1/2 vs 3 are
+  two different transports).
+- **Settings UI regrouping** into the five buckets + a visible (read-only) Turbo
+  section — Turbo still has no Settings presence.
+- **Obstetric modality entry** — the product decision above.
+
+### EchoMind — OB modality activated, Turbo locked, prompts/*.json decided (2026-08-06)
+
+Three owner decisions, implemented together.
+
+**1. Obstetric Ultrasound is now an offered modality.** `REPORT_MODALITIES`
+becomes `["CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND", "RADIOLOGY",
+"MAMOGRAPHY"]`. `"OBSTETRIC ULTRASOUND".lower()` is `"obstetric ultrasound"`,
+which routes to the **dedicated ISUOG branch** that had been dormant — its own
+`JSON OUTPUT SCHEMA (ISUOG — STRICT)`, trimester detection, gestational-age and
+dating rules, biometry format, anatomy survey, placenta/amniotic-fluid and
+Doppler sections. Obstetric studies previously went through the SONOGRAPHY
+prompt; they now get the purpose-built one (the two prompts are asserted
+different).
+
+Verified ready **before** wiring, not after:
+- `_VALIDATED_MODALITIES` already carried all four obstetric aliases → the
+  `temperature = 0.1` clamp and the output validation apply;
+- `_validate_report_json` already had an obstetric branch —
+  `_OB_ULTRASOUND_REQUIRED_KEYS` (Report Title, Gestational Age & Dating, Fetal
+  Presentation, Biometry, Placenta & Umbilical Cord, Amniotic Fluid, Normal
+  Findings) plus optional Anatomy Survey / Doppler / Impression /
+  Recommendations;
+- the report renderer keeps **all** keys — the 2026-08-01 whitelist→blacklist fix
+  was made precisely because the old whitelist was deleting these obstetric
+  sections before rendering (and `_send_to_reception` builds from the rendered
+  bubble, so the referring clinician got them stripped too).
+
+The modality button truncates to four characters, so it displays `OBST...`.
+
+**2. Turbo configuration is LOCKED — the end user cannot change it.** Turbo
+spends the company's paid GapGPT budget, so every knob is in-code:
+
+```
+provider -> TURBO_BACKEND ("company")     endpoint -> GAPGPT_API_URL
+model    -> PRIMARY_REPORT_MODEL          prompt   -> build_report_system_prompt
+who may  -> the hardcoded CENTERS registry (api_manager)
+```
+
+`TURBO_BACKEND` / `TURBO_USER_CONFIGURABLE = False` are named constants in
+`ai_chat_config.py`, so "Turbo configuration" is one greppable place instead of a
+literal buried in the handler. `tests/code/echomind/test_turbo_is_locked.py`
+(**17**) asserts the handler reads **none** of `get_llm_backend`,
+`get_openai_settings`, `get_openai_model_for_feature`, `get_prompt_settings`,
+`_resolve_active_ai_identity`, `_ai_model`, `_ai_backend`,
+`is_active_backend_configured`; that the Settings UI has **no** Turbo control and
+`settings_store` has **no** Turbo key; and that the company report path never
+composes a user prompt. `llm_backend` remains a SEND-backend switch only.
+
+*One lever that is NOT user-facing and was left in place:* the environment
+variable `AIPACS_ECHOMIND_PRIMARY_MODEL` still overrides the report model without
+a rebuild. It is a support/field tool (not exposed in Settings, not reachable
+from the app). Say the word if Turbo should ignore it too.
+
+**3. `viewer_chat/prompts/*.json` stay REVIEW ARTIFACTS — no loader, by design.**
+The README said "the reload mechanism is a follow-up step", implying one was
+coming; it now records the decision, plus the consequence: **these exports are
+stale.** Captured 2026-06-28, they predate SOURCE FIDELITY, the certainty ladder,
+the standardized-systems block, REPORT ORGANIZATION and the per-modality grouping
+vocabularies. The prompts the app actually sends are built in
+`build_report_system_prompt` — the single source of truth and the thing the guard
+tests pin. Re-export before relying on them; never edit them expecting the app to
+change.
+
+**Two guards were superseded in place** (docstrings record why, rather than
+deleting the history): `test_obstetric_branch_is_documented_as_dormant` →
+`test_obstetric_is_now_an_offered_modality` (the dormancy invariant flipped the
+same day), and the Turbo pin test now expects `backend = TURBO_BACKEND` rather
+than the bare literal.
+
+Gate: `echomind + reporting + gui` = **1095 passed, 0 failed**; mirrors
+**422/422**.
+
+**Live-verify:** pick **OBSTETRIC ULTRASOUND** on an OB study and confirm the
+report comes back with the ISUOG sections (Gestational Age & Dating, Biometry,
+Amniotic Fluid, Placenta & Umbilical Cord) rather than the generic three-key
+shape — that is the visible proof the dedicated branch is now reached.
+
+### EchoMind — per-chat case metadata, step 1: the foundation layer (2026-08-06)
+
+Step 1 of the chat-metadata plan. **Nothing here reaches a prompt** — that is the
+point, and a test enforces it.
+
+**New module: `modules/EchoMind/session_metadata.py`** (pure stdlib apart from the DB
+connection helper, so the logic is unit-testable without Qt or a database). It owns
+its own table and changes nothing in the existing schema:
+
+```sql
+CREATE TABLE IF NOT EXISTS ai_session_meta(
+    sid TEXT PRIMARY KEY, auto_json TEXT, user_json TEXT,
+    updated_at TEXT, schema_ver INTEGER)
+```
+
+**Why a new table and not `ai_meta`:** `ai_meta` is a **global** `(k, v)` store holding
+one row (`last_session`) — it is not per-chat. `ai_sessions` is the chat entity and
+stays untouched; the metadata hangs off `sid`.
+
+**THREE LAYERS — the core design decision.**
+
+```
+auto  — what detection produced (DICOM now; reception/dictation/LLM later)
+user  — ONLY the fields the physician edited (sparse)
+effective = deep_merge(auto, user)      # user wins, field by field
+```
+
+Kept apart so **re-detection refreshes `auto` without destroying a physician's
+correction**, the UI can say "detected" vs "you set this", and "reset this field" is a
+delete rather than a guess. A single merged blob forces a bad trade: either a refresh
+silently clobbers user intent, or one edit freezes all future enrichment. Verified
+end-to-end: edit → re-detect → edits survive → reset → back to the newly detected value.
+
+**Two safety rules baked in (not conventions — tested):**
+
+1. **`sex` is NEVER inferred.** Measured here: DICOM `patients.sex` is **3%**
+   populated (60/1807; 1,747 null). The report prompts carry a deliberate rule —
+   *"Do NOT infer or assume the patient's sex … NEVER output both male and female
+   organs"* — which exists because guessing produced wrong reports. An absent value
+   becomes an explicit `"unknown"` with `provenance: {source: none, confidence: low}`,
+   so the UI shows "unknown" rather than an inviting blank. **If verified sex is ever
+   supplied to a prompt, that prompt rule needs a coherent amendment first** — or the
+   prompt and the metadata contradict each other.
+2. **Unknown body parts map to NOTHING.** A wrong region silently removes the correct
+   reporting rules; a missing one only falls back to the full prompt. `ABDOMENPELVIS`
+   (a real value here, 68 series) correctly expands to `("abdomen", "pelvis")`, and
+   series-level `body_part_examined` widens the region set — a CAP study is usually
+   tagged per series.
+
+Every auto value carries **provenance** (source + confidence) so a later consumer can
+refuse low-confidence data and the panel can be honest about where a value came from.
+
+**Hook:** `ai_chat_pages._seed_session_metadata(sid)`, called from `_new_session`.
+Local SQLite reads only — no network, no LLM, no blocking — and **fully swallowed**:
+a metadata failure can never stop a chat from opening.
+
+**Mirror note:** a NEW module needs an explicit path —
+`sync_plugin_mirrors.py --add modules/EchoMind/session_metadata.py`. Running `--add`
+bare silently adds nothing (it takes `nargs="*"`), which would have shipped a build
+without the module. Mirrors now **423** pairs (was 422).
+
+Guard: `tests/code/echomind/test_session_metadata.py` (**30**) — region mapping
+(including the multi-region tag and the never-guess rule), the three-layer merge
+(user wins per field; a sibling field survives; `None` never blanks; re-detection
+preserves edits; merge is non-destructive to its inputs), auto-build + provenance,
+the sex rule, and **`test_no_prompt_path_consumes_metadata_yet`** which fails if
+`openai_reporter` or `openai_parallel_backend` ever import this module without a
+deliberate, separately-guarded step.
+
+**Next (unchanged from the plan):** reception prefetch → the visible panel → free-tier
+region detection with provenance → *only then*, behind a default-OFF flag and after
+measuring accuracy on real cases, let Report/Normal Template consume `case.regions`.
+
+### EchoMind — Phase A: the report recorder actually records (2026-08-07)
+
+`ai_reports` held **0 rows**. Not "a few missing" — none, ever, on a workstation that
+has been generating reports for months. Every report existed only as an HTML bubble in
+`ai_messages`, which means there was no audit trail, no way to separate a correction
+from a fresh generation, and nothing to build physician memory from later.
+
+**Root cause — a `getattr` guard that could never resolve.** `ai_chat_pages` persists
+with:
+
+```python
+fn = getattr(U, "ai_insert_report", None) or getattr(U, "ai_upsert_report", None)
+if callable(fn): fn(...)
+```
+
+`fn` was **always None**. The writer exists in `database/ai_sessions_db.py`, but the
+export chain has four links and one was missing:
+
+```
+PacsClient.utils            explicit import list  — no entry        ← missing
+  <- PacsClient.utils.db_manager   lazy __getattr__ shim — fine
+    <- database.manager            explicit passthroughs — NO wrapper  ← missing
+      <- database.core -> database.ai_sessions_db    the real function
+```
+
+This is the failure mode that makes `getattr`-guarded calls dangerous: a call site that
+never fires is **indistinguishable from one that works** — no exception, no log, no row.
+The feature looked implemented for as long as nobody queried the table.
+
+**The fix (four files, additive).**
+
+1. `database/ai_sessions_db.py` — four audit columns on `ai_reports` via the module's
+   existing try-`SELECT`/except-`ALTER` pattern, so old installs migrate in place:
+   `physician_id`, `model`, `modality`, `corrects_msg_id`. `ai_insert_report` accepts them.
+2. `database/manager.py` — the four missing passthroughs.
+3. `PacsClient/utils/__init__.py` — export them.
+4. `ai_chat_pages.py` — pass `physician_id` / `model` / `modality`, and mark the report
+   that follows a correction as `kind="correction"`, consumed once and reset.
+
+`corrects_msg_id` is what makes correction history analysable: a correction is the
+physician saying *"not that — this"*, the highest-signal record we keep, and it is only
+usable if it is separable from a fresh generation.
+
+**A second silent bug inside the fix.** The first cut extended `ai_insert_report`'s
+signature but not its `INSERT`, which still named the original seven columns. SQLite is
+perfectly happy to insert seven columns into a table of eleven, so rows written with
+`physician_id="vahid"` read back `NULL` — accepted, ignored, no error. Only the
+round-trip check caught it. The INSERT now writes all eleven, and **falls back to the
+original seven on failure**: on an install whose `ALTER` did not land, a missing column
+must cost the *metadata*, never the *report*. Report content is the physician's work;
+attribution is bookkeeping. Both paths are exercised against a real throwaway SQLite
+schema, new and legacy.
+
+**Attribution is deliberately conservative.** AI-PACS has no per-report login, so
+`resolve_physician_id()` returns a name only when the identity table is unambiguous, and
+`None` otherwise. A **wrong** attribution is worse than none — it credits one radiologist
+with another's report, and every downstream use (physician memory, per-physician style)
+would then be trained on someone else's voice. On a shared workstation, an unattributed
+row is the correct output.
+
+---
+
+### The regression I caused fixing it, and the guard that now catches it
+
+While pushing the fix I sent a copy of `database/manager.py` and
+`database/ai_sessions_db.py` built on a **stale snapshot**. That silently deleted
+`ai_count_messages_by_session` — the 2026-07-31 panel-open N+1 fix.
+
+The consequence was much larger than losing one function.
+`PacsClient/utils/__init__.py` imports that name **eagerly**, and
+`PacsClient/utils/db_manager` is a pure lazy forwarder that raises `AttributeError` when
+the manager lacks a name — there is no fallback. So the deletion did not degrade one
+feature; it made `import PacsClient.utils` raise **ImportError**, which is on the startup
+path of the entire workstation.
+
+Restored verbatim from HEAD, at its original position in both files. An AST audit of
+every file touched this session (HEAD vs working copy, comparing defined names) confirms
+this was the **only** lost definition.
+
+**New guard — `tests/code/echomind/test_report_persistence_chain.py`:**
+
+* every name `PacsClient/utils/__init__.py` imports from the shim **must** be defined in
+  `database/manager.py` (54 names today) — this is the test that would have caught the
+  regression in under a second, and it catches the whole class, not this one instance;
+* a companion test pins the shim's *no-fallback* behaviour, which is the premise the
+  above relies on — if a fallback is ever added, that failure message becomes wrong and
+  should be rewritten, not deleted;
+* impl → manager → facade completeness for all five report/count functions;
+* the audit columns arrive by `ALTER` (not only `CREATE TABLE`) and a failed `ALTER`
+  cannot stop the schema pass;
+* the call site records attribution, marks corrections, resets the marker, and stays
+  wrapped so bookkeeping can never take down the bubble the physician is waiting for.
+
+**Process lesson, worth keeping:** patch files **in place on the device**, or re-stage
+immediately before patching. A local copy is a snapshot, and pushing it back is a silent
+`git checkout` of everything that changed underneath it. `git status` / `git diff` on the
+device after any push is cheap and would have surfaced this immediately.
+
+### EchoMind — the normal-findings register, granularity, and the RSNA form (2026-08-07)
+
+Traced from a real report. Patient 53516, CT chest+abdomen, Turbo → `gpt-5.6-terra`.
+The physician dictated «دیگه‌اش هم کد طبیعی بیاد» — *bring the normal report for the
+rest* — and the Normal Findings came back as:
+
+> "No gross focal abnormality is identified in the liver, gallbladder and biliary tree,
+> pancreas, spleen, adrenal glands, kidneys and ureters, bowel, peritoneum, vessels, or
+> abdominal lymph nodes."
+
+One hedged line standing in for eleven organs. The log confirmed the run itself was
+healthy — `backend=company model=gpt-5.6-terra modality=CT`, one `chat/completions` call,
+21.5 s, status 200. Nothing failed. The prompt simply asked for that output.
+
+**Three causes, all prompt text, none a code bug.**
+
+1. **The escape was permissive.** The no-template branch said *"If the physician DID
+   indicate the remainder is normal … you **MAY** state definitive normal findings"* —
+   a permission competing against a directive default (*"state the generated normal
+   findings in a QUALIFIED register"*). A "MAY" loses to a "MUST" every time. And its
+   triggers were English idioms only (*"says the rest is normal"*), while the physician
+   dictates Persian.
+2. **Nothing asked for one statement per organ.** The register's own example *was* the
+   lumped form, and `MODALITY LOGIC (CT)` adds "concise, non-redundant". The model was
+   being told to compress.
+3. **"RSNA-style normal structure" was named but never shown.** No anchor for what the
+   expected output actually looks like.
+
+**The fixes.**
+
+* **The request is now an instruction**, not a permission: *"you MUST switch to
+  DEFINITIVE normal findings"*. The rationale is stated in-prompt — a physician who asks
+  for the normal report and is handed hedged text has to rewrite it by hand, which is
+  the opposite of the point. The Persian triggers are named («کد طبیعی», «کد نرمال»,
+  «تمپلیت نرمال», «نرمال بیاد», «بقیه طبیعی», «مابقی طبیعی» …) alongside the English
+  ones, and the model is told to **judge by intent, not spelling** — with the real
+  corrupted form «دگنش هم کد طبیعی بیاد» shown verbatim as a worked case.
+  SOURCE FIDELITY still governs: definitive normals remain forbidden for any structure
+  the dictated pathology involves.
+* **A GRANULARITY rule** in the shared REPORT ORGANIZATION block, so it governs both
+  findings sections, every modality, and both the template and no-template paths. It
+  quotes the eleven-organ sentence verbatim as *"NOT acceptable output"* — an abstract
+  "be granular" is ignorable; the shape it must not emit is not. It also forbids the
+  opposite failure: never invent an organ to make more lines.
+* **One worked RSNA example** of a normal chest+abdomen block, guarded three ways —
+  *"GRANULARITY, ORDER AND PHRASING ONLY"*, *"Do NOT copy its organ list"*, *"drop any
+  organ the dictated pathology involves"*. An example of a normal chest is one careless
+  copy away from becoming the report for a knee.
+* **Observability:** the `[Turbo]` log line now records `normal_template=<n>ch|none`.
+  Which register a report comes back in depends entirely on that, and diagnosing 53516
+  meant inferring it from the output's wording because the run never recorded it.
+
+**Verified:** all 7 modality branches carry the new rules on the no-template path; the
+with-template path keeps granularity and takes **none** of the generation text (the
+physician's own template must not compete with someone else's normal report). Gate:
+**1401 passed, 0 failed**. Mirrors 423/423.
+
+**Left alone deliberately:** no `Technique` key was added (schema change, not requested),
+and the title scope question — the report reads "Chest and Abdomen" while carrying an
+*inguinal* finding, which is groin/pelvis — is still open. Widening the title to "Pelvis"
+asserts coverage the physician never stated, so the faithful-but-inconsistent title was
+left as-is pending a decision.
+
+**Upstream, and not fixed here:** the transcription is degrading medical Persian. In 269
+characters this one dictation produced `دگنش`←دیگه‌اش, `ماده حاجه`←حاجب,
+`این گوییناد`←اینگوینال, `به نظمات غیر طبیعی`. The prompt now recognises the request
+*through* that corruption, but the corruption itself is a speech-to-text problem.
+
+---
+
+**Process note — a scripted edit truncated a test file.**
+`open(path, "w", newline=nl)` **truncates before it validates `newline`**. A patch script
+with a double-escaped `nl` (`"\\r\\n"` instead of `"\r\n"`) raised `ValueError: illegal
+newline value` *after* the file was already zeroed — and the file was untracked, so git
+could not restore it. Recovered from the container copy, which was byte-identical.
+
+Two rules from this: **validate `nl` before opening for write**, and prefer writing to a
+temp path then replacing. A repo-wide scan confirmed no other file was hit (the only
+0-byte `.py` files are CPython's own test fixtures inside the bundled Slicer install).
+
+### EchoMind — Normal Findings as a generation task, with depth (2026-08-07)
+
+The two halves of a report are not the same kind of work, and the prompt was treating
+them as if they were:
+
+| | Pathological Findings | Normal Findings |
+|---|---|---|
+| task | **transcription** | **generation** |
+| content from | the physician | the model |
+| risk | drift from the dictation | thin, generic output |
+
+The pathological half is mature — formalise the wording, keep the meaning, add nothing.
+The generation half is where 53516 fell down: a whole contrast CT of chest and abdomen
+came back as two lumped lines. The previous patch fixed the **lumping**; this one fixes
+the **depth**, adds the missing **procedure**, and removes the pressure that was actively
+pushing the model to compress.
+
+**What was pushing it short.** Audited across all six modality branches:
+
+| branch | instruction |
+|---|---|
+| CT | "RSNA-style anatomical organisation — **concise**, non-redundant." |
+| MRI | "Always generate grouped, **concise**, non-redundant normal findings." |
+| SONOGRAPHY | "Always produce **concise**, grouped, non-redundant normal findings." |
+| SONOGRAPHY | "Keep it **concise** but complete — one **short** line per structure." |
+| RADIOLOGY | "Always generate **concise**, grouped, non-redundant normal findings." |
+| all | "…tailor Normal Findings … **avoiding repetition**." |
+
+"Non-redundant" is correct and stays — never report the same structure twice. **"Concise"
+was doing the damage**: nothing anywhere stated a completeness requirement, so the whole
+cluster read as *keep it short*. All six were rebalanced; the anti-redundancy rule is kept
+and now explicitly defined so dropping the adjective doesn't drop the rule underneath it.
+
+**The construction procedure** (new, shared by every modality on the no-template path):
+
+```
+1. Establish STUDY TYPE, BODY PART/REGION, MODALITY, CONTRAST state
+2. Build the COMPLETE normal checklist for that examination
+3. For EACH structure, write its relevant normal IMAGING FEATURES
+4. SUBTRACT anything the Pathological Findings already involve
+5. Group under the REPORT ORGANIZATION headings
+```
+
+Step 4 was previously only *implied* by SOURCE FIDELITY. It is now a numbered step in the
+procedure that builds the section, because "the same structure must never appear as both
+normal and abnormal" is the one output a radiologist cannot sign.
+
+**Features, not verdicts.** `The liver is normal.` passes every earlier rule — one line,
+one organ, correctly grouped — and still tells the referring clinician nothing about what
+was assessed. Now banned by name, with the worked features given:
+
+* **Liver** — normal size and morphology, normal attenuation, no focal hepatic lesion, no
+  intrahepatic biliary ductal dilatation.
+* **Bowel** — loops normal in caliber, no evidence of obstruction, no focal mass.
+
+**Contrast governs what may be said.** With contrast, normal enhancement characteristics
+are allowed; without it, *nothing* about enhancement — an enhancement statement on a
+non-contrast study is a fabricated observation, the same class of error as inventing a
+finding. Unclear contrast state → phrase it in terms the study supports either way.
+
+**The worked example was rewritten for depth.** The previous one fixed lumping but still
+modelled bare verdicts — *"Pancreas, spleen and adrenal glands are unremarkable"* is three
+organs and zero features, the exact habit this change exists to break. The new example is
+a contrast CT of chest+abdomen where each organ carries the features a radiologist
+actually comments on, and it is guarded four ways: form-only, don't copy the organ list,
+drop organs the pathology involves, and strip every enhancement clause if no contrast.
+
+**The guard against this change's own failure mode.** A completeness rule stated as length
+would pad a finger X-ray. So completeness is measured **against the anatomy the study
+covers, never a word count** — "never pad a small study to look thorough, and never
+compress a large one to look concise." Two deliberate exceptions are pinned by test:
+
+* RADIOLOGY's *"a one-or-two-line Normal Findings section is correct and expected — do NOT
+  pad it"* — true for a single-digit radiograph;
+* the OB branch's single-sentence Normal Findings — its organ-by-organ work lives in the
+  ISUOG `Anatomy Survey` key, so a blanket "be complete" sweep would have broken it.
+
+**Verified:** gate **1450 passed, 0 failed**; mirrors 423/423.
+`test_normal_findings_register.py` now carries 23 test functions covering the procedure,
+subtraction, feature depth, contrast, the example's depth per organ, the removal of every
+compression cue, and both exceptions above.
+
+**Two self-inflicted bugs worth remembering.** A "skip if already patched" guard keyed on
+`"NORMAL FINDINGS CONSTRUCTION"` collided with a pre-existing OB heading
+(`SECTION 8 — NORMAL FINDINGS CONSTRUCTION`) and silently skipped the block — idempotency
+guards need strings unique to the *new* text, not to its topic. And a second guard keyed
+on `new[:60]` skipped the RADIOLOGY retune because MRI's replacement shares those first 60
+characters. Both failed *quietly*, which is the only reason they were worth writing down.
+
+### EchoMind — modality parity audit, and two latent routing holes (2026-08-08)
+
+Asked whether every modality and body part uses the same report-building system. Audited
+it structurally rather than by reading: built all seven prompts (six modalities + the
+fallback) on both the template and no-template paths and compared 18 rules.
+
+**Answer: yes.** One authority — `build_report_system_prompt` — called by both
+`openai_reporter.reporter()` and `openai_parallel_backend.reporter()`. There is no second
+prompt. Eight shared rules (SOURCE FIDELITY, STANDARDIZED SYSTEMS, REPORT ORGANIZATION,
+GRANULARITY, no-heading-without-content, impression ordering, the JSON-shape lock,
+English-only) present in **all seven, on both paths**. Ten generation rules (construction
+procedure, subtract step, features-not-verdicts, contrast, completeness scaling, RSNA
+layout, qualified register, normal-report request, worked example, sex-never-inferred)
+present in **all seven** on the no-template path, with **zero leakage** into the template
+path — where the physician's own template must govern.
+
+**Three schema variants, each justified by a reporting standard:**
+
+| branch | contract | why |
+|---|---|---|
+| CT, MRI, Sonography, Radiology | `OUTPUT FORMAT (STRICT)` — 5 keys | the standard contract, byte-identical across the four |
+| Obstetric US | ISUOG structured — 12 keys | organ work lives in `Anatomy Survey`, so its Normal Findings is one sentence by design |
+| Mammography | regex-locked, per-breast | BI-RADS reporting is per-breast, not regional |
+
+**Body part is handled by one of two mechanisms, never neither.** CT / MRI / Sonography /
+Radiology each carry a `GROUPING VOCABULARY` naming their regions; OB and Mammography
+instead carry `SECTION Nb — REPORT ORGANIZATION (OBSTETRIC | MAMMOGRAPHY)`, because their
+schemas are already anatomy-structured.
+
+---
+
+**Two latent holes the audit turned up — neither reachable from the UI, both silent.**
+
+1. **The builder did `modality.lower()` with no `.strip()`.** The four entry-point guards
+   only test emptiness, and `' CT '` is truthy — so it passed the guard, matched no
+   branch, and landed in the generic fallback. Worse, the sampling-params helper *one
+   function above* already did `_to_str(modality).strip().lower()`, so the two functions
+   disagreed about the same argument: `' CT '` would get the **validated** sampling
+   params (temperature 0.1 / max_tokens 2500) alongside an **unvalidated** generic prompt.
+2. **Neither generic fallback stated an OUTPUT FORMAT contract** — no JSON schema at all,
+   16 k versus 31–52 k for the real branches.
+
+Compounded, a whitespace-padded modality would produce prose the parser cannot read: a
+failure with no diagnosable cause. `_current_modality` is persisted state, so "the combo
+only emits clean values" describes today, not a guarantee.
+
+**Fixed:** the builder now strips (matching the helper above it), and both fallbacks state
+the standard 5-key contract, so even a genuinely unknown modality returns something the
+existing parser handles. Verified: `' CT '`, `'  MRI'`, `'ct '`, `'\tSONOGRAPHY\t'`,
+`' obstetric ultrasound '`, `' MAMOGRAPHY '` all now route exactly as their clean forms;
+`''`, `None`, `'x-ray'`, `'PET-CT'` all yield STRICT-5.
+
+**New guard — `tests/code/echomind/test_modality_routing.py`.** It reads
+`REPORT_MODALITIES` **from config**, not from a hard-coded list, so adding an option to
+the combo fails these tests until its branch exists — which is exactly the failure mode
+that left the OB branch dormant until 2026-08-06. It also pins that the two normalisers
+cannot silently diverge again.
+
+**Gate: 1503 passed, 0 failed.** Mirrors 423/423.
+
+**Process note — two idempotency guards gave false positives in one session.** One keyed
+on `"NORMAL FINDINGS CONSTRUCTION"`, which collided with a pre-existing OB heading. One
+keyed on `new[:60]`, which MRI and RADIOLOGY shared. A third keyed on
+`"_to_str(modality).strip()"`, which already existed in the sampling helper. All three
+reported "already patched" and skipped real work. **A skip-guard must key on a string
+unique to the new text, and the patch should report what it skipped so a silent no-op is
+visible.** Also: anchor on enough context to be unique — `modality = _to_str(modality)`
+appears in both the builder and `reporter()`.
+
+### EchoMind — three dormant features closed (2026-08-08)
+
+All three found by auditing the backlog against the code rather than by any failure.
+None of them raised, logged, or misbehaved — they simply never ran.
+
+---
+
+**1. The chat-metadata foundation had never executed once.**
+
+`ai_session_meta` did not exist in the production database, eleven days after the step-1
+storage layer landed. The cause was **wiring, not the storage layer**:
+`_seed_session_metadata` was called only from `_new_session`, which mints
+`report-<hex8>` — the "New chat" button. But sessions are actually born in two other
+places:
+
+| path | mints | seeded before |
+|---|---|---|
+| `_new_session` (the button) | `report-<hex8>` | yes |
+| `_ensure_local_session` (normal reporting) | `report-<epoch>-<hex6>` | **no** |
+| `_refresh_sessions_for_current_study` (a study's first chat) | `local-<hex8>` | **no** |
+
+Every session in the database uses one of the two unseeded formats. Seeding was attached
+to the one birth path nobody uses. All three now seed, so the rule is *mint a session →
+seed its metadata*, with no exception to remember.
+
+> **My first diagnosis was wrong and is worth recording.** I claimed `save_auto` never
+> called `ensure_schema`. It does — `save_auto` → `_write` → `ensure_schema()` on its
+> first line. The storage chain was always correct; nothing was ever calling it. I
+> reported "quietly broken" before verifying the chain, and the verification contradicted
+> me. The guard now pins the **wiring**, which is where the defect actually was.
+
+**2. `corrects_msg_id` was always NULL.** `kind='correction'` was recorded, but the link
+to *which* report was corrected never was — the Correction dropdown carries the report
+text and a display label, never a msg_id. Recovered by matching the text back to
+`ai_reports.raw_en` (whitespace-normalised, since it round-trips through a widget) and
+deliberately left NULL when the match is absent **or ambiguous**: an unlinked correction
+is still a useful record, a wrongly-linked one corrupts the exact history this column
+exists to make analysable. Verified live — the resolver returned `{210}` for the report
+whose stored `msg_id` is 210.
+
+**3. `CANONICAL_MODALITIES` omitted OBSTETRIC ULTRASOUND**, so an OB normal template
+could not be filed at all, two days after OB joined the UI modality list. Added with
+aliases (`obstetric ultrasound`, `ob ultrasound`, `ob us`, `obstetric`). No UI modality
+is unfilable now.
+
+---
+
+**New guard — `tests/code/echomind/test_session_seeding_and_correction_link.py`.**
+
+The important one is generalised rather than specific: it enumerates **every function
+that both mints a fresh id and calls `ai_upsert_session`**, and requires each to seed.
+A future fourth birth path fails the test instead of silently starving the feature — a
+guard naming only `_ensure_local_session` would have missed the third site, which this
+same audit did in fact miss on the first pass. Both other lists — UI modalities and
+template-library modalities — are likewise read from source and compared, so the next
+added modality fails here rather than having nowhere to go.
+
+**Gate: 1519 passed, 0 failed.** Mirrors 423/423.
+
+**The pattern, now four times in two days.** `ai_reports` (a `getattr` guard that could
+never resolve), `ai_session_meta` (seeding on an unused path), `corrects_msg_id` (never
+passed), and the OB template slot (never added) all failed the same way: **fully guarded,
+completely silent, indistinguishable from working.** Every one was found by querying the
+data rather than reading the code. Worth doing routinely: *if a feature writes rows, count
+the rows.* A feature that has produced zero rows since it shipped has not shipped.
+
+### EchoMind — a completely normal study could not be reported (2026-08-08)
+
+Found by reading the log around a run the physician *had not* asked about. Patient
+53591's sinus CT was fine; the two runs immediately before it, on **patient 53587**,
+were not.
+
+The physician dictated a normal brain CT — «نرمال نرمال بزن». Twice he pressed Turbo,
+twice the call succeeded (HTTP 200, 27 s then 16 s), and twice he was shown:
+
+> ❌ The AI request failed. Detail: ❌ The AI request failed.
+> Detail: `Required key missing or empty: 'Pathological Findings'`
+
+**The model was right and the validator was wrong.** A normal study has no pathological
+findings, so the model returned that field empty — and
+`openai_reporter._validate_report_json` discarded the entire report, because
+`Pathological Findings` was in the non-empty required list for CT / MRI / Sonography /
+Radiology, and for mammography too. A completely normal study is one of the commonest
+reports in radiology and it was **unreportable**. 43 seconds of model time thrown away;
+the physician gave up and moved to the next patient.
+
+**Fixed at both ends, with the other edge deliberately preserved.**
+
+* **Validator** — a field that is PRESENT but empty (`""`, `null`, `N/A`, `none`, `-`,
+  `nil`) now means *nothing abnormal*, and is filled with
+  `"No pathological findings are identified."` An **ABSENT key still raises**: that is
+  the truncated-JSON signal, and relaxing it too would trade a visible failure for a
+  silently half-empty report. `Report Title` and `Normal Findings` stay strict — neither
+  has a meaningful empty state.
+* **Prompt** — a new rule in the shared REPORT ORGANIZATION block (so it reaches every
+  modality and both paths) requires the model to write that sentence explicitly rather
+  than leave the field blank, with *"Do NOT invent a finding to fill it"* attached so the
+  cure is not worse than the disease.
+
+Verified against the exact payload: empty / null / "N/A" all accepted and coerced; a real
+finding never overwritten; absent key, empty title and empty normals all still raise.
+
+---
+
+**Two smaller things from the same log.**
+
+**Paranasal sinuses had no grouping of their own.** The 53591 report — titled *CT of the
+Paranasal Sinuses* — reported ostiomeatal complexes, orbits and dentition as normal, but
+**not the sinuses themselves**. They existed in the CT vocabulary only as one bullet
+inside `Brain`. Added as a first-class set: maxillary · ethmoid · frontal · sphenoid ·
+ostiomeatal complexes · nasal cavity and turbinates · nasal septum · orbits · skull base ·
+dentition. Also added `paranasal_sinuses` as a region key with the DICOM tags that mean it
+(`SINUS`, `SINUSES`, `PNS`, `PARANASALSINUS…`), so it can be detected and gated on later.
+
+**The failure text was double-wrapped** — the classifier's own output being handed back to
+it as input, producing *"The AI request failed. Detail: ❌ The AI request failed.
+Detail: …"*. `_unwrap_own_wrapper` now peels its own formatting off the front, bounded to
+four passes. That string is what a physician reads at the moment something breaks.
+
+**Gate: 1546 passed, 0 failed.** Mirrors 423/423.
+
+---
+
+**Also confirmed live this run:** `ai_session_meta` wrote its first rows ever (13:07:23
+and 13:08:47), from `_ensure_local_session` — the seeding path wired this morning. The
+foundation is finally running.
+
+**And the first real measurement for region gating: `case.regions` is EMPTY on both.**
+53591's DICOM `modality` is literally the string `"UNKNOWN"`, and paranasal sinuses were
+not in the region map at all (now they are). Region gating built today would have had no
+input to gate on. Worth collecting a few days of `ai_session_meta` rows and measuring
+detection coverage before building the classifier on top of it.
+
+### EchoMind — the per-chat metadata panel (2026-08-08)
+
+Step 1 of region gating: make the metadata **visible and correctable** before anything
+selects a prompt from it. A gate driven by metadata nobody can see is a gate nobody can
+debug, and a wrong region silently deletes the reporting rules for the anatomy that was
+actually imaged.
+
+**New: `modules/EchoMind/viewer_chat/metadata_panel.py`.** A third column in the chat,
+top-aligned, fixed 268 px, collapsible. It shows Patient ID · Sex · Age · Service ·
+Modality · Body part · Study description · Study date · **Region(s)**, each marked
+`auto` (detected), `you` (physician-set) or `—` (absent).
+
+**Why a COLUMN and not a header bar.** The chat's vertical stack (history + composer)
+feeds the composer height maths, and growing that stack is what pushed the action row off
+the window before. A third column costs horizontal space only, which nothing in that
+calculation depends on. A test pins it: the panel must appear in `root` (QHBoxLayout) and
+must NOT appear in the `right` QVBoxLayout.
+
+**The trap that shaped the field table.** `auto` keeps study fields inside `studies[0]`,
+but `set_user_field` builds **dicts** and `deep_merge` does not merge **lists** — writing
+`"studies.0.body_part"` would silently produce `{"studies": {"0": …}}` and corrupt the
+layer. So each field carries two paths: read from `studies.0.x` in auto, write to `case.x`
+in user, effective value = "user if set, else auto". A test asserts no editable field's
+user path contains a numeric segment.
+
+**Regions are picked, never typed.** A checkbox list over `REGION_KEYS`, multi-select
+because a study can genuinely cover shoulder *and* knee. A typo'd region is worse than no
+region: it matches nothing and looks set.
+
+**Also added:** `session_metadata.clear_user_layer(sid)` — drop every physician edit while
+leaving detection untouched. The panel's "Clear my edits" uses it.
+
+**Verified headless against real storage**, which is the property that matters most:
+
+```
+detected CHEST            -> Body part "CHEST"     auto
+physician sets SHOULDER   -> Body part "SHOULDER"  you
+re-detect as CHEST        -> Body part "SHOULDER"  you    <- the edit WINS
+clear my edits            -> Body part "CHEST"     auto   <- detection returns, not blank
+```
+
+Gate: **1560 passed, 0 failed.** Mirrors **424** (the new file needed
+`--add modules/EchoMind/viewer_chat/metadata_panel.py`; a bare `--add` still adds nothing).
+
+---
+
+**What this step deliberately does NOT do.** The panel does not reach a prompt. A test
+enforces that `openai_reporter` and `openai_parallel_backend` contain no reference to
+`session_metadata` or `metadata_panel`, so wiring metadata into report generation stays a
+separate, flagged act.
+
+**Two honest gaps found while building it.**
+
+*Service cannot be populated locally.* There is no admission/service table in the DICOM
+database — `ai_reception_reports` is EchoMind **sending** reports to reception, not service
+codes arriving. So `reception.service` is hand-enterable for now, which is still useful: it
+lets the physician supply real service codes today and gives us data to test gating against
+before the Services fetch is wired.
+
+*Region detection is producing nothing on real studies.* Both of the first real chats came
+back with `case.regions` empty — one had DICOM `modality` set to the literal string
+`"UNKNOWN"`, and paranasal sinuses were not in the region map at all until today. The panel
+now makes that visible instead of silent, which is exactly why it had to come first.
+
+*Visual check pending.* The offscreen Qt platform on this workstation loads no font, so a
+rendered preview shows correct geometry but unreadable glyphs. Layout and behaviour are
+verified by test; the on-screen check needs an app restart.
+
+### EchoMind — case metadata moved out of the sidebar and into the conversation (2026-08-08)
+
+Same day, second attempt. The first build put per-chat case metadata in a permanent
+third column. The correction: *"Case metadata belongs to the conversation context, so it
+should appear inside the conversation as the first structured chat card, not as a
+separate sidebar."* That is right, and for a reason worth writing down — a sidebar
+charges the report horizontal space for the whole session in exchange for facts the
+physician reads once, and it frames the case as chrome standing outside the dialogue
+rather than as its opening statement.
+
+**Where the card lives.** `modules/EchoMind/viewer_chat/metadata_panel.py` now holds
+`CaseMetadataCard` — a bubble, not a panel. It borrows MessageBubble's own QSS verbatim
+(`QFrame#bubbleBox` `#2b2b2b` / `#3a3a3a` / 12 px radius, `QLabel#who` `#ffd48a`) so it
+cannot drift away from the cards it sits above, and it is parented to
+`history.container`, **inside** the scroll area. The module keeps its filename on
+purpose: one import site, one mirror pair, nothing to re-point.
+
+**The one design decision that carries the feature.** SEVEN call sites clear the chat
+history. Teaching all seven to re-add the card guarantees the eighth forgets — so
+instead `ChatHistory` gained a **lead widget**: pinned at index 0, exempted from
+`clear()`, and returned to the top afterwards, exactly how the tail spacer is already
+treated. `OneChatPage` calls `set_lead_widget` once in `__init__`, and every render path
+present or future inherits the behaviour. A test asserts that no render path re-pins it
+by hand.
+
+**Compact means two fields per line.** Eight rows of label-over-value was the panel's
+shape because a 268 px column had no width to spare. A card has the conversation's full
+width, so fields lay out in pairs from an explicit `LAYOUT_PAIRS` table — four rows plus
+regions — and provenance rides inline as a small `auto` / `you` after each value instead
+of consuming a column. A test asserts every `FIELDS` label appears in `LAYOUT_PAIRS`, so
+a field can never be stored and then never shown.
+
+**A bug the rewrite killed.** The panel keyed `self._editors` by LABEL but committed by
+PATH (`self._editors[path]`), so every field edit raised `KeyError` inside a Qt slot and
+was silently lost. Nothing caught it because the panel never received a real edit before
+the screenshot arrived. The card edits through one dialog keyed by the path it writes,
+with one Save — which also stops a half-finished correction reaching storage on
+focus-out, and lets `_save` compare against detection so that re-typing what the scanner
+already said stays marked `auto` instead of falsely reading `you`.
+
+**Verified against real Qt and real storage**, not only by AST:
+
+```
+card at index 0 · hidden until a chat is bound
+detected CHEST            -> "CHEST auto"
+physician sets SHOULDER   -> "SHOULDER you"
+re-detect as CHEST        -> "SHOULDER you"    <- the edit WINS
+clear my edits            -> "CHEST auto"      <- detection returns, not blank
+two messages added        -> card still index 0
+history.clear()           -> card still index 0, still readable, messages gone
+```
+
+Gate: **1570 passed, 0 failed.** Mirrors: 3 drifted files synced.
+`tests/code/echomind/test_metadata_panel.py` asserted the rejected architecture and has
+moved to `_to_delete/metadata-panel-sidebar-2026-08-08/`; `test_metadata_card.py`
+(24 tests) replaces it.
+
+**Still true from the first build:** the card does not reach a prompt. A test keeps
+`openai_reporter` and `openai_parallel_backend` free of any `session_metadata` /
+`metadata_panel` reference, so wiring metadata into report generation stays a separate,
+flagged act — gated on measuring region detection against real studies, which so far has
+produced zero regions.
+
+**Visual check still pending.** The offscreen Qt platform on this workstation loads no
+font, so geometry and behaviour are proven but glyphs render as tofu. The on-screen check
+needs an app restart.
+
+### EchoMind — the metadata card was empty because the database is a lossy copy of the DICOM (2026-08-08)
+
+Study 53516 opened with Sex, Age, Modality and Study description all "not detected",
+and Region(s) reading `chest` for a scan whose own protocol name is
+**"04 Chest Abd Pelvis"**. Every one of those facts was on disk. Measured, not guessed:
+
+| column | populated |
+|---|---|
+| `patients.sex` | 60 / 1814 — **3%** |
+| `patients.age` | 235 / 1814 — 12% |
+| `studies.study_description` | 426 / 2191 — 19% |
+| `series.body_part_examined` | 1237 / 17669 — **7%** |
+| `series.protocol_name` | 119 / 17669 — **0%** |
+
+**The demographics mechanism is specific and repeatable.** The scanned reception sheet
+is imported as a `DOC` series into the same study. Its folder (`100000`) sorts FIRST,
+and it carries no `PatientSex`. The importer samples the first instance it finds, so it
+samples the reception paper. Every one of the 15 CT series in study 53516 carries
+`M` / `019Y`. **866 studies here have a DOC series and a NULL patient sex; 2131 of 2191
+studies have no patient sex at all.** That is an importer defect, upstream of EchoMind
+and unfixable retroactively for rows already written — so the metadata layer stops
+trusting those columns.
+
+**`session_metadata.read_dicom_facts(study_path)`** reads ONE header per series — six
+specific tags, pixels never touched — and fills only what the database left blank. It
+never overrules a populated column, and a test pins that. Measured **~2.5 ms per
+series, 32 ms for the 16-series CT**, inside the seeding path that already runs at chat
+creation.
+
+```
+Sex                not detected  ->  M                     (provenance: dicom_file)
+Age                not detected  ->  019Y                  (provenance: dicom_file)
+Study description  not detected  ->  04 Chest Abd Pelvis   (dicom_file, tag=ProtocolName)
+Modality           not detected  ->  CT
+Region(s)          chest         ->  chest, abdomen
+```
+
+**The region line is the one that mattered.** Series 401/402 are `BodyPartExamined =
+ABDOMEN`. Gating that study to `chest` alone would have silently deleted the abdominal
+reporting rules — precisely the failure mode the gating design exists to prevent. It is
+also the case for reading the files rather than fixing the 7% column: a gate built on
+`series.body_part_examined` would be wrong 93% of the time and look confident doing it.
+
+**Provenance stays honest.** A ProtocolName standing in for a StudyDescription is
+recorded as `{"source": "dicom_file", "tag": "ProtocolName", "confidence": "medium"}` —
+it is a real description of the study, but it is not the tag it is standing in for, and
+the record says so. Sex is still **never inferred**: reading a tag is not guessing, and
+absence stays `unknown`.
+
+**Modality was a card bug, not a data one.** The card read `case.modality_selected` —
+the physician's CHOICE, set only when he opens the Modalities picker. The scanner had
+said `CT` all along, in `studies[0].modality`. Field paths can now be a fallback chain,
+`_dig_first` walks it, and the physician's choice still wins when he has made one.
+
+**One cycle lost, worth recording.** The first cut of `read_dicom_facts` used `os`
+without importing it in `session_metadata.py`. `populate_for_chat` swallows everything
+by design, so the NameError became a debug log and the feature looked exactly like "this
+study has no metadata". Caught only by running the real seeding path against the real
+study and reading the output — the fifth time this pattern has bitten: **fully guarded,
+completely silent, indistinguishable from working.** A test now calls
+`read_dicom_facts` with a missing path, which is enough to catch it.
+
+Gate: **1585 passed, 0 failed.** Mirrors: 2 files synced. New:
+`tests/code/echomind/test_metadata_detection.py` (21 tests, building real DICOM files
+in tmp_path — including a DOC series that sorts first, so the original bug is
+reproducible in CI).
+
+**Still not detected: Service.** There is no local service table. The reception panel's
+`Services (2)` comes from the reception API via
+`reception_data_tab.fetch_patient_data`, lives only in `self.current_data`, and is never
+persisted — shape `{"Service": <persian text>, "Qty": n, "ServiceGroup": <group>}`. The
+same method already persists server-origin report HTML locally
+(`_persist_server_report_snapshot`), so caching the services alongside it is the
+established pattern. That is the last prerequisite before region gating can use the
+service axis, and it is a decision to take deliberately rather than in passing.
+
+### EchoMind — closing the last two metadata gaps: the service axis and the importer (2026-08-08)
+
+Both decided deliberately rather than in passing, because each reaches outside EchoMind.
+
+#### A. The reception SERVICES are now cached locally
+
+`Services (N)` in the reception panel is the only place in AI-PACS that knows what the
+patient was actually **booked for** — the strongest single input the region gate will
+have, because DICOM states laterality in 18% of studies and a body part alone cannot
+tell *CT chest* from *CT angiography of the chest*. It arrived from the reception API,
+lived in `ReceptionDataTab.current_data`, and vanished with the widget.
+
+`database/ai_reception_db.ai_save_reception_services / ai_get_reception_services` cache
+it keyed by patient id, written the moment the payload arrives — the same
+store-it-when-it-lands pattern, in the same method, as the server report snapshot that
+was already there. `populate_for_chat` reads it back.
+
+**Stored as JSON, not normalised into columns.** The reception payload is not ours, its
+shape can change without notice, and a schema that guessed at its fields would start
+losing data the first time it did — including, one day, the service code itself. A test
+pins that an unknown field survives a round trip.
+
+Refusals matter as much as writes: an empty fetch must **not** erase what we already
+know, so an empty list and a blank patient id are both refused and leave the row intact.
+
+`PacsClient/utils/__init__.py` imports these names **eagerly**. Adding a function to the
+db module without extending `database/core.py` and that import list breaks
+`import PacsClient.utils`, which is the first thing the whole application does — the
+exact regression from 2026-08-07. A test now asserts both names are reachable from
+`PacsClient.utils`.
+
+#### B. The scanned reception sheet no longer answers for the patient
+
+A study's demographics are read **once** per import, in
+`process_series_groups`, from `first_group[0][0]`. When the study carries a scanned
+reception sheet, that sheet arrives as a `DOC` series with no `PatientSex` and no
+`PatientAge` — and when it won the pick, the patient row was created blank and never
+revisited, because nothing reads the study again.
+
+`utils.pick_representative_instance(size_groups, fallback)` returns the first file of
+the first readable group whose modality is not a known non-image type.
+
+**The fallback is what makes it safe to land.** A study made entirely of documents, or
+one whose headers cannot be read at all, behaves exactly as it does today. Only series
+we are *sure* are unusable get skipped — and an instance that merely omits `Modality`
+stays eligible, because absence of a tag is not evidence.
+
+One correction during review: the first cut skipped only known non-image modalities,
+which let a **corrupt** file win the pick. `dcmread(force=True)` never raises on junk —
+it returns an *empty* dataset — so "did it throw" is not a readability test. It now
+requires the instance to carry at least one of `Modality` / `SOPClassUID`.
+
+New imports only, by decision; the 2131 existing rows stay as they are and EchoMind's
+own file fallback covers them.
+
+#### A guard that had to be narrowed, not deleted
+
+`test_updated_at_specifically_is_not_written_to_this_table` scanned the **whole**
+`ai_reception_db.py` for the string `updated_at`, because `ai_reception_reports` has no
+such column and writing it raised `OperationalError` on every call. The services table
+legitimately declares one. A file-wide string scan that fails on a *correct* column in a
+*different* table teaches the next person to delete the guard rather than fix a bug — so
+it is now scoped, via AST, to the functions that actually touch `ai_reception_reports`,
+plus an assertion that it examined at least one, so a rename cannot make it vacuous.
+
+#### Study 53516, all eight fields
+
+```
+Patient ID         53516
+Sex                M                     dicom_file
+Age                019Y                  dicom_file
+Service            سی تی اسکن قفسه سینه … / سی تی اسکن شکم و لگن …   reception_api
+Modality           CT
+Body part          CHEST
+Study description  04 Chest Abd Pelvis   dicom_file, tag=ProtocolName
+Study date         20260806
+Region(s)          chest, abdomen
+```
+
+Gate: **1606 passed, 0 failed.** Mirrors verified identical by hash (`reception_data_tab`
+and `ai_reception_db` have no plugin mirror — correctly, they are not in the payload).
+New: `tests/code/database/test_reception_services_cache.py` (9),
+`tests/code/utils/test_importer_picks_image_instance.py` (8), plus 6 reception cases in
+`test_metadata_detection.py`.
+
+**Takes effect on restart**, and Service fills the first time the reception tab loads a
+patient — the cache is written on fetch, so it is empty until then. The verification rows
+I wrote for patient 53516 were deleted afterwards on purpose: the card must show what
+reception actually sent, not values transcribed from a screenshot.
+
+### EchoMind — the reception fetch now happens while the physician dictates (2026-08-08)
+
+Your observation, and it is the right one: **recording and transcription are the only
+stretch of an EchoMind session where the network is idle and nobody is waiting on us.**
+The physician talks for anything from ten seconds to several minutes, and the report is
+not built until they stop. Doing the reception round trip there means the service list
+is already local by the time the report chat is minted — instead of the metadata card
+reading "not detected" until somebody happens to open the reception tab.
+
+**Where the fetch fires.** `UnifiedComposer` gained a `recordingStarted` signal, emitted
+as the FIRST statement of `_start_record` — before the audio stream is opened, so the
+idle window starts as early as it can — and `OneChatPage._prefetch_reception` is
+connected to it. `_transcribe_now` calls the same method, because an audio file dropped
+straight into the composer never passes through `_start_record` and would otherwise miss
+the window entirely.
+
+**`modules/EchoMind/reception_prefetch.py`** resolves study → patient, checks freshness,
+and hands the work to a daemon thread. Three rules, in order of importance:
+
+1. **It can never affect the voice path.** The emit is guarded, the hook is swallowed,
+   and the work is off-thread. A reception outage, a wrong URL, an unconfigured endpoint
+   and a hung server must all look identical from the composer's side: nothing happened.
+   Measured: `prefetch()` returns in **~29 ms**, and a blocking round trip to a closed
+   port takes 2.3 s — which is exactly why it is not on the UI thread.
+2. **It does not stampede.** One fetch per patient in flight, and none at all while the
+   cache is under 15 minutes old. A physician who re-records four times in a minute
+   costs reception one request, not four. The in-flight marker is released in a
+   `finally`, so a failed dictation cannot poison every later one for that patient.
+3. **An empty response never erases a good cache.** A reception hiccup returning
+   `services: []` is "no news", not "none" — `ai_save_reception_services` refuses empty
+   writes and `fetch_and_cache` returns 0 without touching the row.
+
+**Timeout is 8 s, not the reception tab's 30.** This runs while somebody is speaking; a
+socket held open for half a minute past the end of the dictation is a thread kept alive
+for nothing. Daemon, so a server that never answers cannot hold the workstation open at
+shutdown.
+
+**One endpoint definition.** `fetch_patient_record` and `PATIENT_ENDPOINT_TEMPLATE` now
+live in `modules/network/reception_api_config.py`, which already owns this channel. It
+is deliberately **synchronous and caller-threaded**: the reception tab wants to block on
+a QThread and signal the UI, the prefetch wants a plain daemon thread, and baking a
+threading model in would force one of them to fight it. `ReceptionDataFetchWorker` still
+builds its own path, so a test asserts the two do not drift — a silent divergence would
+leave one caller quietly fetching a 404 while the other worked.
+
+**Where the physician sees it.** `_persist_transcribe` re-seeds the session metadata and
+re-binds the card once a transcript lands — one SQLite round trip on the UI thread, by
+which time the prefetch started at record time has long finished. That is the only
+moment Service fills itself in without switching chats. Swallowed: the transcript is
+already written by then and must not be jeopardised by a metadata refresh.
+
+Gate: **1627 passed, 0 failed.** Mirrors: 2 synced + 1 added
+(`--add modules/EchoMind/reception_prefetch.py`; a bare `--add` still adds nothing).
+New: `tests/code/echomind/test_reception_prefetch.py` (21), every one of them offline —
+`fetch_patient_record` is monkeypatched and the default fixture *fails* any test that
+reaches the network, because a suite that can reach reception is a suite that fails on
+the train.
+
+**Worth confirming, not changed.** This workstation resolves reception to
+`http://81.16.117.196:8080`, pinned explicitly in `config/reception_api_config.json`,
+while the active server profile (`razi`) is `192.168.2.222` on the LAN. The module
+docstring names that same IP as the developer center's old hard-coded default, removed
+from source on 2026-07-14 precisely because unconfigured centers were silently querying
+it. The reception panel does return this center's real bookings, so it is very likely
+the correct public host — but it is the one address in the config that deserves a
+deliberate confirmation rather than an assumption, and the prefetch will now reach it on
+every dictation rather than only when the reception tab is opened.
+
+### EchoMind — the metadata card was clipping its own values (2026-08-08)
+
+Reported from a screenshot, which is the tell: **text assertions cannot catch a layout
+bug.** "04 Chest Abd Pelvis" was cut off after "Abd", and the Persian service text was
+truncated mid-string.
+
+**Two causes, both measured before either was touched.**
+
+*The value columns were too narrow.* In the paired layout a value got **108 px**. A
+study description and a two-service Persian booking do not fit in 108 px, so they
+wrapped — and then hit the second cause.
+
+*A wrapped QLabel in a QGridLayout inside a scroll area does not get its
+`heightForWidth` honoured.* The row is sized from a hint computed before the real column
+width is known, so a label that turns out to need two lines is given one line of row and
+the remainder is cut off. No error, no warning; it just looks like the data is short.
+
+**The fix.** The row plan is now explicit: short scalars still pair up — that is what
+keeps the card compact — and the three genuinely long fields (Study description, Service,
+Region(s)) each take a full row. `_FitLabel` re-measures on every resize and pins the
+answer as a minimum height; only the height is pinned, so the relayout it triggers cannot
+change the width that produced it, and an equality guard stops it recursing.
+
+**Keys and values share that one class.** They clip for exactly the same reason. Two
+implementations would mean fixing it twice, and the second one gets forgotten.
+
+**A second bug found while fixing the first.** My initial fix put a 96 px minimum on the
+value columns, which pushed the card's minimum width to **637 px** — wider than a narrow
+chat pane, which would have put a horizontal scrollbar under the *whole conversation*,
+not just the card. A word-wrapped QLabel already reports its longest word as its minimum
+width, so the floor was both redundant and harmful. Removed, replaced with a 40 px floor
+on the label itself: enough that a column cannot vanish, not enough to overflow. Card
+minimum went **637 → 248 px**.
+
+**Measured across five widths, 1100 down to 430:** no clipping, no overlap, no horizontal
+scrollbar.
+
+**On the numbers.** The offscreen Qt platform here loads **zero font families**, so every
+glyph is a wide fallback box — "Study description" measures 204 px against roughly 95 px
+in real Segoe UI. Absolute pixel assertions would be meaningless, so
+`test_metadata_card_geometry.py` asserts only relative facts that hold under any font:
+needed height vs given height, rectangle vs rectangle, card minimum vs viewport. The
+missing font makes the test *harsher* than reality — it measures a card whose text is
+twice as wide as the physician will ever see. That is also why the earlier "visual check
+pending" note stands: geometry is now proven, glyph rendering still needs the real app.
+
+Gate: **1650 passed, 0 failed.** Mirrors synced. New:
+`tests/code/echomind/test_metadata_card_geometry.py` (17 — the first Qt-instantiating
+test in the EchoMind suite), plus 4 layout guards in `test_metadata_card.py`.
+
+### EchoMind — Turbo gets its own prompt builder (2026-08-08)
+
+Owner decision: option **B**. Turbo diverges from the Send path; Send keeps today's
+prompt.
+
+**The obstacle, found by reading the wiring rather than assuming it.**
+`openai_reporter.reporter` is not Turbo's function — it serves **both** buttons:
+
+```
+_on_hq_all_modality_clicked   backend = TURBO_BACKEND   ← always company
+_on_send_chatgpt              backend = Settings        ← company by DEFAULT
+```
+
+`_ai_module("company")` returns `openai_reporter` for both. So swapping the builder
+*inside* `reporter()` would have moved Send too, silently, while the commit message said
+"Turbo only". **The split has to be made at the call site — the only place that knows the
+request is Turbo.**
+
+**What landed.** `modules/EchoMind/viewer_chat/turbo_prompt.py`, plus a keyword-only
+`system_prompt_override` on `openai_reporter.reporter` that defaults to `None`. Turbo's
+call site builds its prompt and passes it; every other caller passes nothing and gets
+`build_report_system_prompt` byte for byte. Only the PROMPT is overridable — the
+temperature clamp, the token budget and the output validation stay shared, because those
+are the contract with the parser and not what Turbo is diverging on.
+
+**Phase 1 is deliberately a no-op on the prompt text.** `build_turbo_system_prompt`
+returns output byte-identical to the shared builder, and a test pins that for all seven
+modalities × with/without a normal template. A refactor that also changes behaviour is
+two changes wearing one diff, and when report quality moves you cannot tell which half
+did it. When that identity test starts failing on purpose, that is the gating change
+landing — and it should be the only thing in that diff.
+
+**Failure is a divergence, never a report.** `None` means "use what you used yesterday":
+the kill switch (`AIPACS_TURBO_PROMPT=0`), an exception in the builder, or an empty
+string all fall back to the shared prompt. `reporter()` checks `.strip()` because a blank
+override would strip every clinical rule and still look like a successful call.
+
+**A guard I had to narrow, not delete.** `test_turbo_diagnostics_are_logged_not_printed`
+asserted `src.count('_log.warning("[Turbo]') == 3` with the message *"the three
+blocked-paths must warn"*. The new fallback warning made it 4 — a guard about blocked
+paths failing because of a legitimate warning about something else. Now scoped to
+`'_log.warning("[Turbo] blocked:'`, which is what it always meant. Second time today a
+count-based guard has tripped on a correct addition; both times the fix was to make the
+assertion say what the message says.
+
+Gate: **1675 passed, 0 failed.** Mirrors: 2 synced + 1 added. New:
+`tests/code/echomind/test_turbo_prompt_seam.py` (25) — byte-identity, the kill switch,
+the failure fallback, the keyword-only default, and three tests asserting the other
+pipelines are untouched: the Send call site passes no override, the parallel backend does
+not contain the parameter name at all, and no other feature prompt picked it up.
+
+**Phase 2, and only in this file:** `profile` is already on the signature, keyword-only
+and reserved, so wiring the region gate is a change to `turbo_prompt.py` alone.
+
+### EchoMind — the CT region blocks are out of the monolith (2026-08-08)
+
+Phase 2 for CT. `modules/EchoMind/viewer_chat/turbo_regions.py` holds the 19
+`RSNA-compliant normal findings per CT body region` blocks, and `turbo_prompt` swaps the
+whole span for just the blocks a study's regions need.
+
+Measured on study 53516 (chest + abdomen + pelvis):
+
+```
+full prompt   48,734 chars  ~12,184 tok
+narrowed      35,226 chars  ~ 8,806 tok      -3,377 tok, -28%
+keeps   CHEST CT AND HRCT · ABDOMEN CT · PELVIS CT · ABDOMINOPELVIC CT
+drops   brain ×2 · neck · sinus · c/t/l-spine · shoulder · hip · knee · ankle ·
+        wrist · coronary CTA · CTA aorta · urography
+```
+
+**Generated, not retyped.** `tools/dev/regen_turbo_regions.py` extracts the blocks from
+the live output of `build_report_system_prompt("CT", "")` and asserts its own round trip
+before writing. A hand copy of nineteen clinical blocks is a transcription error waiting
+to happen.
+
+**Python, not markdown.** `AIPacs.spec` needs an explicit `datas.append(...)` for every
+non-`.py` resource and Nuitka has its own include list, so a `.md` region library would
+work in development and vanish in the frozen build — the worst possible failure mode for
+clinical content. A module is compiled, mirrored by the existing sync, and still
+reviewable in a diff.
+
+**The self-check is the part that makes this safe.** `turbo_regions` was lifted out of
+the prompt, so the two can drift. On every call the composer compares the live span
+against `full_section()`; on any mismatch it logs and sends the **full** prompt rather
+than shipping stale clinical text. Everything else resolves the same way — no profile,
+no regions, unrecognised regions, a modality not yet extracted, missing markers, any
+exception — all send everything. `_select_ct_blocks` returns `None` rather than `[]` by
+construction, because an empty region section would delete every region's rules and
+still look like a successful narrowing.
+
+**Two modelling errors the tests caught before they shipped:**
+
+*Vocabulary drift.* The first mapping used `heart` and `neck`; the canonical
+`REGION_KEYS` are `chest` and `head_neck`. A key that is not in that tuple can never be
+selected by the gate, so those two blocks would have been silently unreachable. There is
+now a test asserting every mapping key is canonical.
+
+*A study type masquerading as a region.* `CORONARY CTA` was mapped under `chest`, which
+would have put 310 tokens of coronary reporting rules into every routine chest CT. It is
+a subtype, not a property of the chest, and it now sits on the subtype axis beside
+urography — the same distinction the gating design draws between region and study type.
+
+**Conservative parents.** A bare `spine` sends all three levels rather than guessing
+which one; `extremity` sends all five MSK blocks. Less targeted, still correct — and
+guessing would delete the level that was actually imaged.
+
+Gate: **1697 passed, 0 failed.** Mirrors: 1 synced + 1 added. New:
+`tests/code/echomind/test_turbo_regions.py` (22) — the byte-for-byte reassembly proof,
+every block reachable, every mapping key canonical, narrowing touches only the span
+(prefix and suffix compared byte-wise against the untouched prompt), and eight tests for
+the fallbacks.
+
+**Next:** MRI's six region blocks, which sit inside a span mislabelled `PATHOLOGICAL
+FINDINGS RULES` — same procedure, same tests. Then the missing MRI regions, starting
+with lumbar spine at 21.5% of this centre's volume.
+
+### EchoMind — CT is complete for Turbo, and the gate is finally wired (2026-08-08)
+
+Two things landed together: the region gaps the tariff exposed, and the profile that
+makes any of it actually happen.
+
+#### The gate was idle until now
+
+Everything built earlier today was proven and doing nothing — nothing constructed a
+`profile`, so Turbo kept sending the full prompt. `OneChatPage._build_gate_profile()`
+reads the chat's own `session_metadata` record, which means **the gate acts on exactly
+what the physician can see and correct on the metadata card**. If he fixes the region,
+the correction is already in the effective record and wins here with no extra plumbing.
+
+It returns `None` on no chat, no record, or no regions — three separate returns, each
+meaning "send the full prompt".
+
+#### Three CT regions had tariff volume and no block at all
+
+Measured across the 117 CT service codes:
+
+| region | service codes | had a block? |
+|---|---|---|
+| temporal bone / inner ear | **11** | no |
+| orbit | **9** | no |
+| maxillofacial / dental / TMJ | **8** | no |
+
+A temporal bone CT was being sent nineteen region blocks, none of which described a
+temporal bone — so the model had to invent the structure list for the one anatomy it was
+actually looking at.
+
+`turbo_regions_extra.py` holds the three authored blocks, **kept apart from the generated
+library on purpose**: `turbo_regions.py` is machine-produced and must never be
+hand-edited or the byte-for-byte reassembly proof stops meaning anything. A test asserts
+no authored block has leaked into the generated file, because regeneration would delete
+it silently.
+
+⚠️ These three are format-correct first drafts and are flagged in the module docstring as
+**needing radiologist review**. They follow the depth and vocabulary of the nineteen a
+radiologist wrote; they have not been read by one.
+
+The three keys also had to be added to `REGION_KEYS` and the DICOM map — `IAC`,
+`MASTOID`, `PETROUS`, `ORBIT`, `EYE`, `TMJ`, `MANDIBLE`, `MAXILLA` now resolve. A block
+whose key is not canonical can never be selected: dead content that still looks present.
+
+#### What Turbo now sends
+
+```
+full CT prompt                      48,734 chars  ~12,184 tok
+chest + abdomen + pelvis (53516)    35,226        ~ 8,806    72%
+temporal bone            (NEW)      31,268        ~ 7,817    64%
+orbit                    (NEW)      31,041        ~ 7,760    64%
+maxillofacial / dental   (NEW)      31,143        ~ 7,786    64%
+brain, non-contrast                 30,902        ~ 7,726    63%
+lumbar spine                        30,766        ~ 7,692    63%
+knee                                30,211        ~ 7,553    62%
+spine (parent, all levels)          32,826        ~ 8,206    67%
+```
+
+Every one keeps `SOURCE FIDELITY`, `OUTPUT FORMAT (STRICT)`, `NORMAL FINDINGS
+CONSTRUCTION`, `REPORT FEATURES, NOT VERDICTS` and `GROUPING VOCABULARY` intact — only
+the region span moves.
+
+#### A test of mine that was wrong
+
+`test_authored_blocks_have_real_content` asserted every bullet carries a
+`Structure: findings` label. Measured against the nineteen generated blocks, **123 of 163
+bullets (75%)** do — the rest are legitimate summary negatives like *"No pneumoperitoneum
+or intraperitoneal free fluid."*, and `BRAIN CT (NON-CONTRAST)` is 1 of 13. My rule was
+stricter than the content a radiologist actually wrote. The floor is now 70%, which is
+the house convention; the authored blocks sit at 92%.
+
+Gate: **1716 passed, 0 failed.** Mirrors: 3 synced + 1 added. New:
+`tests/code/echomind/test_turbo_ct_complete.py` (19), including a coverage test that
+lists the tariff-supported CT regions and fails if any lacks a block.
+
+**Still open for CT:** the CTA territories. The catalogue has seven distinct vascular CT
+codes — intracranial, carotid, renal, thoracic aorta, abdominal aorta, upper and lower
+extremity, plus hepatic portography — and there is one generic `CT ANGIOGRAPHY AORTA`
+block. That is a subtype-axis gap, not a region gap, and worth doing after MRI.
+
+### EchoMind — the other two region-specific spans in the CT prompt (2026-08-08)
+
+The region normal-findings blocks were the obvious target. Two more were hiding inside
+`MODALITY LOGIC`, both sent whole on every CT study.
+
+| span | size | why it is region-specific |
+|---|---|---|
+| `GROUPING VOCABULARY (CT)` | 1,781 chars · ~445 tok | eight region heading-sets — and the prompt *instructs* the model to use "the organ/region groupings the MODALITY RULES below already name for this study — do not invent a different vocabulary". On a knee CT it named chest, abdomen and brain. |
+| Persian / Finglish lexicon | 1,246 chars · ~312 tok | sixteen dictation terms. Five are chest, six abdominal, one sinus, two MSK. "Appendicitis" and "Concha bullosa" are not useful on a temporal bone study. |
+
+Two of the sixteen terms — *Hyperdense / Hypodense* and *Lymphadenopathy* — are general
+CT vocabulary rather than anatomy, so they are marked always-on and never dropped.
+
+#### An inconsistency I had introduced the same day
+
+Adding the three new region blocks (temporal bone, orbit, maxillofacial) without adding
+grouping entries left the model **handed a structure list and simultaneously told to head
+it with a vocabulary that did not cover it.** The three headings now exist in
+`turbo_regions_extra.py` beside their blocks, with a test that pairs them.
+
+#### A whitespace detail that is not cosmetic
+
+Each span ends with the indentation of the line that follows it — the last grouping entry
+carries the 24 spaces that place `• Exclude any anatomical region…` at the right level of
+the outline. Dropping that entry without preserving them puts the next rule at column 0,
+which reads as a different level. `_narrow_span` carries the original span's trailing
+whitespace across, and a test asserts the indent survives.
+
+#### Where CT now lands
+
+```
+full CT prompt                     ~12,184 tok
+chest + abdomen  (53516, real)     ~ 7,749    64%     was 8,093 with blocks alone
+temporal bone                      ~ 7,533    62%
+maxillofacial / dental             ~ 7,500    62%
+knee                               ~ 7,004    57%
+brain, non-contrast                ~ 7,390    61%
+```
+
+#### A test of mine that had to widen, not bend
+
+`test_narrowing_changes_only_the_region_section` asserted that everything before the
+region section was byte-identical. Both new spans sit **before** it, so a correct change
+failed a correct test. Rewritten as `_blank_gateable()`: blank all three spans in both
+prompts and require the remainder to match exactly. That is stronger than the positional
+check it replaced — it names which three spans may move and proves nothing else does.
+
+#### Measured but NOT changed: duplication in MODALITY LOGIC
+
+The generic block and the CT block say the same things:
+
+```
+"The imaging modality is"                2x
+"never report the same structure twice"  2x
+"every structure this study"             2x
+```
+
+~105 tokens of near-verbatim restatement. I did **not** remove it: one bullet in the
+generic block — *"Customize the 'Report Title' to include the modality"* — is unique, so
+deduplication is a content edit rather than a selection change, and content edits deserve
+their own reviewed diff. Turbo now has its own builder, so it can be done Turbo-only when
+someone decides to.
+
+Gate: **1733 passed, 0 failed.** Mirrors: 3 synced. New:
+`tests/code/echomind/test_turbo_modality_logic.py` (16) — byte-for-byte reassembly of both
+new spans, every entry and term mapped to canonical keys, the always-on terms, the
+indentation guard, drift, and the full-span fallback.
+
+### EchoMind — a prompt TEMPLATE, and every CT region filled into it (2026-08-09)
+
+The prompt grew by accretion: every failure added a paragraph near a related one, often
+restating a rule already present. Measured on the CT branch — 23 emphasis markers (one
+every 17 lines), `RSNA` ×9, the nodal threshold ×3, 13% leading whitespace, and **no
+statement anywhere of what job the model was doing** (`"radiology report"`, `"You are"`
+and `"TASK"` all absent; the first line was a formatting constraint).
+
+**`turbo_template.py` fixes the shape**, so the next failure adds a line to a named slot
+instead of another paragraph wherever it seemed to fit.
+
+```
+ROLE  ·  PRECEDENCE  ·  TWO_HALVES  ·  RULES_PATHOLOGICAL  ·  RULES_NORMAL
+      ·  MODALITY  ·  STUDY_CONTEXT  ·  REGION_MODULES  ·  OUTPUT      = 1,303 tok shared
+```
+
+Role first (the old prompt opened on a language rule), output contract last (recency),
+facts before guidance so the guidance can refer to them.
+
+**The region module contract came out as FOUR sections, not the seven I proposed in the
+design.** `measurements`, `reporting_order` and `contrast_rules` collapsed once the
+shared slots carried them — reporting order *is* the headings line, contrast is a shared
+rule, and measurements reduce to "preserve what he dictated, invent nothing". Deriving
+the contract from a prompt that works rather than from a diagram made it smaller.
+
+**All 21 canonical CT regions filled**, generated by `tools/dev/gen_turbo_modules.py`
+from content a radiologist already wrote — grouping vocabulary → `headings`, RSNA blocks
+→ `normal`, Persian lexicon → `terms`. Nothing clinical invented in the generation.
+`pelvis`/`prostate` and `head_neck`/`thyroid` share one module, de-duplicated by title.
+
+```
+single-region prompts    1,618 tok (knee) … 2,143 tok (spine, all levels)
+study 53516, 2 regions   2,322 tok      vs 7,749 gated  vs 12,184 ungated
+```
+
+**Off by default.** `AIPACS_TURBO_PROMPT_V2=1` opts in. This replaces the whole prompt
+rather than narrowing spans inside one, so it is a behaviour change — and a region with
+no module falls back to the narrowed prompt rather than rendering an empty context block.
+
+**Nine load-bearing rules are verified present by literal probe**, not by inspection:
+the "The liver is normal." ban · `کد طبیعی` · `دگنش` · the empty-pathology sentence ·
+"may represent" · laterality · "never invent one" · the sex rule · "no code fences".
+Three more tests enforce the authoring rules directly on the shared slots — no emphasis
+markers, no rule stated twice, whitespace under 6%.
+
+Gate: **1764 passed, 0 failed.** Mirrors: 2 synced + 2 added. New:
+`turbo_template.py`, `turbo_region_modules.py` (generated),
+`tools/dev/gen_turbo_modules.py`, `tests/code/echomind/test_turbo_template.py` (31).
+
+**The honest limit.** The 81% reduction is arithmetic; that it produces equal or better
+reports is a hypothesis and the only thing that matters. It needs both prompts run over
+20–30 real transcripts — watching a normal-template request, a multi-region study, a
+hedged dictation, one carrying a measurement, and a completely normal study — and a
+radiologist reading the compressed `normal` sections, which the generator re-shaped but
+did not check.
+
+### EchoMind - REPORTING CONTEXT is region-major, and there is only one region layer
+
+The reviewer's objection: the template appeared to have two overlapping region layers -
+a REPORTING CONTEXT that is already region-specific, and a separate Region block. Three
+distinct things were behind it, and only one of them was in the assembled prompt.
+
+1. **The prompt running today (v1, narrowing) really does have three region layers.**
+   Measured on 53516: chest/abdomen content appears in the grouping vocabulary, in the
+   CT measurement rules, and in the RSNA normal-findings block - three places that have
+   to agree and do not. That is the failure the template exists to remove.
+2. **The slot had two names.** Documented as `REGION_MODULES`, rendered as
+   `# REPORTING CONTEXT`. Renamed to `REPORTING_CONTEXT` throughout.
+   `REGION_MODULES` in `turbo_region_modules` now unambiguously means the LIBRARY.
+3. **The delivered catalogue file read as a second layer** because each entry was
+   labelled `REGION: brain` above `# REPORTING CONTEXT - brain`. Presentation only.
+
+**`render_region_context` is now region-major**: one self-contained block per gated
+region, in gate order, each carrying its own headings, normal-findings reference,
+dictation terms and notes. The earlier section-wise merge was defending against "two
+competing reporting orders" - a failure that belonged to the old prompt, where each
+region fragment carried its own REPORT ORGANIZATION rule. A module carries a heading
+LIST, not an ordering rule; the rule lives once, in OUTPUT. The merge was solving a
+problem the module contract had already removed.
+
+Also dropped: the region list from the `# REPORTING CONTEXT - chest, abdomen` header,
+which restated what the blocks below name. Dictation terms now de-duplicate first-wins
+across regions, so the always-on Persian terms reach the model once, not once per region.
+
+**The `Regions` row in STUDY CONTEXT stays**, and the reason is not habit. It is the
+gate's conclusion as a fact with provenance at precedence 3, where REPORTING CONTEXT is
+guidance at precedence 4; `RULES_NORMAL` step 1 reads the examination from it; and the
+two lists legitimately differ - `_render_template` proceeds when SOME region has a
+module, so a detected region with no package contributes to the row and not to the slot,
+and pelvis+prostate contribute two names and one block. When they differ the model
+should see that they differ.
+
+Gate: **1768 passed, 0 failed.** Four new guards, one replaced: exactly one region
+content layer in the assembled prompt, one self-contained package per region in gate
+order, no region list in the header, no term emitted twice.
+
+### EchoMind - the pathological half is gated too
+
+The region gate now supplies both halves of the report, not just the normal half. A
+module has five sections: `headings`, **`pathology`**, `normal`, `terms`, `notes`.
+
+**What every CT study receives today**: the same 15-bullet CT-SPECIFIC MEASUREMENT AND
+CLASSIFICATION RULES block (~619 tok) and the same STANDARDIZED SYSTEMS list (~176 tok)
+naming nine systems. A brain CT is told about BI-RADS, PI-RADS, O-RADS, LI-RADS, TI-RADS
+and Lung-RADS; a mammogram is told about Fleischner and Bosniak.
+
+**Ownership after gating** - Fleischner/Lung-RADS to chest only, Bosniak/LI-RADS/
+Balthazar to abdomen, ASPECTS to brain, TI-RADS to neck, O-RADS/PI-RADS to pelvis,
+AO/Magerl to the spine levels. BI-RADS and CAD-RADS reach **no CT region**, which is
+correct: breast and coronary are not CT body regions here.
+
+**The register was wrong and is now fixed.** The source bullets are imperatives to
+PRODUCE - "Brain haemorrhage: specify type, location, volume (ABC/2 method or mL),
+density (HU)". The physician dictates; he cannot dictate an ABC/2 volume he did not
+measure, and source fidelity forbids the model inventing one. Every line is recast as
+what it can only safely have meant: preserve these descriptors when he gives them. A
+parametrised test enforces the register - no line may open with specify/calculate/
+measure/estimate/compute, and every line must carry a preservation clause.
+
+The shared bullet stopped naming BI-RADS, Bosniak, Fleischner and Balthazar (that put
+them in front of every study again) and now points forward: "The systems that apply to
+this study, and the descriptors worth preserving in each region, are named in REPORTING
+CONTEXT."
+
+**Honest accounting.** Against v1 this is a large removal. Against v2-before-this-change
+prompts got slightly BIGGER - brain 1,913 -> 1,996 tok, chest 1,790 -> 2,084 - because
+v2 had deleted the bullets outright rather than gating them. The win here is relevance,
+not tokens: the descriptors are back, and they are the right ones.
+
+**10 of 21 regions have no authored pathology rules** - the MSK group, sinuses, temporal
+bone, orbit, maxillofacial. Their systems (Salter-Harris, Gustilo, Kellgren-Lawrence,
+Outerbridge) are written nowhere in this project, so they were left empty rather than
+invented. Empty is still strictly better than today, where a knee CT gets all 15 bullets
+and none apply.
+
+Gate: **1793 passed, 0 failed** (+25). Mirrors: 2 synced.
+
+### EchoMind - region content for the ten empty regions, compiled from the literature
+
+The MSK group, paranasal sinuses, temporal bone, orbit and maxillofacial had **no**
+pathology rules, because the prompt this project grew from never wrote any for them.
+They were receiving the 15-bullet measurement block written for brain, chest, abdomen
+and spine, of which none applied. All 21 regions now carry rules; every region has at
+least 8 normal-findings lines.
+
+**New file `tools/dev/turbo_region_authored.py`.** The provenance split is structural
+and deliberate: the generator's own `NOTES` and `PATHOLOGY` came from prompts a
+radiologist wrote for this project; this file came from the literature and is marked
+⚠️ CLINICAL REVIEW REQUIRED. The generator **raises** rather than letting researched
+content overwrite authored content for the same region.
+
+Sources: RSNA RadReport templates (RPT50819 shoulder CT, RPT50833 knee CT, RPT50797
+wrist/hand CT, RPT50814, 181/182/229, 50613, 50616, 50670, 50844, 50200), RadioGraphics
+rg.2020200008 / rg.2021200106 / rg.352140098 / rg.342125215 / rg.322115017 /
+rg.2020190023 / rg.331125080 / PMID 16702454, Radiology 2016;281:10-21 (CLOSE),
+Little & Kesser PMID 17178939, StatPearls, LITFL, OTA, Radsource, Hand Surgery Resource.
+RadReport has no CT template for hip, ankle or foot; those came from primary literature.
+
+**The rule that governed the writing: where published normals disagree, no number was
+encoded.** The research surfaced nine genuinely contested thresholds - Gissane
+(130-145 vs 100-130), Insall-Salvati (1.3 vs 1.5), tibiofibular clear space (6 mm
+radiographic vs ~2.0-2.4 mm on CT), the vestibular aqueduct (three competing criteria
+across two planes), extraocular muscle thickness, optic nerve sheath, hip alpha angle
+(50.5 / 55 / 57), lateral centre-edge (20 vs 25). Encoding one side silently produces a
+confidently wrong report. Each line instead names the measurement, asks that his value
+and its plane or method be preserved, and leaves the interpretation to him.
+`test_a_contested_threshold_is_never_encoded_as_a_bare_number` enforces that the caveat
+travels with the measurement.
+
+Also guarded: the classification-system ownership matrix now covers 32 systems - Neer,
+Ideberg, Walch, Goutallier, Judet-Letournel, Pipkin, Schatzker, Dejour, Sanders,
+Hawkins, Lauge-Hansen, Myerson, Salter-Harris, Herbert, Frykman, Lund-Mackay, Keros,
+Le Fort, Zingg, Markowitz-Manson and the earlier set. A region showing a system it does
+not own fails the build.
+
+Prompt sizes: **1,790 tok (thyroid) to 2,335 tok (extremity)**, median 2,053 - still
+about 83% below the 12,184 every CT receives today.
+
+Gate: **1836 passed, 0 failed** (+43). Mirrors: 1 synced.
+
+**Nothing here has been read by a radiologist.** Review sheet delivered as
+`EchoMind_region_content_for_review.txt`.
+
+### EchoMind - the architecture is documented, in docs/echomind/
+
+Seven documents, written so the prompt system, the region gate and the chat metadata
+record can be reproduced on Android and iOS without re-deriving them from Windows source.
+
+```
+docs/echomind/README.md                    index, one-page mental model, six invariants
+              01-architecture.md           module map, three backends, every workflow
+              02-prompt-architecture.md     the nine slots, shared vs gated
+              03-region-gating.md          what a gate is, what selects it
+              04-chat-metadata.md          field provenance, three layers, storage, edits
+              05-mobile-parity.md          what Android/iOS must reproduce byte-for-byte
+              06-extending.md              adding a modality, region, subtype, lexicon, rule
+```
+
+Registered in `docs/INDEX_BY_SUBSYSTEM.md`. `docs/pipelines/echomind-reporting-prompts.md`
+now carries a superseded-in-part banner: it is still correct about the per-modality prompt
+bodies, the preservation rule and the validator, but its claim that the prompt is selected
+**by modality only** no longer holds for Turbo on CT.
+
+**Two things the writing found rather than described.**
+
+`session_metadata.py`'s docstring still said **"Nothing here reaches any prompt"** - true
+on 2026-08-06, false since `_build_gate_profile()` landed. A developer reading the module
+would have concluded the record was inert and wired a second detection path straight into
+the prompt. Corrected in place, with the invariant that replaced it: what the gate acts on
+is exactly what the physician was shown on the card and could have corrected.
+
+`REGION_KEYS` has 24 entries and `REGION_MODULES` has 21. The three without a package -
+`breast`, `scrotum`, `obstetric` - are not CT regions, so a study detected as one produces
+a non-empty `case.regions`, an empty `modules_for()`, and a full ungated prompt. Correct
+behaviour, silent failure mode, now documented.
+
+Measured numbers in the docs are measured, not estimated: shared slots total **1,325 tok**
+(74 + 77 + 56 + 412 + 560 + 146), modality note 16-48, whole prompts 1,790-2,335 with a
+median of 2,053 against 12,184 ungated.
+
+The mobile document specifies a **byte-identical prompt** contract and the fixture set that
+enforces it, and recommends emitting the region library as JSON from the same generator
+rather than hand-porting 21 packages x 5 sections.
+
+### EchoMind - MRI region modules, 19 of them
+
+MRI is the second modality with a region library, and adding it is what forced the
+library to become modality-keyed instead of implicitly CT.
+
+**New `turbo_modules.py`** - the `(modality, region) -> package` registry, hand-written
+and tiny, with the two generated libraries behind it. `modules_for(modality, regions)`
+is now the only lookup; `supported_modalities()` returns `('CT', 'MRI')`. Imports are
+lazy so a syntax error in one generated library cannot stop the other loading.
+
+**Most of MRI was extraction, not authoring.** The shared MRI prompt already contained,
+written by a radiologist for this project: 10 region blocks (BRAIN, SPINE with
+[Cervical]/[Lumbar] conditionals, MSK with five sub-blocks, BREAST, ABDOMEN/PELVIS,
+PROSTATE, HEAD AND NECK, PITUITARY/SELLA, ORBIT, TEMPORAL BONES/IAC), a GROUPING
+VOCABULARY (MRI) supplying headings, and the sequence lexicon. `gen_turbo_mri_modules.py`
+pulls all of it out and self-verifies the round trip.
+
+Three splits the extraction had to make: ABDOMEN/PELVIS is one block and is cut at the
+bladder; MSK is a parent header whose content is its five sub-blocks, which also
+combine into `extremity`; SPINE carries `[Cervical]` and `[Lumbar]` markers that are
+resolved per level and kept only in the all-levels package.
+
+**PITUITARY/SELLA was deliberately not made a region.** It is a SUBTYPE of a brain MRI.
+Folding it into `brain` would put 219 tokens of sella detail into every brain MRI -
+the same mistake putting CORONARY CTA under `chest` would have been on the CT side.
+
+**The pathology half is all new**, in `tools/dev/turbo_mri_authored.py`, compiled from
+the literature and NOT reviewed. Its MRI-specific addition: signal has no meaning
+without the sequence that shows it, so each region's rules ask that the physician's
+sequence attribution survive rewriting.
+
+**Seven contested definitions, none encoded.** Pfirrmann names TWO different systems
+(disc degeneration 1-5 and nerve-root compromise) - "Pfirrmann grade 3" is ambiguous;
+Fardon v2.0 focal/broad-based/bulge circumference thresholds are unresolved between
+secondary sources; Outerbridge splits grade 2/3 at 1/2 inch or 1.5 cm depending on the
+source; ARCO 1993 and 2019 are different systems; PI-RADS v2 and v2.1 differ in the TZ
+rule; NI-RADS has a CT/PET version and an MRI v2025 algorithm; Fazekas is scored as one
+value or as separate PVH and DWMH.
+
+**The CT always-on lexicon was NOT reused.** It carries هایپردنس -> hyperdense/hypodense,
+an attenuation term that is wrong on MRI. `MRI_TERMS` is authored and flagged.
+
+**Narrowing stays CT-only.** The three narrowed spans were extracted from the CT branch
+and the drift self-check is against that extraction. MRI reaches the gate through the
+template path alone - so with `AIPACS_TURBO_PROMPT_V2` off, an MRI report is
+byte-identical to what it was before the library existed. Two tests pin that.
+
+```
+shared MRI prompt   13,089 tok, every MRI study today
+gated per region     1,996 (wrist/hand) - 2,398 (extremity) tok   15-18% of it
+```
+
+**Not covered, not invented:** cardiac MRI (6 of the centre's 65 MRI service codes),
+chest MRI (3), fetal MRI (1), MRA (4). No block exists for any of them in the shared
+prompt. A study gated to one falls back to the full prompt, which is correct. Cardiac
+is the biggest remaining gap in the MRI library.
+
+Gate: **1946 passed, 0 failed** (+110, `tests/code/echomind/test_turbo_mri.py`).
+Mirrors: 1 synced, 2 added. `docs/echomind/` updated - README, 01, 03 and 06.
+
+### EchoMind - radiography region modules, and a section shape CT and MRI do not have
+
+19 X-ray modules. Third modality library, and the first that is mostly AUTHORED: the
+RADIOLOGY branch of the shared prompt carries about **twenty** normal-findings lines in
+total across four study-family blocks (general X-ray, DEXA, bone age, barium) and has no
+per-region reference at all. CT had 19 RSNA blocks to extract and MRI had 10. So here
+the extraction supplies a skeleton and `tools/dev/turbo_xr_authored.py` supplies the
+body - which also means the review burden is larger than MRI's, not smaller.
+
+**The new section: `projection`.** CT and MRI acquire a volume; a radiograph acquires
+one view, and a view cannot assess what it does not show. The shared prompt states that
+rule once, generically. Each region now carries the specifics, rendered FIRST because it
+constrains everything after it. The errors it exists to prevent are concrete: heart size
+off a supine chest, free air excluded from a supine abdomen, the patellofemoral joint
+reported from AP and lateral knee views, dislocation direction from an AP shoulder, fat
+pads off a rotated elbow lateral, the mortise assessed without a mortise view, a curve
+called structural without bending films.
+
+A package's shape may now differ by modality. CT and MRI packages have no `projection`
+key and render nothing for it - a test pins that.
+
+**Two new canonical region keys**, the first added since 2026-08-08: `elbow` (2 X-ray +
+1 fluoroscopy codes, a real MSK radiograph region the CT-derived list never needed) and
+`bone_density` (4 DEXA codes, a study family with its own report shape). CT and MRI have
+no package for either, so a study gated to one falls back to the full prompt.
+
+**Eight contested radiographic values, none encoded** - the carrying angle has six
+published normals; Baumann 64-81 vs 64-82/69-81 vs 75-80; LCEA <25 vs <20; prevertebral
+soft tissue disputed with poor sensitivity throughout; small bowel >2.5 vs >3 cm;
+mediastinum >8 vs >6-8 cm; the Torg 0.8 cut-off unsourced and the ratio unreliable;
+Genant and eSQ using overlapping grade numbers for different things. Plus one global
+caveat with no CT or MRI analogue: **any linear millimetre measurement on a radiograph
+is magnification-dependent unless a calibration marker was in the field.**
+
+```
+shared RADIOLOGY prompt   8,938 tok, every X-ray study today
+gated per region          1,888 (sinuses) - 2,236 (chest) tok   21-25% of it
+```
+
+**A bug worth recording.** The `projection` block rendered TWICE for a while. The patch
+helper's already-applied guard only fires when the anchor count is 0, and this was an
+insert-before-anchor swap whose `new` contained its `old` - so on a re-run the count was
+still 1, the `n == 1` branch fired first, and the block went in again. Every test passed,
+because none of them counted occurrences. A render check caught it. Both lessons are now
+in `docs/echomind/06-extending.md`: never write a swap whose `new` contains its `old`,
+and look at the assembled prompt after a renderer change.
+
+Four MRI assertions went stale when radiography got a library (they asserted RADIOLOGY
+had none). Each was narrowed to what it actually cares about rather than deleted.
+
+**Not covered, not invented:** interventional and vascular fluoroscopy (35 of the
+centre's 93 fluoroscopy codes) - a different report shape. Bone age and barium are
+SUBTYPES, not regions: a bone age is a study type performed on the left hand, the same
+way pituitary MRI is a study type performed on the brain.
+
+Gate: **2047 passed, 0 failed** (+101, `tests/code/echomind/test_turbo_xr.py`).
+Mirrors: 3 synced, 1 added. `docs/echomind/` README, 01, 03 and 06 updated.
+
+### EchoMind - ultrasound, pregnancy, and a SECOND gate axis
+
+12 ultrasound region modules and **9 obstetric subtype packages**. Fourth modality
+library; mammography is the only one left without one.
+
+**Pregnancy is what forced a second axis.** Every other modality gates on region alone.
+Obstetric cannot: a dating scan, an NT scan, an anomaly scan, a growth scan and a
+biophysical profile all have region `obstetric` and share almost no reporting content -
+this centre books **17 distinct obstetric codes**. One `obstetric` package would send
+the full ISUOG anatomy survey to a viability scan and the failed-pregnancy criteria to a
+third-trimester growth scan.
+
+So `subtypes_for(modality, subtypes)` is now a real, wired axis, selected by
+`case.subtype`, rendered as a `# STUDY TYPE` block AFTER the region context because it
+narrows within it. A study with no subtype renders nothing. Nine packages: dating and
+viability, ectopic search, NT and nasal bone, mid-trimester anomaly, growth and FGR,
+obstetric Doppler, biophysical profile, placenta accreta spectrum, multiple pregnancy.
+
+**A finding to act on.** `openai_reporter.py` line 1311 branches on
+`modality_lower in ["obstetric ultrasound", "ob ultrasound", ...]` and behind it sits a
+complete 10-section ISUOG prompt - ~8,000 tokens, its own JSON schema, trimester
+detection, dating rules, biometry format, anatomy survey, placenta and fluid rules,
+Doppler documentation, Persian recognition. **The modality menu emits only CT, MRI,
+SONOGRAPHY, RADIOLOGY and MAMOGRAPHY, so nothing a physician can select reaches it.**
+That prompt has been unreachable. The subtype axis is the fix that needs no sixth menu
+entry. Whether the 8,000-token prompt should also be made reachable is the owner's call;
+it was not touched.
+
+**A third section shape.** Ultrasound packages carry `technique` - window, route, and
+what was not visualised - for the same reason radiography carries `projection`: on
+ultrasound "not visualised" and "normal" are different statements, and a transabdominal
+negative is not a transvaginal negative. CT and MRI carry neither; tests pin that.
+
+**Extraction was rich here** - the SONOGRAPHY branch has twelve barred exam templates
+with the radiologist's own thresholds (liver <=15-16 cm, portal vein <=13 mm, CBD <=6 mm,
+spleen <=12 cm, kidneys 9-12 cm, thyroid isthmus <=3-4 mm, testes 3-5 cm, ICA PSV
+<125 cm/s, appendix <=6 mm, PVR <=50 mL), plus a gynaecologic block, an obstetric
+biometry block and an ISUOG obstetric block. All extracted and pinned by test.
+
+**Nothing obstetric is ever computed.** A centile depends on the growth chart; an NT risk
+combines maternal age, biochemistry and the software's reference; a BPP total is a
+clinical instrument; an accreta grade is never derived from the descriptors; AFI and SDP
+are not interchangeable; PI, RI and S/D are different indices of one waveform. Six
+parametrised tests enforce that each caveat travels with its measurement.
+
+**A test category error, caught and fixed properly.** `must_report` is a coverage
+checklist - the ISUOG anatomy survey, the five BPP components - not preserve-register.
+Holding it to the same rule as `pathology` was wrong; the two sections now have
+different, appropriate checks.
+
+**Staleness, fixed for good.** Adding a library broke the other modalities' tests twice,
+because each pinned the exact supported set. The set is now pinned in exactly ONE file
+(`test_turbo_us.py`), with a comment saying why; the rest assert membership.
+
+```
+shared SONOGRAPHY prompt   9,770 tok, every ultrasound study today
+gated per region           1,971 (chest) - 3,340 (extremity) tok
+obstetric + a subtype      ~3,235 tok   33% of shared
+```
+
+**Not covered, not invented:** fetal echocardiography (2 codes), fetal lung maturity (1).
+
+Gate: **2129 passed, 0 failed** (+82). Mirrors: 3 synced, 1 added. `docs/echomind/`
+README, 03 and 06 updated.
+
+### EchoMind - 18 radiography study types, on the axis pregnancy built
+
+All 11 categories the owner listed on 2026-08-09. Nine became study-type packages on the
+subtype axis; two were already regions.
+
+```
+nasal bone        -> xr_nasal_bone            spine alignment / total spine -> xr_spine_alignment
+HSG               -> xr_hsg                   flexion-extension  -> xr_spine_flexion_extension
+RUG + VCUG        -> xr_rug                   oblique spine      -> xr_spine_oblique
+IVP / IVU         -> xr_ivp                   standing limb align-> xr_limb_alignment
+barium swallow    -> xr_barium_swallow        bone age           -> xr_bone_age
+barium meal / UGI -> xr_barium_meal           skeletal survey    -> xr_skeletal_survey
+small bowel FT    -> xr_sbft                  shoulder special   -> xr_shoulder_special
+barium enema      -> xr_barium_enema          mastoid views      -> xr_mastoid
+fistulography     -> xr_fistulography         colon transit      -> xr_colon_transit
+
+paranasal sinuses -> REGION, projections now named (Water's, Caldwell, lateral, SMV)
+pelvic bone       -> REGION (`pelvis`, already existed)
+```
+
+Single- versus double-contrast is handled INSIDE each barium package rather than as its
+own study type: it changes what the study can answer, so it belongs with the study.
+
+**The subtype axis now carries two libraries** and they cannot see each other's keys.
+Radiography needed it more than ultrasound did: a hysterosalpingogram, a barium enema and
+a colon transit study are all abdominopelvic and share nothing else.
+
+**Three places where a number could not be encoded.** Lower-limb alignment is the worst
+disagreement in the project so far - mechanical axis deviation is published as 4 +/- 2 mm
+medial (EFORT), 8 +/- 7 mm medial (Paley) and 3 mm either side (Gupta), and the joint
+angles appear both as mean +/- 3 degrees and as asymmetric ranges. Colon transit has at
+least four protocols with different marker counts, film days and thresholds, and a count
+is meaningless without its protocol. Bone age differs by method, so a value without its
+method cannot be compared with a previous one. Four parametrised tests enforce that each
+caveat travels with its measurement.
+
+Sources: ACR Extremity Radiography (DocId=12); EFORT Open Reviews 2021 (PMC8246117);
+Gupta J Clin Orthop Trauma 2020 (PMC7026560); boneaxis.org; Hinton/Sitzmarks day-5;
+Metcalf (PMID 3023168); Arhan (PMID 7318630); Chaussade via the NASPGHAN Southwell
+review; PMC5051174; Parks; RSNA RadReport; StatPearls.
+
+A third stale modality assertion turned up and was narrowed rather than deleted - this
+time in the ultrasound tests, which asserted radiography had no subtypes.
+
+Gate: **2188 passed, 0 failed** (+59). Mirrors: 2 synced. Still not covered:
+interventional and vascular fluoroscopy, 35 of the centre's 93 fluoroscopy codes.
+
+### EchoMind - a 500 is no longer reported to the physician as a quiet microphone
+
+**Observed 2026-08-09**, from a screenshot: Company Server 3 returned HTTP 500, and the
+chat said *"Voice quality seems low - automatically retrying in noisy-voice mode"*,
+retried, got 500 again, and only then surfaced the real error.
+
+**Two defects, one root cause.** `ai_chat_pages.py` `err(e)` routed EVERY worker failure
+through `_retry_with_noisy()`, the same helper that handles a genuine quality rejection -
+and that helper always printed the same sentence.
+
+1. **A server outage was reported as a microphone problem.** A 500 is the server saying
+   it broke. The physician is told his voice was too quiet, so he re-records, speaks
+   louder and checks his input device, and none of it can help. In a reporting room that
+   is real time lost on a problem that is not his.
+2. **The retry could not possibly work.** Server 3 is the OpenAI-compatible Whisper path
+   and takes no `quality_mode` - the module's own docstring already said *"a Whisper
+   endpoint has no low-quality noisy retry signal"*. Servers 1 and 2 send
+   `data={"quality_mode": quality_mode}` so their retry means something; on Server 3 the
+   second call was byte-identical to the first.
+
+**The fix.** `voice_transcription.quality_mode_supported(cfg)` answers whether the ACTIVE
+provider acts on `quality_mode` - False for Server 3 and the OpenAI provider, True
+otherwise, and True on any error so an unknown provider keeps the old behaviour.
+`_retry_with_noisy()` became `_retry_once(reason)` with two reasons:
+
+    "quality"    a rejection (accepted=False) or a silent recording. Retries in noisy
+                 mode where the provider honours it, and skips the retry entirely where
+                 it cannot change anything.
+    "transport"  a timeout, connection error or HTTP 5xx. Retries ONCE, plainly, because
+                 a 5xx is often transient - with its own message that does not mention
+                 voice, quality or the microphone.
+
+Both messages are now module constants so the sentence cannot drift back into the wrong
+branch, and a test asserts "Voice quality seems low" appears exactly once in the file.
+
+**Note the server itself was up** - `test_connection()` returned HTTP 200 from
+`/models` while the diagnosis was running, so the 500 was on `/audio/transcriptions`
+specifically: transient at GapGPT or upstream of them. The audio was fine.
+
+Guard: `tests/code/echomind/test_transcribe_retry.py`, 16 tests. Two of them check that
+the capability flag still MATCHES the code it describes - that Server 3 has not started
+using `quality_mode` and that the native path has not stopped sending it - so the flag
+cannot quietly become a lie.
+
+Gate: **2204 passed, 0 failed** (+16). Mirrors: 2 synced.
+
+### EchoMind - Turbo in the Correction tab now EDITS instead of generating
+
+**The bug.** `_on_hq_all_modality_clicked` branched on `active_tab` for standard,
+transcribe and normal_template, and had no case for **correction** - so it fell to the
+`else`, took `composer.box.toPlainText()` (the physician's edit note) as if it were a
+dictation, and called `reporter()`. The selected report was never sent at all. The
+physician pressed Turbo to fix one sentence and got a brand-new report written from his
+own correction instruction.
+
+**The fix, in three small pieces.**
+
+1. `correction()` on BOTH backends takes `system_prompt_prefix`. A PREFIX, never an
+   override - a correction response is parsed, and the shared correction prompt carries
+   a contract that was hard to get right (a mammography report has eleven keys, not
+   five; overriding and forgetting one returns a report the app cannot read). An empty
+   prefix leaves the prompt byte-identical.
+2. `turbo_prompt.build_turbo_correction_prefix()` returns the editing frame: *edit, do
+   not generate*; do not regenerate Normal Findings; do not introduce or remove
+   findings; do not change a measurement, laterality, anatomical location, diagnosis,
+   Impression or Recommendation unless the request requires it; keep the structure;
+   return the COMPLETE corrected report. Behind the existing `AIPACS_TURBO_PROMPT`
+   kill switch, which returns None so the shared correction prompt is used unchanged.
+3. `_turbo_correction()` **delegates to `_send_report_correction`** rather than
+   duplicating it, and passes exactly two things: the prefix, and the pinned company
+   backend. The sender already owns the report lookup, both guards, the
+   correction-history bookkeeping and the rendering, so a second copy would drift from
+   it. Send's behaviour is unchanged - all three new parameters default to off.
+
+**Two mistakes I made getting there, both caught before they shipped.** A signature
+insert matched `):` and landed inside the openai backend's `correction()` BODY, turning
+its return into a tuple - reverted from the diff, then redone against the real
+`) -> dict[str, Any]:` ending. And the first handler called
+`_handle_correction_result`, a method I had invented; replaced by delegating to the
+existing sender, which is what it should have done from the start. A test now asserts
+the Turbo handler contains none of the four things the sender owns.
+
+Guard: `tests/code/echomind/test_turbo_correction.py`, 21 tests - the branch exists and
+runs before the report text is chosen, the handler never calls `reporter()`, Turbo stays
+pinned to the company backend, the frame protects measurements, laterality, location,
+diagnosis, Impression and Recommendation, the frame does not redefine the JSON contract,
+and the kill switch reaches it.
+
+Gate: **2225 passed, 0 failed** (+21). Mirrors: 4 synced.
+
+### EchoMind - the region-gated template is ON by default
+
+Owner decision 2026-08-09. `template_v2_enabled()` inverted: default True,
+`AIPACS_TURBO_PROMPT_V2=0` (or false/no/off) reverts every modality to the previous
+prompt, effective on the next report, no rebuild.
+
+Verified live with a clean environment:
+
+```
+CT          chest                            TEMPLATE  2,084 tok   (shared 12,183)
+MRI         spine_lumbar                     TEMPLATE  2,320       (shared 13,089)
+RADIOLOGY   knee                             TEMPLATE  2,058       (shared  8,938)
+RADIOLOGY   abdomen + xr_barium_enema        TEMPLATE  2,522       (shared  8,938)
+SONOGRAPHY  abdomen                          TEMPLATE  2,560       (shared  9,770)
+SONOGRAPHY  obstetric + ob_anomaly           TEMPLATE  3,248       (shared  9,770)
+MAMOGRAPHY  breast                           shared    9,714       - no library
+```
+
+**24 tests failed on the flip and none were weakened.** They had assumed OFF because
+that was the default when they were written. Three files test the NARROWING path
+specifically (`test_turbo_regions`, `test_turbo_modality_logic`, `test_turbo_ct_complete`)
+and now pin `AIPACS_TURBO_PROMPT_V2=0` with an autouse fixture that says why - otherwise
+they would have silently become template tests. The per-modality "template off" tests
+changed `delenv` to `setenv 0`, because `delenv` used to mean off and now means on. And
+`test_the_template_is_off_by_default` became `test_the_template_is_on_by_default` plus a
+parametrised check that every spelling of the kill switch works.
+
+**What is now live and unreviewed.** The MRI, radiography and ultrasound pathology
+halves, all 18 X-ray and 9 obstetric study types, and the ten literature-sourced CT
+regions are in front of real reports without a radiologist having read them. That is the
+owner's call to make and he made it; the kill switch is what makes it reversible. The
+review sheets are still the outstanding work, not the switch.
+
+Gate: **2230 passed, 0 failed.** Mirrors: 1 synced.
+
+### EchoMind - mammography, the last modality, gated by PREFIX not by template
+
+All five modalities are now gated. Mammography is the one that could not use the
+template, and finding out why was the whole job.
+
+**Its schema is regex-locked.** The shared mammography prompt opens with
+`SECTION 0 - REGEX-LOCKED JSON SCHEMA (HARD ENFORCEMENT)` and returns a different shape
+from every other modality: `Report Title`, `Breast Composition`, `Pathological Findings`,
+`Normal Findings {Right Breast, Left Breast}`, `Axillary Evaluation`,
+`BI-RADS Category {Right Breast, Left Breast}` - and **no `Impression` and no
+`Recommendations` keys at all**. The template's OUTPUT slot defines the five-key
+contract; rendering it here would emit the wrong shape and the regex would reject it.
+
+So mammography is gated by a PREFIX and the shared prompt follows it untouched - the
+same decision as the Turbo correction frame, for the same reason. A test asserts the
+base survives byte-for-byte with `got.endswith(base)`.
+
+**The honest trade: mammography gains coverage and LOSES brevity.** 9,714 -> 10,916 tok.
+Every other modality bought both; this one buys one, because a shorter prompt that fails
+to parse is worth nothing. Stated in the module docstring and asserted by a test, so
+nobody later reads the number as a regression.
+
+```
+CT          chest                     TEMPLATE   2,084 tok   (shared 12,183)
+MRI         spine_lumbar              TEMPLATE   2,320       (shared 13,089)
+RADIOLOGY   knee                      TEMPLATE   2,058       (shared  8,938)
+SONOGRAPHY  obstetric + anomaly       TEMPLATE   3,248       (shared  9,770)
+MAMOGRAPHY  breast + diagnostic       PREFIX    10,916       (shared  9,714)
+```
+
+**Content**: the BI-RADS mammography lexicon as separate axes - composition a-d; mass
+shape, margin and density as three observations; calcification morphology and
+distribution as two; the four asymmetry kinds kept distinct; architectural distortion as
+its own finding. The category is never assigned, upgraded, downgraded, collapsed or
+derived from the descriptors - it is a management decision. And the notes say plainly
+that a dictated impression is preserved INSIDE Pathological Findings, never promoted to
+a key the schema does not have.
+
+**Five study types** on the second axis: screening, diagnostic, tomosynthesis, implant,
+post-treatment.
+
+Two more stale tests turned up - both asserted mammography was untouched, which stopped
+being true. Each was rewritten to the invariant that still holds (the shared prompt
+survives whole) rather than deleted. That is the fifth time; the pattern is now that a
+test naming a modality's absence has to be re-read whenever a library is added.
+
+Gate: **2270 passed, 0 failed** (+40). Mirrors: 1 synced, 1 added.

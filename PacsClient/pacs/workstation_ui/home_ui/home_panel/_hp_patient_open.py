@@ -1424,6 +1424,22 @@ class _HPPatientOpenMixin:
                 """Run background setup in a separate thread to avoid async conflicts"""
                 try:
                     self._log_open_trace(study_uid, 'background_setup_started')
+                    # WU-1 (2026-08-08): pre-warm OS/AV caches for this
+                    # patient's on-disk series files so the viewer's
+                    # switch-time header scan hits warm files (live 53417:
+                    # 40.5 ms/file cold vs 0.9 ms warm -> series 202 took
+                    # ~8.6 s to the viewport). Read-only, budgeted,
+                    # fire-and-forget; the scan/verification is unchanged.
+                    try:
+                        from PacsClient.pacs.patient_tab.utils.series_file_warm import (
+                            warm_study_series_async,
+                        )
+                        warm_study_series_async(
+                            [str(SOURCE_PATH / _uid)
+                             for _uid in (all_study_uids or [study_uid])]
+                        )
+                    except Exception:
+                        _logger.debug("[SERIES_FILE_WARM] kick failed", exc_info=True)
                     # Download attachments in background (non-blocking)
                     if not is_local:
                         try:

@@ -24,7 +24,8 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .ai_chat_config import (
-    CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT, CLR_BUBBLE_USER, CLR_BUBBLE_BOT
+    CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT, CLR_BUBBLE_USER, CLR_BUBBLE_BOT,
+    REPORT_MODALITIES,
 )
 
 PATIENT_SCROLLBAR_QSS = """
@@ -1176,6 +1177,12 @@ class ChatHistory(QWidget):
         self.vbox.setContentsMargins(16, 16, 16, 16)
         self.vbox.setSpacing(0)
 
+        # A widget pinned as the FIRST item of the conversation and preserved across
+        # clear() -- today, the case-metadata card. SEVEN call sites clear this
+        # history; making the history itself responsible means none of them has to
+        # know, and a new render path inherits the behaviour for free.
+        self._lead_widget = None
+
         # Spacer انتهاییِ ثابت (همیشه باید آخرِ لِی‌آوت بماند)
         self._tail_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
         self.vbox.addItem(self._tail_spacer)
@@ -1319,16 +1326,39 @@ class ChatHistory(QWidget):
                 break
         self._stick_to_bottom()
 
+    def set_lead_widget(self, w: QWidget | None):
+        """Pin a widget as the first card of the conversation.
+
+        It scrolls with the messages like any other card, and survives clear() the
+        same way the tail spacer does -- so switching chats re-renders the messages
+        underneath it without rebuilding it.
+        """
+        old = self._lead_widget
+        if old is not None and old is not w:
+            self.vbox.removeWidget(old)
+            old.setParent(None)
+        self._lead_widget = w
+        if w is not None:
+            w.setParent(self.container)
+            self.vbox.insertWidget(0, w, 0, Qt.AlignTop)
+
     def clear(self):
         """
         همه‌ی ویجت‌ها را پاک می‌کنیم ولی Spacer انتهایی را نگه می‌داریم.
         """
+        lead = getattr(self, "_lead_widget", None)
         for i in reversed(range(self.vbox.count())):
             it = self.vbox.itemAt(i)
             w = it.widget() if it else None
             if w is not None:
+                if w is lead:
+                    continue          # pinned: the case-metadata card is not a message
                 self.vbox.removeWidget(w)
                 w.deleteLater()
+        # ...and it must still be FIRST once the messages above it are gone.
+        if lead is not None and self.vbox.indexOf(lead) != 0:
+            self.vbox.removeWidget(lead)
+            self.vbox.insertWidget(0, lead, 0, Qt.AlignTop)
         # مطمئن شو Spacer هست
         if self.vbox.itemAt(self.vbox.count() - 1) is not self._tail_spacer:
             try:
@@ -1449,6 +1479,10 @@ class UnifiedComposer(QWidget):
     assistClicked = Signal(str)
     searchClicked = Signal(str)
     transcribeRequested = Signal(dict)
+    #: Recording has begun. The page uses this to warm the reception cache
+    #: while the physician talks — the one stretch of a session where the
+    #: network is idle and nobody is waiting on us.
+    recordingStarted = Signal()
     cancelClicked = Signal()
     standardizeClicked = Signal(str)
     modalitySelected = Signal(str) 
@@ -1495,7 +1529,7 @@ class UnifiedComposer(QWidget):
         self._mic_mode = "record"  # "record" | "confirm"
         # متغیر برای نگهداری مودالیتی انتخاب شده
         self._selected_modality = None
-        self._modality_options = ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]
+        self._modality_options = list(REPORT_MODALITIES)   # ONE list — ai_chat_config
         self._transcribe_quality_mode = "clear" 
         # --- chip audio player (for voice chips) ---
         self._chip_player = QMediaPlayer(self)
@@ -4860,6 +4894,12 @@ class UnifiedComposer(QWidget):
             self.cancelClicked.emit()
     # ---------- recording ----------
     def _start_record(self):
+        # Emitted FIRST and fully swallowed: warming a cache must never be able to
+        # stop a recording from starting.
+        try:
+            self.recordingStarted.emit()
+        except Exception:
+            pass
         self._rec_running = True
         self._rec_paused = False  # ✅ reset pause
         self._rec_frames = []

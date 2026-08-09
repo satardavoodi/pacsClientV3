@@ -2,6 +2,7 @@
 # Auto-generated from home_ui.py — Phase 3 split
 
 import logging as _logging
+import os as _os
 import threading
 import time
 import traceback
@@ -17,6 +18,75 @@ from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.db_manager import get_study_by_study_uid
 from modules.network.socket_client import PatientListSocketClient
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
+
+
+# ── IMP-2 (2026-08-05): header-only DICOM reads during import registration ──
+# save_complete_study_info() runs on the GUI thread right after an import's
+# copy job finishes, and used to `dcmread(file)` EVERY imported file IN FULL
+# (pixel data included) just to extract six header tags for the instances
+# table. Measured live 2026-08-05 (MRI GA T, 384 files / 66 MB): a 10.6 s
+# MAIN_THREAD_STALL 20:37:04→20:37:14 whose F11 samples sat in pydicom's
+# `fp = open(fp, 'rb')` for ~8 consecutive seconds. All six tags live in the
+# header groups (0008,0018 / 0020,0013 / 0028,0010 / 0028,0011 / 0028,1050 /
+# 0028,1051), so `stop_before_pixels=True` + `specific_tags` yields the SAME
+# values while reading a few KB per file instead of the whole file.
+# Kill switch: AIPACS_IMPORT_HEADER_ONLY_READS=0 restores the legacy full
+# read byte-for-byte.
+_IMPORT_INSTANCE_TAGS = [
+    "SOPInstanceUID", "InstanceNumber", "Rows", "Columns",
+    "WindowWidth", "WindowCenter",
+]
+
+
+def _import_header_only_reads_enabled() -> bool:
+    return str(_os.environ.get("AIPACS_IMPORT_HEADER_ONLY_READS", "1")).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _read_instance_record_for_import(dcm_file, idx):
+    """Read ONE imported file's instance row (no ``series_fk`` — caller adds it).
+
+    Extraction semantics are identical to the legacy inline code: same
+    defaults (``unknown_{idx}`` / ``idx + 1`` / 512×512), same WW/WC
+    multi-value handling. Only the amount of file read changes with the flag.
+    Raises on unreadable files — the caller's per-file try/except keeps the
+    legacy skip-and-continue behaviour.
+    """
+    from pydicom import dcmread
+
+    if _import_header_only_reads_enabled():
+        dcm = dcmread(str(dcm_file), stop_before_pixels=True,
+                      specific_tags=list(_IMPORT_INSTANCE_TAGS))
+    else:
+        dcm = dcmread(str(dcm_file))  # legacy full read (kill switch)
+
+    sop_uid = getattr(dcm, 'SOPInstanceUID', f'unknown_{idx}')
+    instance_number = getattr(dcm, 'InstanceNumber', idx + 1)
+    rows = getattr(dcm, 'Rows', 512)
+    columns = getattr(dcm, 'Columns', 512)
+
+    window_width = None
+    window_center = None
+    try:
+        ww = getattr(dcm, 'WindowWidth', None)
+        wc = getattr(dcm, 'WindowCenter', None)
+        if ww is not None and wc is not None:
+            window_width = float(ww[0]) if hasattr(ww, '__iter__') and not isinstance(ww, str) else float(ww)
+            window_center = float(wc[0]) if hasattr(wc, '__iter__') and not isinstance(wc, str) else float(wc)
+    except (ValueError, TypeError, IndexError):
+        pass
+
+    return {
+        'sop_uid': str(sop_uid),
+        'instance_path': str(dcm_file),
+        'instance_number': instance_number,
+        'rows': rows,
+        'columns': columns,
+        'window_width': window_width,
+        'window_center': window_center,
+    }
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # GetStudyInfo probe regression guard (download-start delay, ZETA §14)
@@ -561,38 +631,13 @@ class _HPStudySaveMixin:
                             instances_to_save = []
                             for idx, dcm_file in enumerate(dicom_files):
                                 try:
-                                    from pydicom import dcmread
-                                    dcm = dcmread(str(dcm_file))
-                                    
-                                    # Extract instance information
-                                    sop_uid = getattr(dcm, 'SOPInstanceUID', f'unknown_{idx}')
-                                    instance_number = getattr(dcm, 'InstanceNumber', idx + 1)
-                                    rows = getattr(dcm, 'Rows', 512)
-                                    columns = getattr(dcm, 'Columns', 512)
-                                    
-                                    # Extract window/level from DICOM tags
-                                    window_width = None
-                                    window_center = None
-                                    try:
-                                        ww = getattr(dcm, 'WindowWidth', None)
-                                        wc = getattr(dcm, 'WindowCenter', None)
-                                        if ww is not None and wc is not None:
-                                            window_width = float(ww[0]) if hasattr(ww, '__iter__') and not isinstance(ww, str) else float(ww)
-                                            window_center = float(wc[0]) if hasattr(wc, '__iter__') and not isinstance(wc, str) else float(wc)
-                                    except (ValueError, TypeError, IndexError):
-                                        pass
-                                    
-                                    instances_to_save.append({
-                                        'sop_uid': str(sop_uid),
-                                        'series_fk': series_pk,
-                                        'instance_path': str(dcm_file),
-                                        'instance_number': instance_number,
-                                        'rows': rows,
-                                        'columns': columns,
-                                        'window_width': window_width,
-                                        'window_center': window_center
-                                    })
-                                    
+                                    # IMP-2: header-only read (flag-gated) —
+                                    # extraction semantics unchanged, see
+                                    # _read_instance_record_for_import().
+                                    record = _read_instance_record_for_import(dcm_file, idx)
+                                    record['series_fk'] = series_pk
+                                    instances_to_save.append(record)
+
                                 except Exception as dcm_err:
                                     print(f"[SAVE_INSTANCES] ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
                                     continue

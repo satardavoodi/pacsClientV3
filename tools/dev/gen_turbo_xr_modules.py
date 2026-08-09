@@ -1,0 +1,187 @@
+# -*- coding: utf-8 -*-
+"""Build the RADIOGRAPHY region modules.
+
+Unlike CT and MRI, this is mostly AUTHORED rather than extracted: the RADIOLOGY branch
+of the shared prompt carries about twenty normal-findings lines in total, across four
+study-family blocks, with no per-region reference. The content lives in
+`turbo_xr_authored.py` and is flagged for review there.
+
+What this script still does with the shared prompt is CHECK against it: every line of
+the four extracted blocks must be represented somewhere in the built library, so that
+nothing a radiologist wrote for this project is silently dropped on the way in.
+
+X-ray packages carry a sixth section, `projection`, which CT and MRI do not have.
+
+Run:  .venv\\Scripts\\python.exe tools\\dev\\gen_turbo_xr_modules.py
+"""
+import io, os, re, sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, HERE)
+
+from modules.EchoMind.session_metadata import REGION_KEYS
+from modules.EchoMind.viewer_chat.openai_reporter import build_report_system_prompt
+from turbo_xr_authored import (XR_HEADINGS, XR_NORMAL, XR_NOTES, XR_PATHOLOGY,
+                               XR_PROJECTION, XR_TERMS)
+from turbo_xr_subtypes import XR_SUBTYPES
+
+TITLES = {
+    "chest": "Chest", "abdomen": "Abdomen", "knee": "Knee", "shoulder": "Shoulder",
+    "hip": "Hip", "pelvis": "Pelvis", "elbow": "Elbow", "wrist_hand": "Wrist and hand",
+    "ankle_foot": "Ankle and foot", "extremity": "Extremity", "spine": "Spine",
+    "spine_cervical": "Cervical spine", "spine_thoracic": "Thoracic spine",
+    "spine_lumbar": "Lumbar spine", "brain": "Skull",
+    "paranasal_sinuses": "Paranasal sinuses",
+    "dental_maxillofacial": "Maxillofacial and dental", "head_neck": "Neck",
+    "bone_density": "Bone densitometry",
+}
+
+# ── cross-check against what the shared prompt does contain ──────────────────
+PROMPT = build_report_system_prompt("RADIOLOGY", "")
+extracted = []
+_in = False
+for ln in PROMPT.splitlines():
+    s = ln.strip()
+    if "RSNA NORMAL FINDINGS" in s or "NORMAL FINDINGS —" in s:
+        _in = True
+        continue
+    if _in and s.startswith("– "):
+        extracted.append(re.sub(r"\s+", " ", s[2:]).strip())
+if len(extracted) < 12:
+    raise SystemExit("only %d extracted lines found — the RADIOLOGY blocks moved"
+                     % len(extracted))
+
+built = {}
+for key in TITLES:
+    if key not in REGION_KEYS:
+        raise SystemExit("%r is not a canonical region key — add it to REGION_KEYS "
+                         "first (docs/echomind/06-extending.md §6.2)" % key)
+    built[key] = {
+        "title": TITLES[key],
+        "headings": XR_HEADINGS.get(key, ""),
+        "projection": XR_PROJECTION.get(key, []),
+        "pathology": XR_PATHOLOGY.get(key, []),
+        "normal": XR_NORMAL.get(key, []),
+        "terms": list(XR_TERMS),
+        "notes": XR_NOTES.get(key, []),
+    }
+
+#: The extracted lines are short and generic; each is checked by a distinctive phrase
+#: rather than verbatim, because the authored reference states the same thing at more
+#: length. A miss here means a line a radiologist wrote has no counterpart.
+COVER = {
+    "Clear lung fields": "chest", "cardiac silhouette": "chest",
+    "Pulmonary vessels": "chest", "pleural effusion": "chest",
+    "Bony thorax": "chest", "bowel gas pattern": "abdomen",
+    "abnormal calcifications": "abdomen", "free intraperitoneal air": "abdomen",
+    "alignment and mineralization": "extremity", "Joint spaces preserved": "extremity",
+    "swelling or masses": "extremity", "vertebral alignment": "spine",
+    "compression fracture": "spine", "T-score and Z-score": "bone_density",
+    "focal skeletal abnormalities": "bone_density",
+    "trabecular and cortical pattern": "bone_density",
+}
+gaps = []
+for phrase, key in COVER.items():
+    blob = " ".join(built[key]["normal"] + built[key]["pathology"]).lower()
+    probe = phrase.lower().replace("mineralization", "mineralisation")
+    head = probe.split()[0]
+    if head not in blob:
+        gaps.append("%s -> %s" % (phrase, key))
+if gaps:
+    print("⚠ extracted content with no counterpart in the built library:")
+    for g in gaps:
+        print("   ", g)
+
+print("%d X-ray region modules built" % len(built))
+for k, m in built.items():
+    print("  %-22s %-24s head=%-3s proj=%d path=%2d normal=%2d notes=%d"
+          % (k, m["title"], "yes" if m["headings"] else "NO", len(m["projection"]),
+             len(m["pathology"]), len(m["normal"]), len(m["notes"])))
+thin = {k: len(m["normal"]) for k, m in built.items() if len(m["normal"]) < 8}
+print("\nnormal references under 8 lines:", thin or "none")
+print("extracted lines cross-checked:", len(extracted))
+
+
+out = io.StringIO()
+w = out.write
+w('''"""Radiography (X-ray) region modules for the Turbo prompt template.
+
+GENERATED by `tools/dev/gen_turbo_xr_modules.py`. Do not hand-edit: re-run it.
+
+Mostly AUTHORED, unlike CT and MRI. The RADIOLOGY branch of the shared prompt carries
+about twenty normal-findings lines in total across four study-family blocks and has no
+per-region reference, so the content comes from `tools/dev/turbo_xr_authored.py` and is
+⚠️ NOT YET CLINICALLY REVIEWED. The generator cross-checks that every extracted line
+still has a counterpart here.
+
+    headings    the organ order for this region, one line
+    projection  what the performed view can and cannot assess    ← X-ray only
+    pathology   the descriptors worth preserving and the systems that apply here
+    normal      the normal-findings reference, one line per structure
+    terms       radiography dictation terms
+    notes       region-specific traps
+
+WHY `projection` EXISTS. CT and MRI acquire a volume; a radiograph acquires one view,
+and a view cannot assess what it does not show. Heart size is not readable on a supine
+film, free air is not excluded by a supine abdomen, the patellofemoral joint is not
+assessable on AP and lateral knee views, and an AP shoulder cannot tell an anterior
+from a posterior dislocation. Those are the errors this section exists to prevent.
+
+NOT COVERED: interventional and vascular fluoroscopy — 35 of this centre's 93
+fluoroscopy service codes. Bone age and barium studies are SUBTYPES, not regions: a
+bone age is a study type performed on the left hand and a barium swallow is one
+performed on the neck and chest.
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List
+
+XR_MODULES: Dict[str, dict] = {
+''')
+for r, m in built.items():
+    w("    %r: {\n" % r)
+    w("        'title': %r,\n" % m["title"])
+    w("        'headings': %r,\n" % m["headings"])
+    for sec in ("projection", "pathology", "normal"):
+        w("        %r: [\n" % sec)
+        for line in m[sec]:
+            w("            %r,\n" % line)
+        w("        ],\n")
+    w("        'terms': %r,\n" % m["terms"])
+    w("        'notes': %r,\n" % m["notes"])
+    w("    },\n")
+w("}\n\n\n")
+w("#: Study types. Radiography has more of them than any other modality: a\n")
+w("#: hysterosalpingogram, a barium enema and a colon transit study are all\n")
+w("#: abdominopelvic and share nothing else.\n")
+w("XR_SUBTYPE_PACKAGES: Dict[str, dict] = {\n")
+for s, m in XR_SUBTYPES.items():
+    w("    %r: {\n" % s)
+    w("        'title': %r,\n" % m["title"])
+    for sec in ("technique", "must_report", "pathology"):
+        w("        %r: [\n" % sec)
+        for line in m.get(sec, []):
+            w("            %r,\n" % line)
+        w("        ],\n")
+    w("    },\n")
+w("}\n")
+
+print("X-ray study types:", len(XR_SUBTYPES))
+
+dst = os.path.join(ROOT, "modules", "EchoMind", "viewer_chat", "turbo_xr_modules.py")
+io.open(dst, "w", encoding="utf-8", newline="\n").write(out.getvalue())
+print("\nwrote %s  %d bytes" % (dst, os.path.getsize(dst)))
+
+import importlib
+mod = importlib.import_module("modules.EchoMind.viewer_chat.turbo_xr_modules")
+importlib.reload(mod)
+assert len(mod.XR_MODULES) == len(built), "round trip lost a module"
+assert len(mod.XR_SUBTYPE_PACKAGES) == len(XR_SUBTYPES), "round trip lost a subtype"
+for k, m in built.items():
+    for sec in ("projection", "pathology", "normal"):
+        assert mod.XR_MODULES[k][sec] == m[sec], "round trip changed %s.%s" % (k, sec)
+print("import verified:", len(mod.XR_MODULES), "modules")

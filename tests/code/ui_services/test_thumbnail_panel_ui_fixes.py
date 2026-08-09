@@ -69,12 +69,27 @@ def test_progress_bar_is_child_of_card_and_raised_above_glass():
     assert 'AIPACS_THUMB_BAR_ABOVE_GLASS' in src
     # created as a child of the card widget (same parent as glass_overlay) when above
     assert "QProgressBar(widget if _bar_above else None)" in src
-    # absolute bottom-strip geometry + click-through
-    assert "dl_bar.setGeometry(8, 215 - 11, 190 - 16, 4)" in src
+    # absolute bottom-strip geometry + click-through.
+    # UX-1 (2026-08-09): the geometry is no longer the hard-coded
+    # `setGeometry(8, 215 - 11, 190 - 16, 4)` this used to pin — that literal
+    # silently assumed a 215 px tall card and drifted in any other layout. It is
+    # now derived from the card's LIVE size via _card_strip_rect() and re-applied
+    # on show/resize, which is the property actually worth pinning. The exact
+    # placement + z-order are covered behaviourally (on real widgets) in
+    # test_thumbnail_active_state_and_strip.py — a source pin cannot see a
+    # stacking bug, which is precisely how the "bar hidden behind the thumbnail"
+    # regression survived this file.
+    assert "_card_strip_rect(widget)" in src
+    assert "dl_bar.setGeometry(_sx, _sy, _sw, _sh)" in src
     assert "dl_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)" in src
     # raised above the glass at creation AND re-raised whenever the glass shows
     assert "_bar.raise_()" in src
     assert "def _raise_dl_bar_above_glass" in src
+    # ...and re-raised AFTER the border is added to the layout (the re-parent
+    # that used to bury the strip under the opaque card content).
+    add_border = src.find("main_layout.addWidget(progress_border)")
+    assert add_border != -1
+    assert "apply_card_strip_layout(widget)" in src[add_border:add_border + 1200]
     # the % text stays a child of glass_overlay (already on top) — unchanged
     assert "progress_overlay = QLabel(glass_overlay)" in src
 

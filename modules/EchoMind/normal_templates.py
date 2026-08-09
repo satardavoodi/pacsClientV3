@@ -70,10 +70,18 @@ from typing import Any, Dict, List, Optional, Tuple
 # Filters have to line up with it or "show me my MRI templates" quietly misses
 # the ones the physician labelled "mri" or "M.R.I".
 CANONICAL_MODALITIES: Tuple[str, ...] = (
-    "CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY",
+    # 2026-08-08: OBSTETRIC ULTRASOUND joined the UI modality list on 2026-08-06
+    # but was never added here, so an OB normal template could not be filed at all.
+    "CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND", "RADIOLOGY", "MAMOGRAPHY",
 )
 
 _MODALITY_ALIASES: Dict[str, str] = {
+    "obstetric ultrasound": "OBSTETRIC ULTRASOUND",
+    "obstetric us": "OBSTETRIC ULTRASOUND",
+    "ob ultrasound": "OBSTETRIC ULTRASOUND",
+    "ob us": "OBSTETRIC ULTRASOUND",
+    "obstetrics": "OBSTETRIC ULTRASOUND",
+    "obstetric": "OBSTETRIC ULTRASOUND",
     "ct": "CT", "cat": "CT", "computed tomography": "CT", "ct scan": "CT",
     "cta": "CT", "ctv": "CT", "hrct": "CT", "cbct": "CT",
     "mr": "MRI", "mri": "MRI", "m.r.i": "MRI", "magnetic resonance": "MRI",

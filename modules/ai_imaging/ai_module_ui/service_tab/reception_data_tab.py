@@ -357,6 +357,26 @@ class ReceptionDataTab(QWidget):
             # Direct object response
             self.current_data = patient_data
 
+        # 2026-08-08: cache the reception SERVICES the moment they arrive.
+        # They are the strongest input EchoMind's region gating has — what the patient
+        # was actually booked for — and until now they lived only in this widget and
+        # vanished with it. Same place, and the same swallow-and-continue contract, as
+        # the report snapshot below.
+        try:
+            _services = (self.current_data or {}).get("services") or []
+            if _services:
+                from PacsClient import utils as U
+                _pids = self._collect_possible_patient_ids_for_ai_report() or []
+                if _pids:
+                    U.ai_save_reception_services(
+                        _pids[0], _services,
+                        study_uid=((self.current_data or {}).get("studyUID")
+                                   or (self.current_data or {}).get("study_uid")),
+                    )
+        except Exception:
+            # Non-fatal: rendering the reception panel must not depend on the cache.
+            pass
+
         # Persist server-origin report HTML snapshot immediately when data is
         # received, so local DB storage does not depend on opening the editor.
         try:

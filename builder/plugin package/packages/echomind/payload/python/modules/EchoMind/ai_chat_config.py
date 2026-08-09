@@ -57,6 +57,52 @@ URL_SEARCH           = resolve_search_endpoint()   # → ASSIST_BASE (same as As
 
 
 # =============================
+# Report modalities (the ONE list)
+# =============================
+# The modality the physician picks routes `build_report_system_prompt` to a
+# modality branch, so these strings are load-bearing: a value with no matching
+# branch falls through to the GENERIC prompt and the study silently loses its
+# modality-specific reporting rules.
+#
+# This list used to be duplicated in ai_chat_pages.py and ai_chat_widgets.py.
+# One copy now; both import it.
+#
+# Every value here MUST lower-case to a string the dispatch in
+# `build_report_system_prompt` accepts, or the study silently falls through to
+# the GENERIC prompt. A test asserts exactly that for every entry.
+# "OBSTETRIC ULTRASOUND" (2026-08-06): lower-cases to "obstetric ultrasound",
+# which routes to the DEDICATED obstetric branch — its own ISUOG JSON schema,
+# trimester detection, biometry, anatomy survey and Doppler rules. That branch
+# already existed but no offered value reached it, so obstetric studies were
+# being reported through the SONOGRAPHY prompt. Verified before enabling:
+#   * `_VALIDATED_MODALITIES` carries the obstetric aliases (temperature clamp
+#     + output validation apply);
+#   * `_validate_report_json` has an obstetric required/optional key set;
+#   * the report renderer keeps ALL keys (the 2026-08-01 whitelist->blacklist
+#     fix was made because the whitelist deleted exactly these sections).
+REPORT_MODALITIES = ["CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND",
+                     "RADIOLOGY", "MAMOGRAPHY"]
+
+
+# =============================
+# Turbo — FIXED company configuration (NOT user-configurable)
+# =============================
+# Turbo is a company-controlled workflow: fixed provider, fixed endpoint,
+# local prompts, authorized centers only (the hardcoded CENTERS registry in
+# api_manager.py), company-selected model. The end user must NOT be able to
+# change any of it:
+#   * nothing in Settings ▸ EchoMind may reach Turbo — the `llm_backend`
+#     switch selects the SEND backend only (AI-PACS vs the user's OpenAI);
+#   * the Turbo handler must not read get_llm_backend()/get_openai_settings();
+#   * the model comes from `openai_reporter.PRIMARY_REPORT_MODEL`, the
+#     endpoint from GAPGPT_API_URL below, the prompt from
+#     `build_report_system_prompt` — all in-code, none of them settings.
+# `tests/code/echomind/test_turbo_is_locked.py` asserts every clause above.
+TURBO_BACKEND = "company"            # always GapGPT; never the user's OpenAI
+TURBO_USER_CONFIGURABLE = False      # invariant — do not add a Turbo setting
+
+
+# =============================
 # GapGPT LLM connection
 # =============================
 # These are shared transport-level settings used by EchoMind/llm_client.py.

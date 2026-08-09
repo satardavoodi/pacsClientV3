@@ -3661,6 +3661,12 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             return
             
         first_file = first_group[0][0]
+        # 2026-08-08: prefer a real IMAGE instance. The scanned reception sheet imports
+        # as a DOC series in the same study with no PatientSex/PatientAge; when it won
+        # this pick the patient row was created blank and never revisited, which is how
+        # 2131 of 2191 studies here ended up with no sex. Falls back to the original
+        # file when the study has no image series, so nothing else changes.
+        first_file = utils.pick_representative_instance(first_group, first_file)
         patient_pk_local = utils.get_or_create_patient(first_file)
 
         study_path = base_path

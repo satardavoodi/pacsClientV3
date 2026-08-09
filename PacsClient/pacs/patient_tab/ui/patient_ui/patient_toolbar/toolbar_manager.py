@@ -1799,7 +1799,13 @@ class ToolbarManager:
                 return None
 
             selected_widget._mpr_grid_position = grid_position
-            selected_widget.setVisible(False)
+            # Host stays VISIBLE until the viewer exists — hiding it here would empty
+            # its grid cell for the whole StandardMPRViewer construction below, and a
+            # sibling viewport would expand to fill the space and snap back. Same
+            # defect and same fix as toggle_zeta_mpr; see the note there.
+            _defer_host_hide = os.environ.get("AIPACS_MPR_STABLE_VIEWPORT_SWAP", "1") != "0"
+            if not _defer_host_hide:
+                selected_widget.setVisible(False)
             # 3-viewport startup layout (dominant axial + smaller coronal/sagittal, NO VRT):
             # use StandardMPRViewer's existing subset mode (layout_views) — the same mechanism
             # the MIP/MinIP/Thick-Slab dropdown uses, which proves the viewer runs correctly
@@ -1818,8 +1824,30 @@ class ToolbarManager:
                     self._apply_dental_curve_layout(host)
                 except Exception as _layout_err:
                     print(f"[CURVED MPR] Dental layout tweak skipped: {_layout_err}")
+            # Atomic swap: hide the original and insert the host in one
+            # repaint-suppressed step so no frame is painted with the cell empty.
             row, col, row_span, col_span = grid_position
-            parent_layout.addWidget(host, row, col, row_span, col_span)
+            _swap_host = parent_widget if _defer_host_hide else None
+            if _swap_host is not None:
+                try:
+                    _swap_host.setUpdatesEnabled(False)
+                except Exception:
+                    _swap_host = None
+            try:
+                if _defer_host_hide:
+                    selected_widget.setVisible(False)
+                parent_layout.addWidget(host, row, col, row_span, col_span)
+                if _swap_host is not None:
+                    try:
+                        parent_layout.activate()
+                    except Exception:
+                        pass
+            finally:
+                if _swap_host is not None:
+                    try:
+                        _swap_host.setUpdatesEnabled(True)
+                    except Exception:
+                        pass
 
             selected_widget._curved_mpr_widget = host
             selected_widget._original_visible = True
@@ -5509,10 +5537,33 @@ class ToolbarManager:
 
             if grid_position:
                 selected_widget._mpr_grid_position = grid_position
-            
-            # Hide the original widget
-            selected_widget.setVisible(False)
-            
+
+            # ── LAYOUT STABILITY DURING THE MPR BUILD (2026-08-01) ───────────────
+            # This used to hide the host viewport HERE — before the volume load, the
+            # off-thread X-flip and the multi-second StandardMPRViewer construction,
+            # and ~150 lines before `zeta_widget` is finally added to the grid.
+            #
+            # A QGridLayout gives a hidden widget ZERO space (there is no
+            # setRetainSizeWhenHidden here), so for that whole window the host cell
+            # was empty AND its sibling was the only visible item in the grid — with
+            # two viewports open, the non-MPR one expanded to nearly the full screen
+            # and snapped back when the MPR widget landed. Exactly the reported
+            # "the other viewport takes over the screen while MPR loads".
+            #
+            # (This is NOT the same thing as the MPR's own internal 2x2 grid, which
+            # was measured and does not move — see
+            # docs/reports/MPR_DEFERRED_3D_LAYOUT_STABILITY_2026-08-01.md.)
+            #
+            # The hide now happens in ONE atomic, repaint-suppressed swap together
+            # with the insert, further down. Until then the host keeps its cell and
+            # keeps showing its current image, so no sibling ever gains space.
+            _defer_host_hide = (
+                os.environ.get("AIPACS_MPR_STABLE_VIEWPORT_SWAP", "1") != "0"
+            )
+            if not _defer_host_hide:
+                # Legacy: hide immediately (the layout WILL jump while loading).
+                selected_widget.setVisible(False)
+
             # ✅ "zeta mpr" folder renamed to "zeta_mpr" — normal import works now
             print("Creating Zeta MPR viewer...", file=sys.stderr, flush=True)
             
@@ -5655,16 +5706,49 @@ class ToolbarManager:
                 except Exception:
                     pass
 
-                # Add to layout at the same position
-                if parent_layout and grid_position:
-                    from PySide6.QtWidgets import QGridLayout
-                    if isinstance(parent_layout, QGridLayout):
-                        row, col, rowSpan, colSpan = grid_position
-                        parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
-                        logger.info(f"Zeta MPR added to grid at position ({row}, {col})")
-                elif parent_layout:
-                    parent_layout.addWidget(zeta_widget)
-                
+                # ── ATOMIC VIEWPORT SWAP (2026-08-01) ────────────────────────────
+                # The host cell has stayed visible and occupied for the whole build
+                # (see the note where the legacy hide used to be). Hide the original
+                # and insert the MPR in ONE repaint-suppressed step so no frame is
+                # ever painted with the cell empty — otherwise the sibling viewport
+                # would flash to full size for exactly one layout pass.
+                #
+                # `activate()` (not `updateGeometry()`) computes the new geometry
+                # WHILE painting is still disabled: `updateGeometry()` only POSTS a
+                # layout request, so the re-enabled repaint can land before the
+                # layout runs. Same bracket as the thumbnail sidebar fix.
+                _swap_host = parent_widget if _defer_host_hide else None
+                if _swap_host is not None:
+                    try:
+                        _swap_host.setUpdatesEnabled(False)
+                    except Exception:
+                        _swap_host = None
+                try:
+                    if _defer_host_hide:
+                        selected_widget.setVisible(False)
+
+                    # Add to layout at the same position
+                    if parent_layout and grid_position:
+                        from PySide6.QtWidgets import QGridLayout
+                        if isinstance(parent_layout, QGridLayout):
+                            row, col, rowSpan, colSpan = grid_position
+                            parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
+                            logger.info(f"Zeta MPR added to grid at position ({row}, {col})")
+                    elif parent_layout:
+                        parent_layout.addWidget(zeta_widget)
+
+                    if _swap_host is not None and parent_layout is not None:
+                        try:
+                            parent_layout.activate()
+                        except Exception:
+                            pass
+                finally:
+                    if _swap_host is not None:
+                        try:
+                            _swap_host.setUpdatesEnabled(True)
+                        except Exception:
+                            pass
+
                 # Store reference
                 selected_widget._zeta_mpr_widget = zeta_widget
                 selected_widget._original_visible = True
@@ -5864,9 +5948,15 @@ class ToolbarManager:
 
             if grid_position:
                 selected_widget._mpr_grid_position = grid_position
-            
-            selected_widget.setVisible(False)
-            
+
+            # Host stays VISIBLE until the viewer exists — see the note in
+            # toggle_zeta_mpr. Hiding here empties the cell for the whole
+            # StandardMPRViewer + CurveMPR construction below, and a sibling
+            # viewport expands into the gap and snaps back.
+            _defer_host_hide = os.environ.get("AIPACS_MPR_STABLE_VIEWPORT_SWAP", "1") != "0"
+            if not _defer_host_hide:
+                selected_widget.setVisible(False)
+
             from modules.mpr.zeta_mpr import StandardMPRViewer
             from modules.mpr.zeta_mpr.CurveMPR import CurveMPRWidget, CurveMPRInteractorStyle
             
@@ -5955,14 +6045,36 @@ class ToolbarManager:
                 # Keep a reference to prevent garbage collection
                 curve_widget._interactor_helper = interactor_style
             
-            if parent_layout and grid_position:
-                from PySide6.QtWidgets import QGridLayout
-                if isinstance(parent_layout, QGridLayout):
-                    row, col, rowSpan, colSpan = grid_position
-                    parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
-            elif parent_layout:
-                parent_layout.addWidget(zeta_widget)
-            
+            # Atomic swap (see toggle_zeta_mpr): hide + insert in one
+            # repaint-suppressed step so no frame shows the cell empty.
+            _swap_host = parent_widget if _defer_host_hide else None
+            if _swap_host is not None:
+                try:
+                    _swap_host.setUpdatesEnabled(False)
+                except Exception:
+                    _swap_host = None
+            try:
+                if _defer_host_hide:
+                    selected_widget.setVisible(False)
+                if parent_layout and grid_position:
+                    from PySide6.QtWidgets import QGridLayout
+                    if isinstance(parent_layout, QGridLayout):
+                        row, col, rowSpan, colSpan = grid_position
+                        parent_layout.addWidget(zeta_widget, row, col, rowSpan, colSpan)
+                elif parent_layout:
+                    parent_layout.addWidget(zeta_widget)
+                if _swap_host is not None and parent_layout is not None:
+                    try:
+                        parent_layout.activate()
+                    except Exception:
+                        pass
+            finally:
+                if _swap_host is not None:
+                    try:
+                        _swap_host.setUpdatesEnabled(True)
+                    except Exception:
+                        pass
+
             selected_widget._curve_mpr_widget = zeta_widget
             selected_widget._original_visible = True
             zeta_widget._original_widget = selected_widget

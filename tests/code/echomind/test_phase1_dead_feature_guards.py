@@ -220,11 +220,34 @@ def test_reception_sql_only_reads_columns_that_exist():
 
 
 def test_updated_at_specifically_is_not_written_to_this_table():
-    # comments stripped: this module documents the defect by name, and a guard
-    # must never trip on its own explanation of what it guards.
-    assert "updated_at" not in _strip_comments(_read(*_RECEPTION_SRC)), (
-        "ai_reception_reports has no updated_at column; writing it raises "
-        "OperationalError on every call"
+    """`ai_reception_reports` has no `updated_at` column; writing it raises
+    OperationalError on every call.
+
+    Scoped to the functions that actually touch that TABLE, not to the whole module
+    (2026-08-08). The module now also holds the reception SERVICES cache, whose own
+    table legitimately declares `updated_at` — a file-wide string scan would fail on
+    a correct column in a different table and teach the next person to delete the
+    guard rather than fix a bug. Comments are stripped because this module documents
+    the defect by name, and a guard must never trip on its own explanation.
+    """
+    src = _strip_comments(_read(*_RECEPTION_SRC))
+    tree = ast.parse(src)
+    lines = src.split("\n")
+    examined = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = "\n".join(lines[node.lineno - 1:node.end_lineno])
+        if "ai_reception_reports" not in body:
+            continue
+        examined.append(node.name)
+        assert "updated_at" not in body, (
+            f"{node.name}() touches ai_reception_reports and mentions updated_at; "
+            "that column does not exist and every call would raise OperationalError"
+        )
+    assert examined, (
+        "no function in ai_reception_db references ai_reception_reports any more — "
+        "this guard has gone vacuous, re-point it at whatever replaced it"
     )
 
 

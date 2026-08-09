@@ -1,6 +1,12 @@
 # EchoMind Reporting Prompts — Architecture & Physician-Content Preservation (as-built)
 
-**Last updated:** 2026-07-09
+**Last updated:** 2026-07-09 · **partly superseded 2026-08-09**
+
+> Read [`docs/echomind/README.md`](../echomind/README.md) first. This document is still
+> correct about the per-modality prompt bodies, the preservation rule and the validator.
+> Its claim that the prompt is selected **by modality only** no longer holds for Turbo on
+> CT, where a region gate selects the region-specific content - see
+> [`docs/echomind/02-prompt-architecture.md`](../echomind/02-prompt-architecture.md).
 **Owner module:** `modules/EchoMind/viewer_chat/`
 **Purpose of this doc:** single reference so future developers/agents never have to re-discover
 where the report prompts live, which prompt serves each modality, how a prompt flows through the

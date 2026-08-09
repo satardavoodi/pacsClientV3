@@ -299,6 +299,54 @@ def convert_itk2vtk(itk_image: sitk.Image):
 # Was 93 lines duplicating convert_itk2vtk() with no callers in the codebase.
 
 
+#: Series that describe the VISIT rather than the patient. The scanned reception
+#: sheet is imported as a DOC series into the same study and carries no PatientSex,
+#: no PatientAge and no BodyPartExamined.
+_NON_IMAGE_MODALITIES = frozenset({"DOC", "SR", "PR", "KO", "SEG", "RTSTRUCT", "PDF"})
+
+
+def pick_representative_instance(size_groups, fallback):
+    """The instance a study's patient and study rows should be built from.
+
+    WHY THIS EXISTS. Demographics are read ONCE per import, from whichever file the
+    caller happened to pick first. When a study carries a scanned reception sheet that
+    sheet arrives as a `DOC` series with no PatientSex and no PatientAge, and if it wins
+    the pick the patient row is created blank — permanently, because nothing reads the
+    study a second time. Measured 2026-08-08 on this installation: 2131 of 2191 studies
+    have no patient sex, and 866 of them have a DOC series, while every CT slice in them
+    carries the value.
+
+    Returns the first file of the first readable group whose Modality is not a known
+    non-image type, and `fallback` when nothing qualifies — so a study made ENTIRELY of
+    documents, or one whose headers cannot be read at all, behaves exactly as it does
+    today. Only series we are SURE are unusable get skipped; an instance that simply
+    omits Modality stays eligible, because absence of a tag is not evidence.
+    """
+    try:
+        for group in (size_groups or []):
+            if not group:
+                continue
+            first = group[0]
+            try:
+                # Modality + SOPClassUID. dcmread(force=True) never raises on a
+                # corrupt file — it returns an EMPTY dataset — so "did it throw" is
+                # not a readability test. An instance with neither tag is not a DICOM
+                # we can learn anything from.
+                ds = _safe_dcmread(first, stop_before_pixels=True,
+                                   specific_tags=[0x00080060, 0x00080016])
+                if not len(ds):
+                    continue
+                modality = str(getattr(ds, "Modality", "") or "").strip().upper()
+            except Exception:
+                continue
+            if modality in _NON_IMAGE_MODALITIES:
+                continue
+            return first
+    except Exception:
+        pass
+    return fallback
+
+
 def get_or_create_patient(file):
     meta_dicom = _safe_dcmread(file, stop_before_pixels=True)
     patient_id = str(meta_dicom.get("PatientID", "N/A"))

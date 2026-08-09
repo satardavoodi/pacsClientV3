@@ -84,8 +84,8 @@ def test_the_two_builtin_servers_resolve_to_their_addresses():
 
 def test_builtin_servers_are_labelled_by_name_only():
     labels = dict(vt.STT_PROVIDER_CHOICES)
-    assert labels["aipacs_1"] == "AI-PACS Server 1"
-    assert labels["aipacs_2"] == "AI-PACS Server 2"
+    assert labels["aipacs_1"] == "Company Server 1"
+    assert labels["aipacs_2"] == "Company Server 2"
     # The raw addresses must never leak into the UI label.
     for label in labels.values():
         assert "81.16" not in label and "80.210" not in label
@@ -221,7 +221,7 @@ def test_sttrouter_route_stays_three_way(cfg):
         assert ss.get_secretary_stt_route() == expected
 
 
-# ── AI-PACS Server 3 — OpenAI-compatible Whisper (GapGPT) ────────────────────
+# ── Company Server 3 — OpenAI-compatible Whisper (GapGPT) ────────────────────
 @pytest.fixture()
 def captured_openai(monkeypatch):
     """Capture a Server-3 style POST (files is a DICT with a single 'file')."""
@@ -243,7 +243,7 @@ def captured_openai(monkeypatch):
 
 def test_server3_is_a_named_choice_no_address_shown():
     labels = dict(vt.STT_PROVIDER_CHOICES)
-    assert labels["aipacs_3"] == "AI-PACS Server 3"
+    assert labels["aipacs_3"] == "Company Server 3"
     # the GapGPT host / key must never appear in a UI label
     for label in labels.values():
         assert "gapgpt" not in label.lower() and "sk-" not in label

@@ -102,6 +102,11 @@ def _build_reporter():
         "Dict": dict,
         "Any": object,
         "requests": types.SimpleNamespace(post=_fake_post),
+        # 2026-08-02: the ten GapGPT sites now go through the ONE transport
+        # authority (echomind_http.post) and the ONE URL constant — the
+        # whitelist must provide both or the exec'd reporter NameErrors.
+        "echomind_http": types.SimpleNamespace(post=_fake_post),
+        "GAPGPT_API_URL": "https://api.gapgpt.app/v1/chat/completions",
         "_to_str": lambda x: "" if x is None else str(x),
         "_get_requests_proxies": lambda: {},
         # OPT-33 (2026-07-13): reporter() now passes timeout=_request_timeout() to
@@ -127,6 +132,10 @@ def _build_reporter():
             "pregnancy ultrasound", "fetal ultrasound",
             "radiology",
         },
+        # 2026-08-02: reporter() default model is now PRIMARY_REPORT_MODEL
+        # (gpt-5.6-terra). It is a signature default evaluated at exec time, so
+        # the whitelist namespace must provide it.
+        "PRIMARY_REPORT_MODEL": "gpt-5.6-terra",
         "Manage": _FakeMgr,
     }
     exec(compile(_extract_reporter_source(), _REPORTER_PY, "exec"), g)
@@ -288,6 +297,8 @@ def _build_company_correction():
     g = {
         "__name__": "corr_under_test",
         "requests": types.SimpleNamespace(post=_post),
+        "echomind_http": types.SimpleNamespace(post=_post),  # 2026-08-02: transport authority
+        "GAPGPT_API_URL": "https://api.gapgpt.app/v1/chat/completions",
         "_to_str": lambda x: "" if x is None else str(x),
         "_get_requests_proxies": lambda: {},
         "_log_usage_safe": lambda *a, **k: None,
@@ -296,6 +307,7 @@ def _build_company_correction():
         "Optional": typing.Optional,
         "Dict": dict,
         "Any": object,
+        "PRIMARY_REPORT_MODEL": "gpt-5.6-terra",
     }
     exec(compile(src, _REPORTER_PY, "exec"), g)
     return g["correction"], cap
@@ -307,7 +319,7 @@ def test_correction_is_deterministic_and_structured():
     correction, cap = _build_company_correction()
     correction(user_report='{"Report Title":"MRI Lumbar"}', correction_note="change L4-L5 to L5-S1")
     p = cap["payload"]
-    assert p["model"] == "gpt-5.4", f"correction should default to a strong model, got {p['model']!r}"
+    assert p["model"] == "gpt-5.6-terra", f"correction should default to the primary model, got {p['model']!r}"
     assert p.get("temperature") == 0, "correction must pin temperature to 0 (surgical patch, not rewrite)"
     uc = p["messages"][1]["content"]
     assert "===== ORIGINAL_REPORT" in uc and "===== CORRECTION_NOTE" in uc, "payload blocks not delimited"

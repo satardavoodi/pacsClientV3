@@ -1,4 +1,4 @@
-﻿"""database.core â€” backward-compatible re-export shim.
+"""database.core â€” backward-compatible re-export shim.
 
 All public symbols are imported from the six domain modules.
 No behaviour changes; import paths that use ``database.core`` or
@@ -120,6 +120,9 @@ from database.ai_reception_db import (  # noqa: F401
     ai_update_reception_report_status,
     ai_delete_reception_report,
     ai_get_pending_reception_reports_count,
+    ai_save_reception_services,
+    ai_get_reception_services,
+    ai_get_reception_services_updated_at,
 )
 
 # â”€â”€ Download progress tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

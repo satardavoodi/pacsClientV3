@@ -141,6 +141,26 @@ def ai_ensure_schema():
             except Exception:
                 pass
 
+        # 2026-08-06 — audit columns. `ai_reports` was written by NOBODY
+        # (the export chain was broken), so every generated report survived
+        # only as an HTML bubble. With the chain fixed, these record WHO
+        # produced a report, with WHICH model, for WHICH modality, and — for
+        # a correction — WHICH report it corrected. That last one is what makes
+        # correction history analysable.
+        for _col, _decl in (
+            ("physician_id", "TEXT"),
+            ("model", "TEXT"),
+            ("modality", "TEXT"),
+            ("corrects_msg_id", "INTEGER"),
+        ):
+            try:
+                cur.execute(f"SELECT {_col} FROM ai_reports LIMIT 1")
+            except Exception:
+                try:
+                    cur.execute(f"ALTER TABLE ai_reports ADD COLUMN {_col} {_decl}")
+                except Exception:
+                    pass
+
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_sid ON ai_reports(sid, created_at, id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_msg_id ON ai_reports(msg_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_reports_study ON ai_reports(study_uid, created_at, id)")
@@ -527,6 +547,10 @@ def ai_insert_report(
     label: str | None = None,
     kind: str = "report",
     ts: int | None = None,
+    physician_id: str | None = None,
+    model: str | None = None,
+    modality: str | None = None,
+    corrects_msg_id: int | None = None,
 ) -> int | None:
     """
     Persist a report payload (raw EN JSON-like string) for a session.
@@ -557,13 +581,32 @@ def ai_insert_report(
             except Exception:
                 pass
 
-        cur.execute(
-            """
-            INSERT INTO ai_reports(sid, msg_id, study_uid, kind, label, raw_en, created_at)
-            VALUES(?,?,?,?,?,?,?)
-            """,
-            (sid, int(msg_id) if msg_id is not None else None, study_uid, kind, label, raw_en, created),
-        )
+        _base = (sid, int(msg_id) if msg_id is not None else None, study_uid,
+                 kind, label, raw_en, created)
+        _audit = (physician_id, model, modality,
+                  int(corrects_msg_id) if corrects_msg_id is not None else None)
+        try:
+            # 2026-08-07 - audit columns (physician / model / modality / the report
+            # a correction corrects). Tried first; an install whose ALTER did not
+            # land falls back to the original seven, so a missing column costs the
+            # metadata and never the report itself.
+            cur.execute(
+                """
+                INSERT INTO ai_reports(sid, msg_id, study_uid, kind, label, raw_en,
+                                       created_at, physician_id, model, modality,
+                                       corrects_msg_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                _base + _audit,
+            )
+        except Exception:
+            cur.execute(
+                """
+                INSERT INTO ai_reports(sid, msg_id, study_uid, kind, label, raw_en, created_at)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                _base,
+            )
         rid = int(cur.lastrowid)
         try:
             conn.execute("UPDATE ai_sessions SET updated_at=? WHERE sid=?", (int(time.time()), sid))

@@ -1,9 +1,76 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.8 (2026-08-04)
-**Previous Stable:** v3.5.7 (2026-08-02)
-**Release Date:** 2026-08-04
+**Current Stable Version:** v3.5.9 (2026-08-10)
+**Previous Stable:** v3.5.8 (2026-08-04)
+**Release Date:** 2026-08-10
 **Branch:** beta-version
+
+---
+
+## v3.5.9 (2026-08-10) - Minor release: EchoMind Turbo reporting overhaul, per-chat case metadata, cold-load warm-up, download cancel/retry
+
+### Summary
+
+This release is dominated by a deep **EchoMind reporting overhaul**. Turbo report
+generation is rebuilt around a **study-aware, region-gated prompt system** —
+per-region/-modality prompt modules for CT, MRI, ultrasound, X-ray, and mammography
+so the model receives only the reporting rules relevant to the study, plus a
+**per-chat case-metadata panel** (detected patient/study details with provenance,
+fed by a reception prefetch during dictation). Reporting is also made safer and more
+correct: a source-fidelity contract, a normal-findings register, a report-persistence
+audit chain, and correct handling of completely-normal studies. Around that: series
+header-scan cold-load warm-up, MPR deferred-3D layout stability, and download-manager
+cancel/retry hardening.
+
+### Included — EchoMind Turbo reporting
+
+- **Study-aware, region-gated Turbo prompts.** Turbo now assembles the report prompt
+  from a shared template plus only the modules relevant to the study's region and
+  modality — `turbo_template`, `turbo_modules`, and per-modality libraries
+  (`turbo_regions`/`turbo_regions_extra`, `turbo_mri_modules`, `turbo_us_modules`,
+  `turbo_xr_modules`, `turbo_mammo_modules`, `turbo_region_modules`). A CT chest study
+  no longer carries the reporting rules for brain, spine, or mammography. Turbo stays
+  pinned to the company pipeline (a locked configuration the end user can't change).
+- **Per-chat case-metadata panel.** Each report chat opens with a structured case
+  card showing the detected patient/study fields (sex, age, service, modality, body
+  part, study description, region) with provenance — read from the displayed study's
+  own DICOM where the local DB is sparse, and pre-fetched from the reception server
+  while the physician dictates so it's ready by report time. `session_metadata`,
+  `metadata_panel`, `reception_prefetch`.
+- **Reporting correctness + safety.** A source-fidelity contract (the model may not
+  invent findings, change anatomy/laterality, or firm up a hedge); a normal-findings
+  register with per-organ depth and contrast-aware phrasing; report organization by
+  anatomical section; a normal study is now reportable (an empty Pathological-Findings
+  field is coerced, not rejected); and a report-persistence chain that finally writes
+  `ai_reports` rows with attribution.
+
+### Included — viewer / performance
+
+- **Series header-scan cold-load warm-up.** Opening a cold, large study re-read DICOM
+  headers on the hot path; a new `series_file_warm` pre-warms them so patient open and
+  the first interactions are faster on a cold cache.
+- **MPR deferred-3D layout stability.** The MPR host viewport stays visible until its
+  replacement exists, so starting MPR with two viewports open no longer lets the other
+  viewport expand and snap back while the reconstruction loads.
+
+### Included — download manager
+
+- **Safer cancel + retry-keeps-files.** Cancel escalation is more robust, and a retry
+  no longer discards already-finished files. `_dm_retry`, `download_process_worker`.
+
+### Included — housekeeping
+
+- Docs reorganized: handoff prompts moved to `docs/handoff/`, deploy records and crash
+  reports to `docs/reports/` and `crash-diagnostics/`; a new `docs/echomind/`
+  architecture set. Reception services are cached locally.
+
+### Notes
+
+- The Turbo/reporting changes are extensively guard-tested offscreen but the clinical
+  wording still needs a radiologist's eyes on a live source build; the case-metadata
+  panel and cold-load warm-up need live verification too.
+- Machine-local `config/echomind_settings.json` preferences (a dev backend/STT
+  selection) were intentionally NOT shipped — the config keeps its sensible defaults.
 
 ---
 

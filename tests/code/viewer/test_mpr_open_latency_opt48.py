@@ -92,7 +92,12 @@ def test_placeholder_is_clickable_when_on_demand():
     assert "on_demand" in ph
     assert "click to render" in ph
     assert "mousePressEvent" in ph
-    assert "_self._build_deferred_3d_view()" in ph
+    # SUPERSEDED 2026-08-01: the click used to call the builder INLINE. It now
+    # schedules it with QTimer.singleShot(0, ...) so the "Rendering 3D…" state
+    # actually paints before the (multi-second, GUI-thread-blocking) VTK build.
+    # The invariant this test exists for — clicking the placeholder triggers the
+    # deferred 3D build — is unchanged; only the dispatch mechanism moved.
+    assert "QTimer.singleShot(0, _self._build_deferred_3d_view)" in ph
     assert "PointingHandCursor" in ph
     # legacy text preserved for the auto-build path
     assert "Rendering 3D…" in ph

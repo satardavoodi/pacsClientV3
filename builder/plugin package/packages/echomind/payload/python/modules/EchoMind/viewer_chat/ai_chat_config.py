@@ -20,6 +20,11 @@ from modules.EchoMind.ai_chat_config import (          # noqa: F401
     URL_EXPORT_ALL,
     URL_GEN_ASSISTANT,
     URL_SEARCH,
+    # Report modalities (single source of truth)
+    REPORT_MODALITIES,
+    # Turbo — fixed, non-user-configurable
+    TURBO_BACKEND,
+    TURBO_USER_CONFIGURABLE,
     # GapGPT transport settings
     GAPGPT_API_URL,
     GAPGPT_DEFAULT_MODEL,

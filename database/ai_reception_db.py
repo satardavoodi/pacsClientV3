@@ -313,3 +313,120 @@ def ai_get_pending_reception_reports_count(patient_id: str | None = None) -> int
         count = row[0] if row else 0
         _logger.debug("ai_get_pending_reception_reports_count: count=%d", count)
         return count
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Reception SERVICES cache (2026-08-08)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The reception panel's "Services (N)" is the only place in AI-PACS that knows what the
+# patient was actually BOOKED for, which makes it the strongest single input for
+# EchoMind's region gating: DICOM states laterality in only 18% of studies, and a body
+# part alone cannot tell "CT chest" from "CT angiography of the chest".
+#
+# Until now it arrived from the reception API, lived in ReceptionDataTab.current_data,
+# and vanished with the widget. This caches the payload verbatim, keyed by patient id,
+# so another module can read it later without a second network call — the same
+# store-it-when-it-arrives pattern as the server report snapshot above.
+#
+# Stored as JSON rather than normalised into columns ON PURPOSE: the reception payload
+# is not ours, its shape can change without notice, and a schema that guessed at its
+# fields would start losing data the first time it did.
+
+_SERVICES_DDL = """
+CREATE TABLE IF NOT EXISTS ai_reception_services(
+    patient_id    TEXT PRIMARY KEY,
+    services_json TEXT NOT NULL,
+    study_uid     TEXT,
+    updated_at    INTEGER NOT NULL
+)
+"""
+
+
+def ai_save_reception_services(patient_id, services, study_uid=None) -> int:
+    """Cache the reception service list for a patient. Last write wins.
+
+    Returns how many services were stored; 0 when there was nothing to store.
+    """
+    import json
+    import time
+
+    pid = str(patient_id or "").strip()
+    if not pid:
+        return 0
+    items = [s for s in (services or []) if isinstance(s, dict)]
+    if not items:
+        return 0
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_SERVICES_DDL)
+        cur.execute(
+            """
+            INSERT INTO ai_reception_services(patient_id, services_json, study_uid, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(patient_id) DO UPDATE SET
+                services_json = excluded.services_json,
+                study_uid     = excluded.study_uid,
+                updated_at    = excluded.updated_at
+            """,
+            (pid, json.dumps(items, ensure_ascii=False),
+             (str(study_uid).strip() if study_uid else None), int(time.time())),
+        )
+        conn.commit()
+    logger.debug("ai_save_reception_services: patient=%s services=%d", pid, len(items))
+    return len(items)
+
+
+def ai_get_reception_services(patient_id) -> list:
+    """The cached reception services for a patient; [] when nothing was cached.
+
+    Never raises: a consumer asking "what was this patient booked for?" must be able to
+    accept "we do not know" as an answer.
+    """
+    import json
+
+    pid = str(patient_id or "").strip()
+    if not pid:
+        return []
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(_SERVICES_DDL)
+            row = cur.execute(
+                "SELECT services_json FROM ai_reception_services WHERE patient_id = ?",
+                (pid,),
+            ).fetchone()
+    except Exception as exc:
+        logger.debug("ai_get_reception_services failed for %s: %s", pid, exc)
+        return []
+    if not row:
+        return []
+    try:
+        data = json.loads(row[0])
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def ai_get_reception_services_updated_at(patient_id):
+    """Unix time this patient's services were last cached, or None.
+
+    Lets a caller decide "fresh enough" for itself instead of refetching on every
+    dictation — a physician who re-records four times in a minute should cost the
+    reception server one request, not four.
+    """
+    pid = str(patient_id or "").strip()
+    if not pid:
+        return None
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(_SERVICES_DDL)
+            row = cur.execute(
+                "SELECT updated_at FROM ai_reception_services WHERE patient_id = ?",
+                (pid,),
+            ).fetchone()
+    except Exception as exc:
+        logger.debug("ai_get_reception_services_updated_at failed for %s: %s", pid, exc)
+        return None
+    return int(row[0]) if row and row[0] is not None else None

@@ -53,6 +53,24 @@ class _PWSeriesMixin:
         except Exception:
             pass
 
+        # UX-2 (2026-08-09): this entry point IS "a series is going into a
+        # viewport" — drag-drop, thumbnail click and keyboard all route through
+        # here — so it is the authoritative place to move the ACTIVE marker.
+        # Driving it from here (not only from the drag-button signal) means the
+        # active state can never be left behind on a stale card: whatever lands
+        # in the viewport is what shows the active border + red line, even when
+        # the series was already viewed once and carries the green mark.
+        # Gated on flag_change_selected_widget so internal reloads that
+        # explicitly do NOT change the selection keep their behaviour.
+        # Isolated: a marker failure must never block the series switch.
+        try:
+            if flag_change_selected_widget:
+                _tm = getattr(self, 'thumbnail_manager', None)
+                if _tm is not None and hasattr(_tm, 'set_active_series'):
+                    _tm.set_active_series(series_index)
+        except Exception:
+            pass
+
         # ✅ OPTIMIZATION: موقع drag & drop، اولویت interactive را افزایش دهید
         try:
             if hasattr(self, 'viewer_controller') and hasattr(self.viewer_controller, 'zeta_boost'):

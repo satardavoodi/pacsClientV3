@@ -178,6 +178,27 @@ def _http_status_in(text: str) -> "int | None":
     return None
 
 
+def _unwrap_own_wrapper(detail: str) -> str:
+    """Peel this function's OWN formatting back off its input.
+
+    Seen in production: "\u274c The AI request failed.\\n\\nDetail: \u274c The AI request
+    failed.\\n\\nDetail: Required key missing or empty: 'Pathological Findings'" — a caller
+    handed an already-classified message back in as the raw error, so the wrapper was
+    applied twice. This is the text a physician reads at the moment something has gone
+    wrong; it should say the thing once.
+    """
+    s = (detail or "").strip()
+    for _ in range(4):                      # bounded: never loop on odd input
+        m = re.match(r"^\u274c[^\n]*?\n+\s*Detail:\s*(.+)$", s, re.S)
+        if not m:
+            break
+        nxt = m.group(1).strip()
+        if not nxt or nxt == s:
+            break
+        s = nxt
+    return s
+
+
 def classify_echomind_error(raw: str) -> "tuple[str, str]":
     """``(kind, user_text)`` for an EchoMind failure. Pure — no Qt, no network.
 
@@ -188,7 +209,7 @@ def classify_echomind_error(raw: str) -> "tuple[str, str]":
     """
     s = "" if raw is None else str(raw)
     low = s.lower()
-    detail = _redact_endpoint_details(s)
+    detail = _unwrap_own_wrapper(_redact_endpoint_details(s))
 
     # 1) No credential at all — raised before any request leaves the machine.
     if any(k in low for k in _NO_KEY_MARKERS):

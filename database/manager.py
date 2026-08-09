@@ -699,6 +699,25 @@ def ai_update_message(msg_id: int, new_html: str):
     return _db_ai.ai_update_message(msg_id, new_html)
 
 
+# --- reports (2026-08-06: these passthroughs were MISSING, so
+# `getattr(U, "ai_insert_report", None)` in EchoMind resolved to None and
+# every report was silently never persisted) ---
+def ai_insert_report(sid, msg_id, raw_en, **kw):
+    return _db_ai.ai_insert_report(sid, msg_id, raw_en, **kw)
+
+
+def ai_fetch_reports_for_session(sid, **kw):
+    return _db_ai.ai_fetch_reports_for_session(sid, **kw)
+
+
+def ai_fetch_reports_map_for_session(sid, **kw):
+    return _db_ai.ai_fetch_reports_map_for_session(sid, **kw)
+
+
+def ai_fetch_reports_for_study(study_uid, **kw):
+    return _db_ai.ai_fetch_reports_for_study(study_uid, **kw)
+
+
 def ai_fetch_messages_full(sid: str):
     return _db_ai.ai_fetch_messages_full(sid)
 

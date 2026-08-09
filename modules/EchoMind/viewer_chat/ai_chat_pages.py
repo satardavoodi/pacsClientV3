@@ -53,11 +53,11 @@ from PySide6.QtWidgets import (
 from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain_text_from_html, style_popup, themed_message_box, themed_input_text
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
-from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET
+from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET,REPORT_MODALITIES,TURBO_BACKEND
 from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
 from modules.EchoMind.secretary.stt.router import SttRouter
-from modules.EchoMind.settings_store import get_llm_backend, get_openai_model_for_feature, get_openai_settings
+from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backend, get_openai_model_for_feature, get_openai_settings
 
 
 def _resolve_active_ai_identity() -> tuple[str, str | None, str | None]:
@@ -96,6 +96,16 @@ def _log_usage_for_ui(api_key: str | None, usage: dict | None) -> None:
             model_name=model_name,
             tokens_delta=total,
         )
+
+
+#: The two things that can go wrong before a transcript exists, and they are not
+#: the same thing. Kept apart so the message always matches the cause.
+_VOICE_RETRY_LOW_QUALITY = (
+    "Voice quality seems low — automatically retrying in noisy-voice mode..."
+)
+_VOICE_RETRY_SERVER = (
+    "The transcription server did not respond — retrying once..."
+)
 
 
 def _transcribe_with_active_backend(paths: list[str], quality_mode: str = "clear") -> dict:
@@ -1367,6 +1377,7 @@ class OneChatPage(QWidget):
 
         self.composer.sendClicked.connect(self._on_send_clicked)
         self.composer.transcribeRequested.connect(self._transcribe_now)
+        self.composer.recordingStarted.connect(self._prefetch_reception)
         self.composer.standardizeClicked.connect(self._standardize_now)
         self.composer.apply_side_padding(16, 16)
 
@@ -1383,6 +1394,20 @@ class OneChatPage(QWidget):
         right.addWidget(self.history, 1); right.addWidget(self.composer, 0)
         right_wrap = QWidget(); right_wrap.setLayout(right)
         right_wrap.setStyleSheet(f"background:{CLR_BG};")
+
+        # 2026-08-08: per-chat case metadata as the FIRST CARD INSIDE the chat.
+        # NOT a sidebar. Case metadata is conversation context, so it belongs in the
+        # conversation: in the scroll area with the other cards, scrolling with them,
+        # wearing their visual language, and taking no permanent horizontal space
+        # away from the report. ChatHistory pins it at index 0 and keeps it across
+        # clear(), so every re-render path preserves it without knowing it exists.
+        try:
+            from .metadata_panel import CaseMetadataCard
+            self.meta_card = CaseMetadataCard(self.history.container)
+            self.history.set_lead_widget(self.meta_card)
+        except Exception as _mc_exc:
+            self.meta_card = None
+            _log.warning("[EchoMind-meta] metadata card unavailable: %s", _mc_exc)
 
         root = QHBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
         root.addWidget(left_wrap, 0); root.addWidget(right_wrap, 1)
@@ -1438,7 +1463,7 @@ class OneChatPage(QWidget):
     def _open_report_modality_menu(self, text: str):
         """Show dropdown for selecting modality before sending report."""
         menu = QMenu(self)
-        modalities = ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]
+        modalities = list(REPORT_MODALITIES)   # ONE list — ai_chat_config
         for mod in modalities:
             act = QAction(mod, menu)
             act.triggered.connect(
@@ -2000,7 +2025,7 @@ class OneChatPage(QWidget):
             pass
 
         current_mod = getattr(self, "_current_modality", None)
-        for mod in ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]:
+        for mod in REPORT_MODALITIES:   # ONE list — ai_chat_config
             act = QAction(mod, menu)
             act.setCheckable(True)
             if mod == current_mod:
@@ -2653,6 +2678,18 @@ class OneChatPage(QWidget):
         dst = os.path.join(self._ai_chat_dir(), f"{sid}-transcribe.json")
         self._atomic_write_json(dst, data)
 
+        # The prefetch started when recording did, so by now the reception services
+        # are usually cached. Re-seed from the warm cache and re-read the card — one
+        # SQLite round trip on the UI thread, and the only place the physician sees
+        # the Service field fill itself in. Swallowed: a transcript is already saved
+        # above and must not be jeopardised by a metadata refresh.
+        try:
+            if sid and sid != "local":
+                self._seed_session_metadata(sid)
+                self._sync_metadata_card(sid)
+        except Exception as exc:
+            _log.debug("[EchoMind-meta] post-transcribe refresh skipped: %s", exc)
+
 
     def _persist_normal_template(self, tpl_text: str):
         """
@@ -2884,10 +2921,17 @@ class OneChatPage(QWidget):
         worker.start()
 
 
-    def _send_report_correction(self, correction_note: str):
+    def _send_report_correction(self, correction_note: str, *,
+                                system_prompt_prefix: str = "",
+                                force_backend: str = "",
+                                turbo: bool = False):
         """Correction tab: apply user's correction note to a selected report and display corrected report."""
         backend_name = get_active_backend_display_name()
         backend, _center_name, center_key = _resolve_active_ai_identity()
+        if force_backend:
+            # Turbo is pinned to the company pipeline like every other Turbo
+            # action; the llm_backend setting switches Send, not Turbo.
+            backend = force_backend
         if not center_key:
             print("[Correction] blocked: AI backend not configured")
             self.controller.bubble("AI ChatBot", f"❌ {backend_name} is not configured. Access denied.")
@@ -2913,7 +2957,14 @@ class OneChatPage(QWidget):
         print(f"[Correction] sending note_len={len(note)} report_len={len(report_text)}")
         
         # Show user's correction note
-        self.controller.bubble("You (✅ Correction)", note)
+        # 2026-08-06: mark the NEXT persisted report as a correction, so
+        # correction history stays separable from fresh generations. A
+        # correction is the physician saying "not that — this", which is the
+        # highest-signal record we keep.
+        self._pending_report_kind = "correction"
+        self._pending_corrects_msg_id = self._resolve_corrected_msg_id(report_text)
+        self.controller.bubble(
+            "You (⚡Turbo · ✅ Correction)" if turbo else "You (✅ Correction)", note)
         
         def work():
             # Correction is the final targeted-revision step → use the dedicated (stronger)
@@ -2923,7 +2974,11 @@ class OneChatPage(QWidget):
                 user_report=report_text,  # Full JSON report
                 correction_note=note,
                 CENTER_Key=center_key,
-                model=_ai_model("correction", "gpt-5.4", backend),
+                model=_ai_model("correction", company_direct.PRIMARY_REPORT_MODEL, backend),
+                # A PREFIX on the shared correction prompt, never an override: the
+                # response is parsed and the shared prompt carries the key contract
+                # (a mammography report has eleven keys, not five).
+                system_prompt_prefix=system_prompt_prefix,
             )
         
         def ok(res):
@@ -3162,23 +3217,51 @@ class OneChatPage(QWidget):
 
     def _on_hq_all_modality_clicked(self):
         from .api_manager import APIKeyManager
-        # ✅ Check active backend (company OR openai)
-        if not is_active_backend_configured():
-            print("[Turbo] blocked: AI backend not configured")
+        # ── Turbo is PINNED to the company GapGPT pipeline (owner decision 2026-08-02).
+        # A fixed company-controlled workflow: hardcoded connection (GapGPT), hardcoded
+        # prompts (build_report_system_prompt), authorized centers only (the CENTERS
+        # registry in api_manager.py), company-selected model (PRIMARY_REPORT_MODEL).
+        # `llm_backend` is a SEND-backend switch and must NOT reroute Turbo — switching
+        # Send to the user's OpenAI key no longer moves Turbo onto the user's
+        # key/model/endpoint (it used to; that was the scoping leak).
+        backend = TURBO_BACKEND   # fixed company config — never a Settings value
+        manager = APIKeyManager.instance()
+        center_key = manager.get_current_key() or ""
+        if not center_key:
+            stored = (get_echomind_api_key() or "").strip()
+            if stored:
+                try:
+                    ok, _code, _err = manager.validate_key(stored)
+                except Exception:
+                    ok = False
+                if ok:
+                    center_key = stored
+        if not center_key:
+            _log.warning("[Turbo] blocked: no authorized company key")
             self.controller.bubble(
                 "AI ChatBot",
-                "❌ AI backend is not configured. Please set your API key in Settings → EchoMind."
+                "❌ Turbo requires an authorized company key. Please set your API key in "
+                "Settings → EchoMind (Company Authentication)."
             )
             return
 
-        backend, _center_name, center_key = _resolve_active_ai_identity()
-        if not center_key and backend == "company":
-            # Company backend requires a validated key; fall back to manager
-            manager = APIKeyManager.instance()
-            center_key = manager.get_current_key() or ""
-
         if str(getattr(self, "page_mode", "")).lower() not in ("report", "chatgpt"):
-            print("[Turbo] blocked: invalid page_mode")
+            _log.warning("[Turbo] blocked: invalid page_mode page_mode=%s", getattr(self, "page_mode", None))
+            return
+
+        # ── Correction tab: Turbo EDITS the selected report ─────────────────
+        # Observed 2026-08-09: with the Correction tab active, Turbo fell through
+        # to the `else` branch below, took the correction INSTRUCTION as if it were
+        # a dictation and called reporter(). The physician got a brand-new report
+        # generated from his own edit note, and the report he had selected was
+        # never sent at all. Correction is an EDIT, and it needs a different
+        # function, a different model and a different prompt.
+        try:
+            _tab = str(self.composer.get_active_tab() or "").strip().lower()
+        except Exception:
+            _tab = ""
+        if _tab == "correction":
+            self._turbo_correction(backend, center_key)
             return
 
         # متن را مشابه منطق Send انتخاب کن
@@ -3205,7 +3288,7 @@ class OneChatPage(QWidget):
         # Always use the persisted modality — no menu anymore
         modality = getattr(self, "_current_modality", None)
         if not modality:
-            print("[Turbo] blocked: modality not selected")
+            _log.warning("[Turbo] blocked: modality not selected")
             self.controller.bubble("AI ChatBot", "⚠️ <i>Please select a modality first.</i>")
             return
         try:
@@ -3215,17 +3298,70 @@ class OneChatPage(QWidget):
 
         # برای لاگ/تاریخچه
         self.controller.bubble("You (⚡Turbo Mode)", user_msg or "(session-based)")
-        print(
-            f"[Turbo] sending backend={backend} text_len={len((user_msg or '').strip())} modality={modality}"
+        # 2026-08-06: logger, not print — a Turbo run must be greppable in
+        # app.log. `model` is logged too: verifying the last live run meant
+        # inferring it from the token-usage record.
+        _log.info(
+            "[Turbo] sending backend=%s model=%s text_len=%d modality=%s normal_template=%s",
+            backend, company_direct.PRIMARY_REPORT_MODEL,
+            len((user_msg or "").strip()), modality,
+            # 2026-08-07: which REGISTER the report comes back in — definitive normals
+            # vs hedged "no gross abnormality" — depends entirely on whether a template
+            # was attached. Diagnosing the 53516 report meant inferring that from the
+            # output's wording, because the run itself never recorded it.
+            (f"{len(normal_template)}ch" if normal_template else "none"),
         )
 
         def work():
+            # ── Turbo's OWN prompt (owner decision 2026-08-08) ──────────────
+            # reporter() is shared: Turbo always, and Send whenever the backend is
+            # `company` (the default). So the Turbo/Send split has to be made HERE —
+            # this is the only place that knows the request is Turbo. Send calls the
+            # same function without an override and keeps the shared prompt.
+            # Fully swallowed: None means "use the shared builder", so a failure in
+            # the Turbo prompt costs a divergence, never a report.
+            _turbo_sys = None
+            _gate = None
+            try:
+                from .turbo_prompt import build_turbo_system_prompt
+                _gate = self._build_gate_profile(user_msg)
+                _turbo_sys = build_turbo_system_prompt(
+                    modality, normal_template or "",
+                    profile=_gate,
+                )
+            except Exception as _tp_exc:
+                _log.warning("[Turbo] own prompt unavailable, using the shared "
+                             "builder: %s", _tp_exc)
+            # 2026-08-09: `ctx=` is the gate indicator, and `_gate` is now the SAME
+            # object the prompt was built from.
+            #
+            # The previous version of this line called _build_gate_profile() a SECOND
+            # time purely to format the message, so it always printed the regions the
+            # run SHOULD have used -- never the ones it did. Every Turbo run on
+            # 2026-08-09 between 14:41 and 16:46 logged a different, correct-looking
+            # region (['brain'], ['pelvis'], ['abdomen'] ...) next to len=35754 every
+            # single time. 35754 is the UNGATED RADIOLOGY prompt: the gate was dead in
+            # that process, and the log read as perfectly healthy.
+            #
+            # So count the artifact instead of restating the intent. The region-major
+            # renderer emits "# REPORTING CONTEXT" only when the gate actually
+            # narrowed, and never on the ungated path. ctx=0 next to a non-empty
+            # regions= is exactly the failure above.
+            _ctx = _turbo_sys.count("# REPORTING CONTEXT") if _turbo_sys else 0
+            _log.info("[Turbo] prompt source=%s len=%s ctx=%d regions=%s",
+                      "turbo" if _turbo_sys else "shared",
+                      len(_turbo_sys) if _turbo_sys else "-",
+                      _ctx,
+                      (_gate or {}).get("regions") or "none")
+
             return _ai_module(backend).reporter(
                 user_msg=user_msg,
                 modality=modality,
                 normal_template=(normal_template or None),
                 CENTER_Key=center_key,
-                model=_ai_model("report", "gpt-4.1-mini", backend),
+                # pinned: Turbo always runs the company report model
+                model=company_direct.PRIMARY_REPORT_MODEL,
+                system_prompt_override=_turbo_sys,
             )
 
         def ok(res):
@@ -3704,6 +3840,10 @@ class OneChatPage(QWidget):
             sid = f"local-{uuid.uuid4().hex[:8]}"
             U.ai_upsert_session(sid, "New Chat", study_uid=self.study_uid)
             U.ai_set_last_session_for_study(self.study_uid, sid)
+            # 2026-08-08: the third mint site — the first chat auto-created for a
+            # study. All three now seed, so the invariant is "mint a session ->
+            # seed its metadata" with no exceptions to remember.
+            self._seed_session_metadata(sid)
             sessions = [(sid, "New Chat")]
 
         # order pins
@@ -3839,6 +3979,15 @@ class OneChatPage(QWidget):
                 U.ai_set_last_session(local_sid)
         except Exception:
             pass
+
+        # 2026-08-08: seed case metadata HERE too. `_new_session` (the "New chat"
+        # button) already did, but THIS is the path that mints a session during
+        # normal reporting — `report-<epoch>-<hex6>`, the format of every session
+        # in the database. Seeding therefore never ran in the real workflow and
+        # `ai_session_meta` was never even created. Same swallowed, local-only
+        # call: it cannot stop a session from being created.
+        self._seed_session_metadata(local_sid)
+        self._sync_metadata_card(local_sid)
 
         return local_sid
 
@@ -5442,7 +5591,27 @@ class OneChatPage(QWidget):
                 if origin == "report" and (not is_user) and raw_report_for_db:
                     fn = getattr(U, "ai_insert_report", None) or getattr(U, "ai_upsert_report", None)
                     if callable(fn):
-                        fn(sid, int(msg_id), raw_report_for_db, study_uid=getattr(self, "study_uid", None))
+                        # 2026-08-06: this call used to be DEAD — `fn` was always None
+                        # because the export chain was broken, so no report was ever
+                        # persisted. With the chain fixed it fires, and it now records
+                        # who/which-model/which-modality for the audit trail.
+                        from modules.EchoMind import session_metadata as _meta
+                        _kind = getattr(self, "_pending_report_kind", None) or "report"
+                        _corrects = getattr(self, "_pending_corrects_msg_id", None)
+                        try:
+                            self._pending_report_kind = None
+                            self._pending_corrects_msg_id = None
+                        except Exception:
+                            pass
+                        fn(
+                            sid, int(msg_id), raw_report_for_db,
+                            study_uid=getattr(self, "study_uid", None),
+                            kind=_kind,
+                            corrects_msg_id=_corrects,
+                            physician_id=_meta.resolve_physician_id(),
+                            model=getattr(company_direct, "PRIMARY_REPORT_MODEL", None),
+                            modality=getattr(self, "_current_modality", None),
+                        )
             except Exception:
                 pass
             if getattr(self, "study_uid", None):
@@ -5560,10 +5729,170 @@ class OneChatPage(QWidget):
         OneChatPage.last_selected_modality = modality  # ذخیره در سطح کلاس
         self._set_modality_text(modality)
 
+    def _resolve_corrected_msg_id(self, report_text: str):
+        """Which stored report is this correction correcting?
+
+        The Correction dropdown carries the report TEXT and a display label — never a
+        msg_id — so the link has to be recovered by matching that text back to
+        `ai_reports.raw_en`. Whitespace-normalised, because the text round-trips
+        through a widget on the way here.
+
+        Returns None when the match is absent OR ambiguous. An unlinked correction is
+        still a useful record; a WRONGLY linked one corrupts the correction history,
+        which is the one thing this column exists to make analysable.
+        """
+        try:
+            norm = " ".join((report_text or "").split())
+            if not norm:
+                return None
+            fn = getattr(U, "ai_fetch_reports_for_session", None)
+            if not callable(fn):
+                return None
+            rows = fn(getattr(self, "current_session_id", None)) or []
+            hits = {r[1] for r in rows
+                    if r[1] is not None and " ".join((r[3] or "").split()) == norm}
+            return hits.pop() if len(hits) == 1 else None
+        except Exception:
+            return None
+
+    def _build_gate_profile(self, transcript: str = ""):
+        """The study profile the Turbo prompt narrows on, or None to send everything.
+
+        Read straight from the chat's own metadata — the card the physician can see and
+        correct — so what the gate acts on is exactly what he was shown. If he corrected
+        the region, the correction is already in the effective record and wins here.
+
+        Returns None on anything uncertain: no chat, no record, no regions. The prompt
+        builder treats None as "send the full prompt", which is today's behaviour.
+        """
+        try:
+            from modules.EchoMind import session_metadata as _meta
+            sid = getattr(self, "current_session_id", None)
+            if not sid:
+                return None
+            rec = _meta.load(sid) or {}
+            case = rec.get("case") or {}
+            regions = [str(r).strip() for r in (case.get("regions") or []) if str(r).strip()]
+            if not regions:
+                return None
+            # The dictation may NARROW the gate, never widen it (owner decision
+            # 2026-08-09). Widening is already the prompt's job — "If the transcript
+            # describes anatomy outside it, report that finding normally and place it
+            # correctly" — and the transcript arrives through an STT that mangles
+            # Persian. So a narrowing is only accepted when what he named is a
+            # non-empty subset of what was booked and scanned; anything else leaves
+            # the gate alone. Logged either way: a region that silently disappears is
+            # indistinguishable from one that was never detected.
+            if transcript and _meta.region_text_enabled():
+                spoken = [r for r in _meta.detect_regions_from_text(transcript)
+                          if r in regions]
+                if spoken and len(spoken) < len(regions):
+                    _log.info("[Turbo] regions %s -> %s (narrowed by the dictation)",
+                              regions, spoken)
+                    regions = spoken
+            patient = rec.get("patient") or {}
+            study = (rec.get("studies") or [{}])[0]
+            bits = [str(patient.get(k) or "").strip()
+                    for k in ("patient_id", "sex", "age")]
+            return {
+                "regions": regions,
+                "contrast": case.get("contrast") or "",
+                "procedure": case.get("procedure") or "",
+                "subtype": case.get("subtype") or "",
+                # Facts for the template's STUDY CONTEXT slot. Absent keys simply do
+                # not render — the block only shows what is actually known.
+                "patient": " · ".join(b for b in bits if b),
+                "service": (rec.get("reception") or {}).get("service") or "",
+                "protocol": study.get("study_description") or "",
+            }
+        except Exception as exc:
+            _log.debug("[Turbo] gate profile unavailable: %s", exc)
+            return None
+
+    def _turbo_correction(self, backend, center_key) -> None:
+        """Turbo in the Correction tab: edit the SELECTED report, never write a new one.
+
+        Delegates to _send_report_correction, which already owns the report lookup, the
+        two guards, the correction-history bookkeeping and the result rendering. Turbo
+        differs in exactly two ways and passes exactly two arguments: it is pinned to the
+        company backend, and it prepends its editing frame to the shared correction prompt.
+
+        Observed 2026-08-09: with the Correction tab active, Turbo fell through to the
+        report branch, took the correction INSTRUCTION as if it were a dictation and
+        called reporter(). The physician got a brand-new report generated from his own
+        edit note, and the report he had selected was never sent at all.
+        """
+        prefix = ""
+        try:
+            from .turbo_prompt import build_turbo_correction_prefix
+            prefix = build_turbo_correction_prefix() or ""
+        except Exception as exc:                      # pragma: no cover - defensive
+            _log.warning("[Turbo-correction] frame unavailable, shared prompt only: %s",
+                         exc)
+        note = (self.composer.box.toPlainText() or "").strip()
+        _log.info("[Turbo-correction] note_len=%d frame=%s backend=%s",
+                  len(note), "turbo" if prefix else "shared", backend)
+        self._send_report_correction(note, system_prompt_prefix=prefix,
+                                     force_backend=backend, turbo=True)
+
+    def _prefetch_reception(self) -> None:
+        """Warm the reception cache while the physician dictates.
+
+        Recording and transcription are the only part of a session where the network
+        is idle and nobody is waiting on us, so this is where the reception round trip
+        belongs. By the time the report chat is minted the service list is already
+        local, instead of the metadata card reading "not detected" until somebody
+        happens to open the reception tab.
+
+        Returns immediately: the work is on a daemon thread, deduplicated per patient,
+        and skipped entirely when the cache is still fresh. Fully swallowed — this is
+        called while an audio stream is being opened.
+        """
+        try:
+            from modules.EchoMind import reception_prefetch
+            reception_prefetch.prefetch(study_uid=getattr(self, "study_uid", None))
+        except Exception as exc:
+            _log.debug("[EchoMind-prefetch] skipped: %s", exc)
+
+    def _sync_metadata_card(self, sid=None) -> None:
+        """Point the in-conversation metadata card at a chat. Fully swallowed.
+
+        The card is a read-out of storage, never a source of truth, so a failure here
+        must cost the physician a card refresh and nothing else.
+        """
+        try:
+            card = getattr(self, "meta_card", None)
+            if card is not None:
+                card.bind(sid or getattr(self, "current_session_id", None))
+        except Exception as exc:
+            _log.warning("[EchoMind-meta] card sync failed: %s", exc)
+
+    def _seed_session_metadata(self, sid: str) -> None:
+        """Seed this chat's case metadata from local DICOM rows (2026-08-06).
+
+        Foundation layer only — NOTHING reads this into a prompt yet. It gives the
+        chat a persistent, correctable case context (patient, study, modality,
+        regions) that later steps can consume once detection accuracy has been
+        measured on real cases.
+
+        Best-effort and fully swallowed: a metadata failure must never stop a chat
+        from opening. Local SQLite reads only — no network, no LLM, no blocking.
+        """
+        try:
+            from modules.EchoMind import session_metadata as _meta
+            _meta.populate_for_chat(
+                sid,
+                study_uid=getattr(self, "study_uid", None),
+                modality_selected=getattr(self, "_current_modality", None),
+            )
+        except Exception as exc:
+            _log.debug("[EchoMind-meta] seed skipped for %s: %s", sid, exc)
+
     def _new_session(self):
         sid = f"{self.ns}-{uuid.uuid4().hex[:8]}"
         title = "New Chat"
         U.ai_upsert_session(sid, title, study_uid=getattr(self, "study_uid", None))
+        self._seed_session_metadata(sid)
 
         it = QListWidgetItem()
         it.setData(Qt.UserRole, sid)
@@ -5580,6 +5909,7 @@ class OneChatPage(QWidget):
         # 0) set local current sid
         self.current_session_id = sid
         self.controller.switch_session(sid)
+        self._sync_metadata_card(sid)
 
         # 2026-07-31 — see `_new_chat`: attachments queued against the previous
         # session (possibly a different patient) must not follow the user here.
@@ -5887,6 +6217,12 @@ class OneChatPage(QWidget):
         quality_mode : "clear" (default, first attempt) or "noisy" (retry).
         _is_retry    : internal — True only for the auto-fallback resend.
         """
+        # Also warm the reception cache here: an audio file dropped straight into the
+        # composer never passes through _start_record, so it would otherwise miss the
+        # one idle window we have. A duplicate call costs nothing — prefetch() is
+        # deduplicated per patient and gated on cache freshness.
+        self._prefetch_reception()
+
         # --- helper: normalize path from payload (file_path OR paths[0]) ---
         def _extract_file_path(pl: dict) -> t.Optional[str]:
             try:
@@ -5991,26 +6327,49 @@ class OneChatPage(QWidget):
         # -----------------------------
         # One-shot automatic quality fallback
         # -----------------------------
-        def _retry_with_noisy() -> bool:
-            """Auto-resend this exact voice once in "noisy" mode.
+        def _retry_once(reason: str = "quality") -> bool:
+            """Auto-resend this exact voice once, and say WHY.
 
-            Returns True if a retry was scheduled (the caller must then stop
-            and return); False if this attempt was already the noisy retry
-            or the user cancelled — in which case the caller surfaces the
-            normal failure message.
+            ``reason`` is "quality" when the server rejected the audio or returned no
+            speech, and "transport" when the request itself failed — a timeout, a
+            connection error, or an HTTP 5xx.
+
+            These are different events and the physician must not be told his
+            microphone was quiet because the server returned a 500. He will re-record,
+            speak louder and check his input device, and none of it can help. Observed
+            2026-08-09: Server 3 returned HTTP 500 and the chat said "Voice quality
+            seems low", twice.
+
+            The retry only switches to "noisy" when the active provider honours it.
+            Server 3 is an OpenAI-compatible Whisper endpoint that takes no
+            ``quality_mode``, so a noisy resend there is a byte-identical request. It
+            still gets one PLAIN retry after a transport failure, because a 5xx is
+            often transient.
+
+            Returns True if a retry was scheduled (the caller must stop and return).
             """
             if _is_retry or quality_mode != "clear":
                 return False
             if _tr_token["cancelled"]:      # THIS request, not "the newest one"
                 return False
+            try:
+                from modules.EchoMind.voice_transcription import quality_mode_supported
+                noisy_helps = bool(quality_mode_supported())
+            except Exception:               # pragma: no cover - defensive
+                noisy_helps = True
+            if reason == "quality" and not noisy_helps:
+                # Nothing a resend could change: same file, same request, same answer.
+                return False
+            next_mode = "noisy" if (reason == "quality" and noisy_helps) else "clear"
             cleanup_ui()
             self.controller.bubble(
                 "AI ChatBot",
-                "Voice quality seems low — automatically retrying in noisy-voice mode...",
+                _VOICE_RETRY_LOW_QUALITY if next_mode == "noisy" else _VOICE_RETRY_SERVER,
             )
             QTimer.singleShot(
                 400,
-                lambda: self._transcribe_now(payload, quality_mode="noisy", _is_retry=True),
+                lambda: self._transcribe_now(payload, quality_mode=next_mode,
+                                             _is_retry=True),
             )
             return True
 
@@ -6075,7 +6434,7 @@ class OneChatPage(QWidget):
                 # response (accepted=False) — NOT an HTTP error. On the first
                 # ("clear") attempt, auto-resend once in noisy mode before
                 # surfacing the rejection.
-                if _retry_with_noisy():
+                if _retry_once("quality"):
                     return
                 crit = file_report.get("criteria", {})
                 msg = (
@@ -6142,7 +6501,7 @@ class OneChatPage(QWidget):
             else:
                 # No transcript in clear mode — auto-retry once in noisy mode
                 # before telling the user no speech was detected.
-                if _retry_with_noisy():
+                if _retry_once("quality"):
                     return
                 self.controller.bubble(
                     "AI ChatBot",
@@ -6161,9 +6520,11 @@ class OneChatPage(QWidget):
         # Worker Error callback (with one-shot quality fallback)
         # -----------------------------
         def err(e):
-            # A clear-mode network/HTTP failure also gets one automatic
-            # retry in noisy mode before the error is surfaced.
-            if _retry_with_noisy():
+            # A clear-mode network/HTTP failure gets one automatic retry too —
+            # but as a TRANSPORT failure, not a voice-quality one. A 500 is the
+            # server saying it broke; blaming the physician's microphone for it
+            # sends him off to fix something that is not wrong.
+            if _retry_once("transport"):
                 return
             cleanup_ui()
             self.controller.bubble("AI ChatBot", f"❌ Error: {e}")
@@ -7632,12 +7993,23 @@ class ChatGPTPage(OneChatPage):
 
     def _default_model_for_mode(self, mode: str) -> str:
         normalized = str(mode or "chat").strip().lower()
+        # 2026-08-02: BACKEND-GATED. This used to read the OpenAI per-feature models
+        # UNCONDITIONALLY, so the user's OpenAI model choice leaked into the
+        # company/GapGPT pipeline whenever this page ran in company mode. Company
+        # mode now uses the company defaults (matching the company functions' own
+        # per-function defaults); the OpenAI settings apply only on the OpenAI backend.
+        if _ai_backend() != "openai":
+            if normalized in ("report",):
+                return company_direct.PRIMARY_REPORT_MODEL
+            if normalized in ("image", "breast"):
+                return "gpt-4.1"
+            return "gpt-4.1-mini"
         if normalized == "report":
-            return get_openai_model_for_feature("report", "gpt-5.4")
+            return get_openai_model_for_feature("report", company_direct.PRIMARY_REPORT_MODEL)
         if normalized == "image":
             return get_openai_model_for_feature("vision", "gpt-5.4")
         if normalized == "breast":
-            return get_openai_model_for_feature("report", "gpt-5.4")
+            return get_openai_model_for_feature("report", company_direct.PRIMARY_REPORT_MODEL)
         return get_openai_model_for_feature("text", "gpt-5-mini")
 
     def _norm_center_name(self, center: str | None) -> str:
@@ -7883,7 +8255,7 @@ class ChatGPTPage(OneChatPage):
             return
         # Correction is the final targeted-revision step; default to the dedicated (stronger)
         # correction model unless the user explicitly selected a model in ChatGPT mode.
-        model = getattr(self, "_current_model", None) or _ai_model("correction", "gpt-5.4", backend)
+        model = getattr(self, "_current_model", None) or _ai_model("correction", company_direct.PRIMARY_REPORT_MODEL, backend)
 
         def work():
             return _ai_module(backend).correction(

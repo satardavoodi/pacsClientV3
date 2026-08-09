@@ -4,7 +4,7 @@
   "module_id": "consultation",
   "title": "Online Consultation",
   "tier": "optional",
-  "version": "3.5.8",
+  "version": "3.5.9",
   "package_kind": "bundled_unlock",
   "payload_dir": "payload",
   "python_paths": [

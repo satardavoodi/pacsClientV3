@@ -64,10 +64,27 @@ def _feature_prompt(name: str) -> str:
 
 
 def _compose_prompt(base_prompt: str, feature_name: str = "") -> str:
+    """Attach the user's custom prompt AFTER the EchoMind header/workflow, fenced.
+
+    2026-08-02 (owner decision Q3): composition order is
+        SHARED HEADER + WORKFLOW  →  fenced USER layer
+    The user layer is ADDITIVE — it may shape wording but the EchoMind output
+    contract above always wins. It used to be PREPENDED (before the header),
+    which gave user text priority over the parsing contract. An empty user
+    prompt returns the base prompt byte-identical (backend parity preserved).
+    """
     extra = _feature_prompt(feature_name) if feature_name else ""
     if not extra:
         return base_prompt
-    return f"{extra}\n\n{base_prompt}"
+    return (
+        f"{base_prompt}\n\n"
+        "===== USER CUSTOM INSTRUCTIONS (additive) =====\n"
+        "The physician-user added the custom instructions below. Apply them ONLY where\n"
+        "they do not conflict with the EchoMind rules and output contract above — on\n"
+        "any conflict, the rules above win.\n"
+        f"{extra}\n"
+        "===== END USER CUSTOM INSTRUCTIONS ====="
+    )
 
 
 def _resolve_feature_model(feature_name: str, model: str | None = None) -> str:
@@ -355,6 +372,7 @@ def correction(
     CENTER_Key: str = "",
     model: str | None = None,
     target_section: str = "",
+    system_prompt_prefix: str = "",
 ) -> dict[str, Any]:
     # ── 2026-08-01: the SHARED correction authority ──────────────────────────
     # The prompt this used to build hard-coded "EXACTLY these 5 keys", so on
@@ -374,7 +392,10 @@ def correction(
     payload = build_correction_user_content(user_report, correction_note, target_section)
     return _call(
         feature_name="correction",
-        system_prompt=system_prompt,
+        # A PREFIX, never an override: everything the shared correction prompt
+        # says - including the output contract that gets parsed - still follows.
+        system_prompt=((str(system_prompt_prefix).strip() + "\n\n" + system_prompt)
+                       if str(system_prompt_prefix or "").strip() else system_prompt),
         user_content=payload,
         user_msg=correction_note,
         model=model,

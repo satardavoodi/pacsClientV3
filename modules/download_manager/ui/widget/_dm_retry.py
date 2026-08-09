@@ -4,6 +4,7 @@
 
 
 import logging
+import os
 import queue
 import threading
 
@@ -14,6 +15,31 @@ from dataclasses import replace
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# ── DM-R1 (2026-08-05, patient 53346): retries must NOT wipe the series ──────
+# `_bg_series_retry` deleted the whole series folder whenever
+# existing_count >= expected_count, where expected came from the STALE
+# in-memory task. For a LIVE/growing study (acquisition still arriving at the
+# server) the retry fires precisely BECAUSE the server count grew past that
+# stale snapshot — so disk(71) >= stale-expected(71) → rmtree → full
+# re-download with skipped=0. Measured: series 203 of study …87153 was wiped
+# and fully re-transferred 5 consecutive times (~185 MB for one 37 MB series)
+# before the count refreshed; the trigger loop was the viewer's missing-slice
+# poll (request_object → request_critical_series, one per 250 ms). The rmtree
+# also raced the viewer holding the displayed instance open → WinError 32 →
+# partial deletes (dl:11604-11617). Round 6 accidentally proved the fix: the
+# failed wipe left 38 files and the downloader correctly SKIPPED all of them.
+#
+# Every current _on_series_retry caller is a "fetch this series" intent
+# (viewer critical path, FAST-OBJECT slice poll, thumbnail retry) — none is
+# "my files are corrupt, wipe them". So with this flag ON (default), a series
+# retry always takes the incremental-resume path and file-level skip fetches
+# only what is missing; deletion requires the explicit force_clean=True
+# parameter, which no auto path passes. `AIPACS_DM_RETRY_KEEP_FILES=0`
+# restores the legacy wipe behaviour byte-for-byte.
+_DM_RETRY_KEEP_FILES = str(
+    os.environ.get("AIPACS_DM_RETRY_KEEP_FILES", "1")
+).strip().lower() not in ("0", "false", "no", "off")
 
 
 # ── Shared retry-I/O worker (heavy-CT freeze fix, 2026-06-07) ────────────────
@@ -288,7 +314,8 @@ class _DMRetryMixin:
             logger.warning(f"⚠️ [SERIES RETRY] Could not write critical-intent file: {exc}")
             return False
 
-    def _on_series_retry(self, study_uid: str, series_number: str = None, series_uid: str = None) -> None:
+    def _on_series_retry(self, study_uid: str, series_number: str = None, series_uid: str = None,
+                         force_clean: bool = False) -> None:
         """
         Per-series Retry - Retry download for a specific series only.
 
@@ -299,6 +326,11 @@ class _DMRetryMixin:
             study_uid: Study UID
             series_number: Series number to retry
             series_uid: Series UID to retry (optional)
+            force_clean: DM-R1 — delete the series folder before re-download.
+                Default False: every auto/viewer-triggered retry keeps existing
+                files and relies on file-level resume (a growing study's retry
+                must fetch only the tail, never re-transfer the series). Pass
+                True only for an explicit user "wipe and re-download" action.
         """
         logger.info(f"🔄🔄 [SERIES RETRY] Series-specific retry requested")
         logger.info(f"   Study UID: {study_uid[:40] if study_uid else 'None'}")
@@ -546,6 +578,22 @@ class _DMRetryMixin:
                             logger.info(
                                 f"ℹ️ [SERIES RETRY-BG] Keeping {existing_count}/{expected_count} files "
                                 f"for series {_series_key} (incremental resume)"
+                            )
+                        elif _DM_RETRY_KEEP_FILES and not force_clean:
+                            # DM-R1: existing_count >= expected_count is NOT
+                            # proof of corruption — expected_count comes from
+                            # the stale in-memory task, and for a LIVE/growing
+                            # study the retry fired precisely because the
+                            # server count grew past it. Deleting here caused
+                            # 5 consecutive full re-downloads of series 203
+                            # (patient 53346) and a WinError-32 race with the
+                            # viewer holding the displayed file open. Keep the
+                            # files; the downloader's file-level resume skips
+                            # them and fetches only what the server has extra.
+                            logger.info(
+                                f"ℹ️ [SERIES RETRY-BG] Keeping {existing_count} files for series "
+                                f"{_series_key} (DM-R1 no-wipe: auto retry never deletes; "
+                                f"expected={expected_count} may be stale for a growing study)"
                             )
                         else:
                             logger.info(f"🗑️ [SERIES RETRY-BG] Deleting series {_series_key} ({existing_count} files)")

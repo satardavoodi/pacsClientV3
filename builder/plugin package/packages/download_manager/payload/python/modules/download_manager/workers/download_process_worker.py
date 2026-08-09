@@ -55,6 +55,45 @@ _QUEUE_POLL_TIMEOUT_S = 0.02
 _PROGRESS_EMIT_MIN_INTERVAL_S = 0.10  # emit at most 10×/s
 
 
+# ── DM-D1 (2026-08-05, patient 53346): parent-side cancel escalation ─────────
+# `request_cancel()` only sets a multiprocessing.Event that the CHILD checks —
+# a child stuck in spawn/boot never sees it, and the bridge's poll loop kept
+# the pool slot occupied until the child finally came up. Measured: the 87152
+# worker's subprocess took 26.8 s to boot (11:30:25.09 → 11:30:51.85 in
+# download_diagnostics.log) while its study was already PAUSED at 11:30:30.8;
+# the single pool slot stayed held the whole time, so the CRITICAL study the
+# user had just opened waited behind it (the intent chain burned all 90
+# attempts and 'recover' fired at 11:30:49 — an 18.3 s visible stall, ~27 s
+# total to first pixel for a 2.2 s transfer).
+#
+# Fix: when cancellation has been requested and the subprocess has not
+# delivered a terminal message within this many seconds, the bridge
+# terminates the subprocess itself (same TerminateProcess ladder philosophy
+# as DM-H4 `ensure_subprocess_dead`). The exit then flows through the
+# existing dead-process handling → completed(False) → normal pool removal →
+# `on_worker_removed` → `_start_next_pending`, so the slot frees in
+# ~escalation+1 s instead of "whenever the child happens to boot".
+#
+# Files are safe to interrupt: every instance write is atomic
+# (.part + os.replace, DM-H2) and a later resume keeps existing files
+# (DM-R1), so an escalated cancel loses at most in-flight network work.
+# Graceful cancels are untouched — a healthy child acknowledges within
+# milliseconds, far under the threshold.
+#
+# `AIPACS_DM_CANCEL_ESCALATE_S` tunes the grace (seconds); `0` (or any
+# non-positive value) disables escalation = legacy wait-forever behaviour.
+_CANCEL_ESCALATE_DEFAULT_S = 8.0
+
+
+def _cancel_escalate_seconds() -> float:
+    """Grace period between request_cancel() and forced subprocess terminate."""
+    try:
+        return float(os.environ.get("AIPACS_DM_CANCEL_ESCALATE_S",
+                                    str(_CANCEL_ESCALATE_DEFAULT_S)))
+    except (TypeError, ValueError):
+        return _CANCEL_ESCALATE_DEFAULT_S
+
+
 class DownloadProcessWorker(QThread):
     """
     Qt bridge thread for a ``multiprocessing.Process``-based download.
@@ -209,6 +248,12 @@ class DownloadProcessWorker(QThread):
                     if self._process is None:
                         break
 
+                    # DM-D1: a cancel the child never acknowledges (e.g. stuck
+                    # in a 26.8 s spawn) must not hold the pool slot — after
+                    # the grace period the bridge terminates the child itself;
+                    # the dead-process handling below then reaps it normally.
+                    self._maybe_escalate_cancel()
+
                     # Timeout — check whether the process is still alive.
                     if self._process.is_alive():
                         process_dead_since = None
@@ -223,6 +268,21 @@ class DownloadProcessWorker(QThread):
 
                     if not terminal_message_received:
                         exit_code = self._process.exitcode
+                        if getattr(self, "_cancel_escalated", False):
+                            # DM-D1: WE terminated it (cancel escalation) —
+                            # this is a deliberate preemption exit, not a
+                            # crash. completed(False) with the state already
+                            # PAUSED+is_auto_paused lands in the classic
+                            # preemption path of the completion handler; no
+                            # error signal (nothing failed).
+                            logger.info(
+                                "[ProcessWorker] DM-D1 subprocess (pid=%s) reaped after "
+                                "cancel escalation (exitcode=%s) — slot released",
+                                self._process.pid,
+                                exit_code,
+                            )
+                            self.completed.emit(study_uid, False)
+                            break
                         logger.error(
                             "❌ Download process (pid=%s) exited unexpectedly (exitcode=%s)",
                             self._process.pid,
@@ -317,6 +377,62 @@ class DownloadProcessWorker(QThread):
         """Signal the download subprocess to cancel (non-blocking)."""
         self._cancel_event.set()
         logger.info("⏸️ Cancellation requested for %s", self.task.patient_name)
+
+    def _maybe_escalate_cancel(self) -> bool:
+        """DM-D1: terminate a subprocess that ignores request_cancel too long.
+
+        Called from the poll loop's queue-timeout branch. Arms a timer the
+        first time the cancel event is observed set; once the grace period
+        (`AIPACS_DM_CANCEL_ESCALATE_S`, default 8 s, <=0 disables) elapses
+        without a terminal message, terminates the subprocess exactly once.
+        The exit is then reaped by the existing dead-process handling, so the
+        pool slot frees through the normal removal path.
+
+        Returns True on the call that performs the terminate.
+        """
+        if getattr(self, "_cancel_escalated", False):
+            return False
+        threshold_s = getattr(self, "_escalate_after_s", None)
+        if threshold_s is None:
+            threshold_s = _cancel_escalate_seconds()
+            self._escalate_after_s = threshold_s
+        if threshold_s <= 0:
+            return False
+        try:
+            if not self._cancel_event.is_set():
+                return False
+        except Exception:
+            return False
+        proc = getattr(self, "_process", None)
+        if proc is None:
+            return False
+        try:
+            if not proc.is_alive():
+                return False
+        except Exception:
+            return False
+
+        now_s = time.monotonic()
+        first_seen = getattr(self, "_cancel_seen_s", None)
+        if first_seen is None:
+            self._cancel_seen_s = now_s
+            return False
+        if (now_s - first_seen) < threshold_s:
+            return False
+
+        self._cancel_escalated = True
+        logger.warning(
+            "[ProcessWorker] DM-D1 cancel unacknowledged for %.1fs — terminating "
+            "subprocess pid=%s (patient=%s); slot frees via normal removal",
+            now_s - first_seen,
+            getattr(proc, "pid", None),
+            self.task.patient_name,
+        )
+        try:
+            proc.terminate()
+        except Exception as exc:
+            logger.warning("[ProcessWorker] DM-D1 terminate failed: %s", exc)
+        return True
 
     def is_cancelled(self) -> bool:
         """Return True if cancellation has been requested."""

@@ -4,11 +4,10 @@ import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-import requests
-
 from .api_manager import APIKeyManager, Manage
 from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import chat_completion
+from modules.EchoMind.ai_chat_config import GAPGPT_API_URL
 from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings, get_proxy_settings
 
 
@@ -32,6 +31,16 @@ from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings
 # are tunable; `AIPACS_ECHOMIND_HTTP_TIMEOUT=0` restores the legacy no-timeout
 # behaviour (emergencies only — it can hang the AI panel indefinitely).
 _DEFAULT_CONNECT_TIMEOUT_S = 10.0
+
+
+# ── 2026-08-02: the primary model for EchoMind report-processing ─────────────
+# Physician directive: report generation, the Normal Template workflow,
+# correction, standardization and report translation all run on gpt-5.6-terra
+# (newer, stronger at instruction-following, and cheaper than the previous mix
+# of gpt-4.1-mini for reports and gpt-5.4 for correction). One name, one place;
+# AIPACS_ECHOMIND_PRIMARY_MODEL overrides it in the field without a rebuild.
+PRIMARY_REPORT_MODEL = (os.environ.get("AIPACS_ECHOMIND_PRIMARY_MODEL") or "gpt-5.6-terra").strip() or "gpt-5.6-terra"
+
 _DEFAULT_READ_TIMEOUT_S = 180.0
 
 
@@ -255,16 +264,22 @@ def _validate_report_json(raw, modality: str):
     # sends "MAMOGRAPHY" (one "m"); without these aliases a mammography report
     # fell through to the generic 3-key branch below and was never checked for
     # "BI-RADS Category" — the one field the referring clinician acts on.
+    # `_nullable` (2026-08-09): required to be PRESENT, allowed to be EMPTY. See the
+    # block further down for why 'Normal Findings' earns this and why mammography and
+    # obstetric ultrasound deliberately do not.
     if _mod in ("mammography", "mamography", "mammogram", "mamogram"):
         _required = _MAMMOGRAPHY_REQUIRED_KEYS
         _optional: list = []
+        _nullable: tuple = ()
     elif _mod in ("obstetric ultrasound", "ob ultrasound",
                   "pregnancy ultrasound", "fetal ultrasound"):
         _required = _OB_ULTRASOUND_REQUIRED_KEYS
         _optional = ["Anatomy Survey", "Doppler", "Impression", "Recommendations"]
+        _nullable = ()
     else:  # mri, ct, sonography, ultrasound
         _required = ["Report Title", "Pathological Findings", "Normal Findings"]
         _optional = ["Impression", "Recommendations"]
+        _nullable = ("Normal Findings",)
     # Coerce empty / N/A optional fields to null (keep key present)
     for key in _optional:
         val = data.get(key)
@@ -274,9 +289,44 @@ def _validate_report_json(raw, modality: str):
     for key in _optional:
         if key not in data:
             data[key] = None
-    # Validate required keys — raise on missing
+    # 2026-08-08 — A COMPLETELY NORMAL STUDY IS A VALID REPORT.
+    # The physician dictated a normal brain CT; the model correctly returned an empty
+    # 'Pathological Findings' and the check below threw the whole report away, twice.
+    # A present-but-empty field means "nothing abnormal", which is a real and common
+    # result. An ABSENT key still raises — that is the truncated-JSON signal.
+    _EMPTY = ("", "n/a", "none", "-", "null", "nil", "no", "no findings")
+    if "Pathological Findings" in _required and "Pathological Findings" in data:
+        _pf = data.get("Pathological Findings")
+        if _pf is None or (isinstance(_pf, str) and _pf.strip().lower() in _EMPTY):
+            data["Pathological Findings"] = "No pathological findings are identified."
+
+    # 2026-08-09 — THE MIRROR OF THE BLOCK ABOVE, AND THE SAME LESSON.
+    # A physician may legitimately ask for only his own findings. Patient 53673's chest
+    # CT ended «همینایی که گفتم بزن دیگه» — "write only the ones I said". The model
+    # complied, returned an empty 'Normal Findings', and the loop below threw away a
+    # report that was exactly what he had asked for. He lost the dictation with it.
+    #
+    # Deliberately NOT substituting a sentence the way pathology does. "No pathological
+    # findings are identified" is a safe default; there is NO safe default sentence for
+    # normals, because any text here asserts that structures were examined and found
+    # normal when he never said so. None renders as no section at all — ai_chat_pages
+    # skips a None value before it reaches str() — which is the honest outcome.
+    #
+    # Mammography and obstetric ultrasound are excluded on purpose: their required keys
+    # are the ones a referring clinician acts on (BI-RADS Category, Biometry), their
+    # 'Normal Findings' is a dict rather than a string, and no failure has been observed
+    # there. Relaxing them would be a guess.
+    for k in _nullable:
+        if k in data:
+            _v = data.get(k)
+            if _v is None or (isinstance(_v, str) and _v.strip().lower() in _EMPTY):
+                data[k] = None
+
+    # Validate required keys — ABSENT always raises: that is the truncated-JSON signal.
     for k in _required:
-        if not data.get(k):
+        if k not in data:
+            raise ValueError(f"Required key missing or empty: {k!r}")
+        if not data.get(k) and k not in _nullable:
             raise ValueError(f"Required key missing or empty: {k!r}")
     return _json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -320,7 +370,11 @@ def build_report_system_prompt(
 
     Do NOT fork a second copy for a new backend. Add the backend, call this.
     """
-    modality = _to_str(modality)
+    # 2026-08-08: .strip() — the dispatch below is `modality.lower()` against exact
+    # keys and the callers' guards only test emptiness, so ' CT ' is truthy, matches
+    # nothing, and silently lands in the generic fallback. The sampling helper above
+    # already strips; the two disagreed about the same input.
+    modality = _to_str(modality).strip()
     normal_template = _to_str(normal_template)
     if normal_template:
         ##print("NORMAL TEMPLATE IS PRESENTED")
@@ -381,6 +435,20 @@ def build_report_system_prompt(
               the physician did NOT explicitly mention — do NOT auto-complete a normal/"unremarkable" statement for it,
               and NEVER output both male and female organs in the same report.
 
+            • PLACEHOLDER VALUES: when a template sentence expects a specific value (a
+              size, a measurement, a count — e.g. "The uterus measures ___" or a
+              bracketed slot) and the physician dictated that value, INSERT the dictated
+              value into the template's own sentence rather than writing a new sentence.
+              Never invent a value for a placeholder the physician did not provide — if
+              the sentence reads correctly without the value keep it value-free,
+              otherwise omit that sentence.
+
+            • ORGANIZATION: the template's OWN section structure governs 'Normal Findings' —
+              keep its headings, its order and its wording. Do NOT re-group the physician's
+              template to match a different scheme. The REPORT ORGANIZATION rule above still
+              applies to 'Pathological Findings', and to any normal content the template does
+              not cover.
+
             OUTPUT
             • This block governs the CONTENT of the findings sections. It does NOT define the JSON
               key set. Use EXACTLY the keys the MODALITY RULES below specify — a mammography report
@@ -394,8 +462,121 @@ def build_report_system_prompt(
             "TEMPLATE LOGIC (No Normal Template Provided):\n"
             "• No 'normal_template' was provided.\n"
             "• Therefore, construct the 'Report Title' using RSNA-style rules.\n"
-            "• Construct 'Normal Findings' automatically using META-driven RSNA structure.\n"
-            "• Exclude any organ mentioned in Pathological Findings.\n"
+            "• The physician dictates the abnormal findings; you generate the Normal Findings\n"
+            "  for the remaining structures, using the standard RSNA-style normal structure for\n"
+            "  this modality.\n"
+            "• Those generated normal statements are boilerplate for structures the physician did\n"
+            "  NOT mention, and they are bound by SOURCE FIDELITY above: never emit a normal\n"
+            "  statement for a structure or property that the dictated pathology involves,\n"
+            "  overlaps, or calls into question. When a normal statement would touch an abnormal\n"
+            "  area, omit or narrow it, so the report never describes the same thing as both\n"
+            "  normal and abnormal.\n"
+            "• NORMAL FINDINGS CONSTRUCTION — a GENERATION task, not a transcription task.\n"
+            "  'Pathological Findings' formalises what the physician said; 'Normal Findings' is\n"
+            "  the part they did NOT dictate, so you must build it. Work these steps IN ORDER:\n"
+            "    1. Establish the examination — STUDY TYPE, BODY PART / REGION, MODALITY, and\n"
+            "       whether CONTRAST was administered. Take these from the dictation and the\n"
+            "       stated modality; never invent a region or a contrast phase.\n"
+            "    2. Build the COMPLETE normal checklist for that examination: every structure a\n"
+            "       standard RSNA-style report of this study covers, in conventional order.\n"
+            "    3. For EACH structure, write its relevant normal IMAGING FEATURES for this\n"
+            "       modality and contrast state — not a bare verdict that the organ is normal.\n"
+            "    4. SUBTRACT — remove or narrow every statement touching a structure or property\n"
+            "       the Pathological Findings already describe, involve, or call into question.\n"
+            "       The same structure must NEVER appear as both normal and abnormal.\n"
+            "    5. Group what survives under the headings REPORT ORGANIZATION specifies.\n"
+            "  COMPLETENESS IS MEASURED AGAINST THE ANATOMY THE STUDY COVERS, never against a\n"
+            "  word count. A chest+abdomen CT has many structures to account for; a single-digit\n"
+            "  radiograph has three. Each is complete when every structure that examination\n"
+            "  actually assessed is accounted for — so never pad a small study to look thorough,\n"
+            "  and never compress a large one to look concise.\n"
+            "• REPORT FEATURES, NOT VERDICTS. A bare 'The liver is normal.' or 'The bowel is\n"
+            "  normal.' is NOT an acceptable normal statement: it carries no radiological\n"
+            "  information and tells the referring clinician nothing about what was assessed.\n"
+            "  State the relevant normal imaging features of the structure. On CT, for example:\n"
+            "    – Liver — normal size and morphology, normal attenuation, no focal hepatic\n"
+            "      lesion, no intrahepatic biliary ductal dilatation.\n"
+            "    – Bowel — loops normal in caliber, no evidence of obstruction, no focal mass.\n"
+            "  Which features are relevant depends on the organ, the modality and the contrast\n"
+            "  state. Report the ones a radiologist would actually comment on for THIS\n"
+            "  examination, and never assert a feature the study could not demonstrate.\n"
+            "• CONTRAST governs what you may say. With contrast, the normal statements may\n"
+            "  include normal enhancement characteristics. WITHOUT contrast, say nothing about\n"
+            "  enhancement at all — an enhancement statement on a non-contrast study is a\n"
+            "  fabricated observation. If the dictation leaves the contrast state unclear, do\n"
+            "  not guess: phrase the normals in terms the study supports either way.\n"
+            "• RSNA STRUCTURE: lay the generated 'Normal Findings' out the way an RSNA\n"
+            "  structured report for THIS examination is laid out — the standard anatomical\n"
+            "  checklist for the region, ORGAN BY ORGAN, in the conventional reporting order,\n"
+            "  ONE LINE PER ORGAN OR STRUCTURE GROUP. Cover the structures this study actually\n"
+            "  included: no organ outside the examined region, and none that the dictated\n"
+            "  pathology already involves.\n"
+            "• Register: unless the physician indicated the rest of the study is normal, state\n"
+            "  the generated normal findings in a QUALIFIED register rather than as definitive\n"
+            "  normals — 'No gross abnormality is identified in ...', 'Within the limits of the\n"
+            "  study ...', 'Evaluation is limited on the provided sequences' — because those\n"
+            "  structures were not explicitly assessed by the physician. Qualify ONCE at the top\n"
+            "  of the block rather than repeating the hedge on every line, and keep the same\n"
+            "  one-line-per-organ layout.\n"
+            "• THE NORMAL-REPORT REQUEST — when the physician asks for the remainder to be\n"
+            "  reported as normal, you MUST switch to DEFINITIVE normal findings for the standard\n"
+            "  structures of this study. This is an instruction, not a permission: a physician who\n"
+            "  asks for the normal report and is handed hedged 'no gross abnormality' text has to\n"
+            "  rewrite the report by hand, which is the opposite of the point.\n"
+            "  Recognise the request in EITHER language, and recognise it THROUGH a bad\n"
+            "  transcription — the input is speech-to-text over medical Persian and routinely\n"
+            "  corrupts these words. Any of the following, or an obvious mis-spelling of one, IS\n"
+            "  the request:\n"
+            "    – Persian: 'کد طبیعی', 'کد نرمال', 'تمپلیت نرمال', 'نرمال بیاد', 'طبیعی بیاد',\n"
+            "      'بقیه طبیعی', 'بقیه‌اش طبیعی', 'دیگه‌اش طبیعی', 'مابقی طبیعی',\n"
+            "      'بقیه رو نرمال بزن', 'بقیه گزارش نرمال';\n"
+            "    – English: 'the rest is normal', 'remainder normal', 'normal template',\n"
+            "      'normal code', 'complete normal report', 'fill in the normals'.\n"
+            "  Judge by INTENT, not by spelling. A real example: 'دگنش هم کد طبیعی بیاد' is a\n"
+            "  corrupted 'دیگه‌اش هم کد طبیعی بیاد' and IS this request — act on it.\n"
+            "  SOURCE FIDELITY still governs: even in the definitive register, never emit a normal\n"
+            "  statement for a structure the dictated pathology involves or calls into question.\n"
+            "• WORKED EXAMPLE — the FORM *and the DEPTH* of an RSNA-style normal block, shown\n"
+            "  for a CONTRAST-ENHANCED CT of the chest and abdomen. It demonstrates GRANULARITY,\n"
+            "  ORDER, FEATURE DEPTH AND PHRASING ONLY. Do NOT copy its organ list: use the\n"
+            "  structures THIS study covered, drop any organ the dictated pathology involves,\n"
+            "  add the ones this example does not have, and drop every enhancement clause if no\n"
+            "  contrast was given.\n"
+            "    Chest:\n"
+            "    - Lungs are clear, with no focal consolidation, suspicious nodule or mass, and\n"
+            "      no interstitial or ground-glass opacity.\n"
+            "    - Central airways are patent, without endobronchial lesion or wall thickening.\n"
+            "    - No pleural effusion, pleural thickening or pneumothorax.\n"
+            "    - No enlarged mediastinal, hilar or axillary lymph nodes by size criteria.\n"
+            "    - Heart is normal in size with no pericardial effusion.\n"
+            "    - Thoracic aorta and pulmonary arteries are normal in caliber with normal\n"
+            "      opacification and no filling defect.\n"
+            "    - Oesophagus is unremarkable, with no wall thickening or hiatal hernia.\n"
+            "    - Chest wall soft tissues are unremarkable; visualised osseous structures show\n"
+            "      normal alignment with no lytic or sclerotic lesion.\n"
+            "    Abdomen:\n"
+            "    - Liver is normal in size, contour and attenuation, enhancing homogeneously,\n"
+            "      with no focal lesion and no intrahepatic biliary ductal dilatation.\n"
+            "    - Gallbladder is normally distended with a thin wall and no calculus; the\n"
+            "      common bile duct is normal in caliber.\n"
+            "    - Pancreas is normal in size, contour and enhancement, with no ductal\n"
+            "      dilatation or peripancreatic fat stranding.\n"
+            "    - Spleen is normal in size and attenuation, with no focal lesion.\n"
+            "    - Adrenal glands are normal in size and configuration bilaterally.\n"
+            "    - Kidneys are normal in size, position and parenchymal thickness and enhance\n"
+            "      symmetrically, with no hydronephrosis, calculus or focal lesion; ureters are\n"
+            "      non-dilated and there is no perinephric stranding.\n"
+            "    - Bowel loops are normal in caliber, without wall thickening, evidence of\n"
+            "      obstruction or focal bowel mass.\n"
+            "    - No free intraperitoneal fluid, free air or organised collection.\n"
+            "    - Abdominal aorta and its major branches are normal in caliber with normal\n"
+            "      opacification; no retroperitoneal or mesenteric lymphadenopathy.\n"
+            "    - Abdominal wall is intact, with no hernia or focal lesion.\n"
+            "  What this example is teaching is the DEPTH, not the line count: each organ carries\n"
+            "  the normal features a radiologist would actually comment on for this examination —\n"
+            "  size, contour, attenuation, enhancement, ducts, calibre, lesions — instead of a\n"
+            "  bare 'the liver is normal'. Note also that pancreas, spleen and adrenals each get\n"
+            "  their own line rather than being collapsed into one.\n"
             "• SEX-SPECIFIC ANATOMY: Do NOT infer or assume the patient's sex. Include a sex-specific organ "
             "(prostate, uterus, ovaries, seminal vesicles, cervix, testes) ONLY IF the physician explicitly "
             "mentioned it; otherwise OMIT it entirely and do NOT emit a normal/'unremarkable' statement for it. "
@@ -406,7 +587,7 @@ def build_report_system_prompt(
 
 
     if modality:
-        base_modality_logic = f"MODALITY LOGIC:\n• The imaging modality is '{modality}'.\n• Customize the 'Report Title' to include the modality (e.g., '{modality} of [Body Part]').\n• Tailor 'Normal Findings' structure and terminology to the modality, using appropriate standards and avoiding repetition.\n"
+        base_modality_logic = f"MODALITY LOGIC:\n• The imaging modality is '{modality}'.\n• Customize the 'Report Title' to include the modality (e.g., '{modality} of [Body Part]').\n• Tailor 'Normal Findings' structure and terminology to the modality, using appropriate standards. Avoid repetition — never report the same structure twice — but do not read that as brevity: the section must still account for every structure this study examined.\n"
         modality_lower = modality.lower()
         if modality_lower == "ct":
                     specific_instructions = ("""
@@ -415,7 +596,26 @@ def build_report_system_prompt(
                         • The imaging modality is CT (Computed Tomography).
                         • Construct 'Normal Findings' using RSNA structured CT reporting standards when no user-provided normal_template is available.
                         • Only mention contrast phases (e.g., non-contrast, arterial, portal venous, delayed) if explicitly referenced in the input.
-                        • Use structured, grouped, RSNA-style anatomical organisation — concise, non-redundant.
+                        • Use structured, grouped, RSNA-style anatomical organisation — non-redundant (never report the same structure twice) and COMPLETE (every structure this study covered, each carrying its relevant normal imaging features).
+
+                        • GROUPING VOCABULARY (CT) — headings to use in BOTH findings sections, chosen from
+                          the regions/organs this study actually covered (never a heading without content):
+                          – Chest: Lungs · Pleura · Mediastinum and hila · Heart and great vessels ·
+                            Chest wall and bones
+                          – Abdomen: Liver · Gallbladder and biliary tree · Pancreas · Spleen · Adrenal glands ·
+                            Kidneys and ureters · Bowel · Peritoneum and free fluid · Vessels · Lymph nodes
+                          – Pelvis: Urinary bladder · Pelvic organs (uterus and adnexa, or prostate and seminal
+                            vesicles) · Rectosigmoid · Pelvic lymph nodes
+                          – Brain: Cerebral parenchyma · Ventricular system and midline · Extra-axial spaces ·
+                            Posterior fossa · Skull base and calvarium · Paranasal sinuses and mastoids · Orbits
+                          – Paranasal sinuses: Maxillary sinuses · Ethmoid air cells · Frontal sinuses ·
+                            Sphenoid sinus · Ostiomeatal complexes · Nasal cavity and turbinates ·
+                            Nasal septum · Orbits · Skull base · Dentition
+                          – Neck: Pharynx and larynx · Salivary glands · Thyroid · Cervical lymph nodes · Vessels
+                          – Spine: Alignment · Vertebral bodies · Intervertebral discs · Spinal canal and foramina ·
+                            Facet joints · Paraspinal soft tissues
+                          – MSK: Bones · Joint and cartilage · Ligaments and tendons · Soft tissues
+                          – A 'Musculoskeletal' or 'Soft tissues' heading may close any body-region study.
                         • Exclude any anatomical region already described in Pathological Findings from the Normal Findings.
 
                         * Recognise Persian / Finglish CT terminology and map to correct radiologic English:
@@ -758,10 +958,29 @@ def build_report_system_prompt(
                         * The imaging modality is MRI.
                         * Construct the 'Normal Findings' using RSNA reporting standards for MRI when no user-provided normal_template is available.
 
+                        * GROUPING VOCABULARY (MRI) — headings to use in BOTH findings sections, chosen from
+                          the structures this study actually covered (never a heading without content):
+                          – Brain: Cerebral parenchyma · Ventricular system and midline · Extra-axial spaces ·
+                            Posterior fossa and brainstem · Vascular structures · Sella · Orbits ·
+                            Paranasal sinuses and mastoids
+                          – Spine: Alignment · Vertebral bodies and marrow · Intervertebral discs (level by level) ·
+                            Spinal canal and cord · Neural foramina · Facet joints · Conus and cauda equina ·
+                            Paraspinal soft tissues
+                          – Knee: Menisci · Cruciate ligaments · Collateral ligaments · Cartilage · Bone marrow ·
+                            Joint effusion and synovium · Extensor mechanism · Soft tissues
+                          – Shoulder: Rotator cuff · Long head of biceps · Labrum · Acromioclavicular joint ·
+                            Bone marrow · Joint effusion
+                          – Hip / Ankle / Wrist: Bones and marrow · Joint and cartilage · Ligaments and tendons ·
+                            Soft tissues
+                          – Breast: report per breast, then Parenchyma and background enhancement · Lesion(s) ·
+                            Lymph nodes
+                          – Abdomen / Pelvis: use the organ order of an abdominopelvic study (liver, biliary,
+                            pancreas, spleen, adrenals, kidneys, bowel, pelvic organs, lymph nodes).
+
                         * Only mention specific MRI sequences (e.g., DWI, Spectroscopy, SWI) if explicitly referenced in the input.
 
                         * Use structured RSNA-style descriptors tailored to body region:
-                            – Always generate grouped, concise, non-redundant normal findings.
+                            – Always generate grouped, non-redundant normal findings that are COMPLETE for the region examined. Non-redundant means never reporting the same structure twice; it does not mean fewer structures, and it does not mean fewer features per structure.
                             – Exclude any body part explicitly described in pathological findings.
                             – Do not create normal findings for irrelevant regions.
 
@@ -1062,7 +1281,7 @@ def build_report_system_prompt(
                             "Report Title": "MRI of the Brain With and Without Contrast, Including DWI and MR Spectroscopy",
                             "Pathological Findings": "1. An infiltrative mass-like lesion is identified in the anterior parts of the right temporal lobe.\n2. DWI sequences show peripheral restricted diffusion.\n3. Post-contrast images reveal central necrosis within the lesion.\n4. MR Spectroscopy demonstrates elevated choline peak in solid components of the lesion.\n5. There is midline shift toward the left.\n6. Mass effect is noted on the right lateral ventricle.\n7. No definitive evidence of hemorrhage is observed.",
                             "Recommendations": "Further evaluation with MR perfusion and biopsy of the described lesion is recommended."
-                            "Normal Findings": "Ventricular System and Midline:\n * Left lateral ventricle is normal in size and configuration.\n * Third and fourth ventricles are within normal limits.\n * Brainstem and cerebellum are unremarkable.\nCerebral Parenchyma:\n * No acute infarcts outside the known lesion.\n * No additional abnormal enhancements are seen.\nSinuses and Skull Base:\n * Paranasal sinuses and mastoid air cells are clear.\n * Skull base is unremarkable.\nOrbits:\n * Orbits and optic nerves appear normal."
+                            "Normal Findings": "Ventricular System and Midline:\n * Left lateral ventricle and the third and fourth ventricles are within normal limits.\n * Brainstem and cerebellum are unremarkable.\nCerebral Parenchyma:\n * No acute infarct outside the known lesion; no additional abnormal enhancement.\nRemaining structures (paranasal sinuses, mastoid air cells, skull base, orbits, optic nerves) are unremarkable."
                         "Impression": "Findings are suggestive of glioblastoma.",
                             '}\n\n'
                             "```  \n"
@@ -1094,7 +1313,7 @@ def build_report_system_prompt(
                             "Report Title": "MRI of the Lumbar Spine Without Contrast",
                             "Pathological Findings": "1. Intervertebral disc bulging with associated annular fissuring is present at the L5–S1 level.\n2. Spondylolysis with anterolisthesis of L4 over L5 is observed.\n3. A right paracentral intervertebral disc herniation is identified at the L4–L5 level.\n4. Moderate to severe narrowing of the right lateral recess is noted at L4–L5.\n5. A left foraminal disc extrusion at the L3–L4 level is causing compression of the exiting left L4 nerve root.\n6. Approximately 50% loss of vertebral body height is seen at L3.\n7. Bone marrow edema is present within the L3 vertebral body.",
                         "Recommendations": "For further evaluation regarding the possibility of underlying malignancy, correlation with in-phase and out-of-phase MRI sequences is recommended."
-                            "Normal Findings": "Alignment & Curvature:\n * Lumbar lordosis is preserved except at levels affected by malalignment.\nVertebral Bodies (Excluding L3):\n * Normal height and marrow signal.\nDiscs (Other Than L3–L4, L4–L5, L5–S1):\n * No bulge, herniation, or extrusion noted.\nSpinal Canal:\n * No significant central canal stenosis outside the levels mentioned.\nNeural Foramina:\n * Patent and normal in unaffected levels.\nFacet Joints:\n * Normal alignment and no hypertrophic changes outside pathological zones.\nConus & Cauda Equina:\n * Normal conus termination and signal.\n * Cauda equina roots are normally distributed without clumping.\nParaspinal Soft Tissues:\n * Normal signal, no edema, mass, or collection."
+                            "Normal Findings": "Vertebral Bodies (Excluding L3):\n * Normal height and marrow signal.\nDiscs (Other Than the levels described above):\n * No bulge, herniation, or extrusion.\nConus & Cauda Equina:\n * Normal conus termination and signal; cauda equina roots without clumping.\nRemaining structures (alignment, spinal canal, neural foramina, facet joints, paraspinal soft tissues) are normal outside the involved levels."
                             "Impression": "Findings are suggestive of an acute compression fracture of the L3 vertebral body.",
                             '}\n\n'
                             "```  \n"
@@ -1115,28 +1334,6 @@ def build_report_system_prompt(
                             "```  \n"
                             "<|end|>"
 
-                            " 'input': 'همین آدم، کاظم کریم، امارای مغز با و بدون تزریق ماده حاجب داره به همراه سکانس DWI و سیکانس های امار سپکتروسکوپی شماره یک بنویس که ضایعه توده مانند انفیلتراتیو در قسمت های قدامی لوب تمپورال سمت راست مشهود از توده ی مذکور در سکانس DWI دارای رستریکشن در قسمت های محیطی می باشد و پس از تزریق ماده حاجب نکروز در قسمت های مرکزی توده ی مذکور رویت می گردد در سکانس های امار اس انجام شده پیک کولین در نواحی سالید توده ی مذکور مشهود است انحراف عناصر خط وسط به سمت چپ رویت می گردد و اثر فشاری بر روی بطن طرفی سمت راست مشهود است شواهدی به نفع hemorrhage واضح در زایعه ی مذکور رویت نمی گردد',\n"
-                            " Output:\n"
-                            "```json  \n"
-                            '{\n'
-                            '  "Report Title": "MRI of the Brain With and Without Contrast, Including DWI and MR Spectroscopy",\n'
-                            '  "Pathological Findings": "1. An infiltrative mass-like lesion is identified in the anterior portions of the right temporal lobe.\\n2. On DWI sequences, peripheral components of the lesion demonstrate restricted diffusion.\\n3. Post-contrast imaging reveals central necrosis within the lesion.\\n4. MR Spectroscopy demonstrates elevated choline peak in the solid components of the lesion.\\n5. There is a midline shift toward the left.\\n6. Mass effect is noted on the right lateral ventricle.\\n7. No definite evidence of intralesional hemorrhage is observed.",\n'
-                            '  "Normal Findings": "Ventricular System and Midline Structures:\\n * Left lateral ventricle is normal in configuration and size.\\n * Third and fourth ventricles are within normal limits.\\n * Cerebellar tonsils are in normal position.\\n * Brainstem appears unremarkable.\\n Cerebral Parenchyma:\\n * No evidence of acute infarction outside the noted lesion.\\n * No additional mass lesions or abnormal enhancement are seen.\\n Meninges and Sinuses:\\n * No meningeal enhancement or thickening.\\n * Paranasal sinuses and mastoid air cells are clear.\\n Orbits and Skull Base:\\n * Orbits and optic nerves are within normal limits.\\n * Skull base structures are unremarkable."\n'
-                            '}\n\n'
-                            "```  \n"
-                            "<|end|>" 
-
-                                " 'input': 'خوب، همین آدم کاظم کریم امارای از مفصل زانو ی سمت راست داره. شماره یک بنویس که افیوژن متوسط در مفصل زانو مشهود است. شماره بعدی بنویس که افزایش ضخامت به همراه ادم و فریینگ در لیگامان ACL رویت می می گردد. که یافته فوق مطرح کننده ی آسیب های مزمن و طول کشیده با نمایه سالری استک در لیگامان ACL باشد.یافته های فوق در مجموع مطرح کننده ی مکویید دیجنریشن و آسیب های مزمن به لیگامان مذکور است. شماره بعدی به نویس که پارگی باکت هندل در تنه ی مینیسک مدیال مشهود است. شماره بعدی بنویس که extrusion تنه ی مینیسک لترال رویت میگردد شماره بعدی بنویس که پارگی کمپلکس در شاخ خلفی منیسک لترال مشهود است. کاهش ضخامت غضروف مفصلی در قسمت های مدیال مفصل زانو به همراهی کیست های ساب کندرال کچک رویت میگردد.',\n"
-                            " Output:\n"
-                            '{\n'
-                            '  "Report Title": "MRI of the Right Knee Joint Without Contrast",\n'
-                            '  "Pathological Findings": "1. Moderate joint effusion is noted within the right knee joint.\\n2. The anterior cruciate ligament (ACL) demonstrates thickening, edema, and fraying, indicative of chronic injury with a \\"celery stalk\\" appearance. These findings are suggestive of mucoid degeneration and chronic ligamentous injury.\\n3. A bucket-handle tear is identified in the body of the medial meniscus.\\n4. Extrusion of the body of the lateral meniscus is observed.\\n5. A complex tear is noted in the posterior horn of the lateral meniscus.\\n6. There is cartilage thinning in the medial compartment of the knee joint, accompanied by small subchondral cysts.",\n'
-                            '  "Normal Findings": "Marrow and Effusion:\\n • Bone marrow signal is normal for the patient\'s age.\\n • No signs of bone contusion or fracture beyond the noted findings.\\n Menisci:\\n • Medial meniscus: bucket-handle tear at the body.\\n • Lateral meniscus: abnormal at body and posterior horn; complex tear and extrusion noted.\\n Ligaments and Tendons:\\n • Posterior cruciate ligament (PCL): normal in shape and signal intensity.\\n • Medial and lateral collateral ligaments: intact and normal in signal.\\n • Popliteus tendon, pes anserinus tendons: normal.\\n • Extensor mechanism (quadriceps tendon and patellar tendon): unremarkable.\\n • Hoffa’s fat pad: normal signal intensity.\\n Cartilage:\\n • Normal cartilage thickness in lateral compartment.\\n • No subchondral edema beyond areas with cyst formation.\\n Soft Tissues:\\n • Periarticular muscles and subcutaneous tissues are within normal limits."\n'
-                            "Impression": "Findings are suggestive of mucoid degeneration and chronic ACL injury.",
-                            '}\n\n'
-                            "```  \n"
-                            "<|end|>"
-            
                             """
                         )
         elif modality_lower in ["obstetric ultrasound", "ob ultrasound",
@@ -1292,6 +1489,14 @@ def build_report_system_prompt(
                 Normalize all to standard English radiological terminology before building JSON
 
                 ─────────────────────────────────────────────────────
+                SECTION 7b — REPORT ORGANIZATION (OBSTETRIC)
+                ====================================================================
+                • The ISUOG section structure above (biometry, anatomy survey, placenta and
+                  amniotic fluid, Doppler) IS this report's organization. Group findings under
+                  those headings, and keep fetal anatomy findings together by system.
+                • Do NOT impose additional regional headings on top of it, and do NOT add,
+                  rename or nest any JSON key to express grouping.
+                ====================================================================
                 SECTION 8 — NORMAL FINDINGS CONSTRUCTION
                 ─────────────────────────────────────────────────────
                 Write a single sentence summarizing non-pathological features:
@@ -1352,7 +1557,7 @@ def build_report_system_prompt(
                 – ISUOG structured standards for Obstetric & Gynecologic Ultrasound,
                 when no user-provided normal_template is available.
 
-                • Always produce concise, grouped, non-redundant normal findings.
+                • Always produce grouped, non-redundant normal findings that are COMPLETE for the structures scanned — each carrying the relevant normal sonographic features (echotexture, size, contour, ducts, flow where assessed), not a bare 'normal'.
                 • Exclude any anatomical region described in the pathological findings.
                 • Do not generate normal findings for irrelevant organs.
 
@@ -1462,6 +1667,18 @@ def build_report_system_prompt(
                 – OB Doppler (if mentioned): UA PI, MCA PI, DV.
 
                 -----------------------------------------------------------------------
+                GROUPING VOCABULARY (ULTRASOUND) — headings to use in BOTH findings sections. Use the
+                headings of the ONE examination type performed, and only those that carry content:
+                • Abdominal: Liver · Gallbladder and biliary tree · Pancreas · Spleen · Kidneys ·
+                  Urinary bladder · Aorta and IVC · Free fluid
+                • Renal / KUB: Right kidney · Left kidney · Ureters · Urinary bladder · Prostate (if examined)
+                • Thyroid / neck: Right lobe · Left lobe · Isthmus · Cervical lymph nodes
+                • Scrotal: Right testis · Left testis · Epididymis · Hydrocele · Varicocele · Vascularity
+                • Gynecologic: Uterus · Endometrium · Right ovary · Left ovary · Adnexa · Free fluid
+                • Doppler studies: one heading per vessel or segment examined
+                • Soft-tissue / MSK: Lesion · Surrounding soft tissue · Vascularity
+                • Appendix / RIF: Appendix · Surrounding fat and fluid · Bowel · Regional lymph nodes
+
                 NON-OBSTETRIC ULTRASOUND — EXAM-SPECIFIC NORMAL TEMPLATES
                 -----------------------------------------------------------------------
                 HOW TO USE THIS SECTION (non-obstetric studies):
@@ -1479,7 +1696,7 @@ def build_report_system_prompt(
                 • Apply the SEX-SPECIFIC ANATOMY RULE (see the GYNECOLOGIC section below) for prostate, uterus,
                   ovaries, and testes: include a sex-specific organ ONLY IF the physician explicitly mentioned
                   it, never assume the patient's sex, and never list both male and female organs together.
-                • Keep it concise but complete — one short line per structure, no filler.
+                • Keep it free of filler but COMPLETE — one line per structure, and that line carries the structure's relevant normal features rather than a bare verdict.
 
                 ▌COMPLETE ABDOMINAL ULTRASOUND
                 • Liver: normal in size (right lobe ≤15–16 cm), smooth contour, homogeneous echotexture, no focal lesion; intrahepatic bile ducts non-dilated.
@@ -1792,6 +2009,13 @@ def build_report_system_prompt(
                 Do NOT paraphrase or substitute synonyms.
 
                 ====================================================================
+                SECTION 3b — REPORT ORGANIZATION (MAMMOGRAPHY)
+                ====================================================================
+                • This per-breast schema IS this report's organization: right breast, left
+                  breast, axilla, composition, BI-RADS. Group each breast's findings together.
+                • Do NOT impose additional regional headings on top of the schema, and do NOT
+                  add, rename or nest any JSON key to express grouping.
+                ====================================================================
                 SECTION 4 — NORMAL FINDINGS TEMPLATE (CONFLICT-FILTERED)
                 ====================================================================
 
@@ -1998,7 +2222,7 @@ def build_report_system_prompt(
 
                             • The imaging modality is X-ray (Radiography).
                             • Construct the “Normal Findings” using RSNA radiography reporting standards when no normal_template is provided.
-                            • Always generate concise, grouped, non-redundant normal findings.
+                            • Always generate grouped, non-redundant normal findings that are COMPLETE for what the film actually covers. Completeness is measured against the anatomy on the image, never against a word count — a single-digit radiograph is complete in two lines, and a chest film is not.
                             • Exclude anatomical regions explicitly described in pathological findings.
 
 
@@ -2106,6 +2330,17 @@ def build_report_system_prompt(
                             – barium terms: filling defect, mucosal irregularity, ulcer niche, narrowing, reflux
 
                             ------------------------------------------------------------
+                            GROUPING VOCABULARY (RADIOGRAPHY) — headings to use in BOTH findings sections. Use only
+                            headings the performed projection can actually support, and only those with content:
+                            • Chest: Lungs · Pleura · Heart and mediastinum · Diaphragm · Bones · Soft tissues ·
+                              Lines and tubes (when present)
+                            • Abdomen: Bowel gas pattern · Free intraperitoneal air · Organ outlines · Calcifications ·
+                              Bones
+                            • Extremity / MSK: Bones · Joint and alignment · Soft tissues · Hardware (when present)
+                            • Spine: Alignment · Vertebral bodies · Disc spaces · Posterior elements · Soft tissues
+                            • A projection cannot assess what it does not show — never add a heading for a structure
+                              the projection cannot support.
+
                             RSNA NORMAL FINDINGS — GENERAL X-RAY
                             ------------------------------------------------------------
 
@@ -2170,7 +2405,7 @@ def build_report_system_prompt(
                             • Generate normal findings only for regions relevant to the study.
                             
                             "1. Pathological Findings:\n"
-                                " • Objective: Transcribe and translate radiologic reports into English with a formal tone, emulating a typist and preparing a professional patient report.\n"
+                                " • Objective: Transcribe and translate radiologic reports into English in a formal, professional radiological register, producing a well-organized report.\n"
                                 " • Structure:\n"
                                 " o Number each part of the findings.\n"
                                 " o Use periods and proper punctuation to mimic the structure of a professional medical report.\n"
@@ -2188,18 +2423,6 @@ def build_report_system_prompt(
                                 " o Normal Findings covers ONLY structures the physician actually assessed, or that are\n"
                                 "   standard for the stated projection AND were not described as abnormal.\n"
                                 " o Remove any normal statement about the same anatomical part described in Pathological Findings.\n"
-                                # ── 2026-08-01 ──────────────────────────────────────────────────
-                                # REMOVED two instructions that ordered the model to MANUFACTURE
-                                # pertinent negatives on a plain film:
-                                #   "include all relevant normal findings NOT MENTIONED in the
-                                #    original report, covering aspects beyond the pathological
-                                #    findings"
-                                #   "Always state at least SEVERAL normal points explicitly"
-                                # Those are an instruction to assert observations the radiologist
-                                # never made, and they contradicted "zero speculation" in the same
-                                # block. No other modality branch carries them. They are especially
-                                # wrong on radiography, where the projection often cannot support
-                                # the negative being asserted.
                                 " o If the dictation is focused (a single bone, a line/tube check, follow-up of\n"
                                 "   one finding), keep Normal Findings equally focused. A two-line Normal\n"
                                 "   Findings section is correct and expected — do NOT pad it.\n"
@@ -2211,18 +2434,6 @@ def build_report_system_prompt(
                                 # 3. Style & Tone
                                 "3. Language & Tone:\n"
                                 " • ANSWER MUST STRICTLY IN ENGLISH.\n"
-                                # ── 2026-08-01 ──────────────────────────────────────────────────
-                                # REMOVED: " • Use *extreme exaggeration*-vivid, dramatic phrasing."
-                                # That line was live in the radiography branch, which fires for the
-                                # UI value "RADIOLOGY". It instructed the model to dramatise a
-                                # CLINICAL RADIOLOGY REPORT, and it contradicted the rules directly
-                                # above and below it ("zero speculation", "no additional
-                                # implications"). It is a survivor of an older creative-writing
-                                # scaffold (note the "emulating a typist" framing further down) and
-                                # has no place in diagnostic text. Radiography was also the branch
-                                # with NO temperature clamp (see _VALIDATED_MODALITIES), so it was
-                                # the highest-variance sampling combined with an instruction to
-                                # exaggerate.
                                 " • Neutral, declarative, professional radiological register.\n"
                                 " • No intensifiers, no emphasis, no dramatic or evaluative language.\n"
                                 " • Do not overstate certainty: keep the physician's own degree of\n"
@@ -2266,6 +2477,20 @@ def build_report_system_prompt(
                 "and MUST be preserved (meaning intact) in the report — never delete, omit, weaken, or soften it. "
                 "If the report includes Impression/Recommendations fields, place it there; otherwise keep it in "
                 "the most appropriate existing field.\n"
+                "\nOUTPUT FORMAT (STRICT)\n"
+                "----------------------------------------------\n"
+                "Return only a valid JSON object - no other text before or after.\n"
+                "Do not include markdown, headers, or explanations.\n"
+                "Do not include code fences.\n"
+                "\n"
+                "Schema (required | optional):\n"
+                "{\n"
+                "  \"Report Title\": string,                // REQUIRED\n"
+                "  \"Pathological Findings\": string,       // REQUIRED\n"
+                "  \"Normal Findings\": string,             // REQUIRED\n"
+                "  \"Impression\": string | null,           // OPTIONAL - only if stated in input\n"
+                "  \"Recommendations\": string | null       // OPTIONAL - only if stated in input\n"
+                "}\n"
             )
         modality_logic = base_modality_logic + specific_instructions + "\n\n"
     else:
@@ -2278,6 +2503,20 @@ def build_report_system_prompt(
             "BUT any such statement the physician EXPLICITLY dictated (e.g. 'suggestive of ...', 'clinical correlation "
             "is recommended', 'biopsy is recommended') MUST be preserved (meaning intact) — never delete, omit, weaken, "
             "or soften it.\n\n"
+            "\nOUTPUT FORMAT (STRICT)\n"
+            "----------------------------------------------\n"
+            "Return only a valid JSON object - no other text before or after.\n"
+            "Do not include markdown, headers, or explanations.\n"
+            "Do not include code fences.\n"
+            "\n"
+            "Schema (required | optional):\n"
+            "{\n"
+            "  \"Report Title\": string,                // REQUIRED\n"
+            "  \"Pathological Findings\": string,       // REQUIRED\n"
+            "  \"Normal Findings\": string,             // REQUIRED\n"
+            "  \"Impression\": string | null,           // OPTIONAL - only if stated in input\n"
+            "  \"Recommendations\": string | null       // OPTIONAL - only if stated in input\n"
+            "}\n"
         )
 
     # ── 2026-08-01: FENCE THE PHYSICIAN'S TEMPLATE ──────────────────────────
@@ -2301,11 +2540,138 @@ def build_report_system_prompt(
     else:
         normal_template_block = ""
 
+    # ── 2026-08-02: SOURCE FIDELITY CONTRACT (stated ONCE) ───────────────
+    # The prompts forbade inventing a new IMPRESSION but not a new FINDING, and
+    # nowhere forbade changing the anatomy the physician stated or reversing a
+    # stated negative — so 'right occipito-parietal hypodensity, no hemorrhage'
+    # came back as 'right frontal lobe' with invented 'hyperdense areas' and
+    # 'gray-white differentiation preserved' over the infarct. This closes that at
+    # the findings level, in the lean example-driven style GPT-5.6 follows best.
+    _fidelity = (
+        "SOURCE FIDELITY — the medical content comes only from the physician.\n"
+        "Your job is to render the physician's dictation as a formal report: correct the\n"
+        "grammar, apply proper radiology terminology, and organise it into the report\n"
+        "structure. Improve the wording; do not change the medical meaning.\n"
+        "\n"
+        "• Report only what the physician stated. Do not add a finding, a diagnosis, or an\n"
+        "  anatomical location the physician did not mention, even when it would be typical.\n"
+        "• Keep the anatomy and laterality exactly as dictated. Do not move a finding to a\n"
+        "  different lobe, side, level, segment, or structure, and do not rename it. If the\n"
+        "  physician says 'right occipital and parietal lobes', report those lobes — not another.\n"
+        "• A stated negative stays negative. When the physician says a finding is absent or not\n"
+        "  seen (for example 'no hemorrhage', 'no midline shift'), keep it as a negative; never\n"
+        "  convert it into a positive finding.\n"
+        "• Preserve the physician's degree of certainty exactly — a hedge is a clinical claim,\n"
+        "  not loose wording. Do not firm it up, and do not soften it:\n"
+        "    'may represent' must not become 'represents';\n"
+        "    'suspicious for' must not become 'consistent with';\n"
+        "    'cannot be excluded' must stay uncertain;\n"
+        "    'favored to represent' must not become a definitive diagnosis;\n"
+        "    'less likely' must remain a secondary possibility.\n"
+        "• Do not drop what the physician stated. Every finding, every negative, and every\n"
+        "  recommendation the physician gave must appear in the report.\n"
+        "• Normal findings must not contradict the pathology. A structure or property the\n"
+        "  physician described as abnormal must not also be described as normal anywhere in the\n"
+        "  report. For example, given 'gallbladder stones are present', the report must not also\n"
+        "  say 'the gallbladder is normal'. When a normal statement for an unmentioned structure\n"
+        "  would overlap a dictated abnormality, remove or narrow it; for a paired or grouped\n"
+        "  structure with one abnormal member, keep the normal statement only for the members\n"
+        "  that remain normal.\n"
+        "• If you are unsure whether the physician stated something, leave it out. A shorter\n"
+        "  faithful report is correct; a fuller invented one is a clinical error."
+    )
+
+    # ── 2026-08-02: standardized reporting systems — from the proven CT/MRI
+    # reference prompt. The systems STANDARDISE WORDING; the guardrails keep them
+    # from becoming an invention vector (assigning a category the criteria don't support).
+    _standardized = (
+        "STANDARDIZED SYSTEMS — use them to standardise wording, never to manufacture a category.\n"
+        "When the modality, organ, and dictated findings support it, use the accepted system:\n"
+        "BI-RADS (breast), TI-RADS (thyroid), PI-RADS (prostate MRI), LI-RADS (liver at HCC risk),\n"
+        "O-RADS (adnexa), Lung-RADS / Fleischner (pulmonary nodules), Bosniak (renal cysts),\n"
+        "CAD-RADS (coronary CTA), and accepted ACR/NASS nomenclature for spine disease.\n"
+        "• Apply a category ONLY when the dictated information meets that system's criteria.\n"
+        "• Do not force a category, and do not invent a measurement, descriptor, or risk factor\n"
+        "  merely to assign one.\n"
+        "• When the physician dictates a category, preserve it (correct only an obvious typo).\n"
+        "• A standardized term may improve the wording, but must never change the physician's meaning."
+    )
+
+    # ── 2026-08-06: REPORT ORGANIZATION ────────────────────────────────────
+    # A report is not only correct content — it must be SCANNABLE. The only
+    # grouping instruction used to sit inside MODALITY LOGIC between two
+    # Normal-Findings lines, so the model applied it to the normals and left
+    # Pathological Findings as one flat paragraph (observed on a real
+    # chest+abdomen+pelvis CT). Stated once here, it governs BOTH sections and
+    # every modality. It arranges text INSIDE the JSON string values only.
+    _organization = (
+        "REPORT ORGANIZATION — group the content INSIDE every findings section.\n"
+        "A section must never be one undifferentiated block or a chain of unrelated\n"
+        "sentences. Group related findings under short anatomical headings, in a\n"
+        "clinically logical order. This applies to BOTH 'Pathological Findings' and\n"
+        "'Normal Findings'.\n"
+        "• Choose the headings from the study itself:\n"
+        "    – a MULTI-REGION study (for example chest + abdomen + pelvis) is grouped by\n"
+        "      REGION first — 'Chest:', 'Abdomen:', 'Pelvis:' — and then by organ inside a\n"
+        "      region when that region carries several findings;\n"
+        "    – a SINGLE-REGION study is grouped by ORGAN, STRUCTURE or SYSTEM (for a knee\n"
+        "      MRI: 'Menisci:', 'Cruciate ligaments:', 'Collateral ligaments:',\n"
+        "      'Cartilage:', 'Bone marrow:', 'Joint effusion:', 'Extensor mechanism:',\n"
+        "      'Soft tissues:'). Use the organ/region groupings the MODALITY RULES below\n"
+        "      already name for this study — do not invent a different vocabulary.\n"
+        "• Format: the heading on its own line ending with a colon, then its findings on\n"
+        "  the lines beneath it. Keep the physician's own numbering when they numbered\n"
+        "  their findings.\n"
+        "• Emit a heading ONLY when it has content. Never write an empty heading, and\n"
+        "  never add a heading for a region or organ this study did not cover — a heading\n"
+        "  is a claim that the region was examined.\n"
+        "• Keep everything about one organ together; do not scatter statements about the\n"
+        "  same structure across the section, and do not split one finding into several\n"
+        "  fragmented sentences.\n"
+        "• GRANULARITY — ONE STATEMENT PER ORGAN OR STRUCTURE GROUP. Under a heading, write\n"
+        "  one line for each organ or structure; never a single sentence that enumerates\n"
+        "  many of them. This is NOT acceptable output:\n"
+        "      'No gross focal abnormality is identified in the liver, gallbladder and\n"
+        "       biliary tree, pancreas, spleen, adrenal glands, kidneys and ureters, bowel,\n"
+        "       peritoneum, vessels, or abdominal lymph nodes.'\n"
+        "  — one line doing the work of eleven. A radiologist reads a report organ by organ,\n"
+        "  and a reader cannot tell from that sentence which organs were actually assessed.\n"
+        "  Split it: one line per organ, or per tightly-related pair ('Gallbladder and\n"
+        "  biliary tree:', 'Pancreas, spleen and adrenal glands:' when genuinely reported\n"
+        "  together). This applies to NORMAL statements exactly as much as to abnormal ones,\n"
+        "  and it does not license padding: never invent an organ the study did not cover.\n"
+        "• Proportion: if the entire study is one region with only one or two findings, a\n"
+        "  heading is optional — never fragment a two-line report to satisfy this rule.\n"
+        "• Grouping NEVER moves content between sections: a pathological finding stays in\n"
+        "  'Pathological Findings' and a normal statement stays in 'Normal Findings'.\n"
+        "• A COMPLETELY NORMAL STUDY IS A VALID REPORT, and one of the commonest. When the\n"
+        "  physician dictated no abnormality at all, 'Pathological Findings' must still be\n"
+        "  a non-empty statement saying so — 'No pathological findings are identified.' —\n"
+        "  never an empty string, never null, and never the key left out. Do NOT invent a\n"
+        "  finding to fill it, and do NOT move normal statements into it.\n"
+        "• When an 'Impression' is present (only when the physician stated one — see the\n"
+        "  presence-lock rules), list its items in order of clinical importance, numbered\n"
+        "  when there is more than one. Do not add regional headings to the Impression.\n"
+        "• Worked example — a chest + abdomen + pelvis study:\n"
+        "    \"Pathological Findings\": \"Chest:\\n1. <finding>\\n2. <finding>\\n\"\n"
+        "                               \"Abdomen:\\n3. <finding>\\nPelvis:\\n4. <finding>\"\n"
+        "• THIS RULE ARRANGES TEXT INSIDE THE EXISTING JSON STRING VALUES. It does NOT\n"
+        "  change the JSON: do not add keys, do not rename keys, do not turn a string\n"
+        "  value into a nested object or a list. The key set stays EXACTLY as the OUTPUT\n"
+        "  FORMAT / modality rules below specify.\n"
+        "• Where the MODALITY RULES below already define a section structure (for example\n"
+        "  a per-breast mammography schema), THAT structure wins — follow it and do not\n"
+        "  impose a second grouping on top of it."
+    )
+
     system_prompt = (
         "IMPORTANT: You MUST respond ONLY in English. "
         "This rule is ABSOLUTE and applies regardless of the user's input language. "
         "Do NOT translate the user's language unless explicitly instructed. "
         "Do NOT include any non-English text.\n\n"
+        f"{_fidelity}\n\n"
+        f"{_standardized}\n\n"
+        f"{_organization}\n\n"
         f"{template_logic.strip()}\n\n"
         f"{normal_template_block}\n\n"
         f"{modality_logic.strip()}\n\n"
@@ -2319,7 +2685,21 @@ def reporter(
     modality: Optional[str] = "",
     normal_template: Optional[str] = "",
     CENTER_Key: Optional[str] = None,
-    model: str = "gpt-4.1-mini"):
+    model: str = PRIMARY_REPORT_MODEL,
+    *,
+    system_prompt_override: Optional[str] = None):
+    """Generate a report on the company GapGPT path.
+
+    ``system_prompt_override`` (2026-08-08) exists because this function serves BOTH
+    buttons: Turbo always, and Send whenever the Settings backend is `company` — which
+    is the default. Turbo is getting its own prompt and Send must not move, so the
+    Turbo call site builds its prompt and passes it here. Every other caller passes
+    nothing and gets `build_report_system_prompt` exactly as before, byte for byte.
+
+    Only the PROMPT is overridable. The temperature clamp, the token budget and the
+    output validation stay shared, because those are the contract with the parser and
+    they are not what Turbo is diverging on.
+    """
     user_msg = _to_str(user_msg)
     modality = _to_str(modality)
     normal_template = _to_str(normal_template)
@@ -2328,7 +2708,11 @@ def reporter(
     # 2026-08-01: assembled by the shared authority so the OpenAI twin
     # backend gets byte-identical clinical instructions (see the function's
     # docstring). The prompt text itself is unchanged.
-    system_prompt = build_report_system_prompt(modality, normal_template)
+    system_prompt = (
+        system_prompt_override
+        if isinstance(system_prompt_override, str) and system_prompt_override.strip()
+        else build_report_system_prompt(modality, normal_template)
+    )
     payload: Dict[str, Any] = {
         "model": (_to_str(model).strip() or "Unknown"),
         "messages": [
@@ -2344,15 +2728,23 @@ def reporter(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # ------------------------------------------------------
     #  EXTRACT USAGE
@@ -2450,15 +2842,23 @@ Return ONLY the final corrected report text. No analysis, no preface.
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # ------------------------------------------------------
     #  USAGE COUNTERS (NOW result IS DEFINED!)
@@ -2519,12 +2919,20 @@ def chat_with_api_key(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     usage_info = result.get("usage", {})
     prompt_tokens = usage_info.get("prompt_tokens", 0)
@@ -2593,13 +3001,20 @@ def ImageQualityAnalyzer(
         "Content-Type": "application/json"
     }
 
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
-
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # usage logging
     usage = result.get("usage", {})
@@ -2798,13 +3213,20 @@ def BreastExpertAssistant(
         "Content-Type": "application/json"
     }
 
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
-
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # usage logging
     usage = result.get("usage", {})
@@ -2862,12 +3284,19 @@ STRICT RULES:
         "Content-Type": "application/json",
     }
 
-    url = "https://api.gapgpt.app/v1/chat/completions"
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
-
+    url = GAPGPT_API_URL
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     usage = result.get("usage", {})
     _log_usage_safe(
@@ -2894,7 +3323,7 @@ STRICT RULES:
 def translate_report(
     user_msg: str,
     CENTER_Key: Optional[str] = None,
-    model: str = "gpt-4.1-mini"):
+    model: str = PRIMARY_REPORT_MODEL):
     user_msg = _to_str(user_msg)
     m = Manage.instance()
     center, api_key = m.get_center_and_gapgpt_key()
@@ -3053,15 +3482,23 @@ def translate_report(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # ------------------------------------------------------
     #  EXTRACT USAGE
@@ -3092,7 +3529,7 @@ def translate_report(
 def standard_assist_search(
     user_msg: str,
     CENTER_Key: Optional[str] = None,
-    model: str = "gpt-4.1-mini"):
+    model: str = PRIMARY_REPORT_MODEL):
     user_msg = _to_str(user_msg)
     m = Manage.instance()
     center, api_key = m.get_center_and_gapgpt_key()
@@ -3154,15 +3591,23 @@ def standard_assist_search(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # ------------------------------------------------------
     #  EXTRACT USAGE
@@ -3193,7 +3638,7 @@ def standard_assist_search(
 
 
 
-def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt-4.1-mini"):
+def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = PRIMARY_REPORT_MODEL):
     user_msg = _to_str(user_msg)
         
     # ------------------------------------------------------
@@ -3366,15 +3811,23 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # ------------------------------------------------------
     #  USAGE COUNTERS (NOW result IS DEFINED!)
@@ -3589,8 +4042,9 @@ def correction(
     user_report: str,
     correction_note:str,
     CENTER_Key: str = "",
-    model: str = "gpt-5.4",
-    target_section: str = ""):
+    model: str = PRIMARY_REPORT_MODEL,
+    target_section: str = "",
+    system_prompt_prefix: str = ""):
     """report corrector — final targeted-revision (PATCH) step.
 
     Correction is the LAST revision stage: it must apply ONLY the physician's requested
@@ -3632,7 +4086,14 @@ def correction(
         "temperature": 0,
         "max_tokens": 3000,
         "messages": [
-            {"role": "system", "content": system_msg},
+            {"role": "system", "content": (
+                # Turbo prepends its editing frame here. A PREFIX rather than an
+                # override, so every rule and the JSON contract below it survive
+                # verbatim - a correction response is parsed, and a prompt that
+                # dropped one key would return a report the app cannot read.
+                (str(system_prompt_prefix).strip() + "\n\n" + system_msg)
+                if str(system_prompt_prefix or "").strip() else system_msg
+            )},
             {"role": "user", "content": user_content}
         ]
     }
@@ -3641,15 +4102,23 @@ def correction(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    url = "https://api.gapgpt.app/v1/chat/completions"
+    url = GAPGPT_API_URL
 
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
-    result = response.json()
+    # 2026-08-02: through the ONE transport authority (retry + logging + SOCKS
+    # guard + proxy/timeout — the same values this site already used via the
+    # echomind_http helpers). Status is checked BEFORE .json(), so a non-JSON
+    # error body reports the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"GapGPT API Error {response.status_code}: {result}")
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
 
     # ------------------------------------------------------
     #  USAGE COUNTERS (NOW result IS DEFINED!)

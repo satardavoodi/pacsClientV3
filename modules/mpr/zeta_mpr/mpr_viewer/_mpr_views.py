@@ -68,6 +68,45 @@ def _vrt_on_demand_slice_threshold() -> int:
         return 200
 
 
+def mpr_deferred_3d_stable_swap_enabled() -> bool:
+    """Keep the 3D placeholder in its cell for the whole deferred VRT build (2026-08-01).
+
+    The build used to REMOVE the placeholder first and only add the real pane at
+    the very end of ``_create_3d_view`` — after the QVTK ctor, ``winId()``, the GPU
+    ray-cast mapper and ``Initialize()``/``Start()``, i.e. seconds of blocking
+    GUI-thread work on a large volume. So the 3D cell went black and empty for that
+    whole window instead of showing its loading state.
+
+    With this ON (default) the placeholder holds the cell until the real pane
+    exists, the swap happens with repaints suppressed, and the layout is
+    ``activate()``d while painting is still off.
+
+    NOTE: this is a PRESENTATION fix. It does NOT make the build shorter, and the
+    grid itself was measured to be geometrically stable either way (see
+    docs/reports/MPR_DEFERRED_3D_LAYOUT_STABILITY_2026-08-01.md).
+    ``AIPACS_MPR_DEFERRED_3D_STABLE_SWAP=0`` restores the legacy remove-then-build.
+    """
+    return (_os.getenv("AIPACS_MPR_DEFERRED_3D_STABLE_SWAP", "1") or "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def mpr_deferred_3d_progress_enabled() -> bool:
+    """Show a modal busy dialog while the deferred 3D VRT builds (2026-08-01).
+
+    The build blocks the GUI thread for seconds and cannot be off-threaded (VTK GL
+    context creation is GUI-thread-only). Past ~5 s Windows substitutes a DWM ghost
+    for an unresponsive window, and a stretched/offset ghost bitmap is what a
+    "collapsed, shifted" MPR actually is. A modal painted before the freeze gives
+    the wait an explicit owner and absorbs stray clicks.
+
+    It does NOT make the build faster. ``AIPACS_MPR_DEFERRED_3D_PROGRESS=0`` hides it.
+    """
+    return (_os.getenv("AIPACS_MPR_DEFERRED_3D_PROGRESS", "1") or "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
 def mpr_stable_scroll_enabled() -> bool:
     """Stack-scroll stability for the RECONSTRUCTED (sag/cor) MPR panes (2026-08-01).
 
@@ -279,6 +318,17 @@ class _MprViewsMixin:
             self._create_3d_view(views_layout, 0, 1)
             self._create_sagittal_view(views_layout, 1, 0)
             self._create_coronal_view(views_layout, 1, 1)
+
+        # NOTE (2026-08-01): pinning uniform row/column stretch on this grid was
+        # TRIED and REMOVED. The hypothesis was that an empty 3D cell (during the
+        # deferred VRT build) let the other panes re-proportion. Measured on a real
+        # QGridLayout at host sizes 1400x900 / 900x650 / 700x500 / 520x420, with
+        # and without the panes' 400x400 QVTK size hints: removing the 3D widget
+        # moves the other three panes by EXACTLY ZERO pixels in every case. The
+        # grid is already stable because all four panes are Expanding. Do not
+        # re-add a stretch pin as a fix for a layout that moves during the 3D
+        # build — the cause is the blocked GUI thread, not the layout. See
+        # docs/reports/MPR_DEFERRED_3D_LAYOUT_STABILITY_2026-08-01.md.
 
         # The NATIVE-plane pane (the one looking down the acquired-slice axis) must show the
         # ORIGINAL acquired slices (nearest-neighbour, no blending); the other two panes are MPR
@@ -972,13 +1022,24 @@ class _MprViewsMixin:
                     "automatically.\nClick to render it (may take a few seconds)."
                 )
 
-                def _on_placeholder_click(event, _self=self, _label=label):
+                def _on_placeholder_click(event, _self=self, _label=label, _ph=placeholder):
+                    # Guard against a second click landing while the (blocking,
+                    # multi-second) build is already running — it would start a
+                    # duplicate 3D pipeline. `_deferred_3d_pending` is cleared by
+                    # the builder itself, so re-entry is refused there too; this
+                    # just stops the label flickering back to "Rendering".
+                    if not getattr(_self, '_deferred_3d_pending', False):
+                        return
                     try:
                         _label.setText("Rendering 3D…")
-                        _label.repaint()
+                        _ph.setCursor(Qt.WaitCursor)
                     except Exception:
                         pass
-                    _self._build_deferred_3d_view()
+                    # Hand control back to the event loop so the "Rendering 3D…"
+                    # state actually PAINTS before the GUI thread is blocked by
+                    # the VTK/GPU build. Calling the builder inline meant the
+                    # user's only feedback was a frozen window.
+                    QTimer.singleShot(0, _self._build_deferred_3d_view)
 
                 placeholder.mousePressEvent = _on_placeholder_click
             else:
@@ -1008,17 +1069,112 @@ class _MprViewsMixin:
             layout = getattr(self, '_views_layout', None)
             if layout is None:
                 return
-            # Drop the placeholder, then build the real 3D into the same cell (0,1).
             placeholder = getattr(self, '_deferred_3d_placeholder', None)
-            if placeholder is not None:
+
+            # ── LOADING PRESENTATION (2026-08-01) ────────────────────────────
+            # This used to REMOVE the placeholder FIRST and only then build.
+            # `_create_3d_view` adds its container to the grid as its very LAST
+            # step — after the QVTKRenderWindowInteractor ctor, `winId()`, the
+            # GPU ray-cast mapper and `Initialize()`/`Start()` — which on a large
+            # volume is SECONDS of blocking GUI-thread work. So the 3D cell sat
+            # EMPTY and black for that entire window instead of showing its
+            # "Rendering 3D…" state.
+            #
+            # Now the placeholder KEEPS the cell for the whole build and is
+            # removed only once the real pane exists. Repaints are suppressed
+            # across the swap and the layout is `activate()`d while painting is
+            # still off — the same bracket the thumbnail sidebar uses;
+            # `updateGeometry()` alone only POSTS a layout request, so the repaint
+            # can land before the layout runs.
+            #
+            # This is PRESENTATION only. It does not shorten the build, and the
+            # grid was measured to be geometrically stable either way — an empty
+            # 3D cell moves the other three panes by exactly 0 px at every host
+            # size tested. See the report for the disproved layout hypothesis.
+            # ── The GUI thread is about to block for SECONDS ──────────────────
+            # `_create_3d_view` is one synchronous call: QVTK ctor -> winId() ->
+            # vtkGPUVolumeRayCastMapper -> Initialize()/Start() -> Render(). It
+            # measured ~9 s on a 672-slice CT. VTK's GL context creation MUST run
+            # on the GUI thread, so this cannot be moved to a worker.
+            #
+            # An unresponsive window past ~5 s is what Windows replaces with a
+            # DWM "ghost" — a stale bitmap it will happily stretch and offset,
+            # which is what a frozen MPR looks like when it appears to collapse
+            # and shift. Painting a modal dialog FIRST means the user sees an
+            # explicit, attributed wait instead of a ghosted workstation, and
+            # stray clicks land on the dialog rather than queueing into the MPR.
+            # Same treatment (and same limitation: it does not shorten the build)
+            # as the MPR open itself — OPT-48 #5.
+            _busy = None
+            if mpr_deferred_3d_progress_enabled():
                 try:
-                    layout.removeWidget(placeholder)
-                    placeholder.setParent(None)
-                    placeholder.deleteLater()
-                except RuntimeError:
-                    pass
-                self._deferred_3d_placeholder = None
-            self._create_3d_view(layout, 0, 1)
+                    from PySide6.QtWidgets import QProgressDialog
+                    _busy = QProgressDialog(
+                        "Building 3D volume rendering…\nThis can take a few seconds "
+                        "on a large series.",
+                        None, 0, 0, self,
+                    )
+                    _busy.setWindowTitle("3D View")
+                    _busy.setWindowModality(Qt.WindowModality.ApplicationModal)
+                    _busy.setCancelButton(None)   # the VTK build cannot be interrupted
+                    _busy.setMinimumDuration(0)
+                    _busy.setAutoClose(False)
+                    _busy.setAutoReset(False)
+                    _busy.show()
+                    # Paint it NOW, before the GUI thread stops answering.
+                    from PySide6.QtWidgets import QApplication as _QApp
+                    _QApp.processEvents()
+                except Exception as _exc:
+                    _busy = None
+                    logger.debug("[ZETA_MPR] 3D build progress unavailable: %r", _exc)
+
+            # Resolving the host / suppressing repaints is PRESENTATION. It must
+            # never be able to stop the 3D pane from being built, so it gets its
+            # own guard rather than riding on the outer try (where a failure here
+            # would skip `_create_3d_view` entirely).
+            _host = None
+            _suppress = False
+            try:
+                if mpr_deferred_3d_stable_swap_enabled():
+                    _host = layout.parentWidget()
+                    if _host is not None:
+                        _host.setUpdatesEnabled(False)
+                        _suppress = True
+            except Exception:
+                _suppress = False
+            try:
+                # 1. Build the real pane WHILE the placeholder still holds the cell.
+                self._create_3d_view(layout, 0, 1)
+                # 2. Only now drop the placeholder.
+                if placeholder is not None:
+                    try:
+                        layout.removeWidget(placeholder)
+                        placeholder.setParent(None)
+                        placeholder.deleteLater()
+                    except RuntimeError:
+                        pass
+                    self._deferred_3d_placeholder = None
+                # 3. Compute the final geometry NOW, while paint is still off.
+                if _suppress:
+                    try:
+                        layout.activate()
+                    except Exception:
+                        pass
+            finally:
+                if _suppress:
+                    try:
+                        _host.setUpdatesEnabled(True)
+                    except Exception:
+                        pass
+                # The busy dialog is closed in the SAME finally as the repaint
+                # re-enable: a failure mid-build must never leave the workstation
+                # behind a modal it can no longer dismiss.
+                if _busy is not None:
+                    try:
+                        _busy.close()
+                        _busy.deleteLater()
+                    except Exception:
+                        pass
             logger.info("[ZETA_MPR] deferred 3D VRT view built (L1)")
         except RuntimeError as exc:
             # Deleted C++ object mid-build (MPR closed during the defer) — benign.

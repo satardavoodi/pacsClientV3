@@ -403,3 +403,61 @@ def record_reception_api_success(base_url: Optional[str] = None) -> None:
             if st.get("logged"):
                 logger.info("[reception-breaker] CLOSED for %s (Reception/API reachable again)", key)
             _reception_breaker_state[key] = {"failures": 0, "open_until": 0.0, "logged": False}
+
+
+# ---------------------------------------------------------------------------
+# Patient record fetch
+# ---------------------------------------------------------------------------
+
+#: The reception patient endpoint, defined ONCE. ``ReceptionDataFetchWorker`` in the
+#: reception tab builds the same path for its own QThread; a test asserts the two do
+#: not drift apart, because a silent divergence would leave one caller quietly
+#: fetching a 404 while the other worked.
+PATIENT_ENDPOINT_TEMPLATE = "/api/pacs/patients/{patient_id}"
+
+
+def build_patient_url(patient_id: Any) -> str:
+    """Full URL for one patient's reception record.
+
+    Returns "" when reception is not configured — which is a supported state, not an
+    error: there is deliberately no hard-coded host (see the module docstring), so an
+    unconfigured install must resolve to nothing rather than to somebody else's server.
+    """
+    base = (get_reception_api_base_url() or "").strip().rstrip("/")
+    pid = str(patient_id or "").strip()
+    if not base or not pid:
+        return ""
+    return base + PATIENT_ENDPOINT_TEMPLATE.format(patient_id=pid)
+
+
+def fetch_patient_record(patient_id: Any, *, timeout: float = 8.0) -> Optional[dict]:
+    """One patient's reception record, unwrapped, or None.
+
+    SYNCHRONOUS and caller-threaded on purpose. The reception tab wants to block on a
+    QThread and signal the UI; the EchoMind prefetch wants a plain daemon thread while
+    the physician dictates. Baking a threading model in here would force one of them
+    to fight it.
+
+    Returns None — never raises — for every failure: no endpoint configured, timeout,
+    connection refused, HTTP error, unparseable body, unexpected shape. "We could not
+    find out" is a legitimate answer, and every caller is required to accept it.
+    """
+    url = build_patient_url(patient_id)
+    if not url:
+        logger.debug("reception: no endpoint configured; not fetching %s", patient_id)
+        return None
+    try:
+        import requests
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.debug("reception fetch failed for %s: %s", patient_id, exc)
+        return None
+
+    # Same unwrapping as ReceptionDataTab: the payload is under "data" and may be a
+    # single object or a one-element list.
+    payload = data.get("data") if isinstance(data, dict) else None
+    if isinstance(payload, list):
+        payload = payload[0] if payload else None
+    return payload if isinstance(payload, dict) else None

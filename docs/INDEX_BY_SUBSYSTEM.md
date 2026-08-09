@@ -15,6 +15,24 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ## Subsystems
 
+### EchoMind (reporting prompts, region gating, chat metadata)
+
+| Doc | What's in it |
+|---|---|
+| **[`echomind/README.md`](echomind/README.md)** | **Start here.** Index, the one-page mental model, and the six invariants. |
+| [`echomind/01-architecture.md`](echomind/01-architecture.md) | Module map, the three backends, and what every workflow calls. |
+| [`echomind/02-prompt-architecture.md`](echomind/02-prompt-architecture.md) | The nine prompt slots, what is shared vs gated, the load-bearing rules. |
+| [`echomind/03-region-gating.md`](echomind/03-region-gating.md) | What a gate is, what selects it, multi-region selection. |
+| [`echomind/04-chat-metadata.md`](echomind/04-chat-metadata.md) | Where every field comes from, the three layers, storage, edits. |
+| [`echomind/05-mobile-parity.md`](echomind/05-mobile-parity.md) | What Android and iOS must reproduce byte-for-byte. |
+| [`echomind/06-extending.md`](echomind/06-extending.md) | Adding a modality, region, subtype, lexicon or rule. |
+| [`pipelines/echomind-reporting-prompts.md`](pipelines/echomind-reporting-prompts.md) | Per-modality prompt bodies and the preservation rule. Partly superseded - see `echomind/README.md`. |
+
+**Guard tests:**
+- `tests/code/echomind/test_turbo_template.py` - 103 guards on the template, the region packages and the gate
+- `tests/code/echomind/test_turbo_prompt_seam.py` - the Turbo/Send seam
+- `tests/code/echomind/test_metadata_detection.py`, `test_metadata_card.py`, `test_reception_prefetch.py`
+
 ### Viewer (multi-study, sidebar, drag-drop)
 
 | Doc | What's in it |
