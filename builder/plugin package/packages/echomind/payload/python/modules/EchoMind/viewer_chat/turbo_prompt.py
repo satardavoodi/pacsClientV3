@@ -246,7 +246,12 @@ correction request. The existing report is the authoritative base document.
 Apply only the requested correction and preserve all unrelated content.
 
 - Do not generate a new report from scratch.
-- Do not regenerate Normal Findings.
+- Do not rewrite Normal Findings that the request did not mention. But when the
+  request DOES ask you to add, extend, split or restructure them — "add the normal
+  findings for the calcaneus", "split normals into knee and calcaneus" — do exactly
+  that, in full, using standard reporting practice for the structures named. Never
+  answer such a request by deleting the normals you already had, and never replace a
+  section with a placeholder like "Normal findings knee."
 - Do not introduce a pathological finding the request did not ask for.
 - Do not remove a finding unless removal is what was requested.
 - Do not change a measurement, laterality, anatomical location, diagnosis,
@@ -261,7 +266,7 @@ section, in the output format specified below.
 """
 
 
-def build_turbo_correction_prefix() -> Optional[str]:
+def build_turbo_correction_prefix(profile: Optional[dict] = None) -> Optional[str]:
     """The editing frame Turbo prepends to the shared correction prompt.
 
     A PREFIX, not an override. A correction response is parsed, so a prompt that
@@ -276,7 +281,30 @@ def build_turbo_correction_prefix() -> Optional[str]:
         logger.info("[Turbo-correction] disabled by %s; shared prompt only",
                     _ENV_TURBO_PROMPT)
         return None
-    return TURBO_CORRECTION_FRAME
+    # 2026-08-11: the correction carries the same region context the report did.
+    # Patient 54120 asked for the calcaneus normal findings to be added and the model
+    # had no calcaneus guidance to add them from — the correction path had never been
+    # gated at all. Advisory here exactly as it is in the report prompt.
+    if not profile:
+        return TURBO_CORRECTION_FRAME
+    try:
+        # Imported HERE, not at module scope: `modules_for` is only in scope inside
+        # build_turbo_system_prompt, and `render_region_context` was in scope nowhere.
+        # The except below would have swallowed the NameError and returned the bare
+        # frame — the feature would have been dead with every test still green.
+        from .turbo_modules import modules_for as _modules_for
+        from .turbo_template import render_region_context as _render_region_context
+
+        regions = [str(r).strip().lower() for r in (profile.get("regions") or []) if r]
+        mods = _modules_for(profile.get("modality") or "", regions)
+        block = _render_region_context(
+            mods, contrast=profile.get("contrast") or "") if mods else ""
+    except Exception as exc:                       # pragma: no cover - defensive
+        logger.warning("[Turbo-correction] region context unavailable: %s", exc)
+        block = ""
+    if not block:
+        return TURBO_CORRECTION_FRAME
+    return TURBO_CORRECTION_FRAME + "\n" + block
 
 
 def build_mammography_prefix(profile: Optional[dict] = None) -> Optional[str]:

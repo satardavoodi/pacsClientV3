@@ -1518,7 +1518,14 @@ class MainWindowWidget(QWidget):
                 if hasattr(cache, 'clear'):
                     cache.clear()
             clear_study_cache()
-            get_disk_pixel_cache().clear()
+            # 2026-08-16: the in-memory caches above are cleared unconditionally
+            # (they die with the process anyway), but the disk pixel cache is
+            # the L2 PERSISTENT cache — wiping it here is what made it useless.
+            # `clear_on_exit()` keeps it by default and honours
+            # AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1 for sites that want the wipe.
+            # Do NOT change this back to `.clear()`: see
+            # docs/reports/PIXEL_CACHE_PERSISTENCE_2026-08-16.md
+            get_disk_pixel_cache().clear_on_exit()
 
         lifecycle_manager.register("cache.auto_cleanup_threads", _shutdown_caches, timeout=3.0)
 

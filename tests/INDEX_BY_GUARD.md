@@ -142,6 +142,45 @@ For each domain, the matching docs live under `docs/` — start at [`../docs/IND
 
 ---
 
+## 2026-08 additions — startup, warm-up and thumbnail guards
+
+These live outside `tests/code/system/`, so they are easy to miss from the
+system table above. Each pairs with a 2026-08 row in the regression catalog.
+
+| Test file | Guards | What it protects |
+|---|---|---|
+| `code/web_browser/test_prewarm_recency_veto.py` | **13** | The input filter SURVIVES the warm (`_finish_watch(warm=True)` must not remove it) and `_on_construct` re-checks input recency before blocking the GUI thread. Removing these re-introduces the 19 s double-click freeze. |
+| `code/system/test_browser_prewarm_idle_gate.py` | +3 | The pre-warm is **opt-in**: only a literal `AIPACS_BROWSER_PREWARM="1"` enables it, and the adaptive used-marker still gates on top. Removing these re-introduces the 72 s freeze. |
+| `code/web_browser/test_prewarm_idle_gate.py` | +4 | Warm the **default profile**, never a throwaway `QWebEngineView` + `setUrl`; the DLL file warm stays **name-scoped** and budget-capped. |
+| `code/viewer/test_series_file_warm.py` | **12** | The patient-open file warm stays read-only, daemon-threaded, budget-capped, kill-switchable, and refuses blank/duplicate work. It must never become the thing that verifies series files — the switch-time scan still does that. |
+| `code/viewer/test_disk_pixel_cache_async_init.py` | **10** | `initialize()` stays synchronous for direct callers; only the singleton goes background. Includes a threaded writer-vs-scan race and the LRU-order-after-merge invariant (the index's ORDER is the eviction order). |
+| `code/viewer/test_viewer_import_warm.py` | **8** | The import warm creates **no Qt object** (it runs off the GUI thread) and fails loudly if the windowing path stops using the numpy calls it warms. |
+| `code/viewer/test_disk_pixel_cache_persistence.py` | **20** | The L2 cache SURVIVES shutdown (before this it was `rmtree`'d every exit and had never served a cross-session hit). Pins: persistence is the default; `AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1` really restores the wipe; **`clear()` itself stays unconditional** so an explicit user clear always clears; the shutdown path calls `clear_on_exit()` not `clear()` (AST pin — a comment naming `.clear()` cannot fool it); and eviction still bounds a *persisted* cache, with LRU order surviving a restart. |
+| `code/ui_services/test_thumbnail_active_state_and_strip.py` | **20** | **Behavioural, on real Qt widgets.** The download bar is not buried by the re-parenting `addWidget`; the red active line is stacked above it; A→B→A returns a series to the active state. A source-string pin cannot see a z-order bug — that is exactly how the buried bar survived `test_thumbnail_panel_ui_fixes.py`. |
+| `code/ui_services/test_main_footer_bar_removed.py` | **6** | The empty main-page footer stays hidden and its widgets stay alive (so `apply_theme` keeps working); fails if anyone starts writing to its labels or introduces a real `QSizeGrip`. |
+
+Run them all with:
+
+```
+.venv\Scripts\python.exe -m pytest tests/code/web_browser tests/code/viewer/test_series_file_warm.py tests/code/viewer/test_disk_pixel_cache_async_init.py tests/code/viewer/test_disk_pixel_cache_persistence.py tests/code/viewer/test_viewer_import_warm.py tests/code/ui_services/test_thumbnail_active_state_and_strip.py tests/code/ui_services/test_main_footer_bar_removed.py tests/code/system/test_browser_prewarm_idle_gate.py -q
+```
+
+Last verified green: **2026-08-16, 162 passed**. The wider viewer regression
+run (`pytest tests/code/viewer tests/code/fast`) was green the same day:
+**2373 passed, 28 skipped, 54 xfailed, 2 xpassed** — the xfail/xpass set is the
+pre-existing quarantine, unchanged.
+
+---
+
+## Cumulative count (2026-08-16)
+
+Counted directly, not from the dashboard:
+
+- **Test files under `tests/code/`: 686** across **44** domain folders
+- **Regression catalog rows: 54**
+
+---
+
 ## Cumulative count (post-audit 2026-05-29)
 
 - **Total test files: 194** (code = 183, bus-driven = 7, pywinauto = 4)

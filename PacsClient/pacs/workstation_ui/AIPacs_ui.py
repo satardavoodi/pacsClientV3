@@ -841,6 +841,32 @@ class ControlPanelWindow(object):
         self.horizontalLayout_11.addWidget(self.sizeGrip, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
 
         self.verticalLayout_10.addWidget(self.footerContainter)
+
+        # UI-4 (2026-08-10): hide the empty footer strip at the bottom of the
+        # main page. Measured on the live window (1920x1032): it drew a
+        # full-width 1 px separator at y=1002 (the `border-top` applied in
+        # apply_theme) plus the borders of its own empty child frames at
+        # y=1007-1008 (x 72-684, 1291-1296 and the 20 px sizeGrip square at
+        # 1890-1909) — which together read as a stray bar / scrollbar under the
+        # patient list, and cost ~30 px of vertical space for nothing.
+        #
+        # It is safe to hide: both of its labels are permanently empty
+        # (`label_15` and `activityLabel` are set to "" here and written
+        # NOWHERE else in the codebase), and `sizeGrip` is a bare QFrame, not a
+        # QSizeGrip — there is no QSizeGrip anywhere in the project and nothing
+        # references `sizeGrip`, so it never resized the window (the frameless
+        # main window is resized by its own handler, untouched here).
+        #
+        # The widgets are kept alive rather than removed because apply_theme()
+        # still styles `footerContainter` / `activityLabel`; hiding is also the
+        # smaller, reversible change. Restore with AIPACS_MAIN_FOOTER=1.
+        try:
+            if (os.getenv("AIPACS_MAIN_FOOTER", "0") or "0").strip() == "0":
+                self.footerContainter.setVisible(False)
+                self.footerContainter.setFixedHeight(0)
+        except Exception:
+            pass
+
         self.verticalLayout_10.setStretch(0, 1)
         self.verticalLayout_10.setStretch(1, 0)
 

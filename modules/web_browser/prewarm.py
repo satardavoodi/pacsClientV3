@@ -47,7 +47,13 @@ NEVER affect app/home startup or the clinical UI. This module imports only
 stdlib + ``PySide6.QtCore`` at top level (NOT QtWebEngine, NOT QtWidgets), so
 importing it is cheap.
 
-Kill switch: ``AIPACS_BROWSER_PREWARM=0``.
+**Default OFF since IMP-4 (2026-08-16).** Opt in with
+``AIPACS_BROWSER_PREWARM=1``. A cold GUI-thread construct was measured at
+**72.1 s** live (see ``should_prewarm`` for the full timeline and reasoning);
+every scheduling guard below worked correctly and still could not prevent it,
+because the construct's cost is unbounded and it must run on the GUI thread.
+Everything documented below therefore describes how the warm behaves WHEN
+EXPLICITLY ENABLED.
 Tunables (ms): ``AIPACS_BROWSER_PREWARM_DELAY_MS`` (initial delay, default
 20000), ``AIPACS_BROWSER_PREWARM_IDLE_MS`` (required idle gap, default 5000),
 ``AIPACS_BROWSER_PREWARM_MAX_WAIT_MS`` (give-up cap, default 600000),
@@ -103,7 +109,26 @@ def _now_ms() -> float:
 # construction hits warm cache (~0.6 s) instead of paying the ~15 s cold cost.
 _WARM_FILE_NAMES = ("QtWebEngineProcess.exe", "icudtl.dat", "v8_context_snapshot.bin")
 _WARM_FILE_SUFFIXES = (".pak",)
-_WARM_FILE_BUDGET_BYTES = 600 * 1024 * 1024   # hard cap; typical total is ~350 MB
+
+# IMP-5 (2026-08-16): the .pak/.dat set above is only 152.1 MB of a 358 MB
+# WebEngine payload. Audited on the reporting workstation, the 277.4 MB NOT
+# being pre-read is almost entirely ONE file:
+#     202.3 MB  Qt6WebEngineCore.dll      <-- the engine itself
+#      10.2 MB  Qt6Core.dll
+#       9.5 MB  Qt6Gui.dll
+#       6.6 MB  Qt6Widgets.dll   (+ Quick/Qml/…)
+# `kick()` already IMPORTS QtWebEngineCore off-thread, which memory-maps that
+# DLL — but mapping is lazy: its pages are faulted in only as the global init
+# executes them, i.e. ON THE GUI THREAD, from cold disk, past two real-time AV
+# engines. Sequentially pre-reading the DLLs on the daemon thread pulls them
+# into the OS page cache and pays the AV verdict off-thread, exactly as the
+# .pak pre-read already does. Names are matched conservatively so this never
+# walks the whole of site-packages.
+_WARM_DLL_HINTS = (
+    "qt6webenginecore", "qt6core", "qt6gui", "qt6widgets",
+    "qt6network", "qt6quick", "qt6qml", "qt6positioning",
+)
+_WARM_FILE_BUDGET_BYTES = 600 * 1024 * 1024   # hard cap; full payload is ~430 MB
 
 
 def _file_warm_enabled() -> bool:
@@ -123,6 +148,9 @@ def _webengine_aux_files(root: Path | None = None) -> list[Path]:
                 if not path.is_file():
                     continue
                 if path.name in _WARM_FILE_NAMES or path.suffix.lower() in _WARM_FILE_SUFFIXES:
+                    out.append(path)
+                elif path.suffix.lower() == ".dll" and path.stem.lower() in _WARM_DLL_HINTS:
+                    # IMP-5: the engine DLLs — 277 MB the warm used to miss.
                     out.append(path)
             except OSError:
                 continue
@@ -195,8 +223,37 @@ def mark_browser_used() -> None:
 
 
 def should_prewarm() -> bool:
-    """True when an idle pre-warm should run this session (adaptive policy)."""
-    if os.environ.get("AIPACS_BROWSER_PREWARM", "1") == "0":
+    """True when an idle pre-warm should run this session.
+
+    IMP-4 (2026-08-16) — the pre-warm is now OPT-IN (default OFF).
+
+    Live evidence, pid 218252, with every earlier guard working as designed:
+        11:05:47  idle 12692 ms >= 5000 ms after first interaction -> warming now
+        11:06:04  file warm read 152.1 MB in 4358 ms (off-thread)
+        11:07:16  Chromium engine warmed (construct+setUrl 72122 ms on GUI thread)
+    -> a **72.1 second** frozen clinical workstation.
+
+    The scheduling guards (OPT-22 idle gate, IMP-1 modal veto, IMP-3
+    construct-time input-recency re-check) all did the right thing: the user
+    had genuinely been idle for 12.7 s, so the construct was allowed. The
+    lesson from four live incidents (~17 s 2026-07-23, 19 s 2026-08-07,
+    39.7 s 2026-08-05, 72 s today) is that WHEN the construct runs was never
+    the real problem — its COST is unbounded and cannot be capped, because Qt
+    requires QWebEngineView construction on the GUI thread and that call is
+    atomic. No idle window is long enough to be safe when a cold boot can take
+    72 s, and the user can always resume work inside it.
+
+    The trade is therefore settled the other way: pay the Chromium boot when
+    the user actually OPENS the Web Browser (an explicit action, where a wait
+    is expected and attributable) instead of risking a minutes-long freeze
+    mid-reporting for a feature that may not be used at all this session.
+
+    Opt in with AIPACS_BROWSER_PREWARM=1 on machines where the boot is cheap
+    (it was 219-227 ms warm on 2026-08-07); the adaptive marker is still
+    honoured on top, so opting in only warms sessions after the browser has
+    been used at least once. AIPACS_BROWSER_PREWARM=0 (or unset) = off.
+    """
+    if (os.environ.get("AIPACS_BROWSER_PREWARM", "0") or "0").strip() != "1":
         return False
     try:
         return _marker_path().exists()
@@ -505,66 +562,60 @@ def schedule_prewarm(delay_ms: int | None = None) -> bool:
 
 
 def _construct_warm_view() -> None:
-    """Construct a hidden ``QWebEngineView`` once to amortize Chromium's global
-    init on the GUI thread. The global engine stays warm for the process after
-    the throwaway view is released, so the user's first real browser open is
-    fast. Never shown — no window appears.
+    """Trigger Chromium's one-time global init, the cheapest way available.
+
+    IMP-5 (2026-08-16) — this no longer constructs a throwaway
+    ``QWebEngineView``; it just touches ``QWebEngineProfile.defaultProfile()``,
+    which is what actually forces the global engine init. (The function keeps
+    its name because ``_on_construct`` and the prewarm tests address it.)
+
+    Measured on the reporting workstation, warm, 2 runs each — "warm block" is
+    the GUI-thread stall, "user open" is what the user then waits for when they
+    really open the browser:
+
+        no warm at all           block    0 ms   ->  user open  971 ms
+        throwaway view (old)     block  991/889  ->  user open  156/115 ms
+        defaultProfile() (new)   block  772/662  ->  user open  173/123 ms
+
+    Identical benefit to the user, for **~24 % less GUI-thread block** (717 vs
+    940 ms mean), because the old path additionally paid ``setUrl()`` + a full
+    ``about:blank`` page load. It also stops creating a render process that was
+    then held alive for up to 60 s purely to be thrown away.
+
+    A phase breakdown of the boot confirms where the cost really is — the view
+    itself was never the expensive part:
+
+        import QtWebEngineCore      46 ms   (already off-thread in kick())
+        QApplication()              45 ms
+        defaultProfile()           918 ms   <-- the global init, GUI-thread only
+        QWebEngineView()             0 ms
+        setUrl() + loadFinished    554 ms   <-- pure waste for a warm
+
+    Chromium flags are NOT a lever here (measured: --disable-gpu 661 ms,
+    --no-sandbox 665 ms, --no-sandbox --disable-gpu 635 ms, --in-process-gpu
+    696 ms vs 662-918 ms default — all within noise).
     """
     global _warm_view
     if _warm_view is not None:
         return
     try:
-        from PySide6.QtCore import QTimer, QUrl
-        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWebEngineCore import QWebEngineProfile
     except Exception:
-        logger.debug("browser prewarm: widgets import failed", exc_info=True)
+        logger.debug("browser prewarm: QtWebEngine import failed", exc_info=True)
         return
     try:
         start = _now_ms()
-        view = QWebEngineView()           # offscreen, never shown
-        view.setUrl(QUrl("about:blank"))
-        _warm_view = view
+        # Touching the default profile boots the global engine (V8/ICU/network/
+        # GPU). Qt owns this object for the process lifetime — nothing to hold,
+        # nothing to release, no render process created.
+        profile = QWebEngineProfile.defaultProfile()
+        _warm_view = profile if profile is not None else True   # "warmed" latch
         logger.info("browser prewarm: Chromium engine warmed "
-                    "(construct+setUrl %.0f ms on GUI thread)",
+                    "(defaultProfile %.0f ms on GUI thread)",
                     _now_ms() - start)
     except Exception:
-        logger.debug("browser prewarm: view construction failed", exc_info=True)
+        logger.debug("browser prewarm: engine warm failed", exc_info=True)
         return
-
-    def _release() -> None:
-        global _warm_view
-        try:
-            if _warm_view is not None:
-                _warm_view.deleteLater()
-        except Exception:
-            pass
-        _warm_view = None
-
-    # Hold the throwaway view until the engine has ACTUALLY finished booting
-    # (loadFinished), then drop the render process — the global engine stays
-    # initialized for the rest of the process. The old fixed 2.5 s release
-    # destroyed the view mid-boot on a COLD start (measured ~15 s to ready,
-    # 2026-07-23), wasting part of the warm. 60 s failsafe so the view can
-    # never linger if loadFinished is lost.
-    released = {"done": False}
-
-    def _release_once(*_a) -> None:
-        if released["done"]:
-            return
-        released["done"] = True
-        try:
-            QTimer.singleShot(1500, _release)  # small settle after ready
-        except Exception:
-            _release()
-
-    try:
-        view.loadFinished.connect(_release_once)
-        QTimer.singleShot(60000, _release_once)  # failsafe
-    except Exception:
-        try:
-            QTimer.singleShot(2500, _release)
-        except Exception:
-            _release()
 
 
 __all__ = ["mark_browser_used", "should_prewarm", "schedule_prewarm"]

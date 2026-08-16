@@ -12,5 +12,12 @@
         "port": "104",
         "ae_title": "aipacs",
         "poor_connectivity": true
+    },
+    {
+        "name": "razi out site",
+        "host": "81.16.117.196",
+        "port": "105",
+        "ae_title": "AIPACS",
+        "poor_connectivity": false
     }
 ]

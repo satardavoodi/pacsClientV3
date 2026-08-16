@@ -242,6 +242,18 @@ ending in a colon, findings on the lines beneath it. Number multiple pathologica
 findings. Emit a heading only when it has content — a heading is a claim that the
 region was examined.
 
+WHEN THE STUDY COVERS MORE THAN ONE BODY PART, organise BOTH "Pathological Findings"
+and "Normal Findings" by body part FIRST, anatomy second. Open each group with the
+body part on its own line ending in a colon, named the same way and in the same order
+in both keys — for example "Left Knee Radiography — AP and Lateral Views:" and
+"Left Ankle / Calcaneus Radiography:". A reader assembling the picture for one body
+part should find it in one place.
+
+Every body part the study covered appears in BOTH keys. One with nothing abnormal
+still gets its own line under Pathological Findings — "No pathological osseous or
+articular abnormality is identified." — because a body part missing from that key
+reads as one that was never examined.
+
 Start with { and end with }.
 """
 

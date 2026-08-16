@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from .providers.native_irannobat import NativeIrannobatProvider
 from .providers.openai_transcribe import OpenAITranscribeProvider
@@ -26,10 +26,21 @@ class SttRouter:
         route: str = "native",
         fallback: bool = True,
         quality_mode: str = "clear",
+        timeout: Optional[int] = None,
     ) -> dict[str, Any]:
+        # 2026-08-10 — `timeout` did not exist here, so a Secretary transcription
+        # always landed on the provider's own default. That default is truthy, and
+        # `VoiceTranscriptionService._post_audio` resolves the budget as
+        # `int(timeout or cfg["timeout_seconds"] or DEFAULT_TIMEOUT_S)` — so the
+        # provider default silently BEAT the user's Settings ▸ EchoMind ▸
+        # Voice to Text value. It is forwarded only when a caller supplies one, so
+        # any caller that stays silent keeps exactly the behaviour it had.
+        call_kwargs: dict[str, Any] = {"quality_mode": quality_mode}
+        if timeout is not None:
+            call_kwargs["timeout"] = int(timeout)
         primary_route = (route or "native").lower()
         primary = self._get_provider(primary_route)
-        first = primary.transcribe_files(paths, quality_mode=quality_mode)
+        first = primary.transcribe_files(paths, **call_kwargs)
         if first.get("ok") and str(first.get("transcript") or "").strip():
             first["route_requested"] = primary_route
             first["route_used"] = primary.name
@@ -42,7 +53,7 @@ class SttRouter:
 
         secondary_route = "v2t" if primary_route not in {"v2t", "openai"} else "native"
         secondary = self._get_provider(secondary_route)
-        second = secondary.transcribe_files(paths, quality_mode=quality_mode)
+        second = secondary.transcribe_files(paths, **call_kwargs)
         second["route_requested"] = primary_route
         second["route_used"] = secondary.name
         if not second.get("ok") and first.get("error"):

@@ -23,8 +23,26 @@ def test_kill_switch_disables_prewarm(monkeypatch):
     assert prewarm.should_prewarm() is False
 
 
-def test_marker_gate(monkeypatch, tmp_path):
+def test_prewarm_is_opt_in_by_default(monkeypatch, tmp_path):
+    """IMP-4 (2026-08-16): default OFF, even with the used-marker present.
+
+    Live that day the warm froze the GUI thread for 72.1 s inside the Chromium
+    construct while every scheduling guard behaved correctly (the user really
+    had been idle 12.7 s). The construct must run on the GUI thread and its
+    cost is unbounded, so no idle window makes it safe — the boot is now paid
+    when the user actually opens the browser.
+    """
     monkeypatch.delenv("AIPACS_BROWSER_PREWARM", raising=False)
+    marker = tmp_path / ".browser_used"
+    monkeypatch.setattr(prewarm, "_marker_path", lambda: marker)
+    marker.write_text("1", encoding="utf-8")
+    assert prewarm.should_prewarm() is False, (
+        "the browser prewarm must not run unless explicitly opted in")
+
+
+def test_marker_gate_applies_on_top_of_the_opt_in(monkeypatch, tmp_path):
+    """Opted in, the adaptive marker still gates it."""
+    monkeypatch.setenv("AIPACS_BROWSER_PREWARM", "1")
     marker = tmp_path / ".browser_used"
     monkeypatch.setattr(prewarm, "_marker_path", lambda: marker)
     # No marker -> never warm (workstation that never opened the browser).
@@ -32,6 +50,16 @@ def test_marker_gate(monkeypatch, tmp_path):
     # After the user opened the browser once -> eligible.
     marker.write_text("1", encoding="utf-8")
     assert prewarm.should_prewarm() is True
+
+
+@pytest.mark.parametrize("val", ["0", "", "yes", "true", "on", "2", "junk"])
+def test_only_an_explicit_1_enables_the_prewarm(monkeypatch, tmp_path, val):
+    """Anything other than "1" leaves the freeze-prone warm disabled."""
+    monkeypatch.setenv("AIPACS_BROWSER_PREWARM", val)
+    marker = tmp_path / ".browser_used"
+    monkeypatch.setattr(prewarm, "_marker_path", lambda: marker)
+    marker.write_text("1", encoding="utf-8")
+    assert prewarm.should_prewarm() is False
 
 
 # ── idle-only routing (default on) ─────────────────────────────────────

@@ -77,10 +77,21 @@ def _active_backend() -> str:
 
 
 def is_active_backend_configured() -> bool:
+    """Can the ACTIVE backend actually be used right now?
+
+    2026-08-09: the company branch used to be `bool(stored_string)`, which was wrong in
+    both directions — True for junk the user typed and never validated, False for a key
+    validated in memory but not yet written to settings. It now asks the entitlement
+    authority, so the UI cannot offer a company backend the licence does not cover.
+
+    The OpenAI branch is deliberately untouched: the user's own key needs no AI-PACS
+    authorisation, only EchoMind being installed.
+    """
     backend = _active_backend()
     if backend == "openai":
         return bool(str(get_openai_settings().get("api_key") or "").strip())
-    return bool(str(get_echomind_api_key() or "").strip())
+    from modules.EchoMind.entitlement import company_entitled
+    return company_entitled()
 
 
 def get_active_backend_display_name() -> str:

@@ -2,7 +2,7 @@
   "stage": 2,
   "key": "qt_shell",
   "title": "Qt Shell Build",
-  "created_at_utc": "2026-08-04T20:15:26.292084+00:00",
+  "created_at_utc": "2026-08-09T22:59:10.958811+00:00",
   "marker_only": true,
   "command": [
     "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
@@ -12,7 +12,7 @@
     "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell",
     "--output-filename=AIPacs.exe",
     "--product-name=AIPacs",
-    "--product-version=3.5.8",
+    "--product-version=3.5.9",
     "--company-name=AIPacs",
     "--file-description=AIPacs - staged Nuitka build",
     "--windows-console-mode=attach",

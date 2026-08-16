@@ -86,9 +86,18 @@ def test_the_correction_frame_exists_and_is_an_editing_instruction():
     assert frame and "EDIT, DO NOT GENERATE" in frame
     low = frame.lower()
     for rule in ("do not generate a new report from scratch",
-                 "do not regenerate normal findings",
                  "complete corrected report"):
         assert rule in low, f"missing: {rule}"
+    # "do not regenerate normal findings" was here until 2026-08-11, when patient
+    # 54120 showed what a blanket ban costs. He asked twice for the calcaneus normal
+    # findings to be added; the rule forbade it, and the model resolved the conflict by
+    # DELETING the knee normals and writing the literal "Normal findings knee."
+    #
+    # The protection that mattered is kept and narrowed: normals the request did not
+    # mention are still untouchable. Normals it explicitly asks for are now writable.
+    assert "do not rewrite normal findings that the request did not mention" in low
+    assert "add, extend, split or restructure" in low
+    assert "deleting the normals you already had" in low
 
 
 @pytest.mark.parametrize("probe", [

@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.5.9 (2026-08-10) - Minor release: the EchoMind Turbo reporting overhaul (study-aware region-gated prompt modules for CT/MRI/US/X-ray/mammography, per-chat case-metadata panel + reception prefetch, source-fidelity contract, normal-findings register, report-persistence chain, modality routing), series header-scan cold-load warm-up, MPR deferred-3D layout stability, download-manager cancel/retry hardening, and a docs reorg. Built on v3.5.8. See `docs/releases/VERSION_3.5.9_RELEASE.md`.
+**Current Stable Version:** v3.6.0 (2026-08-16) - Milestone release: EchoMind entitlement/licensing + Turbo reporting refinements (multi-region studies, region-from-text, report-title rule), a 72-second browser-prewarm startup-freeze fix, persistent + async-init disk pixel cache (faster reopen), main-window footer-bar removal, and an off-site (external) server profile alongside the LAN one. Built on v3.5.9. See `docs/releases/VERSION_3.6.0_RELEASE.md`.
 
-**Previous Stable:** v3.5.8 (2026-08-04) - Minor release: the redesigned UI merged into the stable line, bidirectional reference lines, Siemens multi-frame CSA-protocol geometry, the local patient-list O(N²)→O(N) render (OPT-50), and the form-field icon-chip restyle. See `docs/releases/VERSION_3.5.8_RELEASE.md`.
+**Previous Stable:** v3.5.9 (2026-08-10) - Minor release: the EchoMind Turbo reporting overhaul (study-aware region-gated prompt modules for CT/MRI/US/X-ray/mammography), per-chat case-metadata panel, series header-scan cold-load warm-up, MPR deferred-3D layout stability, and download-manager cancel/retry hardening. See `docs/releases/VERSION_3.5.9_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

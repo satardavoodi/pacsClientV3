@@ -83,7 +83,56 @@ def _release_orphan_secretary_worker(worker) -> None:
     except Exception:
         pass
 from modules.EchoMind.secretary.stt.router import SttRouter
-from modules.EchoMind.settings_store import get_secretary_stt_route, load_settings, get_echomind_api_key
+from modules.EchoMind.settings_store import (
+    get_secretary_stt_route,
+    get_stt_settings,
+    load_settings,
+    get_echomind_api_key,
+)
+
+
+# ── 2026-08-10: one transport retry for the Secretary STT upload ─────────────
+# Agent mode had NO retry of any kind, while the chat gained `_retry_once` on
+# 2026-08-09. A timeout, a dropped connection or an HTTP 5xx is usually transient
+# and costs the physician an entire re-dictation here. Only those are resent: a
+# recording the server answered and found silent ("No speech recognized.") is a
+# quality event — resending it buys a duplicate failure and a wasted upload of
+# patient dictation.
+_STT_TRANSPORT_MARKERS = (
+    "server error",          # requests' raise_for_status wording for every 5xx
+    "timeout",
+    "timed out",
+    "connection",            # ConnectionError / HTTPConnectionPool / aborted
+    "max retries",
+    "remote end closed",
+    "reset by peer",
+    "broken pipe",
+    "bad gateway",
+    "service unavailable",
+    "temporarily unavailable",
+)
+
+
+def _stt_failure_is_transport(stt_resp: dict) -> bool:
+    """Did the STT request fail to COMPLETE (vs. complete and hear nothing)?
+
+    Mirrors the split the chat makes in `ai_chat_pages._transcribe_now`: the
+    worker's `err()` path is "transport", while `accepted=False` / an empty
+    transcript is "quality". Anything unrecognised counts as NOT transport, so
+    the default stays "do not resend the patient's dictation".
+    """
+    try:
+        if stt_resp.get("ok"):
+            return False
+        err = str(stt_resp.get("error") or "").strip().lower()
+    except Exception:                        # pragma: no cover - defensive
+        return False
+    if not err:
+        return False
+    # Quality / caller-side outcomes a resend cannot change.
+    if "no speech" in err or "no files" in err or "no valid audio" in err:
+        return False
+    return any(marker in err for marker in _STT_TRANSPORT_MARKERS)
 
 
 # Lazy orb-frame build (2026-06-18 perceived-latency work). The orb pre-renders
@@ -1909,17 +1958,54 @@ class SecretaryButtonWidget(QWidget):
             _elog(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT started: sending audio to transcription service")
             try:
                 stt_settings = load_settings() or {}
+                # 2026-08-10 — pass the CONFIGURED upload budget. The router took
+                # no `timeout`, so NativeIrannobatProvider's own default reached
+                # `_post_audio`, and a truthy `timeout` wins there over
+                # `cfg["timeout_seconds"]`: Settings ▸ EchoMind ▸ Voice to Text was
+                # inert for agent mode while the chat honoured it.
+                try:
+                    stt_timeout = int(get_stt_settings().get("timeout_seconds") or 0) or None
+                except Exception:
+                    stt_timeout = None
                 stt_req = {
                     "route": get_secretary_stt_route(),
+                    # DELIBERATELY False, and deliberately NOT wired to the
+                    # `secretary_stt_fallback` setting. The router's fallback is
+                    # Google Web Speech, and that setting defaults to True — wiring
+                    # it would ship raw patient dictation to Google's free,
+                    # unauthenticated endpoint on the most common failure mode (an
+                    # empty transcript). Do not connect them without a PHI review.
                     "fallback": False,
+                    # DIVERGENCE from the chat, left as-is on purpose: chat starts
+                    # at "clear" and auto-retries once in "noisy"; agent mode opens
+                    # in "noisy". That moves the server's acceptance threshold for
+                    # dictation, so changing it is a clinical behaviour change and
+                    # needs the owner's sign-off.
                     "quality_mode": "noisy",
+                    "timeout": stt_timeout,
                 }
                 stt_resp = self._stt_router.transcribe_files(
                     paths=[tmp],
                     route=stt_req["route"],
                     fallback=stt_req["fallback"],
                     quality_mode=stt_req["quality_mode"],
+                    timeout=stt_req["timeout"],
                 )
+                # ONE plain resend, transport failures only — the agent-mode
+                # counterpart of the chat's `_retry_once("transport")`. Identical
+                # request (same file, same quality_mode); never fired for "no
+                # speech"/quality. It stays on this worker thread — `_post_log`
+                # already marshals itself to the GUI thread.
+                if _stt_failure_is_transport(stt_resp):
+                    self._post_log("system", "STT transport failure — retrying once...")
+                    _elog(f"[EchoMind | Phase 1] {_dt.datetime.now():%H:%M:%S} — STT transport failure, retrying once")
+                    stt_resp = self._stt_router.transcribe_files(
+                        paths=[tmp],
+                        route=stt_req["route"],
+                        fallback=stt_req["fallback"],
+                        quality_mode=stt_req["quality_mode"],
+                        timeout=stt_req["timeout"],
+                    )
                 transcript = (stt_resp.get("transcript") or "").strip()
                 if not transcript:
                     return {
@@ -1948,7 +2034,22 @@ class SecretaryButtonWidget(QWidget):
                 stt_resp = resp.get("stt_resp") or {}
                 self._set_thinking_status("Ready")
                 self._post_log("system", f"STT request: {stt_req}")
-                self._post_log("system", f"STT response: {stt_resp}")
+                # 2026-08-10 — this used to print the provider dict verbatim. For
+                # AI-PACS Servers 1/2 that dict is the server's merged RAW body: it
+                # carries the transcript (patient dictation) and the resolved
+                # endpoint, so one failed dictation put PHI *and* a server address
+                # on screen. Same spirit as `voice_transcription._delegate`: report
+                # the LENGTH, never the content, and never the raw dict.
+                self._post_log(
+                    "system",
+                    "STT result: route={} used={} ok={} chars={} error={}".format(
+                        stt_req.get("route") or "-",
+                        stt_resp.get("route_used") or "-",
+                        bool(stt_resp.get("ok")),
+                        len(str(stt_resp.get("transcript") or "")),
+                        stt_resp.get("error") or "-",
+                    ),
+                )
                 self._post_log("system", f"Secretary failed: {resp.get('error')}")
                 self._finish_secretary_cycle()
                 return

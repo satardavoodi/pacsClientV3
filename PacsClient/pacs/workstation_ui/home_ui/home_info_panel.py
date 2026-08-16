@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.5.9",
-    "build_date": "2026-08-10",
-    "release_date": "2026-08-10",
+    "version": "3.6.0",
+    "build_date": "2026-08-16",
+    "release_date": "2026-08-16",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "EchoMind reporting overhauled with study-aware Turbo templates",
-        "Per-chat case panel shows detected patient and study details",
-        "Faster patient open and warm-up on cold, large studies",
-        "More reliable downloads: safer cancel, retry keeps finished files",
-        "Reporting is safer: normal studies report correctly, prompts preserved",
+        "Cleaner main window — the redundant footer bar has been removed",
+        "No more startup freeze from the in-app browser warming up",
+        "Images load faster on reopen thanks to a persistent image cache",
+        "Smarter EchoMind reporting with multi-region studies and licensing",
+        "Add an external/off-site server alongside your local one",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.5.9",
+        "AI-PACS Version 3.6.0",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۵.۹",
+        "AI-PACS نسخهٔ ۳.۶.۰",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 
 class NativeIrannobatProvider:
@@ -24,8 +24,14 @@ class NativeIrannobatProvider:
 
     name = "native"
 
+    # 2026-08-10 — the default was a hard 360, and `VoiceTranscriptionService`
+    # resolves its budget as `int(timeout or cfg["timeout_seconds"] or ...)`, so
+    # that truthy default OVERRODE the user's Settings ▸ EchoMind ▸ Voice to Text
+    # timeout on every Secretary transcription. `None` means "no opinion" and lets
+    # the service fall through to the configured value — the same contract the
+    # chat path already uses (`transcribe(..., timeout=None)`).
     def transcribe_files(
-        self, paths: list[str], quality_mode: str = "clear", timeout: int = 360
+        self, paths: list[str], quality_mode: str = "clear", timeout: Optional[int] = None
     ) -> dict[str, Any]:
         if not paths:
             return {

@@ -47,6 +47,12 @@ def _defaults() -> Dict[str, Any]:
         "prompt_transcript_cleanup": "",
         "prompt_image_artifact": "",
         "secretary_stt_provider": "native",  # LEGACY route: native | v2t | openai
+        # INERT, and it must stay that way (checked 2026-08-10). The only fallback
+        # `SttRouter` can reach is Google Web Speech — free, unauthenticated, and
+        # off-premises. This key defaults to True, so wiring it to the router's
+        # `fallback` argument would ship raw patient dictation to Google on the
+        # commonest failure (an empty transcript). The one caller (Secretary) passes
+        # a literal False on purpose; do not connect them without a PHI review.
         "secretary_stt_fallback": True,
         # ── Voice-to-Text (SHARED by EchoMind chat + Secretary EchoMind) ──────
         # Single source of truth for where a recorded voice file is sent.

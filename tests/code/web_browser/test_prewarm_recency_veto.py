@@ -57,7 +57,10 @@ def controller(tmp_path, monkeypatch):
     monkeypatch.setattr(prewarm, "_warm_view", None)
     monkeypatch.setattr(prewarm, "_warm_ctl", None)
 
-    monkeypatch.delenv("AIPACS_BROWSER_PREWARM", raising=False)
+    # IMP-4 (2026-08-16): the prewarm is opt-in now, so these tests of the
+    # scheduling machinery must enable it explicitly. The default-off policy
+    # itself is pinned in tests/code/system/test_browser_prewarm_idle_gate.py.
+    monkeypatch.setenv("AIPACS_BROWSER_PREWARM", "1")
     monkeypatch.delenv("AIPACS_BROWSER_PREWARM_BUSY_VETO", raising=False)
     monkeypatch.delenv("AIPACS_BROWSER_PREWARM_RECENCY_VETO", raising=False)
     monkeypatch.setenv("AIPACS_BROWSER_PREWARM_DELAY_MS", "3600000")

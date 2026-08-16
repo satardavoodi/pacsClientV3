@@ -130,6 +130,21 @@ CENTERS: List[CenterRecord] = [
     ),   
 ]
 
+#: Centre codes that must never be reachable in a shipped build. The TEST key is a
+#: literal string inside the distributed binary, and `validate_key` is a purely local
+#: lookup — so anyone who runs `strings` on the exe could authorise themselves and
+#: spend company GapGPT budget. Set AIPACS_ALLOW_TEST_CENTER=1 to re-enable it for
+#: local testing; no shipped build sets it.
+_DEV_ONLY_CENTER_CODES = ("TEST",)
+_ENV_ALLOW_TEST_CENTER = "AIPACS_ALLOW_TEST_CENTER"
+
+
+def test_center_enabled() -> bool:
+    """Whether the dev-only centres are part of the registry. Default OFF."""
+    raw = os.environ.get(_ENV_ALLOW_TEST_CENTER)
+    return bool(raw) and str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
 def _normalize_key(k: str) -> str:
     return (k or "").strip()
 
@@ -145,9 +160,15 @@ def _build_registry_maps(centers: List[CenterRecord]) -> tuple[Dict[str, CenterR
     centers_by_code: Dict[str, CenterRecord] = {}
     key_to_center_code: Dict[str, str] = {}
 
+    allow_dev = test_center_enabled()
     for c in centers:
         code = (c.center_code or "").strip().upper()
         if not code:
+            continue
+        if code in _DEV_ONLY_CENTER_CODES and not allow_dev:
+            # Excluded from BOTH maps, so the key cannot validate and the code cannot
+            # be detected. Silently skipping is deliberate: logging "TEST centre
+            # disabled" on every start would advertise that it exists.
             continue
 
         centers_by_code[code] = CenterRecord(

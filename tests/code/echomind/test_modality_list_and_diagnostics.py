@@ -147,10 +147,21 @@ def test_turbo_diagnostics_are_logged_not_printed():
     # so adding a legitimate one — the own-prompt fallback — failed a guard about
     # something else entirely. A count-based guard that trips on correct additions
     # teaches the next person to delete it instead of reading it.
-    assert src.count('_log.warning("[Turbo] blocked:') == 3, (
-        "the three blocked paths — no company key, invalid page_mode, no modality — "
-        "must each warn"
-    )
+    # 2026-08-09: the count became a reason, per this block's own warning above. The
+    # entitlement rework split "no company key" into two distinct refusals — not
+    # entitled, and entitled but no centre key resolved — and the magic 3 failed on a
+    # correct addition for the second time. Assert the PROPERTY instead: every blocked
+    # path warns, and the named ones are all present.
+    # Capture to the closing quote, not a character class — the reasons contain a
+    # hyphen ("company-entitled") and an underscore ("page_mode"), and a tidy-looking
+    # [a-z ]+ silently truncates both.
+    blocked = re.findall(r'_log\.warning\("\[Turbo\] blocked: ([^"]+)"', src)
+    assert len(blocked) >= 3, f"blocked paths must warn; found {blocked}"
+    for reason in ("page_mode", "modality not selected"):
+        assert any(reason in b for b in blocked), f"no warning for: {reason}"
+    assert any("entitled" in b for b in blocked), \
+        "the licensing refusal must be logged like the others"
+    assert 'print("[Turbo] blocked' not in src
     assert '"[Turbo] sending backend=%s model=%s' in src, "the send path must log backend AND model"
 
 

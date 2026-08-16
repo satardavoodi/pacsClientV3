@@ -1,9 +1,66 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.9 (2026-08-10)
-**Previous Stable:** v3.5.8 (2026-08-04)
-**Release Date:** 2026-08-10
+**Current Stable Version:** v3.6.0 (2026-08-16)
+**Previous Stable:** v3.5.9 (2026-08-10)
+**Release Date:** 2026-08-16
 **Branch:** beta-version
+
+---
+
+## v3.6.0 (2026-08-16) - Milestone release: EchoMind entitlement + Turbo refinements, browser-prewarm freeze fix, persistent pixel cache, footer removal, off-site server
+
+### Summary
+
+The 3.6 milestone consolidates the 3.5.x line and adds a focused set of fixes and
+features: an **EchoMind entitlement/licensing** layer and further Turbo reporting
+refinements (multi-region studies, region-from-text detection, a report-title rule);
+a fix for a **72-second startup freeze** caused by the in-app browser warming up; a
+**persistent, async-initialised disk pixel cache** so images load faster on reopen;
+removal of the **redundant main-window footer bar**; and support for an **off-site
+(external) server profile** alongside the local one.
+
+### Included — EchoMind
+
+- **Entitlement / licensing layer** (`entitlement.py`) gating EchoMind features, with
+  its own guard suite.
+- **Turbo reporting refinements** — multi-region study handling, region detection
+  from free text, and a report-title rule, plus session-metadata and STT-router
+  adjustments. Turbo remains pinned to the company pipeline.
+
+### Included — performance & startup
+
+- **72-second browser-prewarm startup freeze fixed.** The in-app web-browser
+  (Chromium) prewarm could block the GUI thread for over a minute at an unlucky
+  moment; the idle gate is hardened with busy/recency vetoes so the warm-boot never
+  competes with the user. Reports: `FREEZE_72S_BROWSER_PREWARM_2026-08-16.md`,
+  `WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`.
+- **Persistent + async-init disk pixel cache.** The FAST viewer's decoded-pixel disk
+  cache now persists across sessions and initialises off the hot path, so reopening a
+  study is faster on a warm cache. Report: `PIXEL_CACHE_PERSISTENCE_2026-08-16.md`.
+
+### Included — UI & configuration
+
+- **Main-window footer bar removed** — a redundant bottom bar that duplicated status
+  shown elsewhere; the window is cleaner and the space reclaimed. Report:
+  `MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md`.
+- **Off-site (external) server profile.** Centers can now add an external/public
+  server endpoint (e.g. the clinic's off-site address) alongside the LAN profile; the
+  local profile and the active selection are unchanged.
+
+### Included — engineering
+
+- Regression catalog (`docs/plans/architecture/REGRESSION_CATALOG.md`) and an
+  open-findings log; subsystem/guard indexes refreshed.
+
+### Notes
+
+- The entitlement layer, Turbo refinements, browser-prewarm fix, and pixel-cache
+  persistence are guard-tested offscreen but still need live source-build
+  verification (the startup-freeze fix and the reopen-speed gain in particular are
+  observed on a running build).
+- Machine-local `config` runtime state was not shipped; the added off-site server
+  profile is a deliberate config addition (the LAN `razi` profile and
+  `active_profile_id` are preserved).
 
 ---
 

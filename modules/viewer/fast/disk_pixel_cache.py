@@ -83,14 +83,71 @@ class DiskPixelCache:
         )
         self._write_thread.start()
         self._initialized = False
+        # Set once the startup directory scan has finished. The cache is
+        # usable before then — an unindexed lookup is simply a miss.
+        self._index_ready = threading.Event()
 
-    def initialize(self) -> None:
-        """Scan existing cache files and build index. Call once at startup."""
+    def initialize(self, *, background: bool = False) -> None:
+        """Scan existing cache files and build index. Call once at startup.
+
+        ``background=True`` (used by the module singleton — see
+        ``get_disk_pixel_cache``) returns IMMEDIATELY and does the directory
+        scan on a daemon thread.
+
+        Why (2026-08-16): the scan is an ``iterdir`` per study dir plus a
+        ``stat`` per cache file, and it ran synchronously on whichever thread
+        first touched the singleton — in practice the GUI thread, during the
+        first series switch. Measured live on the reporting workstation:
+        44 study dirs / 1,593 ``.apc`` files / ~1.97 GB, ~4 s of a contiguous
+        9.1 s frozen UI (stall stack: ``disk_pixel_cache.initialize`` ->
+        ``Path.iterdir`` / ``Path.stat``), and it grows with the cache.
+
+        Deferring is safe because an empty index is simply a cache MISS: the
+        caller decodes from the DICOM exactly as it would on a cold cache. The
+        cache is fully usable the instant this returns — ``put()`` writes and
+        registers entries normally while the scan is still running, and the
+        merge below is written to not disturb them.
+
+        Synchronous by default so every direct caller and test keeps its
+        existing deterministic behaviour. Kill switch for the singleton:
+        ``AIPACS_PIXEL_CACHE_ASYNC_INIT=0``.
+        """
         if self._initialized:
             return
+        # Usable immediately: get() misses on an empty index, put() works.
+        self._initialized = True
+        if background and (os.getenv("AIPACS_PIXEL_CACHE_ASYNC_INIT", "1") or "1").strip() != "0":
+            threading.Thread(
+                target=self._scan_index,
+                name="DiskPixelCacheIndex",
+                daemon=True,
+            ).start()
+            return
+        self._scan_index()
+
+    def wait_until_indexed(self, timeout: Optional[float] = None) -> bool:
+        """Block until the startup scan has finished. Returns True if indexed.
+
+        Only needed by tests and diagnostics — normal callers never wait,
+        because an unfinished index is just a cache miss.
+        """
+        return self._index_ready.wait(timeout)
+
+    def _scan_index(self) -> None:
+        """Index the cache directory, then MERGE into the live index.
+
+        Merge rules (the index is live while this runs):
+          * a key already present was registered by a concurrent ``put()``,
+            which already counted its bytes — skip it, never double-count;
+          * after merging, the OrderedDict is re-sorted by last-access
+            ascending, because its ORDER *is* the LRU order
+            (``_evict_if_needed`` pops from the front). Appending old scanned
+            entries after fresh ones would otherwise make the freshly written
+            slices the first candidates for eviction.
+        """
+        started = time.time()
         try:
             self._root.mkdir(parents=True, exist_ok=True)
-            total = 0
             entries = []
             for study_dir in self._root.iterdir():
                 if not study_dir.is_dir():
@@ -105,23 +162,37 @@ class DiskPixelCache:
                                 stat.st_size,
                                 stat.st_mtime,
                             ))
-                            total += stat.st_size
                         except OSError:
                             pass
-            # Sort by mtime (oldest first) for LRU
-            entries.sort(key=lambda e: e[3])
+
+            merged = 0
+            merged_bytes = 0
             with self._lock:
                 for key, path, size, mtime in entries:
+                    if key in self._index:
+                        continue  # live put() owns it; bytes already counted
                     self._index[key] = (path, size, mtime)
-                self._total_bytes = total
-            self._initialized = True
+                    self._total_bytes += size
+                    merged += 1
+                    merged_bytes += size
+                # Restore LRU ordering (oldest first) across scanned + live.
+                if merged:
+                    ordered = sorted(self._index.items(), key=lambda kv: kv[1][2])
+                    self._index.clear()
+                    self._index.update(ordered)
+
             logger.info(
-                "[B3.12] Disk pixel cache initialized: %d entries, %.1f MB, root=%s",
-                len(entries), total / (1024 * 1024), self._root,
+                "[B3.12] Disk pixel cache indexed: %d entries (+%d new, %.1f MB) "
+                "in %.0f ms, root=%s",
+                len(self._index), merged, merged_bytes / (1024 * 1024),
+                (time.time() - started) * 1000.0, self._root,
             )
         except Exception:
-            logger.exception("[B3.12] Failed to initialize disk pixel cache")
-            self._initialized = True  # Don't retry
+            logger.exception("[B3.12] Failed to index disk pixel cache")
+        finally:
+            # Always set: a failed scan must not leave waiters hanging, and the
+            # cache still works (every lookup is simply a miss).
+            self._index_ready.set()
 
     def get(
         self,
@@ -248,6 +319,47 @@ class DiskPixelCache:
             logger.info("[B3.12] Disk pixel cache cleared")
         except Exception:
             logger.exception("[B3.12] Failed to clear disk cache")
+
+    def clear_on_exit(self) -> None:
+        """Shutdown hook: wipe the cache ONLY if the site has opted in.
+
+        This exists because the app's shutdown path used to call ``clear()``
+        unconditionally, which made this whole module dead weight. The L2
+        cache is defined by the module docstring as the thing that
+        "eliminates the need to re-decode slices when reopening a
+        previously-viewed series" — it can only do that across restarts.
+        Measured on the live workstation: 18 clears between 2026-08-08 and
+        2026-08-16, and EVERY startup index scan reported ``0 entries``. The
+        cache had never once served a cross-session hit.
+
+        Persistence is bounded, not unbounded. ``_evict_if_needed()`` runs on
+        every write and holds the cache under ``_max_size_bytes`` (2 GB by
+        default), evicting least-recently-used entries first — and
+        ``_scan_index`` re-sorts the restored index by access time, so the
+        LRU order is correct across a restart too.
+
+        Set ``AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1`` to restore the old
+        wipe-on-exit behaviour. Decoded pixel arrays are patient image data
+        at rest, so a shared or portable workstation may legitimately want
+        that. It is a site policy choice, not a performance one.
+
+        Deliberately a SEPARATE method rather than a flag inside ``clear()``:
+        an explicit, user-initiated "clear the cache" must always clear.
+        """
+        if (os.getenv("AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT", "0") or "0").strip() == "1":
+            self.clear()
+            return
+        try:
+            with self._lock:
+                entries = len(self._index)
+                total_mb = self._total_bytes / (1024 * 1024)
+            logger.info(
+                "[B3.12] Disk pixel cache kept across shutdown: %d entries, "
+                "%.1f MB (set AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1 to wipe on exit)",
+                entries, total_mb,
+            )
+        except Exception:
+            logger.debug("[B3.12] clear_on_exit bookkeeping failed", exc_info=True)
 
     def stats(self) -> dict:
         """Return cache statistics."""
@@ -462,5 +574,9 @@ def get_disk_pixel_cache() -> DiskPixelCache:
         except ImportError:
             root = Path("user_data")
         _instance = DiskPixelCache(root)
-        _instance.initialize()
+        # background=True: this singleton is first touched from the GUI thread
+        # during a series switch, and the directory scan grows with the cache
+        # (~4 s for 1,593 files / 1.97 GB live 2026-08-16). Index off-thread;
+        # until it finishes every lookup is a miss, i.e. exactly a cold cache.
+        _instance.initialize(background=True)
         return _instance

@@ -7,9 +7,10 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 ## Master indexes
 
 - **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** — every stage report linked
-- **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** — every fix + its guard test (37 rows)
+- **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** — every fix + its guard test (54 rows)
 - **[Test inventory](../tests/INDEX_BY_GUARD.md)** — every guard test and what it protects
 - **[For future agents](for-future-agents/README.md)** — onboarding for AI agents working in this repo
+- **[Open findings (2026-08-16)](reports/OPEN_FINDINGS_2026-08-16.md)** — diagnosed but deliberately NOT fixed. §1 (pixel cache) has since been resolved; **§2, the ~4-5.5 s MPR activation stall, is still open** and is the app's largest remaining freeze. Read it before touching MPR activation.
 
 ---
 
@@ -48,6 +49,32 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ---
 
+### Viewer cold-start cost (series load, pixel cache, import warm)
+
+**The recurring lesson in this area: the cost is almost never parsing or thread count — it is FIRST TOUCH.** This machine runs two real-time AV engines, and cold/warm ratios of 7-100× on the *same bytes* have been measured repeatedly. Benchmark warm vs cold before attributing a slow load to the code.
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/SERIES_HEADER_SCAN_COLD_LOAD_2026-08-08.md`](reports/SERIES_HEADER_SCAN_COLD_LOAD_2026-08-08.md)** | Patient 53417, ~15.7 s to get series 202 on screen. The switch-time probe was already header-only (`stop_before_pixels` + `specific_tags`): 40.5 ms/file cold vs 0.88 ms/file warm, and more threads cap at ~2.3×. Fix = a budgeted read-only pre-read at patient open (WU-1). Full per-file verification is unchanged. |
+| [`reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) | §8 documents the async pixel-cache init and the `viewer-import-warm` thread running off the GUI thread in a live run, plus the 7.6× cold/warm read on identical bytes. |
+| **[`reports/PIXEL_CACHE_PERSISTENCE_2026-08-16.md`](reports/PIXEL_CACHE_PERSISTENCE_2026-08-16.md)** | The L2 pixel cache now **survives shutdown** (it never did before: 18 wipes / `0 entries` indexed, measured). `clear_on_exit()` vs `clear()`, why persistence is bounded, the 2 GB / PHI-at-rest trade, and the one residual risk (a reused SOP UID with different pixels). |
+| **[`reports/OPEN_FINDINGS_2026-08-16.md`](reports/OPEN_FINDINGS_2026-08-16.md)** | §1 **resolved** (see above) — kept as the record of how the decision was reached. §2 still **OPEN**: MPR activation blocks the GUI thread ~4-5.5 s and the non-axial views are uninstrumented. |
+
+**Invariants:**
+- `DiskPixelCache.initialize()` stays **synchronous** for every direct caller; only `get_disk_pixel_cache()` passes `background=True`. An unindexed lookup is simply a cache miss, which is why this is safe.
+- The index's **order is the LRU order** (`_evict_if_needed` pops the front). A background scan must re-sort by access time on merge, or the newest slices become the first evicted. This is also what makes persistence safe — without it the slice viewed last before closing would be first evicted next session.
+- The shutdown path calls **`clear_on_exit()`, never `clear()`**. `clear()` must stay unconditional so an explicit user-initiated "clear cache" always clears; only the shutdown *policy* is configurable (`AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1`).
+- The import warm creates **no Qt objects** — it is pure imports on a daemon thread.
+- FAST viewer mode must **never** instantiate VTK render windows. Anything added to warm or cache the MPR path must not be reachable from FAST.
+
+**Guard tests:**
+- `tests/code/viewer/test_series_file_warm.py` (12) — budget caps, kill switch, blank-path refusal, no duplicate concurrent warm
+- `tests/code/viewer/test_disk_pixel_cache_async_init.py` (10) — incl. a threaded writer-vs-scan race and LRU order after merge
+- `tests/code/viewer/test_viewer_import_warm.py` (8) — fails if the warm ever touches a Qt object, or if the windowing path stops using `np.percentile`
+- `tests/code/viewer/test_disk_pixel_cache_persistence.py` (20) — the cache survives shutdown, the kill switch really wipes, `clear()` stays unconditional, and eviction still bounds a persisted cache
+
+---
+
 ### Download Manager (Zeta) + bulk download
 
 | Doc | What's in it |
@@ -63,6 +90,30 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ---
 
+### Web browser module + startup / engine warm-up
+
+**Read this before touching `modules/web_browser/prewarm.py`.** Four live freezes came out of this one file (~17 s 2026-07-23, 39.7 s 2026-08-05, 19 s 2026-08-07, **72 s 2026-08-16**) and the lesson took all four to learn: *when* the Chromium construct runs was never the problem — its **cost is unbounded and cannot be capped**, because Qt requires it on the GUI thread and the call is atomic. Do not "improve the scheduling" here again.
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/FREEZE_72S_BROWSER_PREWARM_2026-08-16.md`](reports/FREEZE_72S_BROWSER_PREWARM_2026-08-16.md)** | **Start here.** The 72 s incident, why every scheduling guard behaved correctly, and why the answer was to make the pre-warm opt-in (IMP-4). |
+| [`reports/PREWARM_DBLCLICK_FREEZE_2026-08-07.md`](reports/PREWARM_DBLCLICK_FREEZE_2026-08-07.md) | The 19 s double-click freeze → the input-recency veto (IMP-3). Explains why `_finish_watch` must keep the input filter installed. |
+| [`reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) | Phase-by-phase cost of the engine boot (IMP-5): `defaultProfile()` is the 918 ms global init, `QWebEngineView()` is 0 ms. §8 is the confirmed live run — 208 ms GUI block, 884 ms total. Chromium flags are measured and are NOT a lever. |
+| [`reports/WEB_BROWSER_MODULE_FIXES_2026-06-27.md`](reports/WEB_BROWSER_MODULE_FIXES_2026-06-27.md) | Earlier module fixes. |
+
+**Invariants:**
+- The pre-warm is **opt-in**: `AIPACS_BROWSER_PREWARM=1` (a literal `"1"`), *and* the adaptive used-marker still gates on top.
+- Warm the **default profile**, never a throwaway `QWebEngineView` + `setUrl` — same benefit, ~24 % less GUI block, no render process held to be discarded.
+- The off-thread file warm is **name-scoped** (`_WARM_DLL_HINTS`), not a blanket DLL sweep, and stays budget-capped.
+
+**Guard tests:**
+- `tests/code/web_browser/test_prewarm_recency_veto.py` (13) — input filter survives the warm; construct re-checks recency
+- `tests/code/web_browser/test_prewarm_idle_gate.py` — default-profile warm + the DLL-name-scoped file warm
+- `tests/code/system/test_browser_prewarm_idle_gate.py` — opt-in default, marker gate on top, only a literal `"1"` enables it
+- `tests/code/web_browser/test_prewarm_busy_veto.py`
+
+---
+
 ### UI / Design system (V2, flag-gated) + viewer interaction
 
 | Doc | What's in it |
@@ -71,10 +122,14 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 | [`design/DROPDOWN_SUBMENU_REVIEW.md`](design/DROPDOWN_SUBMENU_REVIEW.md) | Original dropdown/submenu review (rollout now complete). |
 | [`design/VIEWER_TOOLBAR_INTERACTION_REVIEW.md`](design/VIEWER_TOOLBAR_INTERACTION_REVIEW.md) | Toolbar hover / dropdown attach / menu layout review. |
 | **[`plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md`](plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md)** | Stack-drag main-thread stall fix: drag-pressure psutil sampler gated off by default (`AIPACS_FAST_STACK_PRESSURE`). Don't call psutil on the drag hot path. |
+| **[`reports/THUMBNAIL_STRIP_AND_ACTIVE_STATE_2026-08-09.md`](reports/THUMBNAIL_STRIP_AND_ACTIVE_STATE_2026-08-09.md)** | **Required reading before touching the series thumbnail card.** The download bar / red active line share one bottom strip; `QLayout.addWidget()` RE-PARENTS and moves a widget to the TOP of the sibling stack, which is what buried the bar. Also the A→B→A active-state bug and `set_active_series()` as the single entry point. |
+| [`reports/MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md`](reports/MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md) | The stray bar at the bottom of the main page — an empty Designer footer whose only visible output was its own chrome. Hidden, not deleted (`apply_theme` still styles it). Restore with `AIPACS_MAIN_FOOTER=1`. |
 
 **Guard tests:**
 - `tests/code/test_v2_style_scaffold.py` — pure-function QSS builder + gate guards
 - `tests/code/test_ui_variant_scaffold.py` — flag resolution never raises
+- `tests/code/ui_services/test_thumbnail_active_state_and_strip.py` (20) — **behavioural**, on real Qt widgets. A source-string pin cannot see a z-order bug; that is exactly how the buried download bar survived `test_thumbnail_panel_ui_fixes.py`.
+- `tests/code/ui_services/test_main_footer_bar_removed.py` (6) — footer stays hidden, its widgets stay alive, and it fails loudly if anyone starts writing to its labels
 
 ---
 

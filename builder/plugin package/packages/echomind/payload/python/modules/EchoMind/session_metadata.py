@@ -55,6 +55,7 @@ import copy
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -143,6 +144,10 @@ _DICOM_REGION_MAP: Dict[str, Tuple[str, ...]] = {
     "KNEE": ("knee",),
     "ANKLE": ("ankle_foot",),
     "FOOT": ("ankle_foot",),
+    # 2026-08-11: a left-heel radiograph gated to nothing. The calcaneus IS the heel.
+    "CALCANEUS": ("ankle_foot",),
+    "CALCANEUM": ("ankle_foot",),
+    "HEEL": ("ankle_foot",),
     "WRIST": ("wrist_hand",),
     "HAND": ("wrist_hand",),
     "BREAST": ("breast",),
@@ -516,6 +521,16 @@ _TEXT_REGION_PATTERNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # ── musculoskeletal: qualified forms only
     ("مچ دست", ("wrist_hand",)),
     ("مچ پا", ("ankle_foot",)),
+    # The heel. «پاشنه پا» before «پاشنه» so the longer form claims its own span, and
+    # both before any bare foot word. Patient 54120's booking read «پاشنه پاي چپ» and
+    # matched nothing at all, so half a two-part study vanished from the gate.
+    ("پاشنه پا", ("ankle_foot",)),
+    ("پاشنه", ("ankle_foot",)),
+    ("کالکانئوس", ("ankle_foot",)),
+    ("کالکانوس", ("ankle_foot",)),
+    ("calcaneus", ("ankle_foot",)),
+    ("calcaneum", ("ankle_foot",)),
+    ("heel", ("ankle_foot",)),
     ("مفصل ران", ("hip",)),
     ("هیپ", ("hip",)),
     ("wrist", ("wrist_hand",)),
@@ -533,6 +548,37 @@ _TEXT_REGION_PATTERNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("bone density", ("bone_density",)),
     ("dexa", ("bone_density",)),
 )
+
+
+def _service_segments(text: Any) -> List[str]:
+    """A booking often names SEVERAL studies, separated by "/" or "،".
+
+    Patient 54120 was booked «راديوگرافي پاشنه پاي چپ دو نما / راديوگرافي زانوي چپ …» —
+    two studies. Splitting them is what lets `regions_from_text_complete` notice that
+    one of the two was not understood.
+    """
+    s = _fa_norm(text)
+    if not s:
+        return []
+    out: List[str] = []
+    for part in s.replace("\u060c", "/").replace(";", "/").split("/"):
+        part = part.strip()
+        if part:
+            out.append(part)
+    return out
+
+
+def regions_from_text_complete(text: Any) -> bool:
+    """True when EVERY study named in the booking resolved to a region.
+
+    A booking naming two studies where only one is understood is a partial read, and a
+    partial read must not be trusted to replace a wider set — that is how patient
+    54120's heel disappeared while the knee survived.
+    """
+    segs = _service_segments(text)
+    if not segs:
+        return False
+    return all(detect_regions_from_text(s) for s in segs)
 
 
 def detect_regions_from_text(text: Any) -> Tuple[str, ...]:
@@ -851,8 +897,18 @@ def build_auto_from_context(
     # dictated; all of it asserted that structures had been examined.
     _region_source = "dicom"
     if region_text_enabled():
-        _svc_regions = list(detect_regions_from_text(rec["reception"].get("service")))
-        if _svc_regions:
+        _svc_text = rec["reception"].get("service")
+        _svc_regions = list(detect_regions_from_text(_svc_text))
+        _svc_complete = regions_from_text_complete(_svc_text)
+        if _svc_regions and not _svc_complete:
+            # Half-read booking: keep what both sources know rather than letting the
+            # understood half delete the rest. 54120 — heel + knee, heel unreadable.
+            logger.warning("[EchoMind-meta] booking only partly understood (%s from "
+                           "%d segment(s)); keeping the union with DICOM %s",
+                           _svc_regions, len(_service_segments(_svc_text)), regions)
+            regions = regions + [r for r in _svc_regions if r not in regions]
+            _region_source = "dicom+service_partial"
+        elif _svc_regions:
             _overlap = [r for r in _svc_regions if r in regions]
             if _overlap or not regions:
                 if regions and set(_svc_regions) != set(regions):

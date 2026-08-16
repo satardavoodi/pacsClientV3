@@ -61,10 +61,18 @@ def test_turbo_is_pinned_to_company():
 
 
 def test_turbo_authorization_is_the_centers_registry():
+    """Re-anchored 2026-08-09. The requirement is unchanged — Turbo's authorisation is
+    the hardcoded CENTERS registry — but the handler no longer inlines
+    `validate_key(stored)`. It asks `company_entitled()`, which does that validation
+    against the same registry, and which the AI-PACS backend now asks too. Two copies
+    of an entitlement rule is how one of them drifts.
+    """
     h = _method_src(_read(_PAGES), "_on_hq_all_modality_clicked")
-    assert "APIKeyManager" in h
-    assert "validate_key(stored)" in h, "stored license key must validate against the registry"
-    assert "Turbo requires an authorized company key" in h, "clear auth-required message"
+    assert "company_entitled()" in h, "Turbo no longer checks entitlement at all"
+    assert "ENTITLEMENT_DENIED" in h, "clear auth-required message"
+    # ...and the authority really does resolve against the registry.
+    ent = _read("modules/EchoMind/entitlement.py")   # _read joins _ROOT itself
+    assert "APIKeyManager" in ent and "validate_key(" in ent
 
 
 def test_turbo_does_not_use_the_active_backend_gate():

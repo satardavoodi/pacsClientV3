@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -55,7 +56,10 @@ def controller(tmp_path, monkeypatch):
     monkeypatch.setattr(prewarm, "_warm_view", None)
     monkeypatch.setattr(prewarm, "_warm_ctl", None)
 
-    monkeypatch.delenv("AIPACS_BROWSER_PREWARM", raising=False)
+    # IMP-4 (2026-08-16): the prewarm is opt-in now, so these tests of the
+    # scheduling machinery must enable it explicitly. The default-off policy
+    # itself is pinned in tests/code/system/test_browser_prewarm_idle_gate.py.
+    monkeypatch.setenv("AIPACS_BROWSER_PREWARM", "1")
     monkeypatch.setenv("AIPACS_BROWSER_PREWARM_DELAY_MS", "3600000")  # never auto-fires in test
 
     assert prewarm.schedule_prewarm() is True
@@ -212,15 +216,84 @@ def test_file_warm_never_raises_on_missing_root(tmp_path):
     assert prewarm._warm_webengine_files(root=tmp_path / "does-not-exist") == 0
 
 
-def test_file_warm_wired_off_thread_and_release_waits_for_ready():
-    """Source pins: (a) the file warm runs inside the DAEMON-thread _bg_import
-    (never on the GUI thread); (b) the warm view is released on loadFinished
-    with a failsafe — not the old fixed 2.5 s timer that killed a cold boot
-    mid-init."""
+def test_file_warm_wired_off_thread():
+    """The file warm runs inside the DAEMON-thread _bg_import, never on the
+    GUI thread."""
     import inspect
     src = inspect.getsource(prewarm)
     bg = src.split("def _bg_import", 1)[1].split("threading.Thread", 1)[0]
     assert "_warm_webengine_files()" in bg
-    construct = src.split("def _construct_warm_view", 1)[1]
-    assert "loadFinished.connect(_release_once)" in construct
-    assert "QTimer.singleShot(60000, _release_once)" in construct
+
+
+def test_warm_uses_default_profile_not_a_throwaway_view():
+    """IMP-5 (2026-08-16): warm via QWebEngineProfile.defaultProfile().
+
+    Measured warm, GUI-thread block / then the user's real browser open:
+        no warm          0 ms   -> 971 ms
+        throwaway view 991/889  -> 156/115 ms
+        defaultProfile 772/662  -> 173/123 ms
+    Same benefit to the user for ~24 % less GUI-thread block, because the old
+    path also paid setUrl() + a full about:blank load, and held a render
+    process alive for up to 60 s just to discard it. The phase breakdown shows
+    QWebEngineView() itself cost 0 ms — it was never the expensive part.
+    """
+    import ast
+    import inspect
+    src = inspect.getsource(prewarm._construct_warm_view)
+    assert "QWebEngineProfile" in src
+    assert "defaultProfile()" in src
+
+    # Check CODE, not prose. The docstring above quotes the old approach in its
+    # measurement table, and comments name it too — a naive substring check
+    # matches those and passes/fails for the wrong reason. Strip both.
+    tree = ast.parse(textwrap.dedent(src))
+    fn = tree.body[0]
+    if (fn.body and isinstance(fn.body[0], ast.Expr)
+            and isinstance(fn.body[0].value, ast.Constant)
+            and isinstance(fn.body[0].value.value, str)):
+        fn.body = fn.body[1:]                      # drop the docstring
+    code = ast.unparse(fn)                         # comments do not survive
+
+    # the discarded machinery must be GONE, not merely unused
+    assert "QWebEngineView(" not in code, "no throwaway view should be built"
+    assert "setUrl(" not in code, "warming must not load a page"
+    assert "loadFinished" not in code
+    assert "deleteLater" not in code
+    assert "defaultProfile()" in code, "the profile warm must be real code"
+
+
+def test_engine_dlls_are_included_in_the_off_thread_file_warm():
+    """IMP-5: the warm used to cover 152 MB of a 358 MB payload.
+
+    The 277 MB it missed is dominated by Qt6WebEngineCore.dll (202 MB). The
+    import in kick() memory-maps it, but pages fault in lazily — i.e. on the
+    GUI thread during the global init — so it must be pre-READ off-thread too.
+    """
+    assert "qt6webenginecore" in prewarm._WARM_DLL_HINTS
+    import inspect
+    src = inspect.getsource(prewarm._webengine_aux_files)
+    assert "_WARM_DLL_HINTS" in src
+    assert '".dll"' in src
+
+
+def test_dll_warm_is_name_scoped_not_a_blanket_dll_sweep(tmp_path):
+    """Must not pre-read every DLL it can find — only the engine's own."""
+    (tmp_path / "Qt6WebEngineCore.dll").write_bytes(b"x" * 16)
+    (tmp_path / "Qt6Core.dll").write_bytes(b"x" * 16)
+    (tmp_path / "some_unrelated_vendor.dll").write_bytes(b"x" * 16)
+    (tmp_path / "resources.pak").write_bytes(b"x" * 16)
+    names = {p.name for p in prewarm._webengine_aux_files(root=tmp_path)}
+    assert "Qt6WebEngineCore.dll" in names
+    assert "Qt6Core.dll" in names
+    assert "resources.pak" in names
+    assert "some_unrelated_vendor.dll" not in names, (
+        "the warm must stay scoped — a blanket *.dll sweep would read the "
+        "whole of site-packages")
+
+
+def test_file_warm_still_budget_capped(tmp_path):
+    """A bigger file set must not mean an unbounded background read."""
+    assert prewarm._WARM_FILE_BUDGET_BYTES <= 600 * 1024 * 1024
+    import inspect
+    src = inspect.getsource(prewarm._warm_webengine_files)
+    assert "_WARM_FILE_BUDGET_BYTES" in src

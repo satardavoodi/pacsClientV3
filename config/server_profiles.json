@@ -51,6 +51,30 @@
         "last_checked": null,
         "reachable": null
       }
+    },
+    {
+      "id": "razi_out_site",
+      "display_name": "razi out site",
+      "host": "81.16.117.196",
+      "socket_port": 50052,
+      "dicom_port": 105,
+      "ae_title": "AIPACS",
+      "poor_connectivity": false,
+      "enabled": true,
+      "server_type": "ai_pacs",
+      "modules": {
+        "ai_breast": "81.16.117.196:8002",
+        "ai_boneage": "81.16.117.196:8003",
+        "ai_segmentation": null,
+        "reception_api": "http://81.16.117.196:8080",
+        "pacs_http": null,
+        "mammography": null,
+        "bonj": null
+      },
+      "status": {
+        "last_checked": null,
+        "reachable": null
+      }
     }
   ]
 }

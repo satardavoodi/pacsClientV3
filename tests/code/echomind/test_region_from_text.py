@@ -174,7 +174,10 @@ def test_the_booking_replaces_the_dicom_region_set():
     src = io.open(os.path.join(_ROOT, "modules", "EchoMind", "session_metadata.py"),
                   encoding="utf-8-sig").read()
     body = src[src.index("_region_source = \"dicom\""):src.index('rec["provenance"] = prov')]
-    assert "detect_regions_from_text(rec[\"reception\"].get(\"service\"))" in body
+    # 2026-08-11: the call was hoisted to `_svc_text` so the same string could also be
+    # tested for completeness (patient 54120). Same source, same precedence.
+    assert '_svc_text = rec["reception"].get("service")' in body
+    assert "detect_regions_from_text(_svc_text)" in body
     assert '_region_source = "service_text"' in body
     assert "region_text_enabled()" in body
 

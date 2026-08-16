@@ -43,5 +43,13 @@ call stubbed**, so each `system_prompt` is byte-for-byte what the app would send
 4. **`<|end|>` sentinel.** Several report prompts require the model to end output with `<|end|>`;
    downstream parsing depends on it. Keep it unless you also change the parser.
 
-5. These files are **not yet wired** into a loader. They are exported for review/edit; the reload
-   mechanism is a follow-up step.
+5. **These files are REVIEW ARTIFACTS — by design (decided 2026-08-06).** They are NOT wired into
+   a loader and no loader will be added: the prompts the app actually sends are built in
+   `openai_reporter.build_report_system_prompt`, which is the single source of truth and the
+   thing the guard tests pin. These exports exist so a prompt can be read and reviewed as plain
+   text without running the app.
+
+   **Consequence: they go stale.** They were captured 2026-06-28 and do NOT contain the later
+   work — the SOURCE FIDELITY contract, the certainty ladder, the standardized-systems block,
+   REPORT ORGANIZATION and the per-modality grouping vocabularies. Re-export before relying on
+   them, and never edit them expecting the app to change.

@@ -478,6 +478,71 @@ class _HPSearchMixin:
             except Exception:
                 pass
 
+            # Background: pay the heavy one-time MODULE IMPORTS off the GUI
+            # thread (VS-2 / 2026-08-16). Live stall traces of a first series
+            # open showed one contiguous ~9.1 s frozen UI whose samples landed
+            # in, among others:
+            #   cv2/__init__.py:181 <module> -> :153 bootstrap -> :88 import_module
+            #     (~2 s — the OpenCV extension load, triggered by the first
+            #      opencv_filter_pipeline call, i.e. the first filtered frame)
+            #   dicom_windowing.auto_window_level_from_array -> np.percentile
+            #     -> np.unique -> numpy/__init__.py:737 __getattr__
+            #     (~1 s — numpy resolving its LAZY submodules on first use, not
+            #      the percentile arithmetic itself)
+            # Both are pure imports: no Qt object is created and nothing is
+            # rendered, so doing them on a daemon thread is safe (Python's
+            # import machinery is thread-safe; this is the same pattern the
+            # QtWebEngine prewarm and the linecache warm above already use).
+            # Worst case the user reaches a series first and simply pays the
+            # cost where they do today — never worse, never a new block.
+            # Kill switch: AIPACS_VIEWER_IMPORT_WARM=0.
+            def _warm_viewer_imports():
+                import time as _t2
+                warmed = []
+                _t0w = _t2.perf_counter()
+                try:
+                    import cv2  # noqa: F401  (the ~2 s extension load)
+                    warmed.append("cv2")
+                except Exception:
+                    _logger.debug("[IMPORT-WARM] cv2 unavailable", exc_info=True)
+                try:
+                    # Force numpy's lazy submodules for the auto window/level
+                    # path (percentile -> _quantile -> unique) on a 3-element
+                    # array: microseconds of maths, but it resolves the
+                    # imports that cost ~1 s on the GUI thread.
+                    import numpy as _np
+                    _tiny = _np.array([0, 1, 2], dtype=_np.int16)
+                    _np.percentile(_tiny, 1.0)
+                    _np.percentile(_tiny, 99.0)
+                    _np.unique(_tiny)
+                    warmed.append("numpy.percentile")
+                except Exception:
+                    _logger.debug("[IMPORT-WARM] numpy warm failed", exc_info=True)
+                try:
+                    # The module that actually calls cv2 on the render path.
+                    from PacsClient.pacs.patient_tab.utils import (  # noqa: F401
+                        opencv_filter_pipeline as _ofp,
+                    )
+                    warmed.append("opencv_filter_pipeline")
+                except Exception:
+                    _logger.debug("[IMPORT-WARM] filter pipeline import failed",
+                                  exc_info=True)
+                _logger.info(
+                    "[IMPORT-WARM] viewer imports warmed in %.0f ms: %s",
+                    (_t2.perf_counter() - _t0w) * 1000.0, ", ".join(warmed) or "none",
+                )
+
+            try:
+                import os as _os_iw
+                if (_os_iw.getenv("AIPACS_VIEWER_IMPORT_WARM", "1") or "1").strip() != "0":
+                    import threading as _thr2
+                    _thr2.Thread(
+                        target=_warm_viewer_imports, name="viewer-import-warm",
+                        daemon=True,
+                    ).start()
+            except Exception:
+                pass
+
         try:
             from PySide6.QtCore import QTimer as _QTimer
             _QTimer.singleShot(0, _do_warmup)

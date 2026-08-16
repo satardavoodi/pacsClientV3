@@ -56,7 +56,6 @@ from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIEN
 from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET,REPORT_MODALITIES,TURBO_BACKEND
 from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
-from modules.EchoMind.secretary.stt.router import SttRouter
 from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backend, get_openai_model_for_feature, get_openai_settings
 
 
@@ -66,8 +65,12 @@ def _resolve_active_ai_identity() -> tuple[str, str | None, str | None]:
         api_key = str(cfg.get("api_key") or "").strip()
         return "openai", "OpenAI", api_key or None
 
-    manager = APIKeyManager.instance()
-    if not manager.is_validated():
+    # 2026-08-09: one authority for both paths. This used to test the in-memory
+    # manager only, so a licensed user whose key was on disk but not yet re-validated
+    # this session looked unlicensed to Send while Turbo self-healed. Same question,
+    # same answer, asked once.
+    from modules.EchoMind.entitlement import company_entitled
+    if not company_entitled():
         return "company", None, None
     try:
         info = Manage.instance().ensure_detected()
@@ -3225,24 +3228,21 @@ class OneChatPage(QWidget):
         # Send to the user's OpenAI key no longer moves Turbo onto the user's
         # key/model/endpoint (it used to; that was the scoping leak).
         backend = TURBO_BACKEND   # fixed company config — never a Settings value
+        # ── ENTITLEMENT. Turbo is technically separate from the AI-PACS backend now
+        # (its own hardcoded GapGPT configuration, a direct connection), but it must
+        # NOT be separate for licensing: one company authorisation entitles both, and
+        # its absence disables both. The hardcoded credentials Turbo carries are
+        # plumbing, never permission — `company_entitled()` is the permission.
+        from modules.EchoMind.entitlement import company_entitled, ENTITLEMENT_DENIED
+        if not company_entitled():
+            _log.warning("[Turbo] blocked: installation is not company-entitled")
+            self.controller.bubble("AI ChatBot", ENTITLEMENT_DENIED)
+            return
         manager = APIKeyManager.instance()
         center_key = manager.get_current_key() or ""
         if not center_key:
-            stored = (get_echomind_api_key() or "").strip()
-            if stored:
-                try:
-                    ok, _code, _err = manager.validate_key(stored)
-                except Exception:
-                    ok = False
-                if ok:
-                    center_key = stored
-        if not center_key:
-            _log.warning("[Turbo] blocked: no authorized company key")
-            self.controller.bubble(
-                "AI ChatBot",
-                "❌ Turbo requires an authorized company key. Please set your API key in "
-                "Settings → EchoMind (Company Authentication)."
-            )
+            _log.warning("[Turbo] blocked: entitled but no centre key resolved")
+            self.controller.bubble("AI ChatBot", ENTITLEMENT_DENIED)
             return
 
         if str(getattr(self, "page_mode", "")).lower() not in ("report", "chatgpt"):
@@ -5787,9 +5787,27 @@ class OneChatPage(QWidget):
                 spoken = [r for r in _meta.detect_regions_from_text(transcript)
                           if r in regions]
                 if spoken and len(spoken) < len(regions):
-                    _log.info("[Turbo] regions %s -> %s (narrowed by the dictation)",
-                              regions, spoken)
-                    regions = spoken
+                    # ...but only if the narrowed set still HAS reporting content for
+                    # this modality. 2026-08-11: ['brain','temporal_bone'] narrowed to
+                    # ['temporal_bone'], radiography has no temporal_bone package, and
+                    # the prompt fell all the way back to the 35 754-char ungated one —
+                    # ctx=0. Narrowing that destroys the gate is worse than not
+                    # narrowing.
+                    keeps_gate = True
+                    try:
+                        from .turbo_modules import modules_for as _mods_for
+                        _mod = getattr(self, "_current_modality", None) or ""
+                        keeps_gate = bool(_mods_for(_mod, spoken)) or not _mods_for(_mod, regions)
+                    except Exception:
+                        keeps_gate = True
+                    if keeps_gate:
+                        _log.info("[Turbo] regions %s -> %s (narrowed by the dictation)",
+                                  regions, spoken)
+                        regions = spoken
+                    else:
+                        _log.warning("[Turbo] not narrowing %s -> %s: no %s package for "
+                                     "the narrowed set, the gate would be lost",
+                                     regions, spoken, _mod)
             patient = rec.get("patient") or {}
             study = (rec.get("studies") or [{}])[0]
             bits = [str(patient.get(k) or "").strip()
@@ -5809,6 +5827,20 @@ class OneChatPage(QWidget):
             _log.debug("[Turbo] gate profile unavailable: %s", exc)
             return None
 
+    def _correction_gate_profile(self):
+        """The gate profile for a CORRECTION — regions only, no dictation narrowing.
+
+        The correction note is an instruction ("split the normals into knee and
+        calcaneus"), not a dictation, so it must never be mined for regions: the words
+        it contains describe the edit, not the study. The study's own region set is
+        what the correction needs in order to add anatomy correctly.
+        """
+        prof = self._build_gate_profile() or {}
+        if prof:
+            prof = dict(prof)
+            prof["modality"] = getattr(self, "_current_modality", None) or ""
+        return prof or None
+
     def _turbo_correction(self, backend, center_key) -> None:
         """Turbo in the Correction tab: edit the SELECTED report, never write a new one.
 
@@ -5825,7 +5857,7 @@ class OneChatPage(QWidget):
         prefix = ""
         try:
             from .turbo_prompt import build_turbo_correction_prefix
-            prefix = build_turbo_correction_prefix() or ""
+            prefix = build_turbo_correction_prefix(self._correction_gate_profile()) or ""
         except Exception as exc:                      # pragma: no cover - defensive
             _log.warning("[Turbo-correction] frame unavailable, shared prompt only: %s",
                          exc)

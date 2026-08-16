@@ -112,8 +112,20 @@ def test_the_rule_does_not_redefine_the_output_shape():
 
 
 def test_the_prompt_grew_by_only_the_rule():
-    """A title rule should cost a paragraph, not reshape the prompt."""
+    """A rule added to OUTPUT should cost a paragraph, not reshape the slot.
+
+    2026-08-11: this measured `len(OUTPUT) - 587`, a delta against the slot's size
+    before the title rule. A SECOND legitimate rule (the multi-body-part shape) then
+    failed it — the same magic-number trap as the `== 3` blocked-path count, which the
+    file it lived in had already warned about. A frozen baseline is not a property.
+
+    So assert the property: the slot stays one coherent block of rules around one
+    unchanged schema, and does not balloon.
+    """
     got = tp.build_turbo_system_prompt("MRI", "", profile=_ABDO)
-    assert 400 < len(tt.OUTPUT) - 587 < 900, \
-        "the OUTPUT slot changed by an unexpected amount"
     assert got.count("# OUTPUT") == 1
+    assert got.count("Start with { and end with }.") == 1
+    assert got.count('"Report Title":') == 1, "the schema is stated more than once"
+    assert len(tt.OUTPUT) < 2600, (
+        f"the OUTPUT slot is {len(tt.OUTPUT)} chars — rules belong in RULES_*, and "
+        "this slot has to stay readable next to the schema it describes")

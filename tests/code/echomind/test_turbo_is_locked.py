@@ -94,10 +94,20 @@ def test_turbo_model_is_the_hardcoded_company_constant():
 
 
 def test_turbo_authorization_is_the_hardcoded_registry():
+    """Re-anchored 2026-08-09, same requirement.
+
+    Turbo is now technically separate from the AI-PACS backend, so the owner's rule is
+    that it must not become separate for LICENSING: one company authorisation entitles
+    both, and its absence disables both. The handler therefore no longer inlines its
+    own `validate_key` — it asks the shared authority, which validates against the same
+    hardcoded CENTERS registry.
+    """
     h = _turbo_handler()
-    assert "APIKeyManager" in h, "authorization comes from the hardcoded CENTERS registry"
-    assert "validate_key" in h
-    assert "Turbo requires an authorized company key" in h
+    assert "company_entitled()" in h, "Turbo no longer checks entitlement"
+    assert "ENTITLEMENT_DENIED" in h
+    assert "validate_key" not in h, "the check is duplicated again; it will drift"
+    ent = _read("modules/EchoMind/entitlement.py")
+    assert "APIKeyManager" in ent and "validate_key(" in ent
 
 
 # ── the Settings UI offers no Turbo knob ─────────────────────────────────────

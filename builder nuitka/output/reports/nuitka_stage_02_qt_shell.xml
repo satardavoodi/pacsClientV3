@@ -3,9 +3,9 @@
   <scons_environment c_compiler="MSVC" the_cc_name="cl" the_compiler="cl" />
   <module name="PySide6" kind="CompiledPythonPackage" usage="import path parent" reason="Included to allow post load workaround code." source_path="${sys.prefix}\Lib\site-packages\PySide6\__init__.py" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
     <plugin-influence name="options-nanny" influence="condition-used" condition="use_pyside6" tags_used="use_pyside6" result="true" />
-    <optimization-time pass="1" time="0.0156" micro_passes="5" max_branch_merge="10" merged_total="784" />
-    <optimization-time pass="2" time="0.0156" micro_passes="1" max_branch_merge="10" merged_total="139" />
-    <code-generation-time time="0.0312" />
+    <optimization-time pass="1" time="0.0000" micro_passes="5" max_branch_merge="10" merged_total="784" />
+    <optimization-time pass="2" time="0.0000" micro_passes="1" max_branch_merge="10" merged_total="139" />
+    <code-generation-time time="0.0000" />
     <c-compilation-resources>
       <c-cache tech="clcache" result="cache hit" />
       <object-file size="1109266" />
@@ -55,7 +55,7 @@
     </module_usages>
   </module>
   <module name="PySide6.QtCore" kind="PythonExtensionModule" usage="import" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtCore.pyd" distribution="PySide6">
-    <optimization-time pass="1" time="0.0156" />
+    <optimization-time pass="1" time="0.0000" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
@@ -76,17 +76,17 @@
     </module_usages>
   </module>
   <module name="PySide6.QtGui" kind="PythonExtensionModule" usage="plugin:implicit-imports" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtGui.pyd" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.5312" />
+    <optimization-time pass="1" time="0.0469" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
   <module name="PySide6.QtNetwork" kind="PythonExtensionModule" usage="import fromlist" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtNetwork.pyd" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.5781" />
+    <optimization-time pass="1" time="0.0469" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
   <module name="PySide6.QtWidgets" kind="PythonExtensionModule" usage="import" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtWidgets.pyd" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.4688" />
+    <optimization-time pass="1" time="0.0312" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
@@ -130,9 +130,9 @@
     <module_usages />
   </module>
   <module name="__main__" kind="PythonMainModule" usage="root_module" reason="Root module" source_path="${cwd}\builder nuitka\stage_entrypoints\stage2_qt_shell.py">
-    <optimization-time pass="1" time="0.0156" micro_passes="3" max_branch_merge="2" merged_total="6" />
+    <optimization-time pass="1" time="0.0000" micro_passes="3" max_branch_merge="2" merged_total="6" />
     <optimization-time pass="2" time="0.0000" micro_passes="1" max_branch_merge="2" merged_total="2" />
-    <code-generation-time time="0.0156" />
+    <code-generation-time time="0.0000" />
     <c-compilation-resources>
       <c-cache tech="clcache" result="cache hit" />
       <object-file size="902178" />
@@ -3377,7 +3377,7 @@
   </module>
   <module name="shiboken6" kind="CompiledPythonPackage" usage="plugin:implicit-imports" reason="Instructed by user to follow to all modules." source_path="${sys.prefix}\Lib\site-packages\shiboken6\__init__.py" distribution="shiboken6">
     <plugin-influence name="dll-files" influence="condition-used" condition="win32" tags_used="win32" result="true" />
-    <optimization-time pass="1" time="0.0469" micro_passes="2" />
+    <optimization-time pass="1" time="0.0000" micro_passes="2" />
     <optimization-time pass="2" time="0.0000" micro_passes="1" />
     <code-generation-time time="0.0000" />
     <c-compilation-resources>
@@ -4104,9 +4104,9 @@
     </module_usages>
   </module>
   <performance>
-    <memory_usage name="after_launch" value="36888576" />
-    <memory_usage name="before_c_code_generation" value="66367488" />
-    <memory_usage name="before_running_scons" value="67375104" />
+    <memory_usage name="after_launch" value="37126144" />
+    <memory_usage name="before_c_code_generation" value="66764800" />
+    <memory_usage name="before_running_scons" value="67624960" />
   </performance>
   <included_extension name="QtCore.pyd" dest_path="PySide6\QtCore.pyd" source_path="${sys.prefix}\Lib\site-packages\PySide6\QtCore.pyd" package="PySide6" ignored="no" reason="used extension module" tags="copy" />
   <included_extension name="QtGui.pyd" dest_path="PySide6\QtGui.pyd" source_path="${sys.prefix}\Lib\site-packages\PySide6\QtGui.pyd" package="PySide6" ignored="no" reason="used extension module" tags="copy" />
@@ -4138,6 +4138,9 @@
   <included_extension name="_socket.pyd" dest_path="_socket.pyd" source_path="${sys.real_prefix}\DLLs\_socket.pyd" package="" ignored="no" reason="used extension module" tags="copy" />
   <included_extension name="_wmi.pyd" dest_path="_wmi.pyd" source_path="${sys.real_prefix}\DLLs\_wmi.pyd" package="" ignored="no" reason="used extension module" tags="copy" />
   <included_dll name="libcrypto-3.dll" dest_path="libcrypto-3.dll" source_path="${sys.real_prefix}\dlls\libcrypto-3.dll" package="" ignored="no" reason="Used by '_hashlib.pyd'" tags="copy" />
+  <included_dll name="msvcp140.dll" dest_path="msvcp140.dll" source_path="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\qt-plugins\iconengines\qsvgicon.dll'" tags="copy" />
+  <included_dll name="msvcp140_1.dll" dest_path="msvcp140_1.dll" source_path="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\qt-plugins\iconengines\qsvgicon.dll'" tags="copy" />
+  <included_dll name="msvcp140_2.dll" dest_path="msvcp140_2.dll" source_path="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\qt-plugins\iconengines\qsvgicon.dll'" tags="copy" />
   <included_dll name="pyside6.abi3.dll" dest_path="pyside6.abi3.dll" source_path="${sys.prefix}\lib\site-packages\pyside6\pyside6.abi3.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\QtCore.pyd'" tags="copy" />
   <included_dll name="python3.dll" dest_path="python3.dll" source_path="${sys.real_prefix}\python3.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\QtCore.pyd'" tags="copy" />
   <included_dll name="python313.dll" dest_path="python313.dll" source_path="${sys.real_prefix}\python313.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\QtCore.pyd'" tags="copy" />
@@ -4157,73 +4160,6 @@
   <included_extension name="unicodedata.pyd" dest_path="unicodedata.pyd" source_path="${sys.real_prefix}\DLLs\unicodedata.pyd" package="" ignored="no" reason="used extension module" tags="copy" />
   <included_dll name="vcruntime140.dll" dest_path="vcruntime140.dll" source_path="${sys.real_prefix}\vcruntime140.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\qt-plugins\iconengines\qsvgicon.dll'" tags="copy" />
   <included_dll name="vcruntime140_1.dll" dest_path="vcruntime140_1.dll" source_path="${sys.real_prefix}\vcruntime140_1.dll" package="PySide6" ignored="no" reason="Used by 'PySide6\qt-plugins\iconengines\qsvgicon.dll'" tags="copy" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\iconengines\qsvgicon.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\iconengines\qsvgicon.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\iconengines\qsvgicon.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qgif.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qgif.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qgif.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qicns.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qicns.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qicns.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qico.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qico.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qico.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qjpeg.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qjpeg.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qjpeg.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qpdf.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qpdf.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qpdf.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qsvg.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qsvg.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qsvg.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qtga.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qtga.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qtga.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qtiff.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qtiff.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qtiff.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qwbmp.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qwbmp.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qwbmp.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\imageformats\qwebp.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\imageformats\qwebp.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\imageformats\qwebp.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\platforms\qdirect2d.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\platforms\qdirect2d.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\platforms\qdirect2d.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\platforms\qminimal.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\platforms\qminimal.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\platforms\qminimal.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\platforms\qoffscreen.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\platforms\qoffscreen.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\platforms\qoffscreen.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\platforms\qwindows.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\platforms\qwindows.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\platforms\qwindows.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\styles\qmodernwindowsstyle.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\styles\qmodernwindowsstyle.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\qt-plugins\styles\qmodernwindowsstyle.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\tls\qcertonlybackend.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\tls\qcertonlybackend.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\tls\qopensslbackend.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\tls\qopensslbackend.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\qt-plugins\tls\qschannelbackend.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\qt-plugins\tls\qschannelbackend.dll" reason="no outside dependencies allowed for 'PySide6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\QtCore.pyd" reason="no outside dependencies allowed for 'PySide6.QtCore'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\QtCore.pyd" reason="no outside dependencies allowed for 'PySide6.QtCore'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\QtGui.pyd" reason="no outside dependencies allowed for 'PySide6.QtGui'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\QtGui.pyd" reason="no outside dependencies allowed for 'PySide6.QtGui'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\QtGui.pyd" reason="no outside dependencies allowed for 'PySide6.QtGui'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\QtNetwork.pyd" reason="no outside dependencies allowed for 'PySide6.QtNetwork'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\QtNetwork.pyd" reason="no outside dependencies allowed for 'PySide6.QtNetwork'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="PySide6\QtWidgets.pyd" reason="no outside dependencies allowed for 'PySide6.QtWidgets'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_1.dll" used_by="PySide6\QtWidgets.pyd" reason="no outside dependencies allowed for 'PySide6.QtWidgets'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140_2.dll" used_by="PySide6\QtWidgets.pyd" reason="no outside dependencies allowed for 'PySide6.QtWidgets'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="shiboken6\msvcp140_1.dll" reason="no outside dependencies allowed for 'shiboken6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="shiboken6\msvcp140_2.dll" reason="no outside dependencies allowed for 'shiboken6'" />
-  <excluded_dll name="c:\program files (x86)\microsoft visual studio\2022\buildtools\VC\Redist\MSVC\14.44.35112\x64\microsoft.vc143.crt\msvcp140.dll" used_by="shiboken6\Shiboken.pyd" reason="no outside dependencies allowed for 'shiboken6.Shiboken'" />
   <data_composer blob_size="5403853" total="663">
     <module_data filename="__bytecode.const" blob_name=".bytecode" blob_size="5398489" input_size="5420559" />
     <module_data filename="__constants.const" blob_name="" blob_size="918" input_size="2324" />
@@ -4237,10 +4173,10 @@
     <module_data filename="module.shiboken6.const" blob_name="shiboken6" blob_size="411" input_size="827" />
   </data_composer>
   <performance-totals>
-    <optimization-time pass="1" time="21.4688" module_count="336" />
-    <optimization-time pass="2" time="0.0156" module_count="336" />
-    <optimization-time pass="all" time="21.4844" module_count="336" />
-    <code-generation-time time="0.0469" module_count="8" />
+    <optimization-time pass="1" time="19.9219" module_count="336" />
+    <optimization-time pass="2" time="0.0000" module_count="336" />
+    <optimization-time pass="all" time="19.9219" module_count="336" />
+    <code-generation-time time="0.0000" module_count="8" />
   </performance-totals>
   <python_binary filename="AIPacs.exe" backend_resource_mode="coff_obj" reproducible="no" size="5746176" />
   <command_line>
@@ -4248,7 +4184,7 @@
     <option value="--output-dir=E:\ai-pacs\ai-pacs codes\ai-pacs beta version\builder nuitka\output\dist\stage_02_qt_shell" />
     <option value="--output-filename=AIPacs.exe" />
     <option value="--product-name=AIPacs" />
-    <option value="--product-version=3.5.8" />
+    <option value="--product-version=3.5.9" />
     <option value="--company-name=AIPacs" />
     <option value="--file-description=AIPacs - staged Nuitka build" />
     <option value="--windows-console-mode=attach" />
