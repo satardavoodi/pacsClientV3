@@ -33,6 +33,7 @@ _logger = logging.getLogger(__name__)
 # lazy-load the rest on scroll). Escape hatch: AIPACS_PROGRESSIVE_LOCAL_SEARCH=0
 # restores the legacy "render every row up front" path.
 import os as _os
+import time as _time
 
 
 def _progressive_local_enabled() -> bool:
@@ -76,6 +77,47 @@ def _db_prefetch_enabled() -> bool:
     )
 
 
+def _row_paths_ready(patient: dict) -> bool:
+    """True when the background resolver has already decided this row's verdict.
+
+    The progressive streamer uses this to know when rendering a row would cost a
+    blocking filesystem round-trip on the GUI thread (see
+    ``PatientTableWidget.load_progressive``). Cheap by construction — one dict
+    membership test, no I/O.
+    """
+    try:
+        return '_aipacs_renderable' in patient
+    except Exception:
+        return True
+
+
+# ── 2026-08-21: a small positive-only memo instead of re-scanning the disk ────
+# Every Local search re-stat'ed and re-opendir'ed the same study folders. The
+# memo makes a repeat search (and the second half of a long stream) essentially
+# free, which is what lets the resolver stay ahead of the streamer.
+#
+# ONLY successful ("this study is on disk") verdicts are memoised. A negative is
+# never cached, so a study that finishes downloading — or is imported — appears
+# on the very next search with no invalidation hook needed. The asymmetry is
+# deliberate: the failure mode of caching a positive is a row that lingers for at
+# most _PATH_MEMO_TTL_S after its folder is deleted; the failure mode of caching
+# a negative would be a freshly imported study that refuses to show up.
+_PATH_MEMO: "dict[tuple, tuple[str, float]]" = {}
+_PATH_MEMO_TTL_S = 300.0
+_PATH_MEMO_MAX = 8000
+
+
+def _path_memo_enabled() -> bool:
+    return _os.environ.get("AIPACS_LIST_PATH_MEMO", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
+def clear_path_memo() -> None:
+    """Drop every memoised path verdict (used by tests and after bulk deletes)."""
+    _PATH_MEMO.clear()
+
+
 def _resolve_renderable_study_path(patient: dict):
     """Resolve a study's on-disk path and decide whether its row is renderable.
 
@@ -93,6 +135,16 @@ def _resolve_renderable_study_path(patient: dict):
 
     study_path = patient.get('study_path')
     study_uid = patient.get('study_uid')
+
+    _memo_key = (study_uid, study_path) if _path_memo_enabled() else None
+    if _memo_key is not None:
+        _hit = _PATH_MEMO.get(_memo_key)
+        if _hit is not None:
+            _resolved, _stamp = _hit
+            if (_time.monotonic() - _stamp) < _PATH_MEMO_TTL_S:
+                patient['study_path'] = _resolved
+                return _resolved
+            _PATH_MEMO.pop(_memo_key, None)
 
     _need_fallback = False
     if not study_path:
@@ -130,7 +182,11 @@ def _resolve_renderable_study_path(patient: dict):
     if not _has_dicom:
         _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
         if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
-            return None
+            return None          # negatives are deliberately NOT memoised
+    if _memo_key is not None:
+        if len(_PATH_MEMO) >= _PATH_MEMO_MAX:
+            _PATH_MEMO.clear()   # crude but bounded; the memo is a cache, not state
+        _PATH_MEMO[_memo_key] = (study_path, _time.monotonic())
     return study_path
 
 
@@ -544,8 +600,15 @@ class HomeSearchService:
                             # swallowed inside _resolve_display_paths.
                             _fut.add_done_callback(lambda f: f.exception())
                     home.search_progress.setVisible(False)
+                    # 2026-08-21: hand the table a "can this row be rendered
+                    # without touching the disk?" predicate, so a row the worker
+                    # has not resolved yet PAUSES the stream instead of paying a
+                    # blocking stat/opendir on the GUI thread. Only meaningful on
+                    # the off-thread branch — without it the table keeps the old
+                    # resolve-inline behaviour.
+                    _ready = _row_paths_ready if _paths_offthread_enabled() else None
                     home.patient_table_widget.load_progressive(
-                        patients_display, render_one
+                        patients_display, render_one, ready=_ready
                     )
                 else:
                     # LEGACY: render every row up front, chunked + yielding so the

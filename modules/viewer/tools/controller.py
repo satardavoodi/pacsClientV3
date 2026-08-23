@@ -50,6 +50,7 @@ class ToolController:
         "_placing_slice",
         "_pixel_data_fn",
         "_pixel_spacing_fn",
+        "_text_prompt_fn",
         "_hovered_model",
         "_hovered_handle_idx",
         "_drag_model",
@@ -69,6 +70,9 @@ class ToolController:
 
         self._pixel_data_fn = None
         self._pixel_spacing_fn = None
+        # Returns the string the user typed, or None to cancel. Injected by the
+        # Qt layer (see `_text_press`); this module stays Qt-free.
+        self._text_prompt_fn = None
 
         self._hovered_model: Optional[ToolModel] = None
         self._hovered_handle_idx: int = -2
@@ -569,12 +573,47 @@ class ToolController:
         slice_index: int,
         coord_resolver: Optional[CoordinateResolver] = None,
     ) -> bool:
+        """Place a text annotation at the click point.
+
+        2026-08-18 — this hard-coded ``text="Text"`` and never asked the user
+        anything, so the Text tool stamped the literal word "Text" on the image
+        and there was no way to write your own. Everything else was already
+        wired: the toolbar button, the tool routing, the store, and
+        ``QPainterToolRenderer._render_text`` (which draws ``model.text``
+        faithfully). The input step simply did not exist.
+
+        The prompt is INJECTED rather than opened here on purpose: this module
+        is deliberately Qt-free — it is imported by headless tests and carries
+        the tool state machine — and a controller that pops dialogs cannot be
+        unit-tested. The Qt layer wires ``_text_prompt_fn`` in
+        ``qt_viewer_bridge._init_tool_controller``.
+
+        Cancelling (or entering only whitespace) places NOTHING and returns
+        False, so the caller does not fire ``_emit_tool_completed()`` and the
+        tool stays armed for another try.
+
+        With no prompt wired the legacy placeholder is kept, so anything that
+        builds a bare ToolController behaves exactly as before.
+        """
+        text = "Text"
+        if self._text_prompt_fn is not None:
+            try:
+                entered = self._text_prompt_fn()
+            except Exception:
+                return False          # a broken prompt must not stamp a stray label
+            if entered is None:
+                return False          # cancelled
+            entered = str(entered).strip()
+            if not entered:
+                return False          # empty input is a cancel, not a blank label
+            text = entered
+
         self._store.add(
             TextModel(
                 slice_index=slice_index,
                 points_image=[(img_x, img_y)],
                 is_complete=True,
-                text="Text",
+                text=text,
             )
         )
         return True

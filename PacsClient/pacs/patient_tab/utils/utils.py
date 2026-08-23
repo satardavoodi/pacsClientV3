@@ -909,15 +909,72 @@ def open_folder(folder_path):
         subprocess.run(["xdg-open", folder_path])
 
 
+_DICOM_EXTS = {'.dcm', '.dicom'}
+
+
+def _subfolder_has_dicom(dir_path: str) -> bool:
+    """True when ``dir_path`` holds at least one .dcm/.dicom at any depth.
+
+    Early-exit ``os.scandir`` walk: it checks a directory's FILES before
+    descending, which is where series files actually live, and returns on the
+    first hit. ``Path.rglob('*')`` could not do that — it materialises the walk
+    and costs one extra ``stat`` per yielded entry, so a folder with no DICOM
+    (thumbnails, a partial download) paid a full recursive enumeration.
+    """
+    pending = [dir_path]
+    while pending:
+        current_dir = pending.pop()
+        subdirs = []
+        try:
+            with os.scandir(current_dir) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_file(follow_symlinks=False):
+                            if os.path.splitext(entry.name)[1].lower() in _DICOM_EXTS:
+                                return True
+                        elif entry.is_dir(follow_symlinks=False):
+                            subdirs.append(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+        pending.extend(subdirs)
+    return False
+
+
 def count_subfolders_with_dicom(folder_path: str | Path) -> int:
     """
     تعداد زیرپوشه‌های مستقیمِ folder_path که حداقل یک فایل DICOM (.dcm/.dicom) دارند.
+
+    2026-08-22: this is called PER ROW while the patient table is built from a
+    server search (``add_data2patient_list_table`` -> ``get_study_download_status``),
+    on the GUI thread. MEASURED on this machine over the local study tree, cold:
+    the old ``rglob('*')`` implementation cost **682.5 ms per study**; the
+    scandir walk below costs **1.45 ms** — a 470x reduction, with **0 verdict
+    mismatches** across every local study
+    (``tools/analysis/oneoff/bench_count_subfolders_2026_08_22.py``). That per-row
+    cost is what produced the 12-14 s search stalls of 2026-08-22 15:36.
+    ``AIPACS_DICOM_SCAN_FAST=0`` restores the original walk.
     """
-    exts = {'.dcm', '.dicom'}
     root = Path(folder_path)
     if not root.is_dir():
         return 0
 
+    if (os.environ.get("AIPACS_DICOM_SCAN_FAST", "1") or "1").strip() != "0":
+        count = 0
+        try:
+            with os.scandir(root) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False) and _subfolder_has_dicom(entry.path):
+                            count += 1
+                    except OSError:
+                        continue
+        except (OSError, ValueError):
+            return 0
+        return count
+
+    exts = _DICOM_EXTS
     count = 0
     for sub in root.iterdir():
         if sub.is_dir():
@@ -1695,6 +1752,25 @@ def check_series_study_exist(study_uid, series_name):
     return str(series_dir)
 
 
+def _release_mpr_before_drop(widget, reason):
+    """Tear down any MPR viewer this widget hosts BEFORE it is orphaned.
+
+    2026-08-19. A layout rebuild used to `setParent(None)` a cell that was
+    hosting an open MPR viewer. The MPR keeps a flipped full-size volume, four
+    QVTKRenderWindowInteractors and (for the 3D view) a GPU texture; none of it
+    was released, because `cleanup()` was reachable only from the toolbar's MPR
+    toggle. Order matters — once the widget is orphaned the GL context is gone
+    and `ReleaseGraphicsResources()` can no longer free the VRAM.
+
+    Never raises: a failed MPR teardown must not abort the layout rebuild.
+    """
+    try:
+        from modules.mpr.zeta_mpr.mpr_viewer._mpr_lifecycle import release_mpr_children
+        release_mpr_children(widget, reason=reason)
+    except Exception:
+        pass
+
+
 def delete_widgets_in_layout(layout):
     while layout.count():
         item = layout.takeAt(0)
@@ -1702,6 +1778,7 @@ def delete_widgets_in_layout(layout):
 
         # اگر ویجت باشد، آن را حذف کن
         if widget is not None:
+            _release_mpr_before_drop(widget, "delete_widgets_in_layout")
             widget.setParent(None)
 
         # اگر layout باشد، آن را بازگشتی پاک کن
@@ -1717,6 +1794,7 @@ def delete_layout(layout):
 
         # اگر ویجت باشد، آن را از والد خود جدا کن
         if widget is not None:
+            _release_mpr_before_drop(widget, "delete_layout")
             widget.setParent(None)
         # اگر این آیتم یک layout باشد، باز هم به طور بازگشتی تابع را فراخوانی می‌کنیم
         elif item.layout() is not None:

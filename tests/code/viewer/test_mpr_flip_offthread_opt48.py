@@ -206,8 +206,19 @@ def test_toolbar_offthread_helper_uses_the_same_implementation():
 
 
 def test_toolbar_passes_preflipped_to_the_viewer():
+    """The open path must compute the flip off-thread and hand the result to the
+    viewer.
+
+    Re-pinned 2026-08-23 to assert the WIRING rather than one line's exact
+    formatting. The previous version required the literal
+    ``self._prepare_mpr_flip_offthread(vtk_image_data)`` and broke when the call
+    gained an ``existing_dlg=`` argument (so the flip step reuses the caller's
+    progress dialog instead of stacking a second modal on top of it) and wrapped
+    onto two lines. The assertion was still true; only the spelling had moved.
+    """
     src = TOOLBAR_SRC.read_text(encoding="utf-8", errors="replace")
-    assert "_pre_flipped = self._prepare_mpr_flip_offthread(vtk_image_data)" in src
+    assert "_pre_flipped = self._prepare_mpr_flip_offthread(" in src
+    assert "vtk_image_data" in src[src.index("_pre_flipped = self._prepare_mpr_flip_offthread("):][:400]
     assert "pre_flipped_image_data=_pre_flipped," in src
 
 

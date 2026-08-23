@@ -218,6 +218,14 @@ def refresh_assignments(
 
     A per-reception failure is recorded as ``failed`` and the stored snapshot is
     left ALONE — an unreachable server must never wipe a known assignment.
+
+    PERSISTENCE TIMING (changed 2026-08-16): the snapshot is written ONCE, after
+    the fan-out, via ``ino_assignment_server_state.set_many`` — not once per
+    reception. ``on_row`` still fires per row, at the same point as before, but
+    it now runs BEFORE the write, so an ``on_row`` handler must use the
+    ``parsed`` dict it is given and must not call ``get_state`` expecting to see
+    that row. Every caller in this repo reads ``summary["rows"]`` after the
+    function returns, which is after the write, so this is safe today.
     """
     from modules.network import ino_assignment_server_state as _state
     from modules.network.http_session import parallel_workers
@@ -260,20 +268,11 @@ def refresh_assignments(
         with lock:
             rows[rid] = parsed
             updated += 1
-        try:
-            _state.set_state(
-                rid,
-                assigned=bool(parsed["assigned"]),
-                assignee_name=parsed["assignee_name"],
-                assignee_id=parsed["assignee_id"],
-                mine=bool(parsed["mine"]),
-                assign_type=parsed["assign_type"],
-                assignee_source=parsed["assignee_source"],
-                assigned_by=parsed["last_assigned_by"],
-                assigned_at=parsed["last_assigned_at"],
-            )
-        except Exception:
-            pass
+        # NOTE: the snapshot is NOT written here any more — see the single
+        # `set_many` after the fan-out. Persisting per reception rewrote the
+        # whole snapshot under the store's global lock once per row, and
+        # `get_state` (patient list, per row, GUI thread) takes that same lock:
+        # one batch produced a 10.79 s frozen UI on 2026-08-16.
         if on_row:
             try:
                 on_row(rid, parsed)
@@ -293,6 +292,30 @@ def refresh_assignments(
         with ThreadPoolExecutor(max_workers=workers,
                                 thread_name_prefix="INOAssignFetch") as pool:
             list(pool.map(_one, ids))
+
+    # PERSIST ONCE (2026-08-16). Was one `set_state` per reception, i.e. one
+    # full rewrite of the whole snapshot per row, each holding the store's
+    # global lock that the GUI thread's per-row `get_state` needs. Measured on
+    # the live workstation: 118 ms per write x ~91 rows = a 10.79 s frozen UI.
+    # One write for the whole batch instead. Runs even when `should_stop` fired,
+    # so an interrupted refresh still keeps whatever it managed to fetch.
+    if rows:
+        try:
+            _state.set_many({
+                rid: {
+                    "assigned": bool(parsed["assigned"]),
+                    "assignee_name": parsed["assignee_name"],
+                    "assignee_id": parsed["assignee_id"],
+                    "mine": bool(parsed["mine"]),
+                    "assign_type": parsed["assign_type"],
+                    "assignee_source": parsed["assignee_source"],
+                    "assigned_by": parsed["last_assigned_by"],
+                    "assigned_at": parsed["last_assigned_at"],
+                }
+                for rid, parsed in rows.items()
+            })
+        except Exception:  # never let persistence break the refresh
+            logger.exception("[ino-refresh] could not persist %d rows", len(rows))
 
     # Resolve the "assigned by" user ids to NAMES here, on the WORKER thread, so the
     # patient list can render "Assigned by: Dr Reza Ahmadi" from a warm cache instead

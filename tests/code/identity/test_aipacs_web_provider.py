@@ -42,10 +42,15 @@ class _FakeSession:
         self.calls.append({"method": "POST", "url": url, "json": json, "timeout": timeout})
         return self._next()
 
-    def request(self, method, url, json=None, params=None, headers=None, timeout=None):
+    def request(self, method, url, json=None, params=None, headers=None,
+                timeout=None, data=None, files=None):
+        # data/files mirror the multipart upload path (chat attachments). A
+        # double missing a keyword the real session accepts fails as a
+        # TypeError at the call site, which reads like a client bug.
         self.calls.append({
             "method": method, "url": url, "json": json,
             "params": params, "headers": headers, "timeout": timeout,
+            "data": data, "files": files,
         })
         return self._next()
 

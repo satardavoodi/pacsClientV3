@@ -1319,6 +1319,24 @@ feature-flag config file, complete ALL of:
    then rebuild — a stale stage fails the gate's frozen-PYZ probe.
 6. Run `python -m pytest tests/code/builder tests/code/runtime -q -p no:debugging` —
    the parity tests enforce steps 1–5 automatically.
+7. **Install pipeline invariants (2026-08-22, after the AiPacs Chat "icon visible,
+   module 'not installed correctly'" field bug):** every install channel (installer
+   first-launch bootstrap, Settings package/folder/URL, update feed) funnels through
+   `install_module_package()`, which now hash-verifies (when the feed knows the sha256),
+   guards zip-slip, **verifies after install** (`validate_module_installation`:
+   catalog `requires` dependencies + healthcheck import/path) and only then reports
+   success — a failed verification is recorded as `install_incomplete` + warning and
+   the module stays disabled. Optional catalog keys: `requires: [ids]` (validated with
+   a NAMED "cannot start because …" message) and
+   `feature_flag: {config, key}` — the module's own settings toggle, switched ON
+   automatically after a successful verified install so "selected in the installer"
+   really means "opens afterwards" (the shipped template stays force-OFF via
+   `builder/config_sanitizer.py`; the flag flip happens per-workstation at install
+   time). Everything is logged to `<User Data>/logs/module_install.log`. Unavailable
+   modules must show a PRECISE reason (see `aipacs_chat_unavailable_reason()`), never
+   the generic "not installed or not enabled" string. Tests:
+   `tests/code/runtime/test_module_install_verification.py`,
+   `tests/code/aipacs_chat/test_unavailable_reason.py`.
 
 ### Viewer/Home "V2" design layer (DEFAULT — flipped 2026-05-31)
 Before editing `PacsClient/utils/v2_style.py`, `PacsClient/utils/ui_variant.py`, the viewer

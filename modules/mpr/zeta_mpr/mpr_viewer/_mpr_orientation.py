@@ -307,6 +307,14 @@ class _MprOrientationMixin:
             kind = getattr(self, "_interaction_active_kind", None) or 'move'
             self._interaction_pending_kind = None
             self._apply_interaction_update(kind)
+            # Re-arm the leading edge (2026-08-23). The throttle runs the first
+            # event of a gesture immediately only when the budget has elapsed
+            # since the LAST run — and this final update has just reset that
+            # clock. Without clearing it, a release-then-press inside 16 ms
+            # (a quick correction, a double-click) has its first event DEFERRED
+            # instead of applied, which reads as the gesture not starting.
+            # A new gesture should never wait on the previous one's cadence.
+            self._interaction_last_ms = 0.0
         except Exception as exc:
             logger.debug("[ZETA_MPR] finalize interaction failed: %r", exc)
 

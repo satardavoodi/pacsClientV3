@@ -74,6 +74,15 @@ class TextInteractorStyle(AbstractInteractorStyle):
     def on_left_button_press(self, obj, event):
         text, ok = QInputDialog.getText(None, "Enter Text", "Text:")
 
+        # 2026-08-18: `ok` was collected and then ignored, so pressing Cancel
+        # (or OK on an empty box) still added an empty vtkVectorText actor to
+        # the renderer AND an entry to the tools store — an invisible label the
+        # user could neither see nor easily delete. Bail out instead, leaving
+        # the tool armed so the next click can try again (same contract as the
+        # FAST backend's ToolController._text_press).
+        if not ok or not str(text).strip():
+            return
+
         display_position = self.GetInteractor().GetEventPosition()
         world_position = self.display_to_world(display_position[0], display_position[1])
 

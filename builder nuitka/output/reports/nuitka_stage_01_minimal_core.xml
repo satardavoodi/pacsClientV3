@@ -12,9 +12,9 @@
     <module_usages />
   </module>
   <module name="__main__" kind="PythonMainModule" usage="root_module" reason="Root module" source_path="${cwd}\builder nuitka\stage_entrypoints\stage1_minimal_bootstrap.py">
-    <optimization-time pass="1" time="0.0000" micro_passes="3" />
-    <optimization-time pass="2" time="0.0000" micro_passes="1" />
-    <code-generation-time time="0.0156" />
+    <optimization-time pass="1" time="0.0469" micro_passes="3" />
+    <optimization-time pass="2" time="0.0156" micro_passes="1" />
+    <code-generation-time time="0.0312" />
     <c-compilation-resources>
       <c-cache tech="clcache" result="cache hit" />
       <object-file size="848031" />
@@ -2799,7 +2799,7 @@
   </module>
   <module name="pathlib" kind="UncompiledPythonPackage" usage="import" reason="Including as part of the non-excluded parts of standard library." source_path="${sys.real_prefix}\Lib\pathlib\__init__.py">
     <optimization-time pass="1" time="0.0000" micro_passes="2" />
-    <optimization-time pass="2" time="0.0000" />
+    <optimization-time pass="2" time="0.0156" />
     <module_usages>
       <module_usage name="os" finding="absolute" line="1" />
       <module_usage name="pathlib._abc" finding="absolute" line="8" />
@@ -3628,7 +3628,7 @@
     </module_usages>
   </module>
   <module name="unicodedata" kind="PythonExtensionModule" usage="stdlib" reason="Including as part of the non-excluded parts of standard library." source_path="${sys.real_prefix}\DLLs\unicodedata.pyd">
-    <optimization-time pass="1" time="0.2031" />
+    <optimization-time pass="1" time="1.9062" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
@@ -3778,9 +3778,9 @@
     </module_usages>
   </module>
   <performance>
-    <memory_usage name="after_launch" value="37265408" />
-    <memory_usage name="before_c_code_generation" value="63098880" />
-    <memory_usage name="before_running_scons" value="63127552" />
+    <memory_usage name="after_launch" value="37261312" />
+    <memory_usage name="before_c_code_generation" value="62472192" />
+    <memory_usage name="before_running_scons" value="63471616" />
   </performance>
   <included_extension name="_bz2.pyd" dest_path="_bz2.pyd" source_path="${sys.real_prefix}\DLLs\_bz2.pyd" package="" ignored="no" reason="used extension module" tags="copy" />
   <included_extension name="_lzma.pyd" dest_path="_lzma.pyd" source_path="${sys.real_prefix}\DLLs\_lzma.pyd" package="" ignored="no" reason="used extension module" tags="copy" />
@@ -3797,10 +3797,10 @@
     <module_data filename="module.__main__.const" blob_name="__main__" blob_size="255" input_size="448" />
   </data_composer>
   <performance-totals>
-    <optimization-time pass="1" time="13.4844" module_count="314" />
-    <optimization-time pass="2" time="0.0000" module_count="314" />
-    <optimization-time pass="all" time="13.4844" module_count="314" />
-    <code-generation-time time="0.0156" module_count="1" />
+    <optimization-time pass="1" time="15.2344" module_count="314" />
+    <optimization-time pass="2" time="0.0312" module_count="314" />
+    <optimization-time pass="all" time="15.2656" module_count="314" />
+    <code-generation-time time="0.0312" module_count="1" />
   </performance-totals>
   <python_binary filename="AIPacs.exe" backend_resource_mode="coff_obj" reproducible="no" size="5154816" />
   <command_line>
@@ -3808,7 +3808,7 @@
     <option value="--output-dir=E:\ai-pacs\ai-pacs codes\ai-pacs beta version\builder nuitka\output\dist\stage_01_minimal_core" />
     <option value="--output-filename=AIPacs.exe" />
     <option value="--product-name=AIPacs" />
-    <option value="--product-version=3.5.9" />
+    <option value="--product-version=3.6.1" />
     <option value="--company-name=AIPacs" />
     <option value="--file-description=AIPacs - staged Nuitka build" />
     <option value="--windows-console-mode=attach" />

@@ -58,6 +58,14 @@ def _make_bundled_config(root: Path) -> Path:
         json.dumps({"enabled": False, "transport": "relay", "e2e_encryption": True}),
         encoding="utf-8",
     )
+    # AiPacs Chat family — added to CONFIG_FAMILY_VERSIONS 2026-08-19. Same
+    # reason as agent_gateway above: a family the bundle does not carry is a
+    # family the migration cannot seed, and the idempotency test KeyErrors on
+    # the unrecorded version.
+    (src / "aipacs_chat").mkdir(parents=True)
+    (src / "aipacs_chat" / "aipacs_chat.json").write_text(
+        json.dumps({"enabled": False}), encoding="utf-8"
+    )
     (src / "servers.json").write_text(json.dumps({"host": "1.2.3.4"}), encoding="utf-8")
     return src
 

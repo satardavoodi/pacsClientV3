@@ -78,6 +78,8 @@ from modules.viewer.fast.dicom_color import (
     color_enabled,
     decode_color_for_display,
     has_embedded_palette,
+    normalize_ybr_subsampling,
+    ybr_samples_to_rgb,
 )
 from modules.zeta_boost.cache_engine import _zb_globals
 from PacsClient.utils.runtime_correlation import (
@@ -2710,6 +2712,12 @@ class Lightweight2DPipeline(QObject):
                 foreground_bytes_read=file_size,
             )
             _sanitize_specific_character_set(ds)
+            # 2026-08-21 (colour): correct a mislabelled YBR_FULL_422 header
+            # BEFORE the pixel data is decoded — pydicom applies the 4:2:2
+            # resample during decode and caches the scrambled result, so it
+            # cannot be undone afterwards. No-op for mono / true RGB / genuinely
+            # subsampled frames.
+            normalize_ybr_subsampling(ds)
             try:
                 with warnings.catch_warnings():
                     _ignore_unknown_encoding_warning()
@@ -2746,6 +2754,10 @@ class Lightweight2DPipeline(QObject):
                 arr = arr[_frame] if 0 <= _frame < arr.shape[0] else arr[0]
             if arr.dtype != np.uint8:
                 arr = np.clip(arr, 0, 255).astype(np.uint8)
+            # 2026-08-21 (colour): YBR samples must be converted before they are
+            # painted as RGB. No-op when the photometric is RGB, or when a
+            # decoding handler already converted (pydicom rewrites the tag).
+            arr = ybr_samples_to_rgb(ds, arr)
             result = np.ascontiguousarray(arr)
             disk_cache.put(
                 self._decode_cache_key(sm),

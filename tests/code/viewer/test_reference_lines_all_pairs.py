@@ -216,16 +216,31 @@ def test_flag_off_uses_legacy_single_source(monkeypatch):
     assert host._rl_all_pairs_enabled() is False
 
 
-def test_all_pairs_enabled_by_default(monkeypatch):
+def test_all_pairs_is_OFF_by_default(monkeypatch):
+    """2026-08-16: the default flipped to the legacy single-source path.
+
+    All-pairs put a reference line on the ACTIVE viewport too, which reads as
+    wrong on the floor — the active series is the source and should stay clean.
+    This test previously asserted the opposite; it is re-pointed rather than
+    deleted so the flag's default stays pinned in both directions.
+    See docs/reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md.
+    """
     monkeypatch.delenv("AIPACS_REFERENCE_LINES_ALL_PAIRS", raising=False)
+    host = _harness(monkeypatch)
+    assert host._rl_all_pairs_enabled() is False
+
+
+@pytest.mark.parametrize("val", ["1", "true", "yes", "on", "ON", " 1 "])
+def test_all_pairs_can_be_switched_back_on(monkeypatch, val):
+    monkeypatch.setenv("AIPACS_REFERENCE_LINES_ALL_PAIRS", val)
     host = _harness(monkeypatch)
     assert host._rl_all_pairs_enabled() is True
 
 
 def test_round_robin_targets_include_every_viewport(monkeypatch):
-    """With all-pairs the selected widget is also a target — excluding it would
-    leave its own lines unpainted."""
-    monkeypatch.delenv("AIPACS_REFERENCE_LINES_ALL_PAIRS", raising=False)
+    """With all-pairs ON the selected widget is also a target — excluding it
+    would leave its own lines unpainted."""
+    monkeypatch.setenv("AIPACS_REFERENCE_LINES_ALL_PAIRS", "1")
     host = _harness(monkeypatch)
     targets = host._rl_get_target_widgets()
     assert len(targets) == 3

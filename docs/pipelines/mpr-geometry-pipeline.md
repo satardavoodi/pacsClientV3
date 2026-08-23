@@ -6,6 +6,31 @@
 opens. Read this before touching any MPR geometry, the canonicalization pre‑filter, the
 camera/view‑up logic, or the orientation markers.
 
+> ### ⚠️ Which sections describe the SHIPPED design — read this first
+>
+> This document grew by accretion and **not all of it is current**. Reading a
+> superseded section as if it were live nearly caused an MPR geometry regression
+> on 2026-08-23. The map, as of that date:
+>
+> | sections | status |
+> |---|---|
+> | **§0, §10, §10b–§10h** | **CURRENT — this is the shipped design.** |
+> | §1–§2 | current (data provenance, contract boundaries) |
+> | §3–§6 | **HISTORICAL.** The fixed world‑axis camera table in §5 and the `Roll`/`Azimuth` correction scheme in §6 were **retired** by §10b. `_needs_radiological_correction()` returns `False` on the anatomical path, disabling them at all six sites. §3.3's transpose caveat still applies to the code it describes. |
+> | §7–§9 | historical/background |
+>
+> Two more traps worth knowing before you start:
+> * **The canonicalization flag is default ON** (`_BUILD_DEFAULT_CANONICALIZE = True`,
+>   since 2026‑06‑11), so §10b–§10f is what runs. Several older lines in this doc
+>   said "default OFF"; see §10.6.
+> * **In oblique mode the camera does NOT select the plane** — an explicit
+>   `vtkPlane` on the mapper does (v1.09.Fix‑E). See §10.9. This is the specific
+>   thing that was nearly "fixed" into a regression.
+>
+> Companion: `docs/plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md`
+> — the full constraints inventory, the guard‑test regression surface, and the
+> fixed‑character‑window landmines in the MPR test suite.
+
 This document supersedes the resample‑based approach described in the earlier investigation
 notes. Historical/background docs (still useful for *how we got here*): repo‑root
 `docs/reports/ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md`, `docs/reports/ZETA_MPR_GEOMETRY_MATH_INVESTIGATION_2026-06-02.md`,
@@ -324,10 +349,47 @@ no per‑case/per‑modality branches; preserves shoulder/CT/oblique. Not yet im
 5. **All four correction sites must agree** (`_mpr_views` ×3 create + `_mpr_rendering` reset +
    `_mpr_series` reload + `_mpr_oblique`). Changing one without the others causes
    reset/scroll/reload to diverge from initial render.
-6. **Flag default OFF + fail‑safe.** Flag OFF must remain byte‑identical to the legacy viewer.
+6. **Fail‑safe must hold: with the flag OFF the viewer must remain byte‑identical
+   to the legacy path.** ⚠️ **The flag itself is default ON, not OFF** — this line
+   said "default OFF" until 2026-08-23, which was stale by two months.
+   `_mpr_canonicalize._BUILD_DEFAULT_CANONICALIZE = True`, *"flipped ON
+   2026-06-11 after extended live validation"*, and it is deliberately a **code**
+   default rather than a seeded config value: the frozen installer's config
+   seeder only writes files that do not already exist, so an upgraded client
+   would keep its old config and never receive a new flag. Resolution order is
+   env `AIPACS_ZETA_MPR_CANONICALIZE` → `<USER_DATA_ROOT>/config/zeta_mpr.json`
+   `{"canonicalize": bool}` → build default. Set either to `0`/`false` to pin the
+   legacy geometry. **Assume the anatomical path (§10b–§10f) is what is running.**
 7. **Markers are hardcoded** (§8) — fix by computing from camera vectors, not by adding tables.
 8. Run `tests/code/mpr/` after any change; re‑verify the 4 reference cases (brain/shoulder/
    wrist/CT) live before trusting orientation.
+9. **In OBLIQUE mode the camera does not select the plane — the mapper's explicit
+   `vtkPlane` does. Do NOT "fix" the camera focal point onto the crosshair.**
+   This is **v1.09.Fix-E**, and until 2026-08-23 it was recorded *only* in a source
+   docstring, which is how it was nearly reverted. `_set_oblique_camera` runs
+   `mapper.SliceFacesCameraOff()` + `SliceAtFocalPointOff()` and sets
+   `plane.SetOrigin(self.current_position)` / `plane.SetNormal(oblique_normal)`,
+   leaving the camera **untouched** — *"the camera stays in its original orthogonal
+   position, so the viewport is perfectly stable"*. The earlier v1.09 behaviour
+   (update all three focal-point components to the crosshair) made the image pan
+   under the cursor during rotation and was **deliberately reverted**.
+   Consequences to remember:
+   * The displayed oblique plane passes through the crosshair **by construction**
+     (`plane.origin IS current_position`) — there is nothing to correct.
+   * `_update_slice_positions` moves the camera along the **look axis only**, in
+     both modes, and separately re-points the plane origin.
+   * `mpr_diagnostic_validator.py` (header `Version: 2026-02-17`) still measures
+     the **camera's** plane, so `focal_at_crosshair` and `plane_containment` fire
+     on every oblique update. Those warnings are **expected and do not indicate a
+     geometry defect** — see
+     `docs/plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md`.
+   * `check_parallel_scale` compares against a baseline captured at view creation
+     and after reset only, so a user zoom is reported as a violation.
+10. **Bound guard-test source windows at the next `def`, never a fixed character
+    count.** Adding lines to an MPR function has produced bogus test failures at
+    least four times, once reading as *"the coronal view stopped being built"*.
+    The surviving fixed windows are catalogued in the constraints brief above —
+    convert the relevant one **before** editing the file it slices.
 
 ---
 
@@ -462,6 +524,102 @@ the on-screen position → the crosshair stays geometrically exact. Applied to b
 sagittal): a rotated crosshair draws a continuous X fully on top (over bone + soft tissue), all
 handles visible, no clipping in any pane. Do-not-break: keep the depth-bias on every crosshair/handle
 mapper; it must remain depth-test-only (don't displace the geometry to fake on-top).
+
+## 10g. Render + interaction throttling (documented 2026-08-23)
+
+**This had no documentation at all** — it existed only in source, which meant any
+plan to "just add a camera update per crosshair move" had no budget to check
+itself against. Two independent throttles:
+
+**1. Render batching — 5 ms** (`_mpr_orientation._request_render`). Adds the view
+to a `_render_pending` set and arms a **single-shot 5 ms** `QTimer`;
+`_execute_pending_renders` then renders each pending window **once**. N calls
+inside one 5 ms window produce **one** render per pane.
+`_render_immediately` bypasses this and is docstring'd *"use sparingly"*.
+
+**2. Compute coalescing — 16 ms frame budget**
+(`_request_interaction_update` / `_apply_interaction_update`). VTK's
+`MouseMoveEvent` fires far faster than the panes can reslice and render; running
+the full update on every event saturates the main thread. So: run immediately if
+`AIPACS_ZETA_MPR_INTERACT_MS` (**default 16**) has elapsed, else remember the
+latest request and arm one trailing timer so the final position always lands.
+`=0` restores legacy immediate-every-event.
+
+Interaction kinds coalesce by superset rank **`move ⊃ scroll ⊃ rotate`**, and the
+per-kind call sets are pinned by `tests/code/system/test_mpr_interaction_perf.py`
+as **exact lists** — adding a step to any of them fails those tests by design:
+
+| kind | calls |
+|---|---|
+| `move` | `crosshairs`, `slice_positions`, `oblique`, `text` |
+| `scroll` | `crosshairs`, `oblique`, `text` — **no `slice_positions`** |
+| `rotate` | `crosshairs`, `oblique` |
+
+Note the consequence: **`rotate` deliberately skips `_update_slice_positions`**,
+so on a rotate-only frame the camera focal point's look-axis component can be one
+frame stale. That is harmless for the displayed image (§10.9) but it is what
+makes the stale validator's `plane_containment` check fire — see §10h.
+
+`_mpr_perf_note` logs `[ZETA_MPR_PERF] op=… ms=…` when one interaction step takes
+**≥ 12 ms** (`AIPACS_ZETA_MPR_PERF_MS`), gated by `AIPACS_ZETA_MPR_PERF` (off by
+default). That threshold is the closest thing to a documented frame budget.
+
+**Do-not-break:** route renders through `_request_render`, never
+`_render_immediately`, on any interaction path. An extra camera *write* per
+update is cheap; an extra *render* per mouse-move is the regression. Cost scales
+hard with slice count — the same VTK steps measured 101 ms on a small MR and
+**1 176 ms** on a 512×512×272 CT.
+
+## 10h. The MPR diagnostic validator — and why it currently cries wolf
+
+`mpr_diagnostic_validator.py` runs on **every** oblique update
+(`validate_after_oblique`) and after every reset (`validate_after_reset`). It is
+constructed unconditionally (`_mpr_views.py:375`); only its *visual overlays* are
+gated by `ZETA_MPR_DIAG`.
+
+**Logging asymmetry to know before reading any log:** violations log at
+**WARNING always**; passes log **only** under `ZETA_MPR_DIAG=1`. So a clean run
+is silent, and "zero `[MPR_DIAG]` lines" means either *clean* or *never
+exercised* — it cannot distinguish them. That ambiguity produced a false
+regression finding on 2026-08-23: 3.5.9 showed zero failures because it had
+almost no oblique activity (7 log lines vs 1 152 on 3.6.2), not because it was
+healthy.
+
+The nine checks run on the target view, plus mutual orthogonality across views:
+
+| # | check | measures | threshold |
+|---|---|---|---|
+| 1 | `handedness` | `sign(right · (up × dir))` vs baseline | sign flip |
+| 2 | `normal_hemisphere` | `dot(dir, baseline_dir) > 0` | 0 |
+| 3 | `viewup_ortho` | `|dot(view_up, dir)|` | 0.05 (~3°) |
+| 4 | `viewup_stability` | angle(view_up, baseline) | 90° |
+| 5 | `focal_at_crosshair` | `|camera.focal − crosshair|` | 2.0 mm |
+| 6 | `distance_stable` | camera→focal distance drift | 5 % |
+| 7 | `right_vector` | angle(right, baseline right) | 120° |
+| 8 | `parallel_scale` | zoom drift vs baseline | 1 % |
+| 9 | `plane_containment` | `dot(crosshair − camera.focal, camera.dir)` | 0.5 mm |
+
+⚠️ **Checks 5, 8 and 9 are STALE and produce false alarms.** The module header
+reads `Version: 2026-02-17` — it encodes the **pre-Fix-E** design, in which the
+oblique path repositioned the camera. Since Fix-E (§10.9) the camera no longer
+defines the displayed plane, so:
+
+* **5 `focal_at_crosshair`** measures an in-plane offset that Fix-E *deliberately
+  preserves*. Firing is the feature working.
+* **9 `plane_containment`** measures containment in the **camera's** plane, not
+  the mapper's. The meaningful expression is
+  `dot(crosshair − plane.origin, plane.normal)` where
+  `plane = mapper.GetSlicePlane()` — which is **identically zero**, because
+  `plane.origin IS current_position`. It fires only on rotate-only frames where
+  the camera focal is one frame stale (§10g).
+* **8 `parallel_scale`** compares against a baseline captured at view creation
+  and after `_reset_all_to_orthogonal` **only** — never re-captured after a user
+  zoom or a pane enlarge, so it reports the user's own zoom as a violation.
+
+**If you fix these, make them mode-aware** rather than deleting them: ask
+`mapper.GetSliceFacesCamera()` / `GetSliceAtFocalPoint()`, and validate against
+`mapper.GetSlicePlane()` when the pane is in explicit-plane mode. Checks 1–4, 6
+and 7 remain valid in both modes.
 
 ## 11. Related records
 - Live MPR path & dead `toolbar_integration`: memory `zeta-mpr-live-path-toggle-zeta-mpr`.

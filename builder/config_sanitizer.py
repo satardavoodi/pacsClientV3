@@ -119,6 +119,16 @@ SANITIZE: Dict[str, Dict[str, Any]] = {
         # (a source build writes its runtime state straight into this template).
         "force": {"enabled": False},
     },
+    # AiPacs Chat: the manager console for the ai-pacs.com consultation chat.
+    # Nothing centre-specific lives here — the backend address is the Identity
+    # module's (identity/aipacs_web.json) because the token is too — but the
+    # module MUST ship disabled whatever the dev tree says, for the same reason
+    # as the gateway above: on a SOURCE build the roaming config root IS this
+    # repo's config/ dir, so a developer turning the console on to work on it
+    # rewrites the shipped template. The build is the authority, not the tree.
+    "aipacs_chat/aipacs_chat.json": {
+        "force": {"enabled": False},
+    },
 }
 
 # Files that must NEVER be packaged at all (dev leftovers / secret material /

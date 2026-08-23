@@ -72,7 +72,13 @@ def test_setup_ui_defers_only_the_3d_view():
     src = _views_src()
     fn = src.find("def _setup_ui(")
     assert fn != -1
-    body = src[fn:fn + 4000]
+    # Bound at the NEXT method, not a fixed character count — same lesson as
+    # test_deferred_callback_is_teardown_safe below. The fixed 4000-char window
+    # silently truncated the legacy branch the moment `_setup_ui` grew (2026-08-18:
+    # adding [MPR-STEP] brackets pushed the last assertion out of range, which
+    # reads as "the coronal view stopped being built" — a scary false positive).
+    _next_def = src.find("\n    def ", fn + 1)
+    body = src[fn:_next_def if _next_def != -1 else len(src)]
     # deferred branch
     elif_at = body.find("elif _MPR_DEFER_3D:")
     assert elif_at != -1
@@ -122,12 +128,17 @@ def test_cleanup_clears_pending_flag():
     src = _layout_src()
     fn = src.find("def cleanup(self):")
     assert fn != -1
-    # Window widened 600 -> 3000 on 2026-08-01: the lifecycle work prepended the
-    # `_mpr_closed = True` stop-accepting flag (plus its rationale comment) above
-    # this assignment, pushing it past the old slice. The assertion itself is
-    # unchanged — cleanup() must still clear the deferred-3D pending flag early,
-    # before any VTK teardown, so the idle callback bails.
-    body = src[fn:fn + 3000]
+    # Bound the window at the NEXT def rather than a fixed character count.
+    # This is the THIRD time a fixed count broke here (600 -> 3000 on
+    # 2026-08-01 when the `_mpr_closed` flag was prepended; 3000 was blown on
+    # 2026-08-19 when the memory probe was added) — each time a false positive
+    # that reads like "cleanup() stopped clearing the pending flag" when the
+    # assertion below was still perfectly true. The sibling tests in this file
+    # already bound at the next def for exactly this reason.
+    # The assertion itself is unchanged: cleanup() must clear the deferred-3D
+    # pending flag early, before any VTK teardown, so the idle callback bails.
+    _next_def = src.find("\n    def ", fn + 1)
+    body = src[fn:_next_def if _next_def != -1 else len(src)]
     assert "self._deferred_3d_pending = False" in body
     # ...and it must still come before the first VTK release.
     assert body.index("self._deferred_3d_pending = False") < body.index("_full_teardown")

@@ -212,6 +212,20 @@ class AipacsWebSignInDialog(QDialog):
         self.advanced_box.setVisible(show)
         self.adjustSize()
 
+    def expand_account_signin(self) -> None:
+        """Open the dialog with the email + password / pairing fields showing.
+
+        Public because Settings offers "Sign in with AI-PACS account" as a
+        first-class choice beside Google: same dialog, same endpoints, just
+        opened on the credentials half instead of the Google button. Never
+        raises — a failure here only leaves the section collapsed.
+        """
+        try:
+            if not self.advanced_box.isVisible():
+                self._toggle_advanced()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("expand account sign-in failed: %s", exc)
+
     # ── one-step Google sign-in (primary) ────────────────────────────────────
     def _on_verify_google(self):
         if self._attest_worker is not None and self._attest_worker.isRunning():
@@ -330,7 +344,8 @@ class AipacsWebSignInDialog(QDialog):
 _LIVE_SIGNIN_DIALOG_ATTR = "_aipacs_live_signin_dialog"
 
 
-def open_signin_dialog(service, parent=None, *, on_success=None, on_finished=None):
+def open_signin_dialog(service, parent=None, *, on_success=None, on_finished=None,
+                       expand_account=False):
     """Open :class:`AipacsWebSignInDialog` MODELESS and return it.
 
     This is the supported entry point for every caller — never a modal blocking
@@ -344,11 +359,17 @@ def open_signin_dialog(service, parent=None, *, on_success=None, on_finished=Non
     * ``on_finished(accepted: bool)`` — fires on close either way (accepted or
       cancelled), e.g. to refresh a card.
 
+    ``expand_account=True`` opens it on the email + password / pairing-code
+    half instead of the Google button — same dialog, the caller has just
+    already said which way this user signs in.
+
     Never raises into the caller.
     """
     from PySide6.QtWidgets import QApplication
 
     dlg = AipacsWebSignInDialog(service, parent=parent)
+    if expand_account:
+        dlg.expand_account_signin()
 
     def _on_finished(result):
         try:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -111,6 +112,11 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "package_python_paths": ["python"],
         "package_sources": ["modules/Identity"],
         "healthcheck_import": "modules.Identity.feature_flags",
+        # Declared so dependency validation can read the flag VALUE and name
+        # "Identity is switched off" precisely. Identity is basic tier, so the
+        # install-time auto-enable path never runs for it — this is read-only
+        # metadata here.
+        "feature_flag": {"config": "identity/identity.json", "key": "enabled"},
     },
     {
         "id": "data_analysis",
@@ -195,6 +201,38 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "package_python_paths": ["python"],
         "package_sources": ["modules/cloud_consultation"],
         "healthcheck_import": "modules.cloud_consultation.feature_flags",
+    },
+    {
+        # The manager console for the ai-pacs.com consultation chat. A SECOND
+        # CLIENT of an existing backend, not a second chat system: every
+        # conversation, rule and piece of state lives in the Laravel
+        # PatientChat module and is reached over /api/v1/chat/*.
+        #
+        # Depends on Identity (core) for the Sanctum token — it has no auth of
+        # its own, and the user-facing gate
+        # modules.aipacs_chat.feature_flags.aipacs_chat_available() checks the
+        # identity flag, this module's flag AND this catalog entry together.
+        "id": "aipacs_chat",
+        "title": "AiPacs Chat",
+        "tier": "optional",
+        "default_enabled": False,
+        "component": "optional\\aipacs_chat",
+        "package_kind": "bundled_unlock",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/aipacs_chat"],
+        "healthcheck_import": "modules.aipacs_chat.feature_flags",
+        # Module-install reliability (2026-08-22): ``requires`` is validated by
+        # validate_module_installation() with a NAMED diagnostic ("cannot start
+        # because ..."), and ``feature_flag`` is switched ON automatically after
+        # a successful, VERIFIED install (installer checkbox, Settings package/
+        # folder/URL installs and feed updates all funnel through
+        # install_module_package). Without this, a freshly installed module
+        # still refused to open because its own flag ships force-disabled
+        # (builder/config_sanitizer.py) — the 2026-08-22 "icon visible, module
+        # 'not installed correctly'" bug. Other modules opt in by declaring the
+        # same two keys.
+        "requires": ["identity"],
+        "feature_flag": {"config": "aipacs_chat/aipacs_chat.json", "key": "enabled"},
     },
 ]
 
@@ -762,6 +800,23 @@ def _package_record(
     elif package_state.get("status") in {"installed", "core"}:
         installed = True
 
+    # Keep FAILURE states visible (2026-08-22): a profile that recorded
+    # install_failed / install_incomplete must not be flattened to a generic
+    # "installed"/"not_installed" — the Settings table and diagnostics dialogs
+    # read this status to tell the user WHAT went wrong. The failure status
+    # wins even when package files are present (install_incomplete = files
+    # copied, verification failed); a later SUCCESSFUL install overwrites the
+    # profile status with "installed" and clears it.
+    state_status = str(package_state.get("status") or "")
+    if tier == "basic":
+        status = "core"
+    elif state_status in {"install_failed", "install_incomplete"}:
+        status = state_status
+    elif installed:
+        status = "installed"
+    else:
+        status = "not_installed"
+
     record = {
         "module_id": module_id,
         "title": str(catalog.get("title") or package_state.get("title") or module_id),
@@ -769,7 +824,7 @@ def _package_record(
         "package_kind": package_kind,
         "enabled": bool(configured.get(module_id, False) if enabled is None else enabled),
         "installed": bool(installed),
-        "status": "core" if tier == "basic" else ("installed" if installed else "not_installed"),
+        "status": status,
         "runtime_path": str(runtime_dir if runtime_dir.exists() else ""),
         "installed_version": str(
             effective_manifest.get("version")
@@ -1279,6 +1334,156 @@ def set_module_enabled(module_id: str, enabled: bool) -> dict[str, Any]:
     return save_runtime_profile(patch)
 
 
+def _module_install_logger():
+    """Dedicated module-installation log (mirrors the license.log pattern).
+
+    Lines go to ``<User Data>/logs/module_install.log`` AND propagate to the
+    normal app log, so field diagnosis of "the installer said it installed X"
+    no longer depends on scrollback. Never raises — on any handler failure the
+    plain named logger is returned and propagation still records the lines.
+    """
+    import logging
+
+    logger = logging.getLogger("aipacs.module_install")
+    if not getattr(logger, "_aipacs_file_handler_ready", False):
+        try:
+            log_dir = user_data_root() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(log_dir / "module_install.log", encoding="utf-8")
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+            )
+            logger.addHandler(handler)
+            if logger.level == logging.NOTSET or logger.level > logging.INFO:
+                logger.setLevel(logging.INFO)
+        except Exception:
+            pass
+        logger._aipacs_file_handler_ready = True  # type: ignore[attr-defined]
+    return logger
+
+
+def module_feature_flag_spec(module_id: str) -> dict[str, str] | None:
+    """The catalog-declared feature-flag file for a module, or None.
+
+    Shape: ``{"config": "<relative path under the config root>", "key": "enabled"}``.
+    """
+    spec = module_catalog_map().get(module_id, {}).get("feature_flag")
+    if not isinstance(spec, dict):
+        return None
+    config_rel = str(spec.get("config") or "").strip()
+    if not config_rel:
+        return None
+    key = str(spec.get("key") or "enabled").strip() or "enabled"
+    return {"config": config_rel, "key": key}
+
+
+def module_feature_flag_value(module_id: str) -> bool | None:
+    """Read a module's own flag file: True/False when readable, None when unknown.
+
+    Best-effort and config-file-only (an env override the module honours is the
+    module's own business); used by dependency validation to say "the Identity
+    module is switched off" instead of "module is not installed correctly".
+    """
+    spec = module_feature_flag_spec(module_id)
+    if spec is None:
+        return None
+    try:
+        path = roaming_config_root() / Path(spec["config"])
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8")) or {}
+        if isinstance(data, dict) and spec["key"] in data:
+            return bool(data[spec["key"]])
+    except Exception:
+        return None
+    return None
+
+
+def apply_module_feature_flag(module_id: str, enabled: bool) -> bool:
+    """Switch a module's own feature-flag config file (never raises).
+
+    Called after a successful, verified install with ``enable_on_install`` —
+    installing a module is explicit user intent, so the module must actually
+    open afterwards even though the SHIPPED flag template is force-disabled by
+    builder/config_sanitizer.py. Only modules that declare ``feature_flag`` in
+    MODULE_CATALOG are touched; merges into the existing payload so unknown
+    keys survive. Returns True when the flag file now holds the wanted value.
+    """
+    spec = module_feature_flag_spec(module_id)
+    if spec is None:
+        return False
+    try:
+        try:
+            seed_user_config_defaults()
+        except Exception:
+            pass
+        path = roaming_config_root() / Path(spec["config"])
+        payload: dict[str, Any] = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8")) or {}
+                if isinstance(data, dict):
+                    payload = data
+            except Exception:
+                payload = {}
+        if spec["key"] in payload and bool(payload[spec["key"]]) == bool(enabled):
+            return True
+        payload[spec["key"]] = bool(enabled)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        _module_install_logger().info(
+            "[MODULE_FLAG] module=%s set %s:%s=%s",
+            module_id, spec["config"], spec["key"], bool(enabled),
+        )
+        return True
+    except Exception as exc:  # pragma: no cover - disk/permission problems
+        _module_install_logger().warning(
+            "[MODULE_FLAG] module=%s flag write failed: %s", module_id, exc
+        )
+        return False
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def module_availability_detail(module_id: str) -> dict[str, Any]:
+    """One-call snapshot for "why can't this module open?" diagnostics.
+
+    Read-only; never raises. UIs compose precise dialogs from this instead of
+    the banned generic "module is not installed correctly" string.
+    """
+    try:
+        record = _package_record(module_id)
+        return {
+            "module_id": module_id,
+            "title": str(record.get("title") or module_id),
+            "tier": str(record.get("tier") or ""),
+            "installed": bool(record.get("installed")),
+            "enabled": bool(record.get("enabled")),
+            "status": str(record.get("status") or ""),
+            "warning": str(record.get("warning") or ""),
+            "profile_enforced": bool(_should_enforce_module_profile()),
+        }
+    except Exception:  # pragma: no cover - defensive
+        return {
+            "module_id": module_id,
+            "title": module_id,
+            "tier": "",
+            "installed": False,
+            "enabled": False,
+            "status": "",
+            "warning": "",
+            "profile_enforced": False,
+        }
+
+
 def _normalize_package_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     manifest = dict(payload or {})
     module_id = str(manifest.get("module_id") or "").strip()
@@ -1368,6 +1573,14 @@ def _extract_module_package(source: Path) -> tuple[dict[str, Any], Path]:
 
     temp_dir = Path(tempfile.mkdtemp(prefix="aipacs_module_pkg_"))
     with zipfile.ZipFile(source, "r") as archive:
+        # Zip-slip guard: every member must extract INSIDE temp_dir. A crafted
+        # "..\\" or absolute member name in a downloaded package must fail the
+        # install, never write outside the extraction root.
+        base = temp_dir.resolve()
+        for member in archive.namelist():
+            target = (temp_dir / member).resolve()
+            if target != base and base not in target.parents:
+                raise ValueError(f"Unsafe file path inside module package: {member}")
         archive.extractall(temp_dir)
     return load_module_package_manifest(temp_dir), temp_dir
 
@@ -1383,16 +1596,48 @@ def install_module_package(
     *,
     expected_module_id: str | None = None,
     enable_on_install: bool = True,
+    expected_sha256: str | None = None,
 ) -> dict[str, Any]:
+    """Install a module package from a folder, .zip, or http(s) URL.
+
+    The pipeline is the SAME for every channel (installer first-launch
+    bootstrap, Settings package/folder/URL, update feed):
+    download → hash-verify (when the caller knows the hash) → extract (zip-slip
+    guarded) → manifest validate → payload copy → register → profile update →
+    runtime activation → VERIFY (dependencies + healthcheck) → feature-flag
+    enable. A package whose verification fails is recorded as
+    ``install_incomplete`` with the specific reason and its module stays
+    disabled — "download finished" is never reported as "installed".
+    Every step is logged to <User Data>/logs/module_install.log.
+    """
+    log = _module_install_logger()
     cleanup_dir: Path | None = None
     cleanup_file: Path | None = None
     materialized_source = Path(source)
 
+    log.info("[MODULE_INSTALL] begin source=%s expected_module=%s", source, expected_module_id or "-")
     if str(source).startswith(("http://", "https://")):
         cleanup_file = _download_module_package(str(source))
         materialized_source = cleanup_file
+        try:
+            log.info(
+                "[MODULE_INSTALL] downloaded url=%s bytes=%s",
+                source, materialized_source.stat().st_size,
+            )
+        except Exception:
+            pass
 
     try:
+        if expected_sha256 and materialized_source.is_file():
+            actual_sha256 = _file_sha256(materialized_source)
+            if actual_sha256.lower() != str(expected_sha256).strip().lower():
+                raise ValueError(
+                    "Module package hash mismatch for "
+                    f"{materialized_source.name}: expected {expected_sha256}, got {actual_sha256}. "
+                    "The download may be corrupted or tampered with — not installed."
+                )
+            log.info("[MODULE_INSTALL] sha256 verified %s", actual_sha256)
+
         manifest, extracted_root = _extract_module_package(materialized_source)
         cleanup_dir = extracted_root if extracted_root != materialized_source else None
         module_id = str(manifest["module_id"])
@@ -1420,6 +1665,11 @@ def install_module_package(
         installed_from = str(source)
         manifest["installed_from"] = installed_from
         _write_installed_module_manifest(module_id, manifest)
+        log.info(
+            "[MODULE_INSTALL] registered module=%s version=%s kind=%s payload=%s target=%s",
+            module_id, manifest.get("version") or "-", package_kind,
+            payload_dir_name or "-", target_dir if target_dir.exists() else "-",
+        )
         profile = save_runtime_profile(
             {
                 "modules": {module_id: bool(enable_on_install)},
@@ -1439,7 +1689,42 @@ def install_module_package(
             }
         )
         activate_optional_module_runtime(profile)
+
+        # Post-install verification (2026-08-22): dependencies + healthcheck.
+        # An install whose module cannot actually load is recorded as
+        # install_incomplete WITH the reason and left disabled, instead of
+        # being reported "installed successfully" and failing at first click.
+        verification = validate_module_installation(module_id)
+        if not verification.get("ok"):
+            warning = (
+                "Installed files failed verification: "
+                f"{verification.get('message') or 'unknown reason'}"
+            )
+            save_runtime_profile(
+                {
+                    "modules": {module_id: False},
+                    "module_packages": {
+                        module_id: {
+                            "status": "install_incomplete",
+                            "warning": warning,
+                        }
+                    },
+                }
+            )
+            log.error("[MODULE_INSTALL] verification FAILED module=%s: %s", module_id, warning)
+            record = _package_record(module_id, manifest=manifest, enabled=False)
+            record["warning"] = warning
+            return record
+
+        flag_applied = apply_module_feature_flag(module_id, True) if enable_on_install else False
+        log.info(
+            "[MODULE_INSTALL] verified module=%s healthcheck=ok enabled=%s feature_flag_applied=%s",
+            module_id, bool(enable_on_install), flag_applied,
+        )
         return _package_record(module_id, manifest=manifest, enabled=bool(enable_on_install))
+    except Exception as exc:
+        log.error("[MODULE_INSTALL] FAILED source=%s: %s", source, exc)
+        raise
     finally:
         if cleanup_dir is not None:
             shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -1468,7 +1753,14 @@ def install_component_update(component_id: str, source: str | Path | None = None
         if not artifact_path:
             raise FileNotFoundError(f"Update artifact path is missing for {target}.")
         resolved_source = resolve_update_artifact_source(artifact_path, context=context)
-        return install_module_package(resolved_source, expected_module_id=target, enable_on_install=True)
+        # Feed entries carry the package sha256 — enforce it so a truncated or
+        # tampered download is rejected instead of installed (2026-08-22).
+        return install_module_package(
+            resolved_source,
+            expected_module_id=target,
+            enable_on_install=True,
+            expected_sha256=str(component.get("sha256") or "").strip() or None,
+        )
 
     raise FileNotFoundError(f"No update entry was found for {target}.")
 
@@ -1512,6 +1804,43 @@ def validate_module_installation(module_id: str) -> dict[str, Any]:
     record = _package_record(module_id)
     if not record["installed"] and record["tier"] != "basic":
         return {"ok": False, "message": f"{record['title']} is not installed."}
+
+    # Dependency validation (2026-08-22): catalog ``requires`` entries must be
+    # installed, enabled AND — when they declare a feature flag — not switched
+    # off. The message NAMES the dependency ("cannot start because ...")
+    # instead of the generic "module is not installed correctly".
+    for dep_id in [
+        str(item).strip()
+        for item in (module_catalog_map().get(module_id, {}).get("requires") or [])
+        if str(item).strip()
+    ]:
+        dep = _package_record(dep_id)
+        dep_title = str(dep.get("title") or dep_id)
+        if dep["tier"] != "basic":
+            if not dep["installed"]:
+                return {
+                    "ok": False,
+                    "message": (
+                        f"{record['title']} cannot start because the required "
+                        f"module '{dep_title}' is not installed."
+                    ),
+                }
+            if not dep["enabled"]:
+                return {
+                    "ok": False,
+                    "message": (
+                        f"{record['title']} cannot start because the required "
+                        f"module '{dep_title}' is disabled on this workstation."
+                    ),
+                }
+        if module_feature_flag_value(dep_id) is False:
+            return {
+                "ok": False,
+                "message": (
+                    f"{record['title']} cannot start because the {dep_title} "
+                    "module is switched off in this workstation's settings."
+                ),
+            }
 
     healthcheck_import = str(record.get("healthcheck_import") or "")
     if healthcheck_import:
@@ -1619,6 +1948,11 @@ def bootstrap_installer_selected_module_packages(
         if str(package.get("module_id") or "").strip()
     }
     installed_records: list[dict[str, Any]] = []
+    boot_log = _module_install_logger()
+    boot_log.info(
+        "[MODULE_BOOTSTRAP] installer_selected=%s bundled_available=%s",
+        sorted(selected_by_installer) or "-", sorted(available.keys()) or "-",
+    )
 
     def _normalized_python_paths(payload: dict[str, Any] | None) -> list[str]:
         values = (payload or {}).get("python_paths") or []
@@ -1676,6 +2010,12 @@ def bootstrap_installer_selected_module_packages(
             if str((state or {}).get("status") or "") == "selected_for_install" or str(
                 (state or {}).get("installed_from") or ""
             ) == "bundled_setup_selection":
+                boot_log.error(
+                    "[MODULE_BOOTSTRAP] module=%s selected during setup but no "
+                    "bundled package files were found under %s",
+                    module_id,
+                    [str(root) for root in bundled_module_packages_search_roots()],
+                )
                 save_runtime_profile(
                     {
                         "modules": {module_id: False},
@@ -2061,12 +2401,46 @@ def build_windows_graphics_environment(
     }
 
 
+# ── A0 (2026-08-23): seed once per (src, dst), not once per caller ────────────
+# Five `_config_root()` helpers call seed_user_config_defaults() on EVERY call —
+# server_profiles, offline_cloud, Identity/config, cloud_consultation and
+# aipacs_chat feature flags — plus three module-import call sites. Reading a
+# feature flag therefore re-scans the roaming config directory. The end-user log
+# for the 2026-08-23 00:47 hang shows EIGHT [SEED_CONFIG] lines inside one
+# second, during patient-tab teardown, each doing a full iterdir() + a stat()
+# per file on the GUI thread.
+#
+# Seeding is create-if-missing and the roots cannot change inside a process, so
+# repeating it can never produce a different result — only the same directory
+# walk again. Memoise on the resolved (src, dst) pair rather than a bare bool so
+# tests that seed into different tmp dirs still exercise a real pass.
+# Kill switch AIPACS_SEED_CONFIG_ONCE=0 restores seeding on every call.
+_SEED_DONE: set = set()
+
+
+def seed_config_once_enabled() -> bool:
+    """AIPACS_SEED_CONFIG_ONCE default ON; '0'/'false'/'off'/'no' disables."""
+    raw = os.getenv("AIPACS_SEED_CONFIG_ONCE", "1").strip().lower()
+    return raw not in ("0", "false", "off", "no")
+
+
+def reset_seed_memo_for_tests() -> None:
+    """Test hook: forget which (src, dst) pairs have been seeded."""
+    _SEED_DONE.clear()
+
+
 def seed_user_config_defaults() -> None:
     if not is_frozen():
         return
 
     src_root = bundled_config_root()
     dst_root = roaming_config_root()
+
+    _seed_key = (str(src_root), str(dst_root))
+    _seed_once = seed_config_once_enabled()
+    if _seed_once and _seed_key in _SEED_DONE:
+        return
+
     if not src_root.exists():
         import logging as _log
         _log.getLogger(__name__).warning(
@@ -2117,6 +2491,11 @@ def seed_user_config_defaults() -> None:
         except Exception as _mig_err:  # pragma: no cover - defensive
             _seed_log.warning("[CONFIG_MIGRATE] migration pass failed: %s", _mig_err)
 
+    # Recorded only after a COMPLETE pass, so a run that bailed on a missing
+    # bundled root is retried rather than memoised away.
+    if _seed_once:
+        _SEED_DONE.add(_seed_key)
+
 
 # ── Versioned user-config migration (frozen installs) ─────────────────────────
 # Each seeded config-file family carries a CURRENT_CONFIG_VERSION. Bump a
@@ -2145,6 +2524,12 @@ CONFIG_FAMILY_VERSIONS: dict[str, int] = {
     # v3 (2026-07-17): add the outbound-rendezvous keys (relay_ws_url,
     # relay_workstation_secret) + "e2e_encryption" for the zero-knowledge relay.
     "agent_gateway/agent_gateway.json": 3,
+    # v1 (2026-08-19): AiPacs Chat — the manager console for the ai-pacs.com
+    # consultation chat. New file older installs cannot have; seeds default-OFF.
+    # The backend address is NOT here: it is the Identity module's
+    # (identity/aipacs_web.json), because the token is the Identity module's and
+    # a second copy of the address is a second thing to get wrong.
+    "aipacs_chat/aipacs_chat.json": 1,
 }
 
 _CONFIG_SEED_SKIP_DIRNAMES = {"secrets", "__pycache__"}

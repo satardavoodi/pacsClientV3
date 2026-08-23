@@ -247,6 +247,18 @@ class _MprViewsMixin:
 
     def _setup_ui(self):
         """Setup clean, professional UI inspired by RadiAnt/Horos"""
+        # Brackets the WHOLE view-building phase, so the per-view numbers can be
+        # reconciled against the observed stall instead of leaving a silent gap.
+        # See docs/reports/MPR_FREEZE_54675_2026-08-18.md.
+        _mpr_step('all', 'setup_ui', 'begin')
+        # Opening RSS — pairs with cleanup_begin/cleanup_end so an open/close
+        # cycle can be read straight off the log. Added 2026-08-19 after
+        # answering "did the cache free?" needed a four-log reconstruction.
+        try:
+            from ._mpr_lifecycle import mpr_memory_probe as _mem_probe
+            _mem_probe("open", dims=getattr(self, 'dims', None))
+        except Exception:
+            pass
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -370,6 +382,7 @@ class _MprViewsMixin:
         # crosshair drag is smooth (issue 2). Deferred → no added open time.
         if _MPR_PREWARM:
             QTimer.singleShot(0, self._prewarm_mpr_reslice)
+        _mpr_step('all', 'setup_ui', 'end')
 
     def _prewarm_mpr_reslice(self):
         """Force one re-reslice render of each 2D pane at the CURRENT position.
@@ -379,6 +392,7 @@ class _MprViewsMixin:
         idempotent, and teardown-safe (a close mid-defer is swallowed)."""
         if not _MPR_PREWARM:
             return
+        _mpr_step('all', 'prewarm_reslice', 'begin')
         try:
             for vn in ('axial', 'sagittal', 'coronal'):
                 view = (getattr(self, 'viewers', None) or {}).get(vn)
@@ -398,6 +412,8 @@ class _MprViewsMixin:
             return  # MPR closed before the idle pre-warm fired — benign
         except Exception as exc:
             logger.debug("[ZETA_MPR] reslice pre-warm skipped: %r", exc)
+        finally:
+            _mpr_step('all', 'prewarm_reslice', 'end')
 
     def _create_toolbar(self):
         """Create clean, minimal toolbar like professional DICOM viewers"""
@@ -674,13 +690,17 @@ class _MprViewsMixin:
             fallback_reason="none",
         )
         _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_sagittal_view")
+        _mpr_step('sagittal', 'qt_container', 'begin')
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
+        _mpr_step('sagittal', 'qt_container', 'end')
 
+        _mpr_step('sagittal', 'qvtk_interactor_ctor', 'begin')
         vtk_widget = QVTKRenderWindowInteractor(container)
+        _mpr_step('sagittal', 'qvtk_interactor_ctor', 'end')
         vtk_widget.setStyleSheet("""
             QVTKRenderWindowInteractor { border: none; background: black; }
         """)
@@ -692,10 +712,14 @@ class _MprViewsMixin:
 
         renderer = vtk.vtkRenderer()
         renderer.SetBackground(0, 0, 0)
+        _mpr_step('sagittal', 'render_window_add_renderer', 'begin')
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
+        _mpr_step('sagittal', 'render_window_add_renderer', 'end')
 
         slice_mapper = vtk.vtkImageResliceMapper()
+        _mpr_step('sagittal', 'reslice_mapper_set_input', 'begin')
         slice_mapper.SetInputData(self.image_data)
+        _mpr_step('sagittal', 'reslice_mapper_set_input', 'end')
         slice_mapper.SliceFacesCameraOn()
         slice_mapper.SliceAtFocalPointOn()
 
@@ -720,11 +744,17 @@ class _MprViewsMixin:
         if self._needs_radiological_correction():
             camera.Roll(180)
 
+        _mpr_step('sagittal', 'reset_camera', 'begin')
         renderer.ResetCamera()
+        _mpr_step('sagittal', 'reset_camera', 'end')
         camera.Zoom(1.2)
 
+        _mpr_step('sagittal', 'interactor_initialize', 'begin')
         vtk_widget.Initialize()
+        _mpr_step('sagittal', 'interactor_initialize', 'end')
+        _mpr_step('sagittal', 'interactor_start', 'begin')
         vtk_widget.Start()
+        _mpr_step('sagittal', 'interactor_start', 'end')
 
         self._add_click_handler(vtk_widget, renderer, 'sagittal')
 
@@ -733,9 +763,12 @@ class _MprViewsMixin:
             'actor': image_slice, 'mapper': slice_mapper
         }
         self._register_view('sagittal', container, vtk_widget, row, col)
+        _mpr_step('sagittal', 'crosshairs_and_text', 'begin')
         self._create_crosshairs(renderer, 'sagittal')
         self._create_slice_info_text(renderer, 'sagittal')
+        _mpr_step('sagittal', 'crosshairs_and_text', 'end')
         layout.addWidget(container, row, col)
+        _mpr_step('sagittal', 'create_view', 'end')
 
     def _create_coronal_view(self, layout, row, col):
         """Create coronal view (XZ plane) - MPR reconstructed with interpolation"""
@@ -752,13 +785,17 @@ class _MprViewsMixin:
             fallback_reason="none",
         )
         _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_coronal_view")
+        _mpr_step('coronal', 'qt_container', 'begin')
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
+        _mpr_step('coronal', 'qt_container', 'end')
 
+        _mpr_step('coronal', 'qvtk_interactor_ctor', 'begin')
         vtk_widget = QVTKRenderWindowInteractor(container)
+        _mpr_step('coronal', 'qvtk_interactor_ctor', 'end')
         vtk_widget.setStyleSheet("""
             QVTKRenderWindowInteractor { border: none; background: black; }
         """)
@@ -766,10 +803,14 @@ class _MprViewsMixin:
 
         renderer = vtk.vtkRenderer()
         renderer.SetBackground(0, 0, 0)
+        _mpr_step('coronal', 'render_window_add_renderer', 'begin')
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
+        _mpr_step('coronal', 'render_window_add_renderer', 'end')
 
         slice_mapper = vtk.vtkImageResliceMapper()
+        _mpr_step('coronal', 'reslice_mapper_set_input', 'begin')
         slice_mapper.SetInputData(self.image_data)
+        _mpr_step('coronal', 'reslice_mapper_set_input', 'end')
         slice_mapper.SliceFacesCameraOn()
         slice_mapper.SliceAtFocalPointOn()
 
@@ -795,11 +836,17 @@ class _MprViewsMixin:
             camera.Azimuth(180)
             camera.Roll(180)
 
+        _mpr_step('coronal', 'reset_camera', 'begin')
         renderer.ResetCamera()
+        _mpr_step('coronal', 'reset_camera', 'end')
         camera.Zoom(1.2)
 
+        _mpr_step('coronal', 'interactor_initialize', 'begin')
         vtk_widget.Initialize()
+        _mpr_step('coronal', 'interactor_initialize', 'end')
+        _mpr_step('coronal', 'interactor_start', 'begin')
         vtk_widget.Start()
+        _mpr_step('coronal', 'interactor_start', 'end')
 
         self._add_click_handler(vtk_widget, renderer, 'coronal')
 
@@ -808,19 +855,26 @@ class _MprViewsMixin:
             'actor': image_slice, 'mapper': slice_mapper
         }
         self._register_view('coronal', container, vtk_widget, row, col)
+        _mpr_step('coronal', 'crosshairs_and_text', 'begin')
         self._create_crosshairs(renderer, 'coronal')
         self._create_slice_info_text(renderer, 'coronal')
+        _mpr_step('coronal', 'crosshairs_and_text', 'end')
         layout.addWidget(container, row, col)
+        _mpr_step('coronal', 'create_view', 'end')
 
     def _create_3d_view(self, layout, row, col):
         """Create advanced 3D volume view with best quality"""
+        _mpr_step('3d', 'qt_container', 'begin')
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
+        _mpr_step('3d', 'qt_container', 'end')
 
+        _mpr_step('3d', 'qvtk_interactor_ctor', 'begin')
         vtk_widget = QVTKRenderWindowInteractor(container)
+        _mpr_step('3d', 'qvtk_interactor_ctor', 'end')
         vtk_widget.setStyleSheet("""
             QVTKRenderWindowInteractor { border: none; background: black; }
         """)
@@ -831,7 +885,9 @@ class _MprViewsMixin:
         renderer.SetBackground(0.1, 0.1, 0.1)
         renderer.SetBackground2(0.0, 0.0, 0.0)
         renderer.GradientBackgroundOn()
+        _mpr_step('3d', 'render_window_add_renderer', 'begin')
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
+        _mpr_step('3d', 'render_window_add_renderer', 'end')
 
         # ── OPT-47: size the GPU budget to the ACTUAL volume ─────────────────
         # The 3D VRT used a FIXED SetMaxMemoryInBytes(512 MB). VTK applies its own
@@ -866,8 +922,12 @@ class _MprViewsMixin:
 
         vtk_widget.GetRenderWindow().SetMultiSamples(0 if _very_heavy else 4)
 
+        _mpr_step('3d', 'gpu_raycast_mapper_ctor', 'begin')
         volume_mapper = vtk.vtkGPUVolumeRayCastMapper()
+        _mpr_step('3d', 'gpu_raycast_mapper_ctor', 'end')
+        _mpr_step('3d', 'volume_mapper_set_input', 'begin')
         volume_mapper.SetInputData(self.image_data)
+        _mpr_step('3d', 'volume_mapper_set_input', 'end')
         # Interactive VRT quality (2026-06-14). On a large volume (e.g. 46293 = 512x512x198)
         # the previous fixed config — AutoAdjustSampleDistances OFF + a fine fixed SampleDistance
         # — ray-cast at FULL quality on every rotation frame, so rotation could never go coarse and
@@ -975,8 +1035,12 @@ class _MprViewsMixin:
             except Exception:
                 pass
 
+        _mpr_step('3d', 'interactor_initialize', 'begin')
         vtk_widget.Initialize()
+        _mpr_step('3d', 'interactor_initialize', 'end')
+        _mpr_step('3d', 'interactor_start', 'begin')
         vtk_widget.Start()
+        _mpr_step('3d', 'interactor_start', 'end')
 
         self.viewers['3d'] = {
             'widget': vtk_widget, 'renderer': renderer,
@@ -986,6 +1050,7 @@ class _MprViewsMixin:
         self._register_view('3d', container, vtk_widget, row, col)
         self.setup_auto_rotation()
         layout.addWidget(container, row, col)
+        _mpr_step('3d', 'create_view', 'end')
 
     # ------------------------------------------------------------------
     # Deferred 3D VRT (L1 — AIPACS_MPR_DEFER_3D). Only the *timing* of the 3D

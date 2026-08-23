@@ -7,7 +7,7 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 ## Master indexes
 
 - **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** — every stage report linked
-- **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** — every fix + its guard test (54 rows)
+- **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** — every fix + its guard test (56 rows)
 - **[Test inventory](../tests/INDEX_BY_GUARD.md)** — every guard test and what it protects
 - **[For future agents](for-future-agents/README.md)** — onboarding for AI agents working in this repo
 - **[Open findings (2026-08-16)](reports/OPEN_FINDINGS_2026-08-16.md)** — diagnosed but deliberately NOT fixed. §1 (pixel cache) has since been resolved; **§2, the ~4-5.5 s MPR activation stall, is still open** and is the app's largest remaining freeze. Read it before touching MPR activation.
@@ -34,6 +34,25 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 - `tests/code/echomind/test_turbo_prompt_seam.py` - the Turbo/Send seam
 - `tests/code/echomind/test_metadata_detection.py`, `test_metadata_card.py`, `test_reception_prefetch.py`
 
+### Medical Report Editor (Reception Data tab)
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/REPORT_IMAGE_INSERT_2026-08-18.md`](reports/REPORT_IMAGE_INSERT_2026-08-18.md)** | **Read before touching report content or the upload path.** How a captured viewer image gets into the report and survives `toHtml` -> normaliser -> `setHtml` -> render/print; why images are embedded and downscaled rather than linked; the measured payload numbers; and the reversed-cursor-selection bug that every AST guard missed. |
+| [`reports/REPORT_SYNC_ECHOMIND_EDITOR_RECEPTION_AUDIT_2026-07-15.md`](reports/REPORT_SYNC_ECHOMIND_EDITOR_RECEPTION_AUDIT_2026-07-15.md) | How the editor, EchoMind and the reception server stay in sync, and what the server-side HTML actually keeps. |
+
+**Invariants:**
+
+- The editing surface is a **Qt rich-text `QTextEdit`**, not a web view. Only the HTML-4 subset Qt understands round-trips; anything that needs real CSS will be silently lost.
+- **Styling must be inline.** `prepare_report_html_for_server()` strips `<style>`, `<script>` and document chrome on upload, so a class or a stylesheet rule does not reach the server. Image sizing therefore lives on the `QTextImageFormat` (Qt emits `<img width= height=>` attributes), never in CSS.
+- **`<img>` must stay out of `_DIR_BLOCK_TAGS`.** If it is ever added, an embedded key image silently disappears from the copy the referring doctor opens while the author's copy still shows it.
+- **Report images travel as bytes, not paths.** The report is uploaded as one JSON field; a `file:///` src renders only on the machine that wrote it.
+- **Per-image size is capped** (~1000 px / JPEG q88, 1.5 MB hard ceiling). There is no per-report cap — a report with many images can still grow past what the endpoint likes.
+
+**Guard tests:**
+- `tests/code/reporting/test_report_image_insert.py` (47) — insert, resize, and the full save/upload/reopen round-trip
+- `tests/code/reporting/test_server_report_html.py` (19) — the upload normaliser itself (RTL/LTR per block, inline-style preservation, idempotency)
+
 ### Viewer (multi-study, sidebar, drag-drop)
 
 | Doc | What's in it |
@@ -42,8 +61,118 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 | [`AUDIT_STAGE_5_2026-05-28.md`](plans/architecture/AUDIT_STAGE_5_2026-05-28.md) | Read-only `ViewerAdapter` live verification. |
 | [`AUDIT_STAGE_6_2026-05-28.md`](plans/architecture/AUDIT_STAGE_6_2026-05-28.md) | Multi-study live workflow audit (239 series across 5+ studies). |
 | [`pipelines/thumbnail-pipeline.md`](pipelines/thumbnail-pipeline.md) | THUMBNAIL_PATH conventions, memory-first vs disk fallback. |
+| **[`reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md`](reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md)** | **Read before touching reference lines.** Two modes ship: single-source (default — the ACTIVE viewport is the source and stays clean) and bidirectional all-pairs (`AIPACS_REFERENCE_LINES_ALL_PAIRS=1`). Explains why the source overlay must be *cleared*, not skipped. |
+| **[`reports/TEXT_ANNOTATION_INPUT_2026-08-18.md`](reports/TEXT_ANNOTATION_INPUT_2026-08-18.md)** | **Read before touching the annotation tools.** Why `ToolController` is Qt-free and how the Qt layer injects behaviour into it (`_pixel_data_fn`, `_pixel_spacing_fn`, `_text_prompt_fn`); why a tool press returning `False` is the "place nothing, stay armed" contract; why text annotations are single-line. |
+
+**MPR lifecycle invariant (2026-08-19):** `_MprLayoutMixin.cleanup()` is the
+only thing that releases an MPR viewer's volume, render windows and GPU
+texture — and **a `closeEvent` hook cannot be relied on to reach it.** Qt does
+not call `closeEvent` when a parent is destroyed or a widget is re-parented
+away, which is how patient-tab close and layout rebuilds leaked (14 opens vs
+6 teardowns across the logged sessions). Any code that drops, orphans or
+replaces a widget which may host an MPR must call
+`modules.mpr.zeta_mpr.mpr_viewer._mpr_lifecycle.release_mpr_children(widget,
+reason=...)` **before** `setParent(None)` / `deleteLater()` — after that the
+GL context is gone and `ReleaseGraphicsResources()` cannot free the VRAM.
+See [`reports/MPR_LIFECYCLE_RELEASE_2026-08-19.md`](reports/MPR_LIFECYCLE_RELEASE_2026-08-19.md).
+
+**Oblique-MPR camera invariant (2026-08-23):** *in oblique mode the camera does
+not select the displayed plane — an explicit `vtkPlane` on the mapper does.*
+`_set_oblique_camera` runs `SliceFacesCameraOff()` + `SliceAtFocalPointOff()` and
+sets `plane.SetOrigin(self.current_position)` (the crosshair centre) +
+`plane.SetNormal(oblique_normal)`, **leaving the camera untouched** — this is
+**v1.09.Fix-E**, and repositioning the camera is what it deliberately reverted,
+because it made the image pan under the cursor during rotation. **Do NOT "fix"
+the camera focal point onto the crosshair.** The displayed oblique plane passes
+through the crosshair by construction. Two corollaries that read like bugs and
+are not: `_update_slice_positions` moves the camera along the **look axis only**
+in *both* modes; and `mpr_diagnostic_validator.py` (header `Version: 2026-02-17`)
+still measures the *camera's* plane, so its `focal_at_crosshair`,
+`plane_containment` and `parallel_scale` checks fire on every oblique update
+without anything being wrong. Until 2026-08-23 Fix-E was recorded only in a
+source docstring, and a stability review recommended reverting it. See
+[`plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md`](plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md)
+and `pipelines/mpr-geometry-pipeline.md` §10.9, §10g, §10h.
+
+**Colour-decode invariant (2026-08-21):** any code path that reaches
+`ds.pixel_array` for display must call
+`modules.viewer.fast.dicom_color.normalize_ybr_subsampling(ds)` **before** the
+decode and `ybr_samples_to_rgb(ds, arr)` **after** it. Order is the mechanism,
+not a style choice: pydicom caches the decoded array, and for an uncompressed
+dataset that claims `YBR_FULL_422` while shipping full-rate samples it truncates
+the frame to two thirds and then resamples it, producing coloured static — this
+cannot be repaired after the fact. Equally, multi-sample YBR data painted
+straight into `Format_RGB888` renders with a heavy cyan cast. Both corrections
+are needed; either alone leaves the image unreadable. See
+[`plans/architecture/IMPORT_FREEZE_AND_YBR_COLOR_2026-08-21.md`](plans/architecture/IMPORT_FREEZE_AND_YBR_COLOR_2026-08-21.md).
+
+**GUI-thread disk invariant (2026-08-22):** nothing on the patient-list or
+settings path may walk the filesystem on the GUI thread. Three separate scanners
+were found doing it the day after the streaming fix, and the pattern behind all
+three is worth recognising: *chunking a blocking call does not make it
+non-blocking*. The download-badge refresh was already split into 2-study chunks
+and still froze the UI for 13.1 s per chunk, because the per-study cost was
+seconds. Verdicts are now computed on a worker
+(`patient_table_widget._compute_study_download_status`, dispatched via
+`downloadStatusReady`) and applied on the GUI thread; `_peek_download_status`
+reads the cache and **never computes**. Storage cleanup runs on a `QThread`
+behind a busy dialog (`storage_cleanup_panel._CleanupWorker`). And
+`count_subfolders_with_dicom` uses an early-exit `os.scandir` walk instead of
+`Path.rglob('*')` — measured **682.5 ms → 1.45 ms per study** cold, same verdict.
+Prefer the two worker patterns already in `patient_table_widget`
+(`statusFlagsReady`) and `storage_cleanup_panel` (`_FolderUsageWorker`) over a
+new mechanism. See
+[`plans/architecture/GUI_THREAD_DISK_PATHS_2026-08-22.md`](plans/architecture/GUI_THREAD_DISK_PATHS_2026-08-22.md).
+
+**Hang-visibility invariant (2026-08-23):** *our stall probes cannot see a hang.
+Do not read their silence as health.* Both are blind, for different reasons.
+**F8 `[MAIN_THREAD_STALL]`** is a `QTimer` on the main thread — it measures the
+gap when it *next fires*, so it only ever reports a stall that **ended**; a block
+that runs until the process is killed leaves no record at all. **F11
+`[MAIN_THREAD_STALL_TRACE]`** samples an in-progress block, but it is a **Python**
+thread and needs the GIL for a single bytecode, so it cannot run while the main
+thread sits inside a long C call — `gc.collect()`, a VTK destructor, a driver
+call. On 2026-08-23 a workstation hung for 17 s during a patient close
+(Windows `Application Hang 1002`) and the worst stall either probe recorded for
+that session was 1 188 ms. Therefore: **any GUI-thread section that can block in
+native code must be wrapped in
+`PacsClient.utils.native_fault_log.hang_watchdog(label)`** — it arms
+`faulthandler.dump_traceback_later`, whose timer runs on a **native** thread and
+fires while the GIL is held — **and must log a breadcrumb BEFORE it runs**, not
+only after, so a step the process dies inside is identifiable by having a start
+and no done (`_pw_lifecycle._close_step`). The watchdog keeps exactly one timer
+process-wide and is deliberately non-reentrant; arm it at the outermost point
+that matters. Related: the deferred patient-close `gc.collect()` was made
+*later* in 2026-06-27, not *shorter* — it still runs on the GUI thread by design.
+See
+[`plans/architecture/CLOSE_PATH_HANG_VISIBILITY_2026-08-23.md`](plans/architecture/CLOSE_PATH_HANG_VISIBILITY_2026-08-23.md).
+
+**Patient-list streaming invariant (2026-08-21):** the progressive patient-table
+streamer must never resolve a row's on-disk path on the GUI thread. Rows are
+resolved on a worker (`_resolve_display_paths`), and
+`load_progressive(..., ready=)` makes the streamer *wait* for that worker rather
+than fall back to an inline `stat`/`opendir`. The previous "the worker
+comfortably outruns the streamer" assumption held warm (4,500–6,000 rows/s vs
+800) and failed catastrophically during an import (~325 ms/row → a 13.0 s
+freeze). Anything that adds per-row work to the render path must be
+`ready`-gated or budgeted the same way.
+
+**Annotation-tool invariant:** `modules/viewer/tools/controller.py` must stay
+**Qt-free** — it holds the tool state machine and is imported by every headless
+tool test. Anything needing a widget (a dialog, a colour picker, a font) is
+INJECTED by `qt_viewer_bridge._init_tool_controller`, never imported here. A
+press handler returns `True` only when it actually placed or changed something;
+`False` means the caller must not repaint or deactivate the tool.
+
+**Reference-line invariant:** the active viewport draws **no** line, and its overlay is explicitly cleared when it becomes active — skipping it silently leaves a stale line and looks like the fix never landed.
 
 **Guard tests:**
+- `tests/code/viewer/test_ybr_color_decode.py` (23) — a mislabelled `YBR_FULL_422` frame is corrected before decode and converted to RGB after it; genuinely subsampled, compressed, 16-bit, RGB and monochrome data are all left byte-identical
+- `tests/code/ui_services/test_list_stream_backpressure.py` (17) — the list streamer waits for the path resolver instead of touching the disk, loses no rows, respects a per-batch time budget, and still makes progress if the resolver dies
+- `tests/code/ui_services/test_gui_thread_disk_paths.py` (27) — the download-badge refresh dispatches instead of walking, the DICOM scan never calls `rglob` yet returns the same verdict, and storage cleanup runs on a QThread
+- `tests/code/viewer/test_text_annotation_input.py` (25) — the Text tool asks what to write, cancel places nothing and leaves the tool armed, a bare controller keeps the legacy placeholder, and `controller.py` stays Qt-free
+- `tests/code/viewer/test_reference_line_active_viewport.py` (17) — the active viewport stays clean, the clean one follows the selection, and the env flag restores bidirectional
+- `tests/code/viewer/test_reference_lines_all_pairs.py` — the all-pairs engine itself (still fully covered; the flag default is pinned in both directions)
 - `tests/code/echomind/test_viewer_adapter.py` — 11 read-only adapter contract guards
 - `tests/code/system/test_2026_05_27_regression_guards.py::test_change_series_signature_matches_base`
 
@@ -75,6 +204,32 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ---
 
+### CPU contention & process priority (Windows)
+
+**The recurring lesson in this area: before optimising a path, check whether the main thread was RUNNING.** A stall sample that bottoms out in `run_forever` with nothing below it means the thread was inside the Qt event loop waiting to be scheduled — no amount of work removed from our handler changes that number.
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/STACKING_LAG_55387_2026-08-23.md`](reports/STACKING_LAG_55387_2026-08-23.md)** | Patient 55387 stacking lag (pid 90364). The stacking path is exonerated by its own instrumentation — `frame_total_ms` median **1.6 ms**, disk/decode/cache waits **0.0 at median and p90** — while `ui_lag_max_ms` is 300 ms per drag. The decisive pair is **`event_p95_ms` 84.5 ms vs `handler_p95_ms` 9.0 ms**, and **45 of 66** sampled stall stacks bottom out in `run_forever`. Root cause on our side: the `[CPU_BUDGET]` priority boost had **never applied** (ctypes pseudo-handle truncation → `ERROR_INVALID_HANDLE`, 19 launches / 19 failures). |
+
+**Invariants:**
+- `GetCurrentProcess()` returns the pseudo-handle `(HANDLE)-1` == `0xFFFFFFFFFFFFFFFF`. **Any ctypes call that passes a Win32 HANDLE must declare `restype`/`argtypes` as `c_void_p`**, and must declare them **BEFORE** the handle is taken — a `restype` set after the call is a no-op. The default `c_int` silently truncates and the API fails with err 6. **There is a second, still-unfixed instance of this exact defect** at `modules/download_manager/workers/download_process_entry.py:149` — see the open item below.
+- **The default priority class is build-type dependent** (2026-08-23, by owner request): frozen/installed build → **HIGH** (deployed clinical workstation), source run → **ABOVE_NORMAL** (developer box also running an IDE/VM/compiler). Detected with `aipacs_runtime.is_frozen()`, never a bare `sys.frozen` check — that would report False on every Nuitka build, i.e. on exactly the machines the rule is for. `AIPACS_PRIORITY=normal|above_normal|high` overrides; `normal` is the kill switch.
+- An unrecognised `AIPACS_PRIORITY` must fall back to **the machine's own default**, never a hard-coded class — otherwise a typo silently demotes a clinical workstation.
+- A failing `is_frozen()` probe degrades to the **source** default. Never promote a machine to HIGH because a probe raised.
+
+**Open item — the DM subprocess demotion has never applied.** `download_process_entry.py:149` calls `SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL)` with no `restype`/`argtypes` **and does not check the return**, so it has always silently failed. That demotion is the codebase's stated mitigation for "HIGH starves disk I/O", and the same file's v2.3.7 comment reasons from the premise "the viewer (ABOVE_NORMAL) blocks waiting on a lock held by an IDLE-scheduled thread" — a premise that was false, because the viewer was at Normal too. **The intended priority separation has never existed at runtime.** Not fixed yet: the repo has MEASURED harm from widening this gap (`ui_lag_max` 412 ms vs 229 ms), and HIGH-vs-BELOW_NORMAL is wider still, so it needs its own measurement. Until then `high` is untested against heavy concurrent downloading.
+- **Never delete the `[CPU_BUDGET] SetPriorityClass failed (err=%d)` warning.** That line, ignored for months, is the only reason the defect was ever found.
+- The stall probe writes to **`viewer_diagnostics.log`, not `app.log`.** Searching only `app.log` returns ~2 lines per session and the wrong conclusion.
+- Logging is **not** a GUI-thread cost: `diagnostic_logging.py` routes every file handler behind a `QueueHandler`/`QueueListener`. Rule it out by reading that file, not by assuming.
+
+**Guard tests:**
+- `tests/code/system/test_cpu_budget_priority_boost.py` (13) — the three ctypes declarations, both ORDERING pins, the preserved diagnostics and kill switch, plus two behavioural Win32 probes that reproduce the truncation read-only via `GetPriorityClass`
+
+**Analysis scripts:** `tools/analysis/oneoff/stack_lag_55387{,_detail}_2026_08_23.py`, `stall_trace_frames_90364_2026_08_23.py`
+
+---
+
 ### Download Manager (Zeta) + bulk download
 
 | Doc | What's in it |
@@ -87,6 +242,28 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 - `test_probe_uses_raw_send_request_not_helper` — GetStudyInfo 6.8 s stall guard
 - `test_probe_lock_is_module_level`, `test_probe_lock_is_used_in_get_series_info_from_server`
 - `test_prefetch_uses_threadpool_executor`, `test_prefetch_has_no_sequential_loop`, `test_parallel_prefetch_is_faster_than_sequential`
+
+---
+
+### Internal assignment (INO) — server-state snapshot
+
+**The snapshot file is written under a process-global lock that the GUI thread also takes.** `get_state` is called per patient-list row while painting; anything that holds `_LOCK` for long freezes the worklist. Never add a per-row write to this store.
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/ASSIGNMENT_SNAPSHOT_BATCH_WRITE_2026-08-16.md`](reports/ASSIGNMENT_SNAPSHOT_BATCH_WRITE_2026-08-16.md)** | **Read before touching `ino_assignment_server_state` or `ino_assignment_refresh`.** The 10.79 s freeze: one full-file rewrite per reception, serialised against the GUI thread's per-row read. Measured write costs, why the fsync is now opt-in, and the four contracts that deliberately did NOT change. |
+| [`reports/INTERNAL_ASSIGN_FALSE_ASSIGNED_REGRESSION_2026-07-15.md`](reports/INTERNAL_ASSIGN_FALSE_ASSIGNED_REGRESSION_2026-07-15.md) | Earlier assignment-state regression. |
+
+**Invariants:**
+- Writes are **batched**: `set_many()` for anything loop-shaped, `set_state()` only for a single user action. The write is O(all receptions), so a per-row write is O(N²) over a refresh.
+- `_merge_and_save` must `_load` **inside the same lock acquisition** as the save, or a concurrent single write is silently rolled back.
+- `_load` must stay **lock-free** — the writer already holds `_LOCK`, and `threading.Lock` is not reentrant.
+- `get_state` must **keep** taking `_LOCK` (the 2026-07-31 WinError-5 fix); the answer to contention is fewer writes, not an unlocked read.
+- A failed fetch must never wipe a known assignment.
+
+**Guard tests:**
+- `tests/code/network/test_ino_state_batch_write.py` (28) — one write per batch, the two write paths cannot drift, the fsync gate, and the refresh contracts that must not change
+- `tests/code/network/test_ino_server_state_concurrency.py` — the reader/writer `os.replace` failure and the per-writer temp name
 
 ---
 

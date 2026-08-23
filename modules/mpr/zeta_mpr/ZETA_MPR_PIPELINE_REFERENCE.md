@@ -85,8 +85,16 @@
 ### 3.2 How cross‑lines drive planes
 - Crosshair position updates call:
   - `_update_all_crosshairs()` → line endpoints updated
-  - `_update_slice_positions()` → camera focal points updated
-- This synchronizes axial/sagittal/coronal planes to the crosshair center.
+  - `_update_slice_positions()` → each pane's camera advances along its
+    **through-plane (look) axis ONLY**, focal point and position moving together
+    so the viewing direction and distance are preserved. It does **not** move the
+    camera in-plane, in either mode.
+- In ORTHOGONAL mode that is what synchronizes the pane to the crosshair, because
+  the mapper runs `SliceFacesCameraOn()` + `SliceAtFocalPointOn()` — the camera
+  selects the plane.
+- In OBLIQUE mode the plane comes from the mapper's explicit `vtkPlane` instead;
+  `_update_slice_positions` additionally re-points `plane.SetOrigin(current_position)`.
+  See §3.3.
 
 ### 3.3 Rotation: **visual vs. oblique**
 - Oblique reslicing is controlled by `StandardMPRViewer.oblique_enabled` (default: `True`).
@@ -95,7 +103,19 @@
 - When `oblique_enabled` is `True` and any view’s crosshair angle exceeds 0.01 rad,
   the 9-point camera-plane oblique path activates:
   - `_update_oblique_reslicing()` computes oblique normals via cross products.
-  - `_set_oblique_camera()` repositions the target view’s camera along the oblique normal.
+  - `_set_oblique_camera()` — **CORRECTED 2026-08-23.** This entry previously read
+    *"repositions the target view's camera along the oblique normal"*. That has
+    been false since **v1.09.Fix-E**, and believing it nearly caused a regression.
+    What it actually does: switches the mapper OFF camera-driven slicing
+    (`SliceFacesCameraOff()` + `SliceAtFocalPointOff()`) and sets an explicit
+    `vtkPlane` with `origin = self.current_position` (the crosshair centre) and
+    `normal = oblique_normal` (sign-corrected against the baseline direction).
+    **The camera is left untouched** — *"the camera stays in its original
+    orthogonal position, so the viewport is perfectly stable"*. Repositioning it
+    made the image pan under the cursor during rotation, which is why Fix-E
+    reverted that behaviour.
+    **Consequence: the displayed oblique plane passes through the crosshair by
+    construction. Do not "fix" the camera focal point onto the crosshair.**
   - `_synchronize_oblique_views()` is the final call in every interaction handler.
 - Baseline camera state (`_baseline_camera_state`) is captured after view creation and
   used for sign-consistent normals and stable view-up.  See `ZETA_MPR_ENGINEERING_JOURNAL.md` §5 for details.

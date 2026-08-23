@@ -105,6 +105,10 @@ Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided re
 ; consultation added 2026-06-10 (ADR-0003): purchasable Online Consultation module
 ; (Drive-backed physician-to-physician second-opinion workflow inside Education).
 Name: "optional\consultation"; Description: "Online Consultation — cloud-based physician-to-physician case consultation"; Types: custom
+; aipacs_chat added 2026-08-19: the manager console for the ai-pacs.com patient
+; consultation chat. A second client of the existing web backend — it needs the
+; Identity module (core) for its Sanctum token and nothing else.
+Name: "optional\aipacs_chat"; Description: "AiPacs Chat — manager console for patient consultation conversations"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -132,6 +136,7 @@ Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs
 Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\AIPacs\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\consultation\*"; DestDir: "{commonappdata}\AIPacs\module_packages\consultation"; Components: optional\consultation; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\aipacs_chat\*"; DestDir: "{commonappdata}\AIPacs\module_packages\aipacs_chat"; Components: optional\aipacs_chat; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
@@ -476,13 +481,15 @@ begin
   if OptionalModuleSelected('web_browser')  then Items := Items + '  Web Browser  [selected]' + #13#10;
   if OptionalModuleSelected('echomind')     then Items := Items + '  EchoMind  [selected]' + #13#10;
   if OptionalModuleSelected('consultation') then Items := Items + '  Online Consultation  [selected]' + #13#10;
+  if OptionalModuleSelected('aipacs_chat')  then Items := Items + '  AiPacs Chat  [selected]' + #13#10;
 
   if not OptionalModuleSelected('advanced_mpr') and
      not OptionalModuleSelected('printing') and
      not OptionalModuleSelected('run_cd') and
      not OptionalModuleSelected('web_browser') and
      not OptionalModuleSelected('echomind') and
-     not OptionalModuleSelected('consultation') then
+     not OptionalModuleSelected('consultation') and
+     not OptionalModuleSelected('aipacs_chat') then
     Result := Items + '  No optional modules selected'
   else
     Result := Items;
@@ -662,7 +669,8 @@ begin
     '    "run_cd": ' + BoolToJson(OptionalModuleSelected('run_cd')) + ',' + #13#10 +
     '    "web_browser": ' + BoolToJson(OptionalModuleSelected('web_browser')) + ',' + #13#10 +
     '    "echomind": ' + BoolToJson(OptionalModuleSelected('echomind')) + ',' + #13#10 +
-    '    "consultation": ' + BoolToJson(OptionalModuleSelected('consultation')) + #13#10 +
+    '    "consultation": ' + BoolToJson(OptionalModuleSelected('consultation')) + ',' + #13#10 +
+    '    "aipacs_chat": ' + BoolToJson(OptionalModuleSelected('aipacs_chat')) + #13#10 +
     '  },' + #13#10 +
     '  "module_packages": {' + #13#10 +
     '    "viewer": {"module_id":"viewer","title":"Viewer","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
@@ -678,7 +686,8 @@ begin
     '    "run_cd": {"module_id":"run_cd","title":"Run CD Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('run_cd') + '","installed_from":"' + OptionalModuleSourceValue('run_cd') + '","requires_restart":true},' + #13#10 +
     '    "web_browser": {"module_id":"web_browser","title":"Web Browser Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('web_browser') + '","installed_from":"' + OptionalModuleSourceValue('web_browser') + '","requires_restart":true},' + #13#10 +
     '    "echomind": {"module_id":"echomind","title":"EchoMind Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('echomind') + '","installed_from":"' + OptionalModuleSourceValue('echomind') + '","requires_restart":true},' + #13#10 +
-    '    "consultation": {"module_id":"consultation","title":"Online Consultation","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('consultation') + '","installed_from":"' + OptionalModuleSourceValue('consultation') + '","requires_restart":true}' + #13#10 +
+    '    "consultation": {"module_id":"consultation","title":"Online Consultation","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('consultation') + '","installed_from":"' + OptionalModuleSourceValue('consultation') + '","requires_restart":true},' + #13#10 +
+    '    "aipacs_chat": {"module_id":"aipacs_chat","title":"AiPacs Chat","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('aipacs_chat') + '","installed_from":"' + OptionalModuleSourceValue('aipacs_chat') + '","requires_restart":true}' + #13#10 +
     '  },' + #13#10 +
     '  "graphics": {' + #13#10 +
     '    "user_declared_gpu": ' + BoolToJson(GpuCheckBox.Checked) + ',' + #13#10 +

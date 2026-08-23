@@ -215,12 +215,64 @@ guard test asserting exactly that.
 
 ---
 
+## 3. `os.stat` per series folder, on the GUI thread, per search result
+
+### The finding
+
+The second offender inside the 17:19 freeze (2 of 12 sampled traces, worst
+sample **1,454 ms**), distinct from the assignment-snapshot cause that was
+fixed:
+
+```
+home_search_service.py:925  search_server
+  -> _hp_search.py:1452 _add_socket_patient_to_table
+  -> _hp_search.py:1553 add_data2patient_list_table
+       download_status = get_study_download_status(study_uid, ...)
+  -> utils.py:1618 get_study_download_status
+  -> utils.py:923  count_subfolders_with_dicom
+       if sub.is_dir():
+  -> pathlib/_local.py:515 stat  ->  os.stat
+```
+
+Every row of a server search result walks the study's folder on disk and
+`stat`s each series subfolder, **on the GUI thread, while the table is being
+populated**. Same disease as the two already fixed today — filesystem work on
+the paint path — and the same first-touch AV cost applies (this machine runs
+two real-time engines).
+
+### Why I did not fix it in the same pass
+
+Because the obvious fix is a cache, and a cache here has a **clinical display**
+consequence: `get_study_download_status` drives the download-status indicator
+the user reads to decide whether a study is complete. A stale cache would show
+"downloaded" for a study still arriving. That is not a trade I should make
+silently, and it is a different module from the freeze I was asked to fix.
+
+### What I would do
+
+1. **Measure first**, as with the MPR item: how many rows, how many subfolders
+   per study, what a cold vs warm `count_subfolders_with_dicom` costs. The
+   whole-freeze attribution is 1,454 ms from *one sample* — that is a lower
+   bound, not a total.
+2. Then choose between: (a) computing the status **off the GUI thread** and
+   filling the cell asynchronously — the pattern the Status column already uses
+   (`OPT-50`, 2026-08-02); (b) a short-TTL cache keyed by
+   `(study_uid, dir mtime)`, which self-invalidates as files land; (c) deriving
+   the count from the download manager's own progress state instead of the
+   filesystem.
+
+(a) is most consistent with what this codebase already does elsewhere and does
+not risk staleness.
+
+---
+
 ## Summary
 
 | # | Finding | Blocked on | Cost of doing nothing |
 |---|---|---|---|
 | 1 | ~~Disk pixel cache wiped every shutdown~~ | **RESOLVED 2026-08-16** — owner chose persistence by default (a variant of option C with the default inverted) | — |
 | 2 | MPR activation blocks the GUI thread ~4-5.5 s | Measurement — the non-axial views are uninstrumented | The app's largest remaining freeze, on a frequently-pressed button |
+| 3 | `os.stat` per series folder on the GUI thread, per search-result row | Measurement, then a staleness decision on the download-status indicator | ~1.5 s+ of GUI block on a large server search |
 
 Related: [`WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) §8,
 [`FREEZE_72S_BROWSER_PREWARM_2026-08-16.md`](FREEZE_72S_BROWSER_PREWARM_2026-08-16.md),

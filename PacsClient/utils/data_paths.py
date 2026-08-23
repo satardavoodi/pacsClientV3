@@ -95,6 +95,21 @@ BROWSER_DOWNLOADS_DIR:   Path = BROWSER_DIR / "downloads"
 BROWSER_SAVED_PAGES_DIR: Path = BROWSER_DIR / "saved_pages"
 BROWSER_SCREENSHOTS_DIR: Path = BROWSER_DIR / "screenshots"
 
+# ━━ AiPacs Chat ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Patient-conversation data: attachments an operator opened, and the thumbnail
+# cache that keeps the transcript from re-decoding an image on every repaint.
+#
+# DELIBERATELY NOT IN ``_ALL_DIRS``. Every other tree here is created at import
+# time, but the chat module ships default-OFF and its own contract is that a
+# disabled module performs no filesystem side effects at startup — not even an
+# empty folder. ``modules/aipacs_chat/services/storage.py`` creates these on
+# first use instead. The paths live HERE because this file is the one registry
+# of user-data locations and a second scheme is a second thing to get wrong the
+# day the install directory moves.
+CHAT_DIR:        Path = USER_DATA_ROOT / "aipacs_chat"
+CHAT_FILES_DIR:  Path = CHAT_DIR / "files"        # attachments, per case
+CHAT_THUMBS_DIR: Path = CHAT_DIR / "thumbnails"   # decoded previews, per file id
+
 # ━━ Logs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOGS_DIR: Path = USER_DATA_ROOT / "logs"
 

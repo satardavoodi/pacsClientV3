@@ -262,9 +262,13 @@ class InstallationModuleSettingsWidget(QWidget):
         except Exception:  # pragma: no cover — defensive fallback
             root.addWidget(actions_container)
 
-        self.table = QTableWidget(0, 7, self)
+        # 8 columns since 2026-08-22: "Status" surfaces the runtime package
+        # state (core / installed / not_installed / install_failed /
+        # install_incomplete) so a broken install is visible HERE instead of
+        # only at the moment the user clicks the module's icon.
+        self.table = QTableWidget(0, 8, self)
         self.table.setHorizontalHeaderLabels(
-            ["Module", "Tier", "Package", "Installed", "Enabled", "Version", "Source"]
+            ["Module", "Tier", "Package", "Installed", "Enabled", "Status", "Version", "Source"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -281,7 +285,8 @@ class InstallationModuleSettingsWidget(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._sync_button_state)
         root.addWidget(self.table, 1)
 
@@ -437,18 +442,28 @@ class InstallationModuleSettingsWidget(QWidget):
         self._records = module_installation_statuses()
         self.table.setRowCount(len(self._records))
         for row, record in enumerate(self._records):
+            status = str(record.get("status") or "")
+            warning = str(record.get("warning") or "")
+            status_display = status
+            if status in {"install_failed", "install_incomplete"}:
+                status_display = f"⚠ {status}"
             values = [
                 str(record.get("title") or ""),
                 str(record.get("tier") or ""),
                 str(record.get("package_kind") or ""),
                 "Yes" if record.get("installed") else "No",
                 "Yes" if record.get("enabled") else "No",
+                status_display,
                 str(record.get("installed_version") or "-"),
                 str(record.get("installed_from") or record.get("runtime_path") or "-"),
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.ItemDataRole.UserRole, record.get("module_id"))
+                if warning:
+                    # The recorded failure reason travels with the row — hover
+                    # any cell to read WHY the install failed or is incomplete.
+                    item.setToolTip(warning)
                 self.table.setItem(row, column, item)
         if self._records and self.table.currentRow() < 0:
             self.table.selectRow(0)
@@ -543,10 +558,23 @@ class InstallationModuleSettingsWidget(QWidget):
 
     def _on_install_succeeded(self, record: dict) -> None:
         self.refresh_modules()
+        warning = str(record.get("warning") or "")
+        if warning or str(record.get("status") or "") in {"install_failed", "install_incomplete"}:
+            # The package copied but post-install verification failed — say so
+            # honestly instead of reporting success (2026-08-22).
+            QMessageBox.warning(
+                self,
+                "Installation Module",
+                f"{record.get('title', 'Module')} was copied but did NOT pass "
+                f"installation verification.\n\n{warning or 'See the module table for details.'}\n\n"
+                "The module stays disabled until the problem is fixed and it is reinstalled.",
+            )
+            return
         QMessageBox.information(
             self,
             "Installation Module",
-            f"{record.get('title', 'Module')} installed successfully.\n\nRestart the workstation to load all UI hooks cleanly.",
+            f"{record.get('title', 'Module')} installed and verified successfully.\n\n"
+            "Restart the workstation to load all UI hooks cleanly.",
         )
 
     def _on_install_failed(self, error: str) -> None:

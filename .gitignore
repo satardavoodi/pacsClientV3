@@ -138,3 +138,9 @@ _to_delete/
 #    re-included __pycache__; source tooling is tracked, its .pyc cache is not) ──
 tools/build/__pycache__/
 tools/build/**/*.pyc
+
+# -- Root test-output scratch + backups + dev preview captures (2026-08-23) --
+/test_*_out.txt
+*.bak_prestable
+*.bak
+/consult_edu_*.png

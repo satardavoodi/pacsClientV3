@@ -44,6 +44,8 @@ FEATURE_FLAG_CONFIG_FILES = (
     "identity/aipacs_web.json",
     # modules/agent_gateway/feature_flags.py -> agent_gateway/agent_gateway.json
     "agent_gateway/agent_gateway.json",
+    # modules/aipacs_chat/feature_flags.py -> aipacs_chat/aipacs_chat.json
+    "aipacs_chat/aipacs_chat.json",
 )
 
 

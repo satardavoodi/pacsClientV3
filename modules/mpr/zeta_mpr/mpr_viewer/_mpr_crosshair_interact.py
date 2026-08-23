@@ -352,14 +352,11 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         # Crosshair grabbing off (hidden/disabled) → no rotation/line cursors; keep
         # the default arrow so the hidden crosshair isn't implied as interactive.
         if not self._crosshair_grab_active():
-            try:
-                self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
-            except Exception:
-                pass
+            self._apply_hover_cursor('arrow', None)
             return None
 
         if self.view_name not in self.parent.crosshair_actors:
-            self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
+            self._apply_hover_cursor('arrow', None)
             return None
 
         actors = self.parent.crosshair_actors[self.view_name]
@@ -371,66 +368,109 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         v_p1 = self._world_to_display(v_line_source.GetPoint1())
         v_p2 = self._world_to_display(v_line_source.GetPoint2())
 
+        # Hysteresis: while a zone is already held, it keeps the cursor until the
+        # pointer leaves a slightly LARGER radius. Without this the boundaries
+        # flip on a single pixel of hand tremor, because display coordinates are
+        # integers and the zones physically overlap: every point of the 20 px
+        # centre disc is also inside a 15 px line band (20/√2 = 14.1 < 15), so
+        # `centre` and `h_line` share a hard edge at exactly r = 20 that a 1 px
+        # move crosses back and forth. Enter tight, leave loose.
+        held = getattr(self, '_last_hover_zone', None) if self._hover_stable_enabled() else None
+        center_limit = 26 if held == 'center' else 20
+        line_limit = 19 if held in ('h_line', 'v_line') else 15
+
         # PRIORITY 1: Rotation zones
         rotation_threshold = 20
         h_rotation_zone = self._is_in_rotation_zone(click_pos, h_p1, h_p2, rotation_threshold)
         if h_rotation_zone:
-            self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
+            self._apply_hover_cursor('sizeall', 'h_rotation')
             return 'h_rotation'
 
         v_rotation_zone = self._is_in_rotation_zone(click_pos, v_p1, v_p2, rotation_threshold)
         if v_rotation_zone:
-            self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
+            self._apply_hover_cursor('sizeall', 'v_rotation')
             return 'v_rotation'
 
         # PRIORITY 2: Visual handles (geometric hit-test — no GPU prop pick on the
         # mouse hot path; see _handle_at).
         if self._handle_at(click_pos) is not None:
-            self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
+            self._apply_hover_cursor('sizeall', 'handle')
             return 'handle'
 
-        # PRIORITY 3: Center region (20px)
+        # PRIORITY 3: Center region (20px, 26px to leave)
         center_world = self.parent.current_position
         center_display = self._world_to_display(center_world)
 
         center_distance = math.sqrt((click_pos[0] - center_display[0]) ** 2 +
                                     (click_pos[1] - center_display[1]) ** 2)
 
-        if center_distance <= 20:
-            self.parent._set_view_cursor(self.view_name, None)
-            self.GetInteractor().GetRenderWindow().SetCurrentCursor(10)
+        if center_distance <= center_limit:
+            self._apply_hover_cursor('cross', 'center')
             return 'center'
 
-        # PRIORITY 4: Line hover (15px)
+        # PRIORITY 4: Line hover (15px, 19px to leave)
         h_distance = self._distance_to_line_segment(click_pos, h_p1, h_p2)
         v_distance = self._distance_to_line_segment(click_pos, v_p1, v_p2)
 
-        line_threshold = 15
-
-        if h_distance <= line_threshold:
-            self.parent._set_view_cursor(self.view_name, None)
+        if h_distance <= line_limit:
             angle = math.atan2(h_p2[1] - h_p1[1], h_p2[0] - h_p1[0])
             angle_deg = abs(math.degrees(angle))
-            if angle_deg < 30 or angle_deg > 150:
-                self.GetInteractor().GetRenderWindow().SetCurrentCursor(6)
-            else:
-                self.GetInteractor().GetRenderWindow().SetCurrentCursor(10)
+            shape = 'sizever' if (angle_deg < 30 or angle_deg > 150) else 'cross'
+            self._apply_hover_cursor(shape, 'h_line')
             return 'h_line'
 
-        if v_distance <= line_threshold:
-            self.parent._set_view_cursor(self.view_name, None)
+        if v_distance <= line_limit:
             angle = math.atan2(v_p2[1] - v_p1[1], v_p2[0] - v_p1[0])
             angle_deg = abs(math.degrees(angle))
-            if 60 < angle_deg < 120:
-                self.GetInteractor().GetRenderWindow().SetCurrentCursor(7)
-            else:
-                self.GetInteractor().GetRenderWindow().SetCurrentCursor(10)
+            shape = 'sizehor' if (60 < angle_deg < 120) else 'cross'
+            self._apply_hover_cursor(shape, 'v_line')
             return 'v_line'
 
         # Reset cursor
-        self.parent._set_view_cursor(self.view_name, None)
-        self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
+        self._apply_hover_cursor('arrow', None)
         return None
+
+    # ── Hover cursor application (2026-08-23) ─────────────────────────
+    # Two defects made the pointer visibly shake over the crosshair centre:
+    #
+    #   1. The centre branch wrote the cursor through BOTH APIs with
+    #      CONTRADICTORY values on the same frame — `_set_view_cursor(..., None)`
+    #      (Qt, synchronous → arrow) and `SetCurrentCursor(10)` (VTK, applied one
+    #      event-loop turn later by QVTKRenderWindowInteractor's
+    #      `QTimer.singleShot(0, ShowCursor)` → crosshair). At the ~60 Hz hover
+    #      cadence that is a 30–60 Hz alternation between two glyphs whose
+    #      hotspots differ by 8–16 px.
+    #   2. Every accepted frame re-issued the write even when nothing changed,
+    #      and there was no hysteresis at the zone boundaries.
+    #
+    # Now: one API (Qt), one write per actual change. Kill switch
+    # AIPACS_MPR_HOVER_STABLE=0 restores the legacy every-frame behaviour (the
+    # dual-API write is NOT restored — it was never correct).
+    @staticmethod
+    def _hover_stable_enabled():
+        import os
+        return (os.getenv("AIPACS_MPR_HOVER_STABLE", "1") or "1").strip() != "0"
+
+    def _apply_hover_cursor(self, shape, zone):
+        """Set the hover cursor through ONE API, and only when it changes."""
+        self._last_hover_zone = zone
+        if self._hover_stable_enabled() and shape == getattr(self, '_last_hover_shape', None):
+            return
+        self._last_hover_shape = shape
+        try:
+            self.parent._set_view_cursor(
+                self.view_name, self.parent._get_hover_cursor(shape))
+        except Exception:
+            pass
+
+    def _reset_hover_cursor_state(self):
+        """Forget the cached zone/shape so the next hover re-applies the cursor.
+
+        Called on button release: a drag can change the cursor behind our back
+        (and can end over a different zone), so the cached shape must not
+        suppress the first post-drag update."""
+        self._last_hover_zone = None
+        self._last_hover_shape = None
 
     def _crosshair_grab_active(self):
         """True when left-drag should GRAB the crosshair (rotate / move); False when
@@ -616,7 +656,15 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         click_pos = self.GetInteractor().GetEventPosition()
 
         # Handle rotation by dragging handle
-        if self.dragging_handle and self.current_handle:
+        # `left_button_down` is required on all three drag branches (2026-08-23).
+        # `dragging_center` in particular lives on the PARENT, so it is shared by
+        # all three panes; if a release is ever missed — the interactor style is
+        # swapped mid-gesture by _enable_/_disable_crosshair_interaction, a
+        # toolbar tool takes over, the window loses focus — a buttonless hover
+        # would otherwise keep re-centring the crosshair on the pointer, and the
+        # crosshair visibly chases the mouse. The stack branch below already
+        # checked the button; these three did not.
+        if self.left_button_down and self.dragging_handle and self.current_handle:
             picker = vtk.vtkWorldPointPicker()
             picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
             picked_pos = picker.GetPickPosition()
@@ -650,7 +698,7 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             return
 
         # Drag from line (with offset)
-        if self.dragging_line:
+        if self.left_button_down and self.dragging_line:
             picker = vtk.vtkWorldPointPicker()
             picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
             picked_pos = picker.GetPickPosition()
@@ -676,7 +724,7 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             return
 
         # Drag from center
-        if self.parent.dragging_center:
+        if self.left_button_down and self.parent.dragging_center:
             picker = vtk.vtkWorldPointPicker()
             picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
             picked_pos = picker.GetPickPosition()
@@ -725,6 +773,11 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
 
         if self.parent.dragging_center:
             self.parent.dragging_center = False
+
+        # A drag can change the cursor behind the hover path's back, and it can
+        # end over a different zone than it started in — so forget the cached
+        # shape or the first post-drag hover would be suppressed as "unchanged".
+        self._reset_hover_cursor_state()
 
         self.parent.drag_start_pos = None
         if self.pan_active and not self.right_button_down:

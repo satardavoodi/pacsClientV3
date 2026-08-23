@@ -5,11 +5,29 @@ Extracted from standard_mpr_viewer.py (Phase 5A refactoring).
 """
 import logging
 import math
+import os
 
 import numpy as np
 import vtkmodules.all as vtk
 
 logger = logging.getLogger(__name__)
+
+
+def _oblique_validate_enabled() -> bool:
+    """Should the diagnostic validator run on every oblique update?
+
+    Default OFF (2026-08-23). It is a per-frame GUI-thread cost on the crosshair
+    rotation path, and three of its checks are stale — they measure the camera's
+    plane, which has not selected the displayed slice since v1.09.Fix-E. Enable
+    with ``ZETA_MPR_DIAG=1`` (the validator's own verbose flag, so turning
+    diagnostics on turns validation on too) or ``AIPACS_MPR_OBLIQUE_VALIDATE=1``.
+    """
+    raw = (os.getenv("AIPACS_MPR_OBLIQUE_VALIDATE", "") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return os.environ.get("ZETA_MPR_DIAG", "0") == "1"
 
 
 class _MprObliqueMixin:
@@ -298,7 +316,20 @@ class _MprObliqueMixin:
         self._request_render(target_view)
 
         # --- diagnostic validation ----------------------------------------
-        if hasattr(self, '_diag'):
+        # Gated 2026-08-23. This ran on EVERY oblique frame, twice per rotated
+        # source view, and it is not cheap: `validate_after_oblique` snapshots
+        # all three cameras, allocates numpy arrays, runs ten checks and formats
+        # a log record — synchronously, on the GUI thread, inside the crosshair
+        # rotation loop. One field session produced 1 152 oblique log lines.
+        #
+        # And the failures it reports are FALSE: the checks measure the CAMERA's
+        # plane, but since v1.09.Fix-E the oblique plane is the mapper's explicit
+        # vtkPlane (whose origin IS the crosshair centre). See
+        # docs/pipelines/mpr-geometry-pipeline.md §10h. So this is per-frame cost
+        # for a wrong answer. It stays available for diagnosis — set
+        # ZETA_MPR_DIAG=1 (or AIPACS_MPR_OBLIQUE_VALIDATE=1) to restore it — but
+        # it no longer runs during ordinary reading.
+        if hasattr(self, '_diag') and _oblique_validate_enabled():
             self._diag.validate_after_oblique(target_view, oblique_normal)
 
     def _clamp_to_fov(self, center, endpoint, bounds):

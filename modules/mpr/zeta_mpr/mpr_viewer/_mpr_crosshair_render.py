@@ -168,6 +168,37 @@ class _MprCrosshairRenderMixin:
             else:
                 widget.setCursor(cursor)
 
+    # ── Hover cursors (2026-08-23) ────────────────────────────────────────
+    # ONE cursor API, cached. The crosshair hover path used to drive the cursor
+    # through BOTH Qt (`_set_view_cursor`, synchronous) and VTK
+    # (`RenderWindow.SetCurrentCursor`, which QVTKRenderWindowInteractor applies
+    # a full event-loop turn later via `QTimer.singleShot(0, ShowCursor)`). In
+    # the centre zone those two writes DISAGREED — Qt was told "no cursor"
+    # (arrow) and VTK was told "crosshair" on the same frame — so the pointer
+    # alternated between two glyphs with different hotspots at the hover
+    # cadence. That is the reported "cursor shakes over the crosshair centre".
+    # Every shape the hover path needs, as a real QCursor, so VTK is never used.
+    _HOVER_CURSOR_SHAPES = {
+        'arrow':   Qt.CursorShape.ArrowCursor,
+        'cross':   Qt.CursorShape.CrossCursor,
+        'sizeall': Qt.CursorShape.SizeAllCursor,
+        'sizever': Qt.CursorShape.SizeVerCursor,
+        'sizehor': Qt.CursorShape.SizeHorCursor,
+    }
+
+    def _get_hover_cursor(self, shape):
+        """Cached QCursor for a hover zone. Unknown names fall back to arrow."""
+        cache = getattr(self, '_hover_cursor_cache', None)
+        if cache is None:
+            cache = {}
+            self._hover_cursor_cache = cache
+        cur = cache.get(shape)
+        if cur is None:
+            cur = QCursor(self._HOVER_CURSOR_SHAPES.get(
+                shape, Qt.CursorShape.ArrowCursor))
+            cache[shape] = cur
+        return cur
+
     def _create_slice_info_text(self, renderer, view_name):
         """Create text annotation showing slice information and orientation labels"""
         text_actor = vtk.vtkTextActor()

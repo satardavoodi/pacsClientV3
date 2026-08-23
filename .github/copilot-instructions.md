@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.6.0 (2026-08-16) - Milestone release: EchoMind entitlement/licensing + Turbo reporting refinements (multi-region studies, region-from-text, report-title rule), a 72-second browser-prewarm startup-freeze fix, persistent + async-init disk pixel cache (faster reopen), main-window footer-bar removal, and an off-site (external) server profile alongside the LAN one. Built on v3.5.9. See `docs/releases/VERSION_3.6.0_RELEASE.md`.
+**Current Stable Version:** v3.6.3 (2026-08-23) - Minor release: the new AiPacs Chat manager module (console + Laravel chat API), a verified module-install pipeline (OPT-53 — hash-verify → dependency/healthcheck → auto-enable), stable license fingerprint (MachineGuid + volume-serial, survives reboots), a centralized Consultation & Education settings tab, MPR interaction/lifecycle stability + geometry-constraint work, report image insert/capture, YBR color + import-freeze fixes, and internal-browser link policy. Built on v3.6.0. See `docs/releases/VERSION_3.6.3_RELEASE.md`.
 
-**Previous Stable:** v3.5.9 (2026-08-10) - Minor release: the EchoMind Turbo reporting overhaul (study-aware region-gated prompt modules for CT/MRI/US/X-ray/mammography), per-chat case-metadata panel, series header-scan cold-load warm-up, MPR deferred-3D layout stability, and download-manager cancel/retry hardening. See `docs/releases/VERSION_3.5.9_RELEASE.md`.
+**Previous Stable:** v3.6.0 (2026-08-16) - Milestone release: EchoMind entitlement/licensing + Turbo reporting refinements, a 72-second browser-prewarm startup-freeze fix, persistent + async-init disk pixel cache, main-window footer-bar removal, and an off-site server profile. See `docs/releases/VERSION_3.6.0_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

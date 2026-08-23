@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QFont, QTextCharFormat, QTextCursor, QColor, 
     QTextListFormat, QTextBlockFormat, QTextFrameFormat,
     QTextTableFormat, QTextLength, QKeySequence, QShortcut,
+    QTextImageFormat,
     QIcon
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
@@ -706,7 +707,30 @@ class ReportEditorDialog(QDialog):
         layout.addWidget(self.btn_link)
         layout.addWidget(self.btn_table)
         layout.addWidget(self.btn_hr)
-        
+
+        # 2026-08-18: insert a key image captured in the Patient tab viewer.
+        # The three resize buttons act on the image AT THE CURSOR and stay
+        # disabled otherwise, so they read as "image tools" instead of dead
+        # controls. See docs/reports/REPORT_IMAGE_INSERT_2026-08-18.md
+        self.btn_image = self._create_format_button(
+            'fa5s.image', "Insert Captured Image (from the Patient tab)"
+        )
+        self.btn_img_smaller = self._create_format_button(
+            'fa5s.search-minus', "Make the selected image smaller (10%)"
+        )
+        self.btn_img_larger = self._create_format_button(
+            'fa5s.search-plus', "Make the selected image larger (10%)"
+        )
+        self.btn_img_fit = self._create_format_button(
+            'fa5s.expand-arrows-alt', "Fit the selected image to the page width"
+        )
+        for _btn in (self.btn_img_smaller, self.btn_img_larger, self.btn_img_fit):
+            _btn.setEnabled(False)
+        layout.addWidget(self.btn_image)
+        layout.addWidget(self.btn_img_smaller)
+        layout.addWidget(self.btn_img_larger)
+        layout.addWidget(self.btn_img_fit)
+
         layout.addWidget(self._create_separator())
         
         # Clear formatting
@@ -921,6 +945,17 @@ class ReportEditorDialog(QDialog):
         
         # Text editor
         self.text_edit = QTextEdit()
+        # 2026-08-18: swap in a document that can resolve `data:` image
+        # sources BEFORE any content is loaded. Qt's stock QTextDocument
+        # resolves <img src> through loadResource(), which knows files and
+        # qrc: but not data URIs — so without this an embedded capture shows
+        # as a broken-image box the moment a saved report is reopened, and
+        # prints blank. Must happen before setHtml/setDefaultStyleSheet.
+        try:
+            from .report_capture_images import install_data_uri_image_support
+            install_data_uri_image_support(self.text_edit)
+        except Exception:
+            pass          # stock document: no embedded images, but no crash
         self.text_edit.setStyleSheet(get_text_edit_style(self.is_rtl))
         self.text_edit.setAcceptRichText(True)
         
@@ -1100,6 +1135,10 @@ class ReportEditorDialog(QDialog):
         self.btn_link.clicked.connect(self._insert_link)
         self.btn_table.clicked.connect(self._insert_table)
         self.btn_hr.clicked.connect(self._insert_horizontal_line)
+        self.btn_image.clicked.connect(self._insert_captured_image)
+        self.btn_img_smaller.clicked.connect(lambda: self._scale_image_at_cursor(1 / 1.1))
+        self.btn_img_larger.clicked.connect(lambda: self._scale_image_at_cursor(1.1))
+        self.btn_img_fit.clicked.connect(self._fit_image_at_cursor)
         
         # Clear formatting
         self.btn_clear_format.clicked.connect(self._clear_formatting)
@@ -1118,6 +1157,10 @@ class ReportEditorDialog(QDialog):
         # Text changes
         self.text_edit.textChanged.connect(self._on_text_changed)
         self.text_edit.cursorPositionChanged.connect(self._update_format_buttons)
+        # Image resize buttons follow the cursor: enabled only when there is an
+        # image to resize, so they never look broken.
+        self.text_edit.cursorPositionChanged.connect(self._update_image_buttons)
+        self.text_edit.selectionChanged.connect(self._update_image_buttons)
     
     def _apply_initial_content(self):
         """Apply the initial report content."""
@@ -1463,6 +1506,232 @@ class ReportEditorDialog(QDialog):
         """Insert a horizontal line."""
         cursor = self.text_edit.textCursor()
         cursor.insertHtml("<hr style='border: 1px solid #ccc; margin: 10px 0;'>")
+
+    # ── Captured images (2026-08-18) ─────────────────────────────────────
+    #
+    # Physicians capture key images in the Patient tab viewer and want them
+    # in the report, usually right under the paragraph that describes the
+    # finding. The picker is scoped to THIS study; the chosen file is
+    # downscaled, JPEG-encoded and embedded as a data URI so the bytes travel
+    # with the report to the INO server (a file:// path would be a broken
+    # image everywhere but this workstation).
+    #
+    # Full rationale: docs/reports/REPORT_IMAGE_INSERT_2026-08-18.md
+
+    def _report_study_uid(self) -> str:
+        """StudyInstanceUID for the report being edited, or ''.
+
+        Same key precedence as ``_start_previous_exams_lookup`` - the two must
+        not disagree about which study this report belongs to.
+        """
+        try:
+            return str(
+                (self.patient_data or {}).get("studyUID")
+                or (self.patient_data or {}).get("study_uid") or ""
+            ).strip()
+        except Exception:
+            return ""
+
+    def _report_study_uids(self) -> list:
+        """Every study whose captures this report may show.
+
+        A report opened from the Reception Data tab carries a RECEPTION
+        record, and in this deployment that has ``receptionId`` but NO
+        StudyInstanceUID — while captures on disk are keyed by study UID. So
+        `_report_study_uid()` alone came back empty and the picker said "not
+        linked to a study" even for a patient who plainly had captures
+        (reception 54800 / porya mazaheri: 1 CT study, 1 capture).
+
+        `resolve_study_uids` therefore falls back to the local DICOM DB,
+        joining `patients.patient_id -> patient_pk -> studies.patient_fk`.
+        """
+        try:
+            from .report_capture_images import resolve_study_uids
+            return resolve_study_uids(self.patient_data or {})
+        except Exception:
+            explicit = self._report_study_uid()
+            return [explicit] if explicit else []
+
+    def _insert_captured_image(self):
+        """Open the capture gallery and embed the chosen image at the cursor."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            from .report_image_picker_dialog import pick_captured_image
+            from .report_capture_images import encode_capture_for_report
+        except Exception:
+            logger.warning("[REPORT_EDITOR] image insert unavailable", exc_info=True)
+            QMessageBox.warning(
+                self, "Insert Captured Image",
+                "The captured-image tools could not be loaded.",
+            )
+            return
+
+        study_uids = self._report_study_uids()
+        if not study_uids:
+            QMessageBox.information(
+                self, "Insert Captured Image",
+                "No imaging study could be matched to this report, so there "
+                "are no captured images to list.\n\n"
+                "This happens when the reception record has no matching study "
+                "in the local database — for example when the images have not "
+                "been downloaded to this workstation yet.",
+            )
+            return
+
+        path = pick_captured_image(study_uids, self, is_rtl=self.is_rtl)
+        if not path:
+            return                      # cancelled - insert nothing
+
+        encoded = encode_capture_for_report(path)
+        if encoded is None:
+            QMessageBox.warning(
+                self, "Insert Captured Image",
+                "That image could not be prepared for the report.\n\n"
+                "It may be unreadable, or too large to embed even after "
+                "compression. Try capturing a smaller region.",
+            )
+            return
+
+        width = self._fitted_width(encoded.width)
+        height = max(1, round(encoded.height * (width / max(1, encoded.width))))
+
+        fmt = QTextImageFormat()
+        fmt.setName(encoded.data_uri)
+        fmt.setWidth(width)
+        fmt.setHeight(height)
+
+        cursor = self.text_edit.textCursor()
+        cursor.beginEditBlock()
+        try:
+            # Own paragraph, so the image never lands mid-sentence and the
+            # physician can keep typing underneath it.
+            if not cursor.atBlockStart():
+                cursor.insertBlock()
+            cursor.insertImage(fmt)
+            cursor.insertBlock()
+        finally:
+            cursor.endEditBlock()
+        self.text_edit.setTextCursor(cursor)
+
+        logger.info(
+            "[REPORT_EDITOR] inserted capture %s (%dx%d, %.0f KB encoded)",
+            os.path.basename(encoded.source), encoded.width, encoded.height,
+            encoded.encoded_bytes / 1024.0,
+        )
+        self._update_image_buttons()
+
+    def _fitted_width(self, natural_width: int) -> int:
+        """Clamp an inserted image to the editor's usable width.
+
+        An image wider than the page forces a horizontal scrollbar and prints
+        cropped, so a freshly inserted capture is never allowed to exceed the
+        text area. Smaller images keep their natural size.
+        """
+        try:
+            available = self.text_edit.viewport().width() - 24
+        except Exception:
+            available = 0
+        if available <= 0:
+            available = 640
+        return max(80, min(int(natural_width), int(available)))
+
+    # ── Image resize ─────────────────────────────────────────────────────
+
+    def _image_format_at_cursor(self):
+        """(cursor, QTextImageFormat) for the image at the cursor, else
+        (None, None).
+
+        Both candidate positions are probed with a FORWARD selection
+        ``[start, start+1]``. That is not a style choice: ``charFormat()``
+        returns the format of the character immediately before ``position()``,
+        so a *reversed* selection reads the character on the far side of the
+        range and an image sitting right there reports ``isImageFormat() ==
+        False``. Selecting backwards is why the resize buttons silently did
+        nothing the first time round.
+
+        ``start`` covers "cursor sits just before the image" (and a selection
+        that spans it); ``start - 1`` covers "the user clicked just after it",
+        which is where the cursor lands right after an insert.
+        """
+        try:
+            cursor = self.text_edit.textCursor()
+            document = self.text_edit.document()
+        except Exception:
+            return None, None
+
+        origin = cursor.selectionStart()
+        for start in (origin, origin - 1):
+            if start < 0:
+                continue
+            try:
+                probe = QTextCursor(document)
+                probe.setPosition(start)
+                probe.movePosition(
+                    QTextCursor.MoveOperation.NextCharacter,
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+            except Exception:
+                continue
+            if not probe.hasSelection():
+                continue
+            fmt = probe.charFormat()
+            if fmt.isImageFormat():
+                return probe, fmt.toImageFormat()
+        return None, None
+
+    def _update_image_buttons(self):
+        """Enable the resize buttons only when the cursor is on an image."""
+        try:
+            _, fmt = self._image_format_at_cursor()
+            has_image = fmt is not None
+            self.btn_img_smaller.setEnabled(has_image)
+            self.btn_img_larger.setEnabled(has_image)
+            self.btn_img_fit.setEnabled(has_image)
+        except Exception:
+            pass
+
+    def _apply_image_width(self, cursor, fmt, new_width: int):
+        """Rewrite the image's width, keeping its aspect ratio.
+
+        Width/height are set on the QTextImageFormat rather than via CSS
+        because Qt writes them straight back out as ``<img width= height=>``
+        attributes, which the server-side HTML normaliser passes through
+        untouched. A class or a stylesheet rule would be stripped.
+        """
+        old_width = fmt.width() or new_width
+        old_height = fmt.height() or new_width
+        ratio = (old_height / old_width) if old_width else 1.0
+
+        width = max(60, min(int(new_width), 4000))
+        height = max(1, round(width * ratio))
+
+        updated = QTextImageFormat(fmt)
+        updated.setWidth(width)
+        updated.setHeight(height)
+
+        cursor.beginEditBlock()
+        try:
+            cursor.setCharFormat(updated)
+        finally:
+            cursor.endEditBlock()
+        self._update_image_buttons()
+
+    def _scale_image_at_cursor(self, factor: float):
+        """Step the image at the cursor up or down by *factor*."""
+        cursor, fmt = self._image_format_at_cursor()
+        if fmt is None:
+            return
+        current = fmt.width() or self._fitted_width(400)
+        self._apply_image_width(cursor, fmt, round(current * factor))
+
+    def _fit_image_at_cursor(self):
+        """Resize the image at the cursor to the full usable page width."""
+        cursor, fmt = self._image_format_at_cursor()
+        if fmt is None:
+            return
+        self._apply_image_width(cursor, fmt, self._fitted_width(10_000))
     
     def _clear_formatting(self):
         """Clear all formatting from selection."""

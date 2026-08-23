@@ -464,6 +464,13 @@ class ControlPanelWindow(object):
         self.education_btn = self._create_menu_button(self.frame_2, "education_btn", "book-open.png", "Educational Courses", "Educational Courses", register_left_menu=True)
         self.verticalLayout_3.addWidget(self.education_btn)
 
+        # AiPacs Chat — the manager console for ai-pacs.com patient
+        # conversations. The button is always present; the module's own gate
+        # (aipacs_chat_available) decides whether it opens or explains itself,
+        # exactly like Web Browser and Print.
+        self.aipacs_chat_btn = self._create_menu_button(self.frame_2, "aipacs_chat_btn", "message-circle.png", "AiPacs Chat", "AiPacs Chat", register_left_menu=True)
+        self.verticalLayout_3.addWidget(self.aipacs_chat_btn)
+
         self.verticalLayout_2.addWidget(self.frame_2)
 
         # Spacer
@@ -1014,6 +1021,7 @@ class ControlPanelWindow(object):
         
         self.download_manager_btn.clicked.connect(self.open_download_manager)
         self.web_browser_btn.clicked.connect(self.open_web_browser)
+        self.aipacs_chat_btn.clicked.connect(self.open_aipacs_chat)
 
     def _show_home_page(self):
         self.mainPages.setCurrentIndex(0)
@@ -1116,6 +1124,14 @@ class ControlPanelWindow(object):
         except Exception as e:
             logger.exception("Error opening web browser: %s", e)
     
+    def open_aipacs_chat(self):
+        """Open the AiPacs Chat manager console in a new tab"""
+        try:
+            if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_aipacs_chat'):
+                self.home_widget.open_aipacs_chat()
+        except Exception as e:
+            logger.exception("Error opening AiPacs Chat: %s", e)
+
     def open_education_module(self):
         """Open education module in a new tab"""
         try:

@@ -143,6 +143,70 @@ class _HPModulesMixin:
             import traceback; traceback.print_exc()
             return None
 
+    def open_aipacs_chat(self):
+        """Open the AiPacs Chat manager console in a module tab.
+
+        The EXACT open_web_browser pattern — a singleton tab keyed by
+        ``is_aipacs_chat_tab``. Returns the widget (new or existing) so the
+        Secretary CommandBus can reach it later, or None when unavailable.
+
+        The gate is ONE call: aipacs_chat_available() checks the Identity
+        flag, this module's own flag AND the commercial module registry.
+        Checking only one of the three is how a module ends up visible on a
+        workstation that never licensed it, or opening a console with no way
+        to authenticate.
+        """
+        try:
+            from modules.aipacs_chat.feature_flags import aipacs_chat_available
+
+            if not aipacs_chat_available():
+                # Precise diagnostics (2026-08-22): name the failing gate
+                # condition and where to fix it. The old one-line "not
+                # installed or not enabled" covered three different causes
+                # and was indistinguishable from a broken install.
+                reason = ""
+                try:
+                    from modules.aipacs_chat.feature_flags import (
+                        aipacs_chat_unavailable_reason,
+                    )
+                    reason = aipacs_chat_unavailable_reason()
+                except Exception:
+                    reason = ""
+                QMessageBox.information(
+                    self, "AiPacs Chat",
+                    reason or (
+                        "The AiPacs Chat module is not installed or not "
+                        "enabled for this workstation."))
+                return None
+
+            from modules.aipacs_chat.ui.chat_widget import AiPacsChatWidget
+
+            # The login dict comes from the SHARED resolver, never from
+            # `getattr(self, 'auth_user')` — HomePanelWidget does not carry
+            # that attribute, so the old code silently passed None and the
+            # console looked up identity "local", reporting "Not signed in"
+            # for an operator who was signed in (live bug 2026-08-22).
+            from modules.Identity.ui.host_user import resolve_host_auth_user
+
+            auth_user = resolve_host_auth_user(self)
+
+            return activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_aipacs_chat_tab',
+                widget_factory=lambda: AiPacsChatWidget(
+                    parent=self,
+                    host_tab_widget=self.tab_widget,
+                    host_custom_tab_manager=self.custom_tab_manager,
+                    auth_user=auth_user,
+                ),
+                add_tab_method_name='add_aipacs_chat_tab',
+                fallback_label='AiPacs Chat',
+            )
+        except Exception as e:
+            print(f"[HomePanelWidget] Error opening AiPacs Chat: {e}")
+            import traceback; traceback.print_exc()
+            return None
+
     def open_education_module(self):
         """Open education module in a new tab.
 

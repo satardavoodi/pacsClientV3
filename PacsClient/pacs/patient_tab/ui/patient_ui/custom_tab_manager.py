@@ -1254,6 +1254,57 @@ class CustomTabManager:
         
         return tab_index
     
+    def add_aipacs_chat_tab(self, widget=None):
+        """
+        Add the AiPacs Chat manager console tab with the same custom tab UI
+        as the Web Browser tab.
+
+        Args:
+            widget: The AiPacsChatWidget to display
+
+        Returns:
+            int: The index of the added tab
+        """
+        print("[CustomTabManager] add_aipacs_chat_tab called")
+
+        # Singleton: the console holds one poll loop and one cursor, and a
+        # second copy would fight the first over the same read state.
+        for idx, tab_data in self.patient_tabs.items():
+            if tab_data.get('is_aipacs_chat_tab', False):
+                print("[CustomTabManager] AiPacs Chat tab already exists, switching to it")
+                self.set_tab_active_simple(idx)
+                return idx
+
+        custom_tab = ServiceTabWidget(
+            service_name="AiPacs Chat",
+            icon_name="fa5s.comments",
+            icon_color="white"
+        )
+
+        tab_index = self.tab_widget.addTab(widget, "")
+        print(f"[CustomTabManager] AiPacs Chat tab added at index: {tab_index}")
+
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
+
+        if self.title_bar_tab_area:
+            custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
+            self._add_title_bar_right_tab_widget(custom_tab)
+            self.title_bar_tabs[tab_index] = custom_tab
+        else:
+            self.tab_widget.tabBar().setTabButton(tab_index, QTabBar.ButtonPosition.LeftSide, custom_tab)
+
+        self.patient_tabs[tab_index] = {
+            'custom_tab': custom_tab,
+            'widget': widget,
+            'is_aipacs_chat_tab': True
+        }
+
+        self.tab_widget.setCurrentIndex(tab_index)
+        self.set_tab_active(tab_index)
+        print(f"[CustomTabManager] AiPacs Chat tab added successfully")
+
+        return tab_index
+
     def add_consultation_source_tab(self, widget=None):
         """
         Add the "AI-PACS Consultation" source page tab (workflow v2) with the

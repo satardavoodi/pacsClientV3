@@ -292,6 +292,35 @@ class _MprSeriesMixin:
 
                 self._request_render(view_name)
 
+            # ── The 3D view (2026-08-19) ────────────────────────────────────
+            # The loop above deliberately covers only the three ORTHOGONAL
+            # panes. The 3D view's vtkGPUVolumeRayCastMapper was left pointing
+            # at the PREVIOUS volume, so every in-MPR series switch pinned one
+            # full host volume (~30-95 MB for the series seen in practice) plus
+            # its GPU texture for as long as the viewer stayed open — and it
+            # also meant the 3D pane silently kept rendering the old series
+            # next to three panes showing the new one, which is a reading
+            # hazard, not just a memory one.
+            try:
+                view_3d = self.viewers.get('3d') if hasattr(self, 'viewers') else None
+                mapper_3d = view_3d.get('mapper') if isinstance(view_3d, dict) else None
+                if mapper_3d is not None:
+                    mapper_3d.SetInputData(self.image_data)
+                    logger.info(
+                        "[MPR-SERIES] 3D volume mapper re-pointed at the new "
+                        "series (dims=%s)", self.dims,
+                    )
+                    self._request_render('3d')
+                elif getattr(self, '_deferred_3d_pending', False):
+                    # 3D was deferred and has not been built yet: it will pick
+                    # up self.image_data when it is created. Nothing pinned.
+                    logger.debug("[MPR-SERIES] 3D view still deferred; nothing to re-point")
+            except Exception:
+                logger.warning(
+                    "[MPR-SERIES] could not re-point the 3D volume mapper; it may "
+                    "still hold the previous series", exc_info=True,
+                )
+
             # Capture fresh baseline after camera recreation
             self._capture_baseline_camera_state()
             # Update crosshairs

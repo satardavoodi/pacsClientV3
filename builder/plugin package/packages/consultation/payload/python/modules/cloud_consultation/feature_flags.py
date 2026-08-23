@@ -52,6 +52,59 @@ def _flag_payload() -> dict:
     return {}
 
 
+# Keys the Settings ▸ Consultation & Education tab may write. Anything else in
+# the flag file (e.g. ``oauth_embedded``) is preserved untouched on save.
+_EDITABLE_KEYS = ("enabled", "hub_mode", "consultation_address", "center_id")
+
+
+def save_flag_values(values: dict) -> bool:
+    """Persist consultation settings into the flag file (Settings-tab writer).
+
+    Companion to the read authorities in this module — merges only the known
+    editable keys into the existing payload so unrelated keys survive. Env
+    overrides still win at READ time; the Settings UI shows a warning when one
+    is set (see :func:`env_overrides`). Returns False instead of raising.
+    """
+    try:
+        payload = _flag_payload()
+        for key in _EDITABLE_KEYS:
+            if key in values:
+                payload[key] = values[key]
+        path = _flag_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        return True
+    except Exception as exc:  # pragma: no cover - disk/permission problems
+        logger.warning("cloud_consultation flag write failed: %s", exc)
+        return False
+
+
+def flag_values() -> dict:
+    """A copy of the raw flag-file payload (Settings-tab reader).
+
+    FILE values only — no env merging and no linked-identity fallback; the
+    Settings UI edits the file and shows env overrides separately. Effective
+    values still come from the per-setting authorities above/below."""
+    return dict(_flag_payload())
+
+
+def env_overrides() -> dict:
+    """Map of editable setting -> env var name, for settings currently FORCED
+    by the environment (so the Settings tab can warn that its field is
+    ignored). Empty dict when nothing is overridden. Never raises."""
+    out: dict[str, str] = {}
+    for key, env in (
+        ("enabled", _ENV_VAR),
+        ("hub_mode", _HUB_ENV),
+        ("consultation_address", _ADDR_ENV),
+        ("center_id", _CENTER_ENV),
+    ):
+        raw = os.environ.get(env)
+        if raw is not None and raw.strip():
+            out[key] = env
+    return out
+
+
 def cloud_consultation_enabled() -> bool:
     raw = os.environ.get(_ENV_VAR)
     if raw is not None:

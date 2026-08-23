@@ -60,7 +60,15 @@ def test_storage_clear_still_full_recomputes():
     # refresh_download_statuses_local_only must also clear the flag cache so a storage
     # clear stays fully authoritative (not just the DICOM flag).
     start = s.index("def refresh_download_statuses_local_only")
-    body = s[start:start + 1800]
+    # Bounded at the NEXT def, not a fixed character count. A fixed window
+    # (1800 here) silently starts asserting on the wrong text as soon as the
+    # method's comments or docstring grow — which is exactly what happened on
+    # 2026-08-22 when the storage-clear refresh was moved off the GUI thread and
+    # gained an explanatory paragraph. Same trap, same fix, as
+    # test_mpr_defer_3d_view.py (2026-08-18 and 2026-08-19). The assertion below
+    # is unchanged.
+    end = s.find("\n    def ", start + 1)
+    body = s[start:end if end != -1 else len(s)]
     assert "self._local_status_cache.clear()" in body
 
 

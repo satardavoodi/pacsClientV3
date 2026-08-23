@@ -1604,12 +1604,30 @@ class _PWSyncMixin:
     _RL_ALL_PAIRS_ENV = "AIPACS_REFERENCE_LINES_ALL_PAIRS"
 
     def _rl_all_pairs_enabled(self) -> bool:
+        """Bidirectional (all-pairs) reference lines. Default: OFF since 2026-08-16.
+
+        All-pairs draws, on EVERY viewport, one line per OTHER viewport — so in a
+        2-up layout the ACTIVE viewport also carries a line showing where the
+        other series cuts it. Reported from the floor as wrong: the reader
+        expects the active series to be the SOURCE and to stay clean, with the
+        line drawn only on the series being cross-referenced. That is the
+        classic localizer convention and it is what the legacy single-source
+        path in `manage_reference_line` already implements — including clearing
+        any stale overlay on the source viewport.
+
+        So the default now selects the single-source path. Nothing was deleted:
+        `AIPACS_REFERENCE_LINES_ALL_PAIRS=1` restores bidirectional lines, and
+        `_manage_reference_line_all_pairs` and its tests are untouched.
+
+        Opt-in vocabulary matches the flag's original off-vocabulary
+        (`1/true/yes/on`), so a site that had explicitly set `0` is unaffected.
+        """
         try:
             import os as _os
-            return str(_os.environ.get(self._RL_ALL_PAIRS_ENV, "1")).strip().lower() \
-                not in ("0", "false", "no", "off")
+            return str(_os.environ.get(self._RL_ALL_PAIRS_ENV, "0")).strip().lower() \
+                in ("1", "true", "yes", "on")
         except Exception:
-            return True
+            return False
 
     def _rl_collect_viewport_records(self):
         """One record per live viewport: widget, viewer, current slice, and its own

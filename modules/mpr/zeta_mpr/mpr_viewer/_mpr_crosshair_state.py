@@ -56,18 +56,29 @@ class _MprCrosshairStateMixin:
         # Call _synchronize_oblique_views() as the final step instead.
 
     def _update_slice_positions(self):
-        """Update slice positions to follow crosshair.
+        """Update slice positions to follow the crosshair.
 
-        Orthogonal mode: moves camera + focal point together to preserve
-        viewing direction (original behavior).
+        BOTH modes: the camera moves along this pane's through-plane (look)
+        axis ONLY, carrying focal point and position together so the viewing
+        direction and distance are preserved. The image stays put; the slice
+        advances.
 
-        Oblique mode (v1.09 fix): updates the focal point to fully match
-        current_position so that the oblique slice plane always passes
-        through the crosshair center.  Camera position is NOT touched
-        here; _synchronize_oblique_views() will recompute it correctly.
+        Oblique mode additionally re-points the mapper's explicit ``vtkPlane``
+        origin at ``current_position``, because since **v1.09.Fix-E** the
+        oblique plane is carried by that plane and NOT by the camera
+        (``_set_oblique_camera`` runs ``SliceFacesCameraOff()`` +
+        ``SliceAtFocalPointOff()``). The crosshair centre is therefore on the
+        displayed oblique plane by construction.
 
-        Previous v1.08 only updated the through-plane axis, causing the
-        oblique slice to drift when the crosshair center moved in-plane.
+        DOCSTRING CORRECTED 2026-08-23. It previously described the v1.09
+        behaviour — "updates the focal point to fully match current_position…
+        _synchronize_oblique_views() will recompute it correctly" — which
+        Fix-E **reverted** because moving the focal point in-plane made the
+        image pan under the cursor during rotation. Both of those clauses had
+        been false for some time and contradicted the code directly below;
+        acting on them would have re-introduced that defect. Do not restore
+        full focal-point tracking here. See ``docs/pipelines/mpr-geometry-pipeline.md``
+        §10.9 and ``docs/plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md``.
         """
         for view_name in ['axial', 'sagittal', 'coronal']:
             if view_name not in self.viewers:

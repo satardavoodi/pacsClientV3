@@ -48,3 +48,37 @@ def identity_module_enabled() -> bool:
 
     # 3) Default OFF
     return False
+
+
+def save_identity_enabled(enabled: bool) -> bool:
+    """Persist the Identity flag file (Settings-tab writer). Never raises.
+
+    Merges into the existing payload so unknown keys survive. The env override
+    (``AIPACS_IDENTITY_MODULE``) still wins at read time — the Settings UI
+    warns when it is set (see :func:`identity_env_override`).
+    """
+    try:
+        from modules.Identity.config import identity_flag_file_path
+
+        path = identity_flag_file_path()
+        payload = {}
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    payload = data
+        except Exception:  # unreadable file: rewrite it cleanly
+            payload = {}
+        payload["enabled"] = bool(enabled)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        return True
+    except Exception as exc:  # pragma: no cover - disk/permission problems
+        logger.warning("identity flag write failed: %s", exc)
+        return False
+
+
+def identity_env_override() -> str:
+    """The env var name forcing the Identity flag, or "" (Settings-tab warning)."""
+    raw = os.environ.get(_ENV_VAR)
+    return _ENV_VAR if raw is not None and raw.strip() else ""

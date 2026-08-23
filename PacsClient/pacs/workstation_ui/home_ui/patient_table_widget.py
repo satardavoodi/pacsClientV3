@@ -873,6 +873,15 @@ class PatientTableWidget(QWidget):
     # reception-file read + DB queries. Payload: study_uid, patient_id, flags,
     # generation. Delivered to the GUI thread via a queued connection.
     statusFlagsReady = Signal(str, str, object, int)
+    # Per-study download status computed on a background worker (2026-08-22).
+    # MEASURED (viewer_diagnostics.log 2026-08-22 14:14:30–14:18:00): the chunked
+    # refresh stalled the GUI thread for 3.5 minutes, peak 13.1 s in a single
+    # 2-study chunk — ~6.5 s per study inside
+    # check_study_complete -> evaluate_sync -> build_local_manifest, which counts
+    # every .dcm of every series folder. Chunking only changed the SCHEDULING; the
+    # per-study disk walk still ran on the GUI thread. Payload: study_uid, status,
+    # refresh token. Delivered to the GUI thread via a queued connection.
+    downloadStatusReady = Signal(str, str, int)
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -3496,6 +3505,100 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"Error updating study download status: {e}")
     
+    # ── Off-GUI-thread download status (2026-08-22) ─────────────────────────
+    # The per-study verdict (check_study_complete -> evaluate_sync ->
+    # build_local_manifest) is pure disk + DB with no Qt in it, and
+    # modules.storage.sync_manifest guards its own cache with a lock, so it is
+    # safe on a worker. Mirrors the statusFlagsReady pattern above: the worker
+    # only COMPUTES; every cache write and every widget touch stays on the GUI
+    # thread, so there is no new cache race.
+
+    @staticmethod
+    def _status_refresh_offthread_enabled() -> bool:
+        return (os.getenv("AIPACS_STATUS_REFRESH_OFFTHREAD", "1") or "1").strip() != "0"
+
+    def _peek_download_status(self, study_uid: str):
+        """Fresh cached download status, or None (a MISS). NEVER computes —
+        that is what keeps the refresh off the disk."""
+        try:
+            entry = self._download_status_cache.get(study_uid)
+            if entry and (time.time() - float(entry.get('timestamp', 0.0))) \
+                    < self._cache_validity_seconds:
+                return entry.get('status')
+        except Exception:
+            pass
+        return None
+
+    def _ensure_download_status_async(self) -> None:
+        if getattr(self, '_dl_status_pool', None) is not None:
+            return
+        try:
+            self.downloadStatusReady.connect(self._on_download_status_ready)
+        except Exception:
+            pass
+        import concurrent.futures as _cf
+        # Deliberately its OWN small pool rather than sharing _status_pool: the
+        # Status-chip tasks are dispatched during a render and a 2000-row refresh
+        # queued ahead of them would leave the chips blank for minutes.
+        self._dl_status_pool = _cf.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="dl-status")
+
+    def _dispatch_download_status_async(self, study_uid: str, token: int) -> None:
+        """Compute one study's download status on a worker; apply it on the GUI
+        thread when it arrives. Falls back to the synchronous path if dispatch
+        fails, so a row never keeps a stale badge."""
+        try:
+            self._ensure_download_status_async()
+
+            def _work(su=study_uid, tk=token):
+                try:
+                    _status = self._compute_study_download_status(su)
+                except Exception:
+                    _status = 'not_downloaded'
+                try:
+                    self.downloadStatusReady.emit(str(su or ''), str(_status), int(tk))
+                except Exception:
+                    pass
+
+            self._dl_status_pool.submit(_work)
+        except Exception:
+            try:
+                self.update_study_download_status(study_uid)
+            except Exception:
+                pass
+
+    def _on_download_status_ready(self, study_uid: str, status: str, token: int) -> None:
+        # Ignore results from a superseded refresh (table cleared / re-searched);
+        # clear_table() bumps the same token the chunk chain checks.
+        if int(token) != int(getattr(self, '_status_refresh_token', 0)):
+            return
+        if self.table_rebuild_in_progress():
+            return
+        try:
+            self.update_study_download_status(study_uid, status=status)
+        except RuntimeError:
+            return  # the row was deleted mid-flight — benign
+        except Exception:
+            pass
+
+    def _compute_study_download_status(self, study_uid: str) -> str:
+        """Uncached verdict — the disk work. Worker-thread safe: no Qt, no widget
+        access, and it writes nothing (the GUI thread owns every cache)."""
+        try:
+            from PacsClient.pacs.patient_tab.utils.utils import check_study_complete
+            result = check_study_complete(study_uid)
+            if isinstance(result, dict):
+                if result.get('is_complete', False):
+                    return 'complete'
+                if result.get('series_downloaded', 0) > 0:
+                    return 'partial'
+                return 'not_downloaded'
+            if isinstance(result, bool):
+                return 'complete' if result else 'not_downloaded'
+        except Exception as e:
+            print(f"Error checking download status for {study_uid}: {e}")
+        return 'not_downloaded'
+
     def _check_study_download_status(self, study_uid: str) -> str:
         """
         بررسی دقیق وضعیت دانلود یک مطالعه
@@ -3625,21 +3728,49 @@ class PatientTableWidget(QWidget):
         """Refresh download-status badges a few studies at a time, yielding to the Qt
         event loop between chunks so the per-study disk check
         (``check_study_complete`` -> ``build_local_manifest``) never freezes the GUI
-        thread. Everything still runs on the main thread — no worker threads and no
-        cache races; only the *scheduling* of the existing per-study updates changes.
+        thread.
+
+        2026-08-22: chunking alone was NOT enough. Measured, a single 2-study chunk
+        blocked the GUI thread for 13.1 s (~6.5 s per study) because the disk walk
+        itself still ran here; the refresh produced a 3.5-minute stall storm. The
+        verdict is now computed on a worker (``_dispatch_download_status_async``)
+        and applied here when it arrives, so this loop only reads a cache or fires
+        a dispatch — both microseconds. Cache writes and widget touches remain
+        GUI-thread-only, so the original "no cache races" property is preserved.
+        ``AIPACS_STATUS_REFRESH_OFFTHREAD=0`` restores the blocking behaviour.
 
         The run is cancelled if a newer refresh supersedes it (token mismatch). Chunk
-        size is ``AIPACS_STATUS_REFRESH_CHUNK`` (default 2)."""
+        size is ``AIPACS_STATUS_REFRESH_CHUNK`` (default 2) for the blocking path and
+        ``AIPACS_STATUS_REFRESH_DISPATCH`` (default 40) for the off-thread one."""
         if token != getattr(self, '_status_refresh_token', 0):
             return  # a newer refresh started; stop this stale chain
         try:
             chunk = max(1, int(os.getenv("AIPACS_STATUS_REFRESH_CHUNK", "2") or "2"))
         except Exception:
             chunk = 2
+        # 2026-08-22: with the verdict computed off-thread a "chunk" is just a
+        # batch of dispatches (microseconds each), so it can be much larger — the
+        # 2-per-tick cadence existed only to bound the BLOCKING disk walk.
+        offthread = self._status_refresh_offthread_enabled()
+        if offthread:
+            try:
+                chunk = max(chunk, int(
+                    os.getenv("AIPACS_STATUS_REFRESH_DISPATCH", "40") or "40"))
+            except Exception:
+                chunk = max(chunk, 40)
         end = min(index + chunk, len(study_uids))
         for i in range(index, end):
             try:
-                self.update_study_download_status(study_uids[i])
+                if not offthread:
+                    self.update_study_download_status(study_uids[i])
+                    continue
+                uid = study_uids[i]
+                cached = self._peek_download_status(uid)
+                if cached is not None:
+                    # Already fresh — pure widget work, no disk.
+                    self.update_study_download_status(uid, status=cached)
+                else:
+                    self._dispatch_download_status_async(uid, token)
             except Exception:
                 pass
         if end < len(study_uids):
@@ -3662,7 +3793,16 @@ class PatientTableWidget(QWidget):
         per-study disk check (``update_study_download_status`` ->
         ``_check_study_download_status`` -> ``check_study_complete``).
 
-        Returns the number of rows re-evaluated (0 on any failure)."""
+        2026-08-22: this ran as ONE synchronous loop over every visible row, and it
+        fires immediately after a storage clear — when the cache has just been
+        emptied, so every row is a miss and pays the full disk walk. That is the
+        same GUI-thread block measured in the chunked refresh (13.1 s peak), on the
+        worst possible occasion. It now goes through the same chunked +
+        off-thread chain; the badges fill in as the worker answers.
+
+        Returns the number of rows SCHEDULED for re-evaluation (0 on any failure).
+        With the off-thread path on, the badges settle shortly after this returns
+        rather than at the moment it returns."""
         try:
             # Force a fresh disk check (the per-study cache is consulted first).
             self._download_status_cache.clear()
@@ -3671,15 +3811,20 @@ class PatientTableWidget(QWidget):
             # (_refresh_local_status_dicom_flag) fall through to a full recompute here,
             # keeping the storage-clear path fully authoritative (not just DICOM).
             self._local_status_cache.clear()
-            count = 0
+            study_uids = []
             for row in range(self.results_table.rowCount()):
                 uid_item = self.results_table.item(row, COL['study_uid'])
-                if uid_item:
-                    study_uid = uid_item.text()
-                    if study_uid:
-                        self.update_study_download_status(study_uid)
-                        count += 1
-            return count
+                if uid_item and uid_item.text():
+                    study_uids.append(uid_item.text())
+            if not study_uids:
+                return 0
+            if os.getenv("AIPACS_STATUS_REFRESH_CHUNKED", "1") != "0":
+                self._status_refresh_token = getattr(self, '_status_refresh_token', 0) + 1
+                self._refresh_statuses_chunked(study_uids, 0, self._status_refresh_token)
+            else:
+                for study_uid in study_uids:
+                    self.update_study_download_status(study_uid)
+            return len(study_uids)
         except Exception as e:
             print(f"Error refreshing local download statuses: {e}")
             return 0
@@ -4623,6 +4768,49 @@ class PatientTableWidget(QWidget):
     _PROGRESSIVE_INITIAL_BATCH = 20
     _PROGRESSIVE_BG_BATCH = 40
     _PROGRESSIVE_BG_DELAY_MS = 50
+    # ── 2026-08-21: keep the streamer off the disk (import-freeze fix) ───────
+    # MEASURED (app.log 2026-08-21 13:50:03–13:50:16, sampled by the main-thread
+    # probe): ONE background batch blocked the GUI thread for 13.0 s. 104 of the
+    # 137 stall samples in that window were innermost in pathlib stat/iterdir,
+    # reached through render_one -> _resolve_renderable_study_path. OPT-50 had
+    # already moved that resolution to a worker, but left an inline fallback for
+    # "rows the worker has not reached yet" — and during an import the worker
+    # (same disk, same directories, now contended by the writer and by AV
+    # scanning of the freshly written DICOM files) cannot outrun the
+    # 40-rows-per-50 ms streamer. Every overtaken row then paid ~325 ms of
+    # blocking disk I/O ON the GUI thread; the bigger the local library, the
+    # more rows fall into that state — exactly the reported symptom.
+    #
+    # Two guards, each independently kill-switchable:
+    #   * back-pressure — when the caller supplies a `ready` predicate, a row the
+    #     worker has not resolved yet ENDS the batch instead of being resolved
+    #     inline. The idle timer re-arms, so the stream simply follows the worker.
+    #   * a per-batch wall-clock budget — even fully-resolved rows build widgets,
+    #     and 40 of them can outlast a frame. The batch stops at the budget and
+    #     resumes on the next tick.
+    # A continuously-deferred stream force-renders ONE row after
+    # _PROGRESSIVE_DEFER_FORCE_MS so the list can never stall permanently if the
+    # resolver future dies.
+    _PROGRESSIVE_BUDGET_MS = 30
+    _PROGRESSIVE_DEFER_FORCE_MS = 4000
+
+    @staticmethod
+    def _progressive_backpressure_enabled() -> bool:
+        import os as _os
+        return _os.environ.get("AIPACS_LIST_STREAM_BACKPRESSURE", "").strip().lower() not in (
+            "0", "false", "off",
+        )
+
+    @classmethod
+    def _progressive_budget_ms(cls) -> float:
+        import os as _os
+        raw = _os.environ.get("AIPACS_LIST_STREAM_BUDGET_MS", "").strip()
+        if raw:
+            try:
+                return max(0.0, float(raw))
+            except ValueError:
+                pass
+        return float(cls._PROGRESSIVE_BUDGET_MS)
 
     @staticmethod
     def _progressive_bg_enabled() -> bool:
@@ -4631,13 +4819,30 @@ class PatientTableWidget(QWidget):
             "0", "false", "off",
         )
 
-    def load_progressive(self, items, render_one, batch_size=None, initial_batch=None):
+    def load_progressive(self, items, render_one, batch_size=None, initial_batch=None,
+                         ready=None):
         """Render ``items`` incrementally. ``render_one(item)`` renders one row
         (returns True if a row was added). Renders a SMALL first batch now (fast
         first paint), then streams the rest in the background on an idle timer and
-        on scroll-near-end. Replaces any prior progressive buffer."""
+        on scroll-near-end. Replaces any prior progressive buffer.
+
+        ``ready`` (optional): ``ready(item) -> bool``, "this row can be rendered
+        without touching the disk". When supplied, a row that is not ready ends
+        the current batch instead of being rendered — the stream then follows the
+        background resolver rather than doing its disk work on the GUI thread.
+        Omit it (or set AIPACS_LIST_STREAM_BACKPRESSURE=0) for the pre-2026-08-21
+        behaviour.
+        """
         self._prog_items = list(items or [])
         self._prog_render_one = render_one
+        # Resolved defensively: several test harnesses drive this streamer from a
+        # partial stub of the widget, and a missing gate must degrade to the
+        # pre-2026-08-21 behaviour rather than raise.
+        _bp_gate = getattr(self, '_progressive_backpressure_enabled', None)
+        self._prog_ready = ready if (ready is not None and
+                                     (_bp_gate is None or _bp_gate())) else None
+        self._prog_defer_since = None
+        self._prog_defer_forced = 0
         self._prog_batch = int(batch_size or self._PROGRESSIVE_BG_BATCH)
         self._prog_initial = int(initial_batch or self._PROGRESSIVE_INITIAL_BATCH)
         self._prog_cursor = 0
@@ -4675,21 +4880,75 @@ class PatientTableWidget(QWidget):
         if n <= 0:
             n = self._PROGRESSIVE_BG_BATCH
         self._prog_loading = True
+        # Local import (not the module-level `time`) so this method stays
+        # self-contained for the source-exec'd guards in
+        # tests/code/system/test_local_search_progressive.py, which run this
+        # block against stubs with a bare namespace.
+        import time as _t
         try:
             end = min(cursor + n, total)
+            ready = getattr(self, '_prog_ready', None)
+            _budget_fn = getattr(self, '_progressive_budget_ms', None)
+            budget_ms = float(_budget_fn()) if _budget_fn is not None else 0.0
+            force_ms = float(getattr(self, '_PROGRESSIVE_DEFER_FORCE_MS', 4000))
+            t0 = _t.monotonic()
+            rendered = 0
             self.begin_bulk_insert()
             try:
                 for idx in range(cursor, end):
+                    # ── back-pressure: never resolve a row's on-disk path on the
+                    # GUI thread. A row the background resolver has not reached
+                    # yet ends the batch; the idle timer re-arms and the stream
+                    # simply follows the worker.
+                    if ready is not None and not self._prog_row_ready(ready, items[idx]):
+                        now = _t.monotonic()
+                        if getattr(self, '_prog_defer_since', None) is None:
+                            self._prog_defer_since = now
+                        if (now - self._prog_defer_since) * 1000.0 < force_ms:
+                            end = idx
+                            break
+                        # Deferred for too long — the resolver may be gone. Force
+                        # exactly ONE row (which pays the inline resolve) so the
+                        # list can never stall permanently, then yield.
+                        self._prog_defer_forced = int(
+                            getattr(self, '_prog_defer_forced', 0) or 0) + 1
+                        try:
+                            render_one(items[idx])
+                            rendered += 1
+                        except Exception:
+                            pass
+                        self._prog_defer_since = now
+                        end = idx + 1
+                        break
+                    self._prog_defer_since = None
                     try:
                         render_one(items[idx])
+                        rendered += 1
                     except Exception:
                         pass
+                    # ── per-batch wall-clock budget: stop mid-batch rather than
+                    # outlast a frame; the next tick continues where we stopped.
+                    if budget_ms > 0.0 and (_t.monotonic() - t0) * 1000.0 >= budget_ms:
+                        end = idx + 1
+                        break
             finally:
                 self.end_bulk_insert()
             self._prog_cursor = end
-            self._update_progressive_count_label()
+            # A batch that rendered nothing (pure back-pressure wait) must not
+            # rebuild the count label — that would run at the timer's 20 Hz for
+            # no visible change.
+            if rendered:
+                self._update_progressive_count_label()
         finally:
             self._prog_loading = False
+
+    @staticmethod
+    def _prog_row_ready(ready, item) -> bool:
+        """Never let a caller-supplied predicate break the stream."""
+        try:
+            return bool(ready(item))
+        except Exception:
+            return True
 
     def _schedule_progressive_background(self):
         """Arm an idle-timer step to render the next background batch, unless the

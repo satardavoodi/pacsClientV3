@@ -45,9 +45,134 @@ _PALETTE_ON_MONO = _flag("AIPACS_DICOM_PALETTE_ON_MONO")
 _RED_PALETTE_DESC = 0x00281101   # Red Palette Colour LUT Descriptor
 _RED_PALETTE_DATA = 0x00281201   # Red Palette Colour LUT Data
 
+# ── 2026-08-21: multi-sample (SamplesPerPixel >= 3) colour correctness ────────
+# Two independent defects, both reproduced on the ALPINION E-CUBE i7 breast US
+# study 1.2.410.114480.3.2.503247.20260707080007251.1 (45 instances):
+#
+#   1. 39 of its 45 instances declare PhotometricInterpretation YBR_FULL_422 but
+#      ship FULL, non-subsampled pixel data (len(PixelData) == R*C*3, not
+#      R*C*2). pydicom 2.4.5 warns about this and then applies the 4:2:2 -> 4:4:4
+#      resample ANYWAY (numpy_handler.get_pixeldata), reading with stride 4 from
+#      a period-3 interleave after truncating the buffer to 2/3. Every output
+#      sample becomes a rotating mix of Y/Cb/Cr from neighbouring pixels ->
+#      coloured static. MEASURED row-to-row correlation: -0.36 (noise) vs 0.93
+#      once the bogus expansion is skipped.
+#
+#   2. Even with correct geometry the FAST pipeline painted the raw samples as
+#      RGB (`samples_per_pixel >= 3` branch), so a YBR frame rendered with a
+#      heavy cyan cast (Cb/Cr ~128 landing in the G/B channels).
+#
+# `normalize_ybr_subsampling` fixes (1) BEFORE pixel data is touched;
+# `ybr_samples_to_rgb` fixes (2) AFTER decode. Both are no-ops for grayscale and
+# for true RGB, and both are individually kill-switchable.
+_YBR422_FIX = _flag("AIPACS_DICOM_YBR422_FIX")
+_YBR_TO_RGB = _flag("AIPACS_DICOM_YBR_TO_RGB")
+
 
 def color_enabled() -> bool:
     return _COLOR_ENABLED
+
+
+def ybr422_fix_enabled() -> bool:
+    return _YBR422_FIX
+
+
+def ybr_to_rgb_enabled() -> bool:
+    return _YBR_TO_RGB
+
+
+def _uncompressed(ds) -> bool:
+    """True when the dataset's transfer syntax stores native (unencapsulated) pixels."""
+    try:
+        from pydicom.uid import UID
+        ts = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
+        if ts is None:
+            return True                      # no file meta -> raw little endian
+        return not UID(str(ts)).is_compressed
+    except Exception:
+        return False
+
+
+def normalize_ybr_subsampling(ds) -> bool:
+    """Repair a dataset that claims YBR_FULL_422 but carries full-rate samples.
+
+    Must be called BEFORE ``ds.pixel_array``: pydicom caches the decoded array,
+    and it is the decode itself that mis-resamples.  Mutates ``ds`` in memory
+    only (nothing is written back to the file).  Returns True when the
+    photometric interpretation was corrected.
+
+    Deliberately narrow — every one of these must hold, so a genuinely
+    subsampled 4:2:2 image is never touched:
+      * colour handling and the fix are enabled
+      * the transfer syntax is uncompressed (for encapsulated data the codec
+        owns subsampling, not the tag)
+      * PhotometricInterpretation is exactly YBR_FULL_422
+      * SamplesPerPixel == 3 and BitsAllocated == 8
+      * len(PixelData) covers the FULL R*C*3*frames, i.e. nothing was subsampled
+    """
+    if not (_COLOR_ENABLED and _YBR422_FIX):
+        return False
+    try:
+        if str(getattr(ds, "PhotometricInterpretation", "") or "").upper().strip() \
+                != "YBR_FULL_422":
+            return False
+        if int(getattr(ds, "SamplesPerPixel", 1) or 1) != 3:
+            return False
+        if int(getattr(ds, "BitsAllocated", 8) or 8) != 8:
+            return False
+        if not _uncompressed(ds):
+            return False
+        if "PixelData" not in ds:
+            return False
+        rows = int(getattr(ds, "Rows", 0) or 0)
+        cols = int(getattr(ds, "Columns", 0) or 0)
+        if rows <= 0 or cols <= 0:
+            return False
+        try:
+            frames = max(1, int(getattr(ds, "NumberOfFrames", 1) or 1))
+        except Exception:
+            frames = 1
+        raw = ds["PixelData"].value
+        if not isinstance(raw, (bytes, bytearray)):
+            return False
+        if len(raw) < rows * cols * 3 * frames:
+            return False                     # genuinely subsampled -> leave alone
+        ds.PhotometricInterpretation = "YBR_FULL"
+        logger.info(
+            "[DICOM_COLOR] YBR_FULL_422 mislabel corrected -> YBR_FULL "
+            "(%dx%d frames=%d pixel_bytes=%d)", rows, cols, frames, len(raw),
+        )
+        return True
+    except Exception as exc:                  # pragma: no cover - never break decode
+        logger.debug("[DICOM_COLOR] ybr422 normalize skipped: %s", exc)
+        return False
+
+
+def ybr_samples_to_rgb(ds, arr):
+    """Convert a decoded multi-sample YBR frame to RGB; pass anything else through.
+
+    Call AFTER ``ds.pixel_array``.  pydicom rewrites
+    ``ds.PhotometricInterpretation`` to ``RGB`` when a decoding handler already
+    performed the colour conversion (the Pillow/GDCM JPEG paths do), so reading
+    the tag *after* the decode is what tells us whether a conversion is still
+    owed — that keeps compressed colour images from being converted twice.
+    """
+    if not (_COLOR_ENABLED and _YBR_TO_RGB):
+        return arr
+    try:
+        a = np.asarray(arr)
+        if a.ndim < 3 or a.shape[-1] != 3:
+            return arr
+        photometric = str(getattr(ds, "PhotometricInterpretation", "") or "").upper().strip()
+        if "YBR" not in photometric:
+            return arr
+        from pydicom.pixel_data_handlers.util import convert_color_space
+        out = convert_color_space(a, photometric, "RGB")
+        return np.ascontiguousarray(np.clip(out, 0, 255).astype(np.uint8))
+    except Exception as exc:                  # pragma: no cover - never break decode
+        logger.warning("[DICOM_COLOR] YBR->RGB convert failed: %s; "
+                       "rendering raw samples", exc)
+        return arr
 
 
 def has_embedded_palette(ds) -> bool:

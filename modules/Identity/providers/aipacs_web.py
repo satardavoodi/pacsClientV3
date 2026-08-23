@@ -73,9 +73,119 @@ def aipacs_web_configured() -> bool:
     return bool(cfg.get("enabled") and cfg.get("base_url"))
 
 
+def save_aipacs_web_config(base_url: str, enabled: bool = True) -> bool:
+    """Persist ``{base_url, enabled}`` to ``config/identity/aipacs_web.json``.
+
+    Settings-tab writer companion to :func:`load_aipacs_web_config` — until now
+    this file could only be created by hand (the provider's ``is_available``
+    message literally told users to edit JSON). Merges into the existing file
+    so unknown keys survive; the ``AIPACS_WEB_BASE_URL`` env override still
+    wins at read time. Returns False instead of raising.
+    """
+    try:
+        path = aipacs_web_config_path()
+        payload: dict[str, Any] = {}
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    payload = data
+        except Exception:  # unreadable file: rewrite it cleanly
+            payload = {}
+        payload["base_url"] = (base_url or "").strip().rstrip("/")
+        payload["enabled"] = bool(enabled)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        return True
+    except Exception as exc:  # pragma: no cover - disk/permission problems
+        logger.warning("aipacs_web config write failed: %s", exc)
+        return False
+
+
+def aipacs_web_env_override() -> str:
+    """The env var name forcing the base URL, or "" (Settings-tab warning)."""
+    return _ENV_BASE_URL if (os.environ.get(_ENV_BASE_URL) or "").strip() else ""
+
+
+# ── the THREE addresses, and why they are not one ────────────────────────────
+# ai-pacs.com serves ONE Laravel app through TWO web-server mounts, and they own
+# different URL spaces (verified 2026-08-20 against the deployment):
+#
+#   API + forms/chat mount   https://ai-pacs.com/consult-form
+#       …/api/v1/*           every call this client makes (base_url above)
+#       …/forms-panel/*      staff login, chat console, visitors, Drive, greetings
+#   Consultation portal      https://ai-pacs.com/ai-pacs-consultation
+#       login, dashboard, consultations, consultants, profile, library, sharing,
+#       admin
+#
+# They are NOT nested: the portal mount 404s `api` and `forms-panel`, and the
+# consult-form mount 404s `ai-pacs-consultation` (both by .htaccess rule). So the
+# portal address CANNOT be produced by appending to base_url — it is derived from
+# the same host, or set explicitly with a ``portal_url`` key in aipacs_web.json
+# for a deployment that puts the portal somewhere else.
+PORTAL_PATH = "/ai-pacs-consultation"
+STAFF_PANEL_PATH = "/forms-panel"
+
+
+def portal_url() -> str:
+    """Human-facing AI-PACS Consultation portal root, or "" if unknown.
+
+    Where consultants, the education library, sharing and the consultant's own
+    profile live. Explicit ``portal_url`` in the config wins; otherwise the
+    scheme+host of ``base_url`` plus :data:`PORTAL_PATH`. Never raises.
+    """
+    try:
+        data: dict[str, Any] = {}
+        path = aipacs_web_config_path()
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        explicit = str(data.get("portal_url") or "").strip().rstrip("/")
+        if explicit:
+            return explicit
+        base = str(load_aipacs_web_config().get("base_url") or "").strip()
+        if not base:
+            return ""
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(base)
+        if not parts.scheme or not parts.netloc:
+            return ""
+        return f"{parts.scheme}://{parts.netloc}{PORTAL_PATH}"
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("portal url resolution failed: %s", exc)
+        return ""
+
+
+def staff_panel_url() -> str:
+    """Staff (forms + chat) panel root, or "".
+
+    This one IS under ``base_url`` — the panel and the API share a mount.
+    """
+    base = str(load_aipacs_web_config().get("base_url") or "").strip().rstrip("/")
+    return f"{base}{STAFF_PANEL_PATH}" if base else ""
+
+
 # ── errors ─────────────────────────────────────────────────────────────────────
 class AipacsWebError(RuntimeError):
-    """Clean, user-presentable error from the AI-PACS web API client."""
+    """Clean, user-presentable error from the AI-PACS web API client.
+
+    ``status_code`` carries the HTTP status when there was one, and ``None``
+    when the request never reached a response (DNS, refused connection,
+    timeout) or when the failure was local.
+
+    WHY IT EXISTS. A 401 used to be distinguishable from every other failure
+    only by matching the message string, which is fine for a dialog that shows
+    the message and wrong for a long-lived polling client: "the token is dead,
+    discard it and ask the operator to sign in again" and "the wifi dropped,
+    back off and retry" are opposite responses, and a poller cannot tell them
+    apart from prose. Additive — every existing caller ignores it.
+    """
+
+    def __init__(self, message: str = "", *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _extract_error(resp) -> str:
@@ -367,7 +477,8 @@ class AipacsWebClient:
         return self._session
 
     def _request(self, method: str, path: str, *, json_body: dict | None = None,
-                 params: dict | None = None) -> Any:
+                 params: dict | None = None, data=None, files=None,
+                 timeout: int | None = None) -> Any:
         from modules.Identity.thread_guard import assert_off_gui_thread
 
         assert_off_gui_thread(f"aipacs_web {method} {path}")
@@ -378,24 +489,71 @@ class AipacsWebClient:
             "Authorization": f"Bearer {self._token}",
             "Accept": "application/json",
         }
+        # A multipart body and a JSON body are mutually exclusive: a request
+        # carrying both would send the JSON and silently drop the files.
+        # ``Content-Type`` is left to requests, which has to generate the
+        # multipart boundary itself.
+        #
+        # ``data``/``files`` are added to the call ONLY when there is something
+        # to send, so a JSON request is passed exactly the arguments it always
+        # was — the multipart feature cannot change the shape of a call that
+        # does not use it.
+        extra: dict[str, Any] = {}
+        if files is not None:
+            extra["files"] = files
+        if data is not None:
+            extra["data"] = data
+
         try:
             resp = session.request(
-                method, url, json=json_body, params=params,
-                headers=headers, timeout=self._timeout,
+                method, url,
+                json=None if files is not None else json_body,
+                params=params, headers=headers,
+                timeout=timeout or self._timeout,
+                **extra,
             )
         except Exception as exc:
+            # No status: the request never reached a response.
             raise AipacsWebError(f"Could not reach the consultation server: {exc}")
         status = getattr(resp, "status_code", 0)
         if status == 401:
             raise AipacsWebError(
-                "Your AI-PACS Consultation session expired — sign in again."
+                "Your AI-PACS Consultation session expired — sign in again.",
+                status_code=401,
             )
         if status not in (200, 201):
-            raise AipacsWebError(_extract_error(resp))
+            raise AipacsWebError(_extract_error(resp), status_code=status or None)
         try:
             return resp.json()
         except Exception:
-            raise AipacsWebError("Unexpected response from the consultation server.")
+            raise AipacsWebError(
+                "Unexpected response from the consultation server.", status_code=status
+            )
+
+    def request_json(self, method: str, path: str, *, json_body: dict | None = None,
+                     params=None, data=None, files=None,
+                     timeout: int | None = None) -> Any:
+        """The same request path, for modules that add their own endpoints.
+
+        A public door onto ``_request`` so a module like AiPacs Chat can call
+        ``/chat/*`` without either reaching into a private method or building a
+        second client — which would mean a second copy of the bearer header,
+        the thread guard, the 401 handling and the error extraction, and one of
+        the copies would drift.
+
+        ``params`` accepts a list of (key, value) PAIRS as well as a dict,
+        because the chat filters post repeated keys (``attn[]`` twice) and a
+        dict cannot hold those.
+
+        ``data``/``files`` send a multipart body instead of JSON — chat
+        attachments, which Laravel reads with ``$request->file('files.0')``.
+        ``timeout`` overrides the client default for those: the JSON default is
+        sized for a poll, and a 20 MB upload on a clinic's ADSL line is not.
+        """
+        return self._request(
+            method, path, json_body=json_body, params=params,
+            data=data, files=files, timeout=timeout,
+        )
 
     @staticmethod
     def _rows(data: Any) -> list[dict]:

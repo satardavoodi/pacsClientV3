@@ -181,6 +181,25 @@ def _decode_worker(
             )
         else:
             file_meta.TransferSyntaxUID = ExplicitVRBigEndian
+
+    # 2026-08-21 (colour): repair a mislabelled YBR_FULL_422 header BEFORE the
+    # pixel data is touched — pydicom applies the 4:2:2 resample during decode
+    # and caches the (scrambled) result, so this cannot be done afterwards.
+    # No-op for grayscale, for true RGB, and for genuinely subsampled frames.
+    try:
+        from modules.viewer.fast.dicom_color import (
+            normalize_ybr_subsampling as _norm_ybr,
+            ybr_samples_to_rgb as _ybr_rgb,
+        )
+    except Exception:                        # pragma: no cover - defensive
+        _norm_ybr = None
+        _ybr_rgb = None
+    if _norm_ybr is not None:
+        try:
+            _norm_ybr(ds)
+        except Exception:
+            pass
+
     try:
         arr = _np.asarray(ds.pixel_array)
     except Exception as exc:
@@ -199,6 +218,12 @@ def _decode_worker(
             arr = arr[0]
         if arr.dtype != _np.uint8:
             arr = _np.clip(arr, 0, 255).astype(_np.uint8)
+        # 2026-08-21 (colour): a YBR frame must be converted before it is painted
+        # as RGB. No-op when the photometric is already RGB, or when a decoding
+        # handler (Pillow/GDCM JPEG) has already done the conversion — pydicom
+        # rewrites the tag to RGB in that case.
+        if _ybr_rgb is not None:
+            arr = _ybr_rgb(ds, arr)
         return _np.ascontiguousarray(arr)
 
     # ── Rescale slope/intercept ──

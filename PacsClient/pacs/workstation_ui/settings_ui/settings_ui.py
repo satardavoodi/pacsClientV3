@@ -41,6 +41,7 @@ class SettingsTabWidget(QTabWidget):
         self.echomind_settings = None
         self.installation_module_settings = None
         self.agent_settings = None
+        self.consultation_education_settings = None
 
         self._tab_creators = {}    # tab index -> zero-arg builder callable
         self._tab_containers = {}  # tab index -> container QWidget
@@ -51,6 +52,12 @@ class SettingsTabWidget(QTabWidget):
         self._add_lazy_tab('Image Filter', self._create_image_filter)
         self._add_lazy_tab('Installation & Updates', self._create_installation_settings)
         self._add_lazy_tab('Agent', self._create_agent_settings)
+        # Always present (not module-gated): this tab is where the identity /
+        # consultation / education gates themselves are viewed and enabled, so
+        # hiding it behind those same gates would be circular. Sections degrade
+        # to "not available in this build" when a module is absent.
+        self._add_lazy_tab('Consultation & Education',
+                           self._create_consultation_education_settings)
 
         if is_module_enabled("run_cd"):
             self._add_lazy_tab('Light Viewer', self._create_lightviewer_settings)
@@ -128,6 +135,14 @@ class SettingsTabWidget(QTabWidget):
 
         self.agent_settings = AgentSettingsWidget()
         return self.agent_settings
+
+    def _create_consultation_education_settings(self):
+        from .consultation_education_settings import (
+            ConsultationEducationSettingsWidget,
+        )
+
+        self.consultation_education_settings = ConsultationEducationSettingsWidget()
+        return self.consultation_education_settings
 
     def _create_lightviewer_settings(self):
         from .lightviewer_settings import LightViewerSettingsWidget

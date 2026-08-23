@@ -4,10 +4,22 @@ MPR Layout Mixin — expand/collapse, event filter, toolbar tools, cleanup.
 Extracted from standard_mpr_viewer.py (Phase 5A refactoring).
 """
 import logging
+import os
 
 from PySide6.QtCore import Qt, QPoint
 
 logger = logging.getLogger(__name__)
+
+
+def _active_view_noop_guard() -> bool:
+    """AIPACS_MPR_ACTIVE_VIEW_NOOP_GUARD default ON; '0' restores the legacy
+    unconditional 4-container restyle on every `_set_active_view` call.
+
+    See `_set_active_view` for why that restyle is expensive: a container
+    stylesheet change re-polishes the QVTKRenderWindowInteractor child, whose
+    paintEvent is a full VTK Render().
+    """
+    return (os.getenv("AIPACS_MPR_ACTIVE_VIEW_NOOP_GUARD", "1") or "1").strip() != "0"
 
 
 class _MprLayoutMixin:
@@ -331,16 +343,45 @@ class _MprLayoutMixin:
         return True
 
     def _set_active_view(self, view_name):
-        """Set the active view for toolbar actions and show selection highlight."""
+        """Set the active view for toolbar actions and show selection highlight.
+
+        NO-OP FAST PATH (2026-08-23) — this is a latency fix, not cosmetics.
+        Every press and every wheel notch calls this TWICE: once from the Qt
+        event filter (`eventFilter`, which sees the event first) and again from
+        the interactor style's own handler. Each call ran
+        `_update_view_highlights`, and `QWidget.setStyleSheet` on a view
+        CONTAINER forces Qt to re-polish its whole subtree — including the
+        `QVTKRenderWindowInteractor` child, whose `paintEvent` is a full
+        `Render()`. So a redundant re-set of the same view queued an extra
+        ray-cast of the 3D pane between the button press and the first rotate
+        frame: exactly the "small initial delay before rotation begins".
+        Re-setting the view that is already active cannot change any highlight,
+        so return before touching a stylesheet. Kill switch
+        AIPACS_MPR_ACTIVE_VIEW_NOOP_GUARD=0 restores the unconditional restyle.
+        """
         if view_name not in self._view_containers:
             return
+        if view_name == getattr(self, '_active_view_name', None) and _active_view_noop_guard():
+            return
+        previous = getattr(self, '_active_view_name', None)
         self._active_view_name = view_name
         if view_name in ['axial', 'sagittal', 'coronal']:
             self.active_measurement_viewport = view_name
-        self._update_view_highlights()
+        self._update_view_highlights(changed_only=(previous, view_name))
 
-    def _update_view_highlights(self):
-        for name, container in self._view_containers.items():
+    def _update_view_highlights(self, changed_only=None):
+        """Repaint the selection borders.
+
+        ``changed_only`` restricts the restyle to the (previous, new) pair when
+        the caller knows nothing else can have changed — 2 subtree re-polishes
+        instead of 4. Called with no argument (e.g. from `_register_view`) it
+        styles every container, which a newly added pane needs.
+        """
+        names = self._view_containers.keys()
+        if changed_only is not None and _active_view_noop_guard():
+            names = [n for n in changed_only if n in self._view_containers]
+        for name in names:
+            container = self._view_containers[name]
             if name == self._active_view_name:
                 container.setStyleSheet(self._active_view_style)
             else:
@@ -356,6 +397,31 @@ class _MprLayoutMixin:
         """Update slice info text overlays in viewports"""
         # Slice info is shown in VTK text actors (created in _create_slice_info_text)
         pass
+
+    def closeEvent(self, event):  # noqa: N802 (Qt override)
+        """Release VTK resources when the viewer is explicitly closed.
+
+        2026-08-19. `cleanup()` used to be reachable ONLY from the toolbar's
+        MPR toggle, so `close()` on the widget released nothing. Note this
+        hook alone is NOT sufficient — Qt does not call `closeEvent` when a
+        parent is destroyed or when a widget is re-parented away, which is how
+        the real leaks happened (patient-tab close, layout change). Those are
+        covered by `_mpr_lifecycle.release_mpr_children`, called by the owners.
+        This is the explicit-close half of the same contract.
+
+        `cleanup()` is idempotent, so a close after a toolbar toggle is a
+        cheap no-op rather than a double teardown.
+        """
+        try:
+            if not getattr(self, "_mpr_closed", False):
+                self.cleanup()
+        except Exception:
+            logger.warning("[MPR-LIFECYCLE] closeEvent teardown failed",
+                           exc_info=True)
+        try:
+            super().closeEvent(event)
+        except Exception:
+            pass
 
     def cleanup(self):
         """Cleanup"""
@@ -374,6 +440,20 @@ class _MprLayoutMixin:
         # bails instead of building into a finalizing widget (the callback also
         # swallows the deleted-object RuntimeError as a second layer).
         self._deferred_3d_pending = False
+
+        # 2026-08-19: record RSS on the way in and out. Without this, "did the
+        # cache free?" needed a four-log reconstruction (the MPR timings are in
+        # viewer_diagnostics.log, the close path logs to app.log, and neither
+        # carried a single memory number). See _mpr_lifecycle.mpr_memory_probe.
+        # Deliberately placed AFTER the two stop-accepting flags above: those
+        # are safety-critical and must be the first thing cleanup() does, and
+        # diagnostics must never be able to delay them.
+        _rss_before = None
+        try:
+            from ._mpr_lifecycle import mpr_memory_probe as _probe
+            _rss_before = _probe("cleanup_begin")
+        except Exception:
+            _probe = None
 
         # Stop auto-rotation timer
         if hasattr(self, 'auto_rotation_timer') and self.auto_rotation_timer:
@@ -560,3 +640,17 @@ class _MprLayoutMixin:
                         pass
                 except Exception:
                     pass
+
+        # Close the measurement: how much did this teardown actually give back?
+        try:
+            if _probe is not None:
+                _rss_after = _probe("cleanup_end")
+                if _rss_before is not None and _rss_after is not None:
+                    logger.info(
+                        "[MPR-MEM] phase=cleanup_delta freed_mb=%.1f "
+                        "rss_before_mb=%.1f rss_after_mb=%.1f full_teardown=%s",
+                        _rss_before - _rss_after, _rss_before, _rss_after,
+                        _full_teardown,
+                    )
+        except Exception:
+            pass

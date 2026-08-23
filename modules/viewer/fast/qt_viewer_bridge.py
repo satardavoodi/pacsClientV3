@@ -781,10 +781,65 @@ class QtViewerBridge:
             # Wire pixel data access so ROI tools can compute statistics
             ctrl._pixel_data_fn = self.pipeline.get_pixel_array
             ctrl._pixel_spacing_fn = lambda idx: self.pipeline.get_slice_meta(idx).pixel_spacing
+            # 2026-08-18: the TEXT tool used to stamp the literal word "Text"
+            # because nothing ever asked the user what to write.  The prompt
+            # lives HERE (the Qt layer) and not in the controller, which is
+            # deliberately Qt-free.  See _prompt_annotation_text below and
+            # docs/reports/TEXT_ANNOTATION_INPUT_2026-08-18.md
+            ctrl._text_prompt_fn = self._prompt_annotation_text
             self.qt_viewer.tool_controller = ctrl
             self._bind_tool_store_for_series(self.metadata)
         except Exception as exc:
             logger.debug("ToolController init skipped: %s", exc)
+
+    def _prompt_annotation_text(self) -> Optional[str]:
+        """Ask the user what to write on the image.
+
+        Returns the typed string, or ``None`` when the user cancels (the
+        controller treats ``None`` as "place nothing and stay armed").
+
+        Contract notes:
+
+        * ``QInputDialog`` is imported lazily so importing this module stays
+          as cheap as it is today — the widget import is only paid the first
+          time somebody actually places a text annotation.
+        * Modal dialogs re-enter the Qt event loop, so a second mouse press
+          delivered while the dialog is up could call this again and stack a
+          second dialog.  ``_text_prompt_open`` blocks that; the re-entrant
+          call is reported as a cancel.
+        * This must never raise: the controller treats an exception as "do
+          not stamp anything", which is safe, but a traceback out of a mouse
+          press would be noise in the log for no benefit.
+        """
+        if getattr(self, "_text_prompt_open", False):
+            return None
+        try:
+            from PySide6.QtWidgets import QInputDialog, QLineEdit
+        except Exception:
+            logger.debug("Text annotation prompt unavailable (no QtWidgets)", exc_info=True)
+            return None
+
+        parent = self.qt_viewer if isinstance(self.qt_viewer, QtSliceViewer) else None
+        self._text_prompt_open = True
+        try:
+            # Same title/label as the Advanced (VTK) backend's
+            # TextInteractorStyle.on_left_button_press, so the two viewers
+            # ask the same question in the same words.
+            text, ok = QInputDialog.getText(
+                parent,
+                "Enter Text",
+                "Text:",
+                QLineEdit.Normal,
+                "",
+            )
+        except Exception:
+            logger.debug("Text annotation prompt failed", exc_info=True)
+            return None
+        finally:
+            self._text_prompt_open = False
+        if not ok:
+            return None
+        return text
 
     def _series_annotation_key(self, metadata: Optional[Dict[str, Any]] = None) -> str:
         meta = metadata if isinstance(metadata, dict) else self.metadata

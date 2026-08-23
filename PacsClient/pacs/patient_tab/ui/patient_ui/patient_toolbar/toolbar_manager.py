@@ -2566,6 +2566,9 @@ class ToolbarManager:
         print(f"  is_vtk_widget: {self.is_vtk_widget(selected_widget)}")
         print(f"  current tool_selected: {self.tool_selected}")
         
+        if self._tool_unavailable_in_mpr(selected_widget, "Two-Line Angle"):
+            return
+
         # Normal VTKWidget mode
         if not self.is_vtk_widget(selected_widget):
             print("  ❌ Not VTK widget, returning")
@@ -2621,6 +2624,13 @@ class ToolbarManager:
                     if success:
                         self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ARROW}'
                         print("✓ Arrow tool activated in MPR on all 2D views")
+                # The toolbar button must reflect the new state (2026-08-23).
+                # Ruler and Angle both do this; Arrow did not, so the button
+                # stayed unchecked after a successful activation — the user
+                # clicked again, which took the `is_arrow_active` branch above
+                # and DEACTIVATED the tool. From the desk that reads as "the
+                # arrow tool doesn't work in MPR".
+                self.handle_buttons_checked()
             return
 
         # Normal VTKWidget mode - NO can_use_tool check
@@ -2644,6 +2654,29 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_text(self, selected_widget):
+        # MPR mode (wired 2026-08-23). The MPR caption tool has existed since
+        # the measurement-tools refactor (`activate_caption`, a text box with a
+        # leader line, placed on all three 2D panes) but nothing ever called it
+        # — so picking Text while MPR was open fell through to
+        # `check_and_deactivate_tools()`, which CLOSED MPR and dropped the user
+        # back to the 2D image. That is the reported "annotation tools exit
+        # MPR". Same shape as toggle_ruler / toggle_angle.
+        if self.is_mpr_viewer(selected_widget):
+            mpr_widget = self.get_mpr_widget(selected_widget)
+            if mpr_widget:
+                is_text_active = self.tool_selected and self.tool_access.TEXT in str(self.tool_selected)
+                if is_text_active:
+                    self.tool_selected = self.tool_access.MPR
+                    mpr_widget.deactivate_tool()
+                else:
+                    if self.tool_selected != self.tool_access.MPR:
+                        self.check_and_deactivate_tools()
+                    self._register_mpr_tool_auto_exit(mpr_widget)
+                    if mpr_widget.activate_caption():
+                        self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.TEXT}'
+                self.handle_buttons_checked()
+            return
+
         # Check if tool can be used on this widget
         if not self.can_use_tool(selected_widget):
             return
@@ -4206,6 +4239,8 @@ class ToolbarManager:
         if selected_widget is None:
             print("⚠️ toggle_roi: selected_widget is None, ignoring")
             return
+        if self._tool_unavailable_in_mpr(selected_widget, "ROI"):
+            return
         
         if self.tool_selected == self.tool_access.ROI:  # deactivate tool
             selected_widget.current_style.deactivate()
@@ -4226,6 +4261,8 @@ class ToolbarManager:
     def toggle_circle_roi(self, selected_widget):
         if selected_widget is None:
             print("⚠️ toggle_circle_roi: selected_widget is None, ignoring")
+            return
+        if self._tool_unavailable_in_mpr(selected_widget, "Circle ROI"):
             return
         
         if self.tool_selected == self.tool_access.CIRCLE_ROI:  # deactivate tool
@@ -4258,6 +4295,8 @@ class ToolbarManager:
         if selected_widget is None:
             print("No widget selected.") #Debugging statement
             return  # Exit if no widget is selected
+        if self._tool_unavailable_in_mpr(selected_widget, "AI Chat"):
+            return
 
 
         if self.tool_selected == self.tool_access.AI_CHAT:  # deactivate tool
@@ -5673,7 +5712,13 @@ class ToolbarManager:
                 # OPT-48 Phase 2: hoist the L/R (X) flip onto a worker thread.
                 # Geometry-identical (same build_lr_flipped_volume the viewer
                 # would run inline); None → the viewer flips inline as before.
-                _pre_flipped = self._prepare_mpr_flip_offthread(vtk_image_data)
+                # Hand our live modal through so the flip step does NOT stack a
+                # second dialog on top of it (2026-08-23) — see
+                # _prepare_mpr_flip_offthread. `_build_dlg` is None when the
+                # build-progress dialog was not shown (small volume / flag off),
+                # in which case the helper creates and owns its own as before.
+                _pre_flipped = self._prepare_mpr_flip_offthread(
+                    vtk_image_data, existing_dlg=_build_dlg)
                 try:
                     zeta_widget = StandardMPRViewer(
                         vtk_image_data=vtk_image_data,
@@ -5871,7 +5916,10 @@ class ToolbarManager:
         # Otherwise, open Curve MPR (toggle ON)
         try:
             logger.info("🚀 [MPR OPEN] Opening Curve MPR (toggle ON)")
-            self.check_and_deactivate_tools()
+            # close_mpr=True: Curve MPR needs the grid cell that Zeta MPR is
+            # occupying, so this is one of the few callers that legitimately
+            # tears an open MPR down. Ordinary tool selection does not.
+            self.check_and_deactivate_tools(close_mpr=True)
             
             selected_widget = self.patient_widget.selected_widget
             
@@ -6711,8 +6759,10 @@ class ToolbarManager:
                 "Tip: Works for vessel straightening, airway visualization, dental panoramic view"
             )
 
-            self.check_and_deactivate_tools()
-            
+            # close_mpr=True: curved MPR takes over the same cell — see
+            # toggle_new_curve_mpr for the same reasoning.
+            self.check_and_deactivate_tools(close_mpr=True)
+
             # Actually enable curved MPR mode in viewer
             selected_widget.image_viewer.enable_curved_mpr_mode(True)
             
@@ -7251,8 +7301,18 @@ class ToolbarManager:
             return load_vtk_from_dicom_paths(dcm_files)
 
 
-    def _prepare_mpr_flip_offthread(self, vtk_image_data, label="Preparing MPR volume…"):
+    def _prepare_mpr_flip_offthread(self, vtk_image_data, label="Preparing MPR volume…",
+                                    existing_dlg=None):
         """OPT-48 Phase 2: compute the MPR left-right (X) flip OFF the GUI thread.
+
+        ``existing_dlg`` (2026-08-23): a progress dialog the CALLER already has on
+        screen. This helper runs from inside the MPR build, which has already
+        shown its own "Preparing MPR views…" modal — so creating a second one
+        stacked a differently-sized dialog on top of the first, restarted the
+        marquee from phase 0, and then revealed the first again when it closed.
+        That is most of the reported "the loading popup opens, closes,
+        reappears, restarts". When a live dialog is handed in we reuse it (text
+        only) and never create or close one of our own.
 
         GEOMETRY SAFETY — this is a THREADING change, not a geometry change:
         it calls ``StandardMPRViewer.build_lr_flipped_volume``, i.e. the exact
@@ -7303,14 +7363,24 @@ class ToolbarManager:
             loop = QEventLoop()
             worker.finished.connect(loop.quit)
 
-            dlg = QProgressDialog(label, None, 0, 0, self.patient_widget)
-            dlg.setWindowTitle("MPR")
-            dlg.setWindowModality(_Qt.WindowModality.ApplicationModal)
-            dlg.setCancelButton(None)
-            dlg.setMinimumDuration(0)
-            dlg.setAutoClose(False)
-            dlg.setAutoReset(False)
-            dlg.show()
+            _owns_dlg = existing_dlg is None
+            if _owns_dlg:
+                dlg = QProgressDialog(label, None, 0, 0, self.patient_widget)
+                dlg.setWindowTitle("MPR")
+                dlg.setWindowModality(_Qt.WindowModality.ApplicationModal)
+                dlg.setCancelButton(None)
+                dlg.setMinimumDuration(0)
+                dlg.setAutoClose(False)
+                dlg.setAutoReset(False)
+                dlg.show()
+            else:
+                # Reuse the caller's live modal — do NOT show a second one, and
+                # do NOT close this one: it belongs to the caller's `finally`.
+                dlg = existing_dlg
+                try:
+                    dlg.setLabelText(label)
+                except Exception:
+                    pass
 
             import time as _t
             _t0 = _t.perf_counter()
@@ -7318,11 +7388,12 @@ class ToolbarManager:
             if not worker.isFinished():
                 loop.exec()          # pumps paints; modal blocks input => no re-entrancy
             worker.wait()
-            try:
-                dlg.close()
-                dlg.deleteLater()
-            except Exception:
-                pass
+            if _owns_dlg:
+                try:
+                    dlg.close()
+                    dlg.deleteLater()
+                except Exception:
+                    pass
 
             if box["error"] is not None or box["data"] is None:
                 logger.warning(
@@ -7436,7 +7507,58 @@ class ToolbarManager:
             pass
         return False
 
-    def check_and_deactivate_tools(self):
+    @staticmethod
+    def _mpr_preserve_on_tool_select() -> bool:
+        """AIPACS_MPR_PRESERVE_ON_TOOL_SELECT default ON; '0' restores the legacy
+        behaviour where switching to any tool closed an open MPR."""
+        import os as _os
+        return (_os.getenv("AIPACS_MPR_PRESERVE_ON_TOOL_SELECT", "1") or "1").strip() != "0"
+
+    def _tool_unavailable_in_mpr(self, selected_widget, tool_label):
+        """True (and the user is told) when *tool_label* has no MPR implementation.
+
+        Tools that DO work inside MPR (ruler, angle, arrow, caption, eraser,
+        zoom, pan, window/level, stack, rotate/flip, zoom-to-fit, reset, MIP)
+        each have their own `is_mpr_viewer` branch and never reach here. The
+        rest used to be "handled" by silently closing MPR and running on the 2D
+        viewer underneath — which is what the user reported as *"selecting a
+        toolbar tool closes MPR"*. Now MPR stays, and the tool says so instead
+        of pretending to work on a hidden widget.
+        """
+        if not self.is_mpr_viewer(selected_widget):
+            return False
+        if not self._mpr_preserve_on_tool_select():
+            return False
+        import logging as _lg
+        _lg.getLogger(__name__).info(
+            "[MPR-TOOL] %s has no MPR implementation — MPR kept open, tool not activated",
+            tool_label,
+        )
+        try:
+            from PySide6.QtWidgets import QToolTip
+            from PySide6.QtGui import QCursor
+            QToolTip.showText(
+                QCursor.pos(),
+                f"{tool_label} is not available inside MPR.\n"
+                f"Close MPR first to use it on the 2D image.",
+            )
+        except Exception:
+            pass
+        return True
+
+    def check_and_deactivate_tools(self, close_mpr=None):
+        """Deactivate the currently-selected tool before another one activates.
+
+        ``close_mpr`` (2026-08-23): whether an OPEN MPR should be torn down as
+        part of this reset. Default ``None`` resolves to *preserve* — see
+        ``_mpr_preserve_on_tool_select``. Callers that genuinely need the MPR
+        cell freed (Curve MPR, Dental Curve MPR, the projection views, and the
+        post-series-switch reset) pass ``close_mpr=True`` explicitly.
+
+        This used to close MPR unconditionally, which is why picking a tool
+        dropped the user back to the 2D image. MPR now opens and closes only
+        from the MPR button, or from a caller that has said so in as many words.
+        """
         self._debug_target(
             f"check_and_deactivate_tools: tool_selected={self.tool_selected}, "
             f"sync_enabled={getattr(self, '_sync_point_enabled', False)}"
@@ -7458,17 +7580,20 @@ class ToolbarManager:
             # If selected_widget is a normal adjacent viewer, keep MPR open so the user
             # can use tools on that viewer without unintentionally closing MPR.
             sel = self.patient_widget.selected_widget
-            if sel is not None and self.is_mpr_viewer(sel):
+            _may_close = close_mpr if close_mpr is not None else (
+                not self._mpr_preserve_on_tool_select())
+            if sel is not None and self.is_mpr_viewer(sel) and _may_close:
                 # Diagnostic: a drop / click onto ANOTHER viewport must NOT reach
                 # here for the MPR host (set_viewer_to_main_viewer preserves MPR on
-                # an active-viewport change). This should now fire only on an
-                # explicit MPR-off or a switch to a different tool while the MPR
-                # cell is the active selection.
+                # an active-viewport change). With close_mpr defaulting to False
+                # this now fires ONLY for a caller that asked for the cell —
+                # Curve MPR, Dental Curve MPR, the projection views, and the
+                # post-series-switch reset.
                 import logging as _lg
                 _lg.getLogger(__name__).info(
                     "[MPR-TEARDOWN] check_and_deactivate_tools closing MPR; "
-                    "selected is MPR host viewer=%s",
-                    getattr(sel, "id_vtk_widget", "?"),
+                    "selected is MPR host viewer=%s close_mpr=%s",
+                    getattr(sel, "id_vtk_widget", "?"), close_mpr,
                 )
                 self.toggle_zeta_mpr()  # deactivate Zeta MPR (on the active MPR viewer)
             # else: keep MPR alive; tool_selected will be overridden by the caller
@@ -10244,7 +10369,12 @@ class ToolbarManager:
             pass
         
     def turn_off_all_tools(self):
-        self.check_and_deactivate_tools()
+        # close_mpr=True preserves the pre-2026-08-23 behaviour for this path
+        # ONLY. It is the post-series-switch reset (scoped to the switch target
+        # by turn_off_all_tools_after_switch), and a new series makes the open
+        # MPR's volume stale — so freeing the cell is correct here. Tool
+        # selection, which is NOT this path, no longer closes MPR.
+        self.check_and_deactivate_tools(close_mpr=True)
         self.handle_buttons_checked()
 
     def turn_off_all_tools_after_switch(self, target_widget=None):

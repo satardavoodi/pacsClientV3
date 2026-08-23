@@ -1005,31 +1005,84 @@ if __name__ == "__main__":
     # config machines this shows up as 75–950ms event-loop lag during drag
     # even when the app itself would otherwise fit in the budget.
     #
-    # ABOVE_NORMAL_PRIORITY_CLASS (0x00008000) biases the scheduler toward
-    # AIPacs without preempting system-critical work. We do NOT use HIGH
-    # (0x00000080) — it can starve disk I/O and make downloads slower.
+    # THE DEFAULT DEPENDS ON WHAT KIND OF MACHINE THIS IS (2026-08-23).
     #
-    # Override: set AIPACS_PRIORITY=normal to disable, AIPACS_PRIORITY=high
-    # for HIGH_PRIORITY_CLASS on dedicated viewing workstations.
+    #   frozen / installed build  -> HIGH_PRIORITY_CLASS   (0x00000080)
+    #   running from source (dev) -> ABOVE_NORMAL           (0x00008000)
+    #
+    # A frozen build is, by definition, an installed clinical workstation
+    # whose whole job is this app; there is nothing else on it that deserves
+    # the CPU more, so the reading experience wins. A source run is a
+    # developer box that is simultaneously running an IDE, a VM, a compiler
+    # and a test suite — promoting the app under test above the tools being
+    # used to develop it makes the machine worse, not better.
+    #
+    # `is_frozen()` covers PyInstaller (`sys.frozen`) AND Nuitka (`__compiled__`
+    # / `sys.__nuitka__`, normalised by the bootstrap at the top of this file).
+    # It is imported locally: `aipacs_runtime` is already imported at module
+    # scope, so this costs a dict lookup, and a failure here must degrade to
+    # the safe default rather than break startup.
+    #
+    # Override: AIPACS_PRIORITY = normal | above_normal | high wins over both.
+    # `normal` is the kill switch — it skips the call entirely.
+    #
+    # THE HIGH CAVEAT IS REAL AND IS NOT SOLVED BY THIS BLOCK: a HIGH process
+    # can starve disk I/O and make downloads slower. The codebase's intended
+    # mitigation is that the DM download subprocess demotes ITSELF to
+    # BELOW_NORMAL (`modules/download_manager/workers/download_process_entry.py`).
+    # As of 2026-08-23 that demotion carries the SAME ctypes pseudo-handle
+    # defect this block just had, so it has never actually applied. Until it
+    # is fixed and measured, treat `high` as untested against heavy concurrent
+    # downloading and fall back with AIPACS_PRIORITY=above_normal if downloads
+    # regress. See docs/reports/STACKING_LAG_55387_2026-08-23.md.
+    #
     # Child processes (decode service, warmup subprocess, DM workers)
     # are NOT affected — they explicitly set their own priority class.
     try:
         if sys.platform == 'win32':
-            _pri_env = os.environ.get('AIPACS_PRIORITY', 'above_normal').strip().lower()
+            try:
+                from aipacs_runtime import is_frozen as _is_frozen
+                _pri_frozen = bool(_is_frozen())
+            except Exception:
+                _pri_frozen = False
+            _pri_default = 'high' if _pri_frozen else 'above_normal'
+            _pri_env = os.environ.get('AIPACS_PRIORITY', _pri_default).strip().lower()
             _pri_map = {
                 'normal':       0x00000020,   # NORMAL_PRIORITY_CLASS
                 'above_normal': 0x00008000,   # ABOVE_NORMAL_PRIORITY_CLASS
                 'high':         0x00000080,   # HIGH_PRIORITY_CLASS
             }
-            _pri_class = _pri_map.get(_pri_env, 0x00008000)
+            # An unrecognised AIPACS_PRIORITY falls back to the machine's own
+            # default, never to a hard-coded class — a typo on a clinical
+            # workstation must not silently demote it.
+            _pri_class = _pri_map.get(_pri_env, _pri_map[_pri_default])
             if _pri_env != 'normal':
                 import ctypes
                 _k32 = ctypes.windll.kernel32
+                # ctypes types are REQUIRED here, not decoration (fixed 2026-08-23).
+                # `GetCurrentProcess()` returns the pseudo-handle (HANDLE)-1 =
+                # 0xFFFFFFFFFFFFFFFF on Win64. With ctypes' default restype of
+                # c_int that truncates to a 32-bit -1, and passing it to
+                # SetPriorityClass — which wants a 64-bit HANDLE — hands the API
+                # a malformed handle. Measured on this machine:
+                #     default restype  -> handle=-1                 -> returns 0, err=6
+                #     c_void_p restype -> handle=0xffffffffffffffff -> returns 1
+                # err 6 is ERROR_INVALID_HANDLE. So the priority boost this block
+                # exists to apply has been failing on EVERY launch, silently
+                # leaving the app at Normal — visible in the logs as
+                # "[CPU_BUDGET] SetPriorityClass failed (err=6)" once per session
+                # for as long as the line has existed. It matters most on a busy
+                # workstation, where the GUI thread then competes on equal terms
+                # with whatever else is running.
+                _k32.GetCurrentProcess.restype = ctypes.c_void_p
+                _k32.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                _k32.SetPriorityClass.restype = ctypes.c_int
                 _hproc = _k32.GetCurrentProcess()
                 if _k32.SetPriorityClass(_hproc, _pri_class):
                     logging.getLogger(__name__).info(
-                        "[CPU_BUDGET] Main process priority set to %s (class=0x%X)",
-                        _pri_env, _pri_class,
+                        "[CPU_BUDGET] Main process priority set to %s "
+                        "(class=0x%X, default=%s, frozen=%s)",
+                        _pri_env, _pri_class, _pri_default, _pri_frozen,
                     )
                 else:
                     logging.getLogger(__name__).warning(
@@ -1257,7 +1310,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.6.0")
+    app.setApplicationVersion("3.6.3")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

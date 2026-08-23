@@ -58,6 +58,43 @@ class _FolderUsageWorker(QObject):
                 pass
 
 
+class _CleanupWorker(QObject):
+    """Runs one cleanup_manager call off the GUI thread.
+
+    MEASURED (viewer_diagnostics.log 2026-08-22 10:04): a single "Clear patients"
+    click blocked the Qt event loop for **183 seconds** — 181 of that session's
+    514 sampled stall stacks were this one call, innermost in
+    ``shutil._rmtree_unsafe`` (108) and ``_cleanup_patients_db`` (45). The
+    manager methods are pure filesystem + DB with no Qt in them, and
+    ``database/_pool.py`` keeps its connections in ``threading.local``, so they
+    are safe on a worker — the same reasoning that already moved the folder-size
+    scan here (``_FolderUsageWorker`` above).
+    """
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, fn):
+        super().__init__()
+        self._fn = fn
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self._fn()
+        except Exception as exc:
+            _logger.exception("[STORAGE_PANEL] cleanup worker failed: %s", exc)
+            try:
+                self.failed.emit(str(exc))
+            except Exception:
+                pass
+            return
+        try:
+            self.finished.emit(result)
+        except Exception:
+            pass
+
+
 class StorageCleanupPanelWidget(QWidget):
     """Reusable panel for storage insights + cleanup actions."""
 
@@ -75,6 +112,10 @@ class StorageCleanupPanelWidget(QWidget):
         self._folder_size_thread: QThread | None = None
         self._folder_size_worker: _FolderUsageWorker | None = None
         self._folder_size_pending: bool = False
+        # Off-GUI-thread cleanup state (2026-08-22 — see _CleanupWorker).
+        self._cleanup_thread: QThread | None = None
+        self._cleanup_worker: _CleanupWorker | None = None
+        self._cleanup_progress = None
         self._setup_ui()
         # Drives section is fast (shutil.disk_usage); render it sync so the
         # panel never appears blank. Folder sizes are deferred to a worker.
@@ -338,20 +379,34 @@ class StorageCleanupPanelWidget(QWidget):
 
         try:
             if category == "patients":
-                result = self.cleanup_manager.cleanup_patients_folder()
+                job = self.cleanup_manager.cleanup_patients_folder
             elif category == "education":
-                result = self.cleanup_manager.cleanup_education_folder()
+                job = self.cleanup_manager.cleanup_education_folder
             elif category == "cache":
-                result = self.cleanup_manager.cleanup_cache_folder()
+                job = self.cleanup_manager.cleanup_cache_folder
             elif category == "printing":
-                result = self.cleanup_manager.cleanup_printing_folder()
+                job = self.cleanup_manager.cleanup_printing_folder
             elif is_offline_cloud:
-                result = self.cleanup_manager.cleanup_offline_cloud_folder(
-                    category.split("::", 1)[1].strip()
-                )
+                job = partial(self.cleanup_manager.cleanup_offline_cloud_folder,
+                              category.split("::", 1)[1].strip())
             else:
                 raise ValueError(f"Unknown cleanup category: {category}")
+        except Exception as e:
+            QMessageBox.critical(self, "Cleanup Failed", f"Could not start cleanup:\n{e}")
+            return
 
+        # 2026-08-22: same GUI-thread freeze as the patient dialog (measured 183 s
+        # on a patients clear) — every one of these categories is an rmtree + DB
+        # delete. Run it on the worker with the busy dialog.
+        self._run_cleanup_job(
+            self, job,
+            on_done=self._on_category_cleanup_finished,
+            on_fail=self._on_category_cleanup_failed,
+        )
+
+    def _on_category_cleanup_finished(self, parent, result) -> None:
+        self._close_cleanup_progress()
+        try:
             _warn = ""
             if getattr(result, "warnings", None):
                 _warn = "\n\n⚠ Warnings:\n- " + "\n- ".join(result.warnings)
@@ -372,12 +427,21 @@ class StorageCleanupPanelWidget(QWidget):
             # patient-list download/green badges to match the now-cleared files.
             # (Disk is the source of truth for download status.)
             self.storageChanged.emit()
-        except Exception as e:
+        except RuntimeError:
+            return  # the panel was closed while the cleanup ran — benign
+        except Exception:
+            _logger.exception("[STORAGE_PANEL] post-cleanup refresh failed")
+
+    def _on_category_cleanup_failed(self, parent, message: str) -> None:
+        self._close_cleanup_progress()
+        try:
             QMessageBox.critical(
                 self,
                 "Cleanup Failed",
-                f"Could not complete cleanup:\n{e}",
+                f"Could not complete cleanup:\n{message}",
             )
+        except RuntimeError:
+            pass
 
     def _on_check_consistency_clicked(self, _checked=False):
         """Validate DB/file consistency and offer a conservative repair.
@@ -659,19 +723,104 @@ class StorageCleanupPanelWidget(QWidget):
         )
         if confirm != QMessageBox.Yes:
             return
-        
+
         try:
             if strategy_id == 0:
-                result = self.cleanup_manager.cleanup_patients_folder()
+                job = self.cleanup_manager.cleanup_patients_folder
             elif strategy_id == 1:
-                result = self.cleanup_manager.cleanup_patients_folder_filtered(strategy="keep_recent_days", value=recent_days)
+                job = partial(self.cleanup_manager.cleanup_patients_folder_filtered,
+                              strategy="keep_recent_days", value=recent_days)
             elif strategy_id == 2:
-                result = self.cleanup_manager.cleanup_patients_folder_filtered(strategy="older_than_days", value=older_days)
+                job = partial(self.cleanup_manager.cleanup_patients_folder_filtered,
+                              strategy="older_than_days", value=older_days)
             elif strategy_id == 3:
-                result = self.cleanup_manager.cleanup_patients_folder_filtered(strategy="delete_oldest_count", value=count)
+                job = partial(self.cleanup_manager.cleanup_patients_folder_filtered,
+                              strategy="delete_oldest_count", value=count)
             else:
                 raise ValueError(f"Unknown strategy ID: {strategy_id}")
-            
+        except Exception as e:
+            QMessageBox.critical(parent, "Cleanup Failed", f"Could not start cleanup:\n{e}")
+            return
+
+        # 2026-08-22: this used to run on the GUI thread — a measured 183-second
+        # freeze. It now runs on a worker behind a modal busy dialog, so the app
+        # stays responsive and the user can see that something is happening.
+        # AIPACS_STORAGE_CLEANUP_OFFTHREAD=0 restores the blocking call.
+        self._run_cleanup_job(parent, job)
+
+    @staticmethod
+    def _cleanup_offthread_enabled() -> bool:
+        import os as _os
+        return (_os.getenv("AIPACS_STORAGE_CLEANUP_OFFTHREAD", "1") or "1").strip() != "0"
+
+    def _run_cleanup_job(self, parent, job, on_done=None, on_fail=None) -> None:
+        """Run *job* (a no-arg callable returning a CleanupResult) off the GUI
+        thread, then report exactly as the synchronous version did.
+
+        ``on_done(parent, result)`` / ``on_fail(parent, message)`` default to the
+        patient-dialog reporters; the per-category rows pass their own so their
+        message text (warnings block, no dialog accept) is unchanged.
+        """
+        on_done = on_done or self._on_cleanup_finished
+        on_fail = on_fail or self._on_cleanup_failed
+        if not self._cleanup_offthread_enabled():
+            try:
+                on_done(parent, job())
+            except Exception as e:
+                on_fail(parent, str(e))
+            return
+        if self._cleanup_thread is not None:
+            QMessageBox.information(parent, "Cleanup In Progress",
+                                    "A cleanup is already running. Please wait for it to finish.")
+            return
+
+        from PySide6.QtWidgets import QProgressDialog
+        progress = QProgressDialog("Cleaning up storage…", "", 0, 0, parent)
+        progress.setWindowTitle("Cleanup")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)      # rmtree cannot be safely interrupted
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+        self._cleanup_progress = progress
+
+        thread = QThread(self)
+        worker = _CleanupWorker(job)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda res, p=parent, f=on_done: f(p, res))
+        worker.failed.connect(lambda msg, p=parent, f=on_fail: f(p, msg))
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._on_cleanup_thread_finished)
+        self._cleanup_thread = thread
+        self._cleanup_worker = worker
+        thread.start()
+
+    def _close_cleanup_progress(self) -> None:
+        progress, self._cleanup_progress = self._cleanup_progress, None
+        if progress is None:
+            return
+        try:
+            progress.close()
+            progress.deleteLater()
+        except Exception:
+            pass
+
+    def _on_cleanup_thread_finished(self) -> None:
+        thread, self._cleanup_thread = self._cleanup_thread, None
+        worker, self._cleanup_worker = self._cleanup_worker, None
+        for obj in (worker, thread):
+            try:
+                if obj is not None:
+                    obj.deleteLater()
+            except Exception:
+                pass
+
+    def _on_cleanup_finished(self, parent, result) -> None:
+        self._close_cleanup_progress()
+        try:
             QMessageBox.information(
                 parent,
                 "Cleanup Completed",
@@ -685,8 +834,18 @@ class StorageCleanupPanelWidget(QWidget):
             parent.accept()
             self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
             self.storageChanged.emit()
-        except Exception as e:
-            QMessageBox.critical(parent, "Cleanup Failed", f"Could not complete cleanup:\n{e}")
+        except RuntimeError:
+            return  # the dialog was closed while the cleanup ran — benign
+        except Exception:
+            _logger.exception("[STORAGE_PANEL] post-cleanup refresh failed")
+
+    def _on_cleanup_failed(self, parent, message: str) -> None:
+        self._close_cleanup_progress()
+        try:
+            QMessageBox.critical(parent, "Cleanup Failed",
+                                 f"Could not complete cleanup:\n{message}")
+        except RuntimeError:
+            pass
 
     def refresh_storage_insights(self, force_refresh: bool = False, defer_folder_sizes: bool = False):
         if self.drive_usage_container is None:

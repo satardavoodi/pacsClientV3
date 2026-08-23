@@ -1,9 +1,76 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.6.0 (2026-08-16)
-**Previous Stable:** v3.5.9 (2026-08-10)
-**Release Date:** 2026-08-16
+**Current Stable Version:** v3.6.3 (2026-08-23)
+**Previous Stable:** v3.6.0 (2026-08-16)
+**Release Date:** 2026-08-23
 **Branch:** beta-version
+
+---
+
+## v3.6.3 (2026-08-23) - Minor release: AiPacs Chat module, verified module-install pipeline, stable license fingerprint, consultation/education settings, MPR stability
+
+### Summary
+
+This release adds a new **AiPacs Chat** manager module and hardens the plumbing
+around modules and licensing: a **verified module-install pipeline** (OPT-53) so a
+module reported as "installed" is actually usable, a **stable license fingerprint**
+so licenses survive a reboot, and a centralized **Consultation & Education settings**
+tab. On the viewer side, **MPR interaction and lifecycle stability** work plus a
+geometry-constraints pass, report **image insert/capture**, and **YBR colour /
+import-freeze** fixes.
+
+### Included — modules & licensing
+
+- **AiPacs Chat manager module** — a new installable module for team messaging
+  (workstation console + a Laravel-backed chat API). `modules/aipacs_chat/`, its
+  plugin package + definition, `config/aipacs_chat/`, and a Consultation & Education
+  settings surface. **Note:** the chat API is not yet deployed to production
+  ai-pacs.com, so the client will report "server does not have the chat API" until
+  the backend goes live. Design: `docs/plans/AIPACS_CHAT_MODULE_DESIGN_2026-08-19.md`.
+- **Verified module-install pipeline (OPT-53).** Every install channel (installer
+  first-launch, Settings package/folder/URL, update feed) now funnels through one
+  path that hash-verifies the payload, guards against zip-slip, **verifies after
+  install** (catalog `requires` dependencies + a healthcheck import/path), and only
+  then reports success — auto-enabling the module's feature flag. A module whose icon
+  shows but that "isn't installed correctly" now gives a precise reason instead of a
+  generic error. `MODULE_INSTALLATION_ARCHITECTURE_REVIEW_2026-08-22.md`.
+- **Stable license fingerprint.** Licenses were being lost on reboot because the
+  hardware ID was recomputed from unstable inputs each launch; it is now derived from
+  the Windows MachineGuid + volume serial (stable), with legacy-compatible validation
+  and a dedicated `license.log`. `modules/LicenseGenerator/license_manager.py`,
+  `tests/code/licensing/`.
+- **Consultation & Education settings tab** — identity / website / consultation /
+  chat / Drive settings centralized into one Settings surface
+  (`consultation_education_settings.py`), with an Identity host-user resolver.
+
+### Included — viewer / MPR
+
+- **MPR interaction + lifecycle stability** — crosshair interaction/render/state
+  refactors, an explicit `_mpr_lifecycle` module, oblique/orientation/geometry-
+  constraint work, and step instrumentation, addressing MPR freeze/stability reports
+  (`MPR_FREEZE_54675`, `MPR_INTERACTION_STABILITY`, `MPR_LIFECYCLE_RELEASE`).
+- **Report image insert / capture** — insert captured viewport images into a report
+  (`report_capture_images.py`, `report_image_picker_dialog.py`, report-editor
+  wiring).
+- **YBR colour + import-freeze fixes** — correct colour handling
+  (`dicom_color.py`, decode/pipeline) and an import-path freeze fix; text-annotation
+  input and reference-line active-viewport refinements.
+
+### Included — stability / engineering
+
+- GUI-thread disk-path audit, close-path hang visibility, CPU-budget priority boost,
+  assignment-snapshot batch write, and an end-user stability review; regression
+  catalog and open-findings refreshed. 15 module packages + the update feed advanced
+  to 3.6.3.
+
+### Notes
+
+- The AiPacs Chat client is shipped but its production API is **not yet deployed**;
+  module-install verification, the license fingerprint, and the MPR work all need
+  live source-build verification.
+- A machine-local `config/cloud_consultation.json` change (a personal, malformed
+  consultation address) was intentionally **not shipped** — the config keeps the
+  center's correct address.
 
 ---
 

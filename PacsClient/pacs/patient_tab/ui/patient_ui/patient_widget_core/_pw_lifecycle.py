@@ -33,13 +33,73 @@ import os as _os
 _DEFER_CLOSE_GC = (_os.getenv("AIPACS_DEFER_CLOSE_GC", "1") or "1").strip() != "0"
 _CLOSE_GC_PENDING = [False]
 
+# ── A0: make the close path visible (2026-08-23) ──────────────────────────────
+# An end-user workstation hung for 17s on 2026-08-23 00:47 (Windows Application
+# Hang 1002, AIPacs.exe 3.6.2.0, pid 24696) immediately after a patient-tab
+# close, and left NOTHING in our logs. Two structural reasons:
+#
+#   1. The close path logs nothing of its own at INFO — every ``print()`` in this
+#      module is redirected to ``logger.debug`` (see above), so we cannot even
+#      tell whether ``exit_patient_widget`` returned.
+#   2. The deferred ``gc.collect()`` below is the one UNLOGGED, UNBOUNDED,
+#      GIL-HOLDING step on that path. The 2026-06-27 fix moved this collect
+#      150 ms later so the close *returns* instantly — it did NOT make the
+#      collect shorter, and 150 ms after a close the user is still sitting there.
+#      That session's heap was 2 378 MB of VTK wrappers.
+#
+# So: a breadcrumb BEFORE each step (proves we entered it even if we never come
+# back) and a native hang watchdog AROUND it (dumps the stuck stack even though
+# the GIL is held — our Python-thread sampler cannot). Observation only.
+# Kill switch AIPACS_CLOSE_PATH_TIMING=0 restores the silent legacy behaviour.
+import contextlib as _contextlib
+
+_CLOSE_PATH_TIMING = (_os.getenv("AIPACS_CLOSE_PATH_TIMING", "1") or "1").strip() != "0"
+
+try:
+    _CLOSE_PATH_WARN_MS = float(_os.getenv("AIPACS_CLOSE_PATH_WARN_MS", "") or 250.0)
+except (TypeError, ValueError):
+    _CLOSE_PATH_WARN_MS = 250.0
+
+try:
+    from PacsClient.utils.native_fault_log import hang_watchdog as _hang_watchdog
+except Exception:  # pragma: no cover - the close path must never depend on this
+    @_contextlib.contextmanager
+    def _hang_watchdog(label, seconds=None):  # type: ignore[misc]
+        yield False
+
+
+@_contextlib.contextmanager
+def _close_step(label: str):
+    """Breadcrumb + native hang watchdog around one patient-close step.
+
+    The ``start`` line is the point: if the process dies inside the step there is
+    no ``done`` line, and the pair tells us exactly which step swallowed it.
+    Never raises, never changes what the step does.
+    """
+    if not _CLOSE_PATH_TIMING:
+        yield
+        return
+    logger.info("[CLOSE_PATH] %s start", label)
+    _t0 = time.perf_counter()
+    try:
+        with _hang_watchdog(label):
+            yield
+    finally:
+        _elapsed_ms = (time.perf_counter() - _t0) * 1000.0
+        _emit = logger.warning if _elapsed_ms >= _CLOSE_PATH_WARN_MS else logger.info
+        try:
+            _emit("[CLOSE_PATH] %s done ms=%.1f", label, _elapsed_ms)
+        except Exception:
+            pass
+
 
 def _run_deferred_close_gc():
     _CLOSE_GC_PENDING[0] = False
-    try:
-        gc.collect()
-    except Exception:
-        pass
+    with _close_step("deferred_close_gc"):
+        try:
+            gc.collect()
+        except Exception:
+            pass
 
 
 def _schedule_deferred_close_gc():
@@ -209,7 +269,18 @@ class _PWLifecycleMixin:
             print(f"⚠️ Error processing priority queue: {e}")
 
     def exit_patient_widget(self):
-        """تمام resources را با سرعت تمیز کن"""
+        """تمام resources را با سرعت تمیز کن
+
+        Thin wrapper (A0, 2026-08-23): the whole synchronous teardown — viewer
+        cleanup, ``release_mpr_children``, VTK widget destruction, thumbnail
+        release — runs on the GUI thread and logged nothing at INFO, so a block
+        anywhere inside it was indistinguishable from the app simply stopping.
+        The body is unchanged; it just runs inside a breadcrumb + hang watchdog.
+        """
+        with _close_step("exit_patient_widget"):
+            self._exit_patient_widget_impl()
+
+    def _exit_patient_widget_impl(self):
         try:
             print("🔴 exit_patient_widget: Starting cleanup...")
             
@@ -303,6 +374,23 @@ class _PWLifecycleMixin:
                             node: NodeViewer
                             vtk_widget: VTKWidget = getattr(node, 'vtk_widget', None)
                             if vtk_widget is not None:
+                                # 2026-08-19: release an OPEN MPR viewer first.
+                                # This loop cleans the HOST viewer and then nulls
+                                # node.vtk_widget, but an MPR viewer hangs off the
+                                # host as `_zeta_mpr_widget` and was never reached
+                                # — so closing a patient tab with MPR open orphaned
+                                # its full volume, 4 render windows and GPU texture.
+                                # Observed live: MPR opened 12:57, close_patient at
+                                # 15:35, no cleanup() logged in between.
+                                # Must run BEFORE the host teardown, while the GL
+                                # context is still valid.
+                                try:
+                                    from modules.mpr.zeta_mpr.mpr_viewer._mpr_lifecycle import (
+                                        release_mpr_children,
+                                    )
+                                    release_mpr_children(vtk_widget, reason="close_patient")
+                                except Exception:
+                                    pass
                                 try:
                                     if hasattr(vtk_widget, 'cleanup_image_viewer'):
                                         vtk_widget.cleanup_image_viewer()  # Advanced viewer (VTKWidget)

@@ -261,12 +261,20 @@ class VRTInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         self.EndPan()
 
     def OnLeftButtonDown(self):
-        self.parent._set_active_view('3d')
+        # Arm the rotate state FIRST (2026-08-23). `super().OnLeftButtonDown()`
+        # is what calls StartRotate(), which flips the render window from
+        # StillUpdateRate to DesiredUpdateRate. `_set_active_view` can queue a
+        # repaint of this pane (a full ray-cast), so doing it first meant that
+        # repaint ran at STILL quality, before the interactive rate was set —
+        # the "few ms before rotation starts". Order only; no behaviour change
+        # (`_set_active_view` touches no VTK state).
         self.lmb_down = True
         if self.rmb_down:
+            self.parent._set_active_view('3d')
             self._start_pan()
             return
         super().OnLeftButtonDown()
+        self.parent._set_active_view('3d')
 
     def OnLeftButtonUp(self):
         self.lmb_down = False
