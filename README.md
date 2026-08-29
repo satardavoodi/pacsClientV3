@@ -142,3 +142,19 @@ If Inno Setup fails with `Error 32` on `builder/output/installer/ai-pacs install
 ```
 
 The Windows installer is prepared for deployment on other PCs. In `Custom` mode it asks which optional modules should be installed on that workstation, stores the selection in `installation_profile.json`, and uses a GPU probe plus runtime fallback logic so unsupported systems can still run with CPU-safe software OpenGL.
+
+
+---
+
+## Recovery documentation
+
+If projects, skills, MCP servers or agent configuration ever need to be reconstructed
+(for example after switching Claude accounts), start here:
+
+```text
+Document Recovery Account Vahid
+D:\_RECOVERY\Document Recovery Account Vahid.md
+```
+
+This project also has its own `RECOVERY.md` in its root.
+<!-- added 2026-08-27 by environment recovery; nothing above this line was modified -->

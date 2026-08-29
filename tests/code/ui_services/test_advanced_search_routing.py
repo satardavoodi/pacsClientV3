@@ -53,26 +53,41 @@ def test_local_criteria_mapping_maps_supported_fields():
         'import_date_from': '2026-07-01', 'import_date_to': '2026-07-31',
         'body_part': 'HEAD', 'age_min': 10, 'age_max': 90, 'physician': 'dr x',
     })
-    assert out['patient_id'] == '52658'
+    assert out['patient_ids'] == ['52658']
     assert out['modality'] == 'CT,MR'
     assert out['date_from'] == '20260101' and out['date_to'] == '20260131'
     assert out['import_date_from'] == '2026-07-01' and out['import_date_to'] == '2026-07-31'
-    # server-only client-refinement fields are NOT mapped to the local query
-    assert 'body_part' not in out
-    assert 'age_min' not in out and 'age_max' not in out
-    assert 'physician' not in out
+    assert out['body_part'] == 'HEAD'
+    assert out['age_min'] == 10 and out['age_max'] == 90
+    assert out['physician'] == 'dr x'
 
 
-def test_local_criteria_mapping_multiple_ids_not_mapped_as_single():
+def test_local_criteria_mapping_preserves_multiple_ids():
     fn = _extract_func(_hp_search_src(), "_advanced_query_to_local_criteria")
-    # more than one ID cannot map to the single-value local patient_id filter
     out = fn({'patient_ids': ['1', '2']})
-    assert 'patient_id' not in out
+    assert out['patient_ids'] == ['1', '2']
 
 
 def test_local_criteria_mapping_empty_query_is_empty():
     fn = _extract_func(_hp_search_src(), "_advanced_query_to_local_criteria")
     assert fn({}) == {}
+
+
+def test_local_results_forward_persisted_reporting_physician_to_the_table():
+    src = (_repo_root() / "PacsClient" / "pacs" / "workstation_ui" / "home_ui"
+           / "home_search_service.py").read_text(encoding="utf-8")
+    body = src[src.find("async def search_local"):]
+    body = body[:body.find("\n    async def ", 20)]
+    assert "reporting_physician=patient.get('reporting_physician')" in body
+
+
+def test_valid_online_physician_hydration_is_persisted_for_offline_reuse():
+    src = _hp_search_src()
+    body = src[src.find("def _queue_reporting_physician_hydration"):]
+    body = body[:body.find("\n    def ", 20)]
+    resolved = body.find("if self._has_displayable_reporting_name(physician_name)")
+    assert resolved >= 0
+    assert "update_study_reporting_physician(suid, physician_name)" in body[resolved:]
 
 
 # ── source-pins: routing honours the mode, never crosses over ────────────────

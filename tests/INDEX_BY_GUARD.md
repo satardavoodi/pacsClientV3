@@ -158,6 +158,10 @@ system table above. Each pairs with a 2026-08 row in the regression catalog.
 | `code/viewer/test_disk_pixel_cache_persistence.py` | **20** | The L2 cache SURVIVES shutdown (before this it was `rmtree`'d every exit and had never served a cross-session hit). Pins: persistence is the default; `AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1` really restores the wipe; **`clear()` itself stays unconditional** so an explicit user clear always clears; the shutdown path calls `clear_on_exit()` not `clear()` (AST pin — a comment naming `.clear()` cannot fool it); and eviction still bounds a *persisted* cache, with LRU order surviving a restart. |
 | `code/ui_services/test_thumbnail_active_state_and_strip.py` | **20** | **Behavioural, on real Qt widgets.** The download bar is not buried by the re-parenting `addWidget`; the red active line is stacked above it; A→B→A returns a series to the active state. A source-string pin cannot see a z-order bug — that is exactly how the buried bar survived `test_thumbnail_panel_ui_fixes.py`. |
 | `code/ui_services/test_main_footer_bar_removed.py` | **6** | The empty main-page footer stays hidden and its widgets stay alive (so `apply_theme` keeps working); fails if anyone starts writing to its labels or introduces a real `QSizeGrip`. |
+| `code/ui_services/test_clear_table_crash_guard.py` | **16** | Patient-table item and widget teardown stays outside Qt model mutation: each order cell is created once, safe row/full clears use `takeItem` before `removeRow`/`setRowCount(0)`, producers respect the rebuild guard, and Local Server search does not pump a nested event loop. Includes a real offscreen Qt/Shiboken ownership check. |
+| `code/ui_services/test_local_offline_contract.py` | **7** | LocalDatabase defaults to no remote resync; single-click reconcile, right-panel cache miss, grouped preview, viewer thumbnail cache miss, existing-tab focus, and local patient open return through DB/disk paths before any PACS socket access. A multi-study Local open must also aggregate every study's SQLite/disk series metadata and push it into the grouped patient-tab renderer. |
+| `code/ui_services/test_advanced_search_routing.py` + `code/database/test_local_advanced_search.py` | **8 + 3** | Advanced Search follows the active source and preserves bounded multi-ID, normalized acquisition/import date, multi-valued modality, body part, DICOM age, and persisted physician filters in Local SQLite. Valid online physician hydration is persisted for later offline reuse; the database tests use an isolated patched `DATABASE_FILE` and cleared pool. |
+| `code/ui_services/test_local_incremental_and_import_date.py` | **13** | Imported Date means the immutable first entry into this computer's Local SQLite, never acquisition date or last refresh. Single-day/preset/range queries use full-day boundaries, NULL legacy timestamps do not match, import-date queries stay Local, and reversed custom ranges are normalized in both the dialog and repository. Also retains the incremental Local-list guards. |
 | `code/viewer/test_reference_line_active_viewport.py` | **17** | The ACTIVE viewport carries no reference line — it is the source and stays clean; the line goes only on the series being cross-referenced. Load-bearing pin: the source overlay is **cleared**, not merely skipped, so a line drawn while a viewport was inactive vanishes the instant it becomes active. Also pins that `AIPACS_REFERENCE_LINES_ALL_PAIRS=1` restores bidirectional lines end-to-end. |
 | `code/viewer/test_text_annotation_input.py` | **25** | The Text tool ASKS what to write. Before this it stamped the literal word "Text" — the whole chain was wired except the input step. Pins: the typed string is what reaches the `TextModel`; cancel / whitespace / a raising prompt all place **nothing** and return `False`, so the tool stays armed; a bare `ToolController` still places the legacy `"Text"` (every headless tool test and the EchoMind adapter build one that way); only the TEXT tool may prompt; `controller.py` stays **Qt-free**; the Qt bridge really wires `_text_prompt_fn` (AST pin — the controller change is inert without it); the dialog is re-entrancy-guarded and releases its flag even when it raises; and both backends word the prompt identically. |
 | `code/reporting/test_report_image_insert.py` | **68** | Captured viewer images can be inserted into the Medical Report Editor and survive the whole trip. Also pins study RESOLUTION: a report opened from the Reception Data tab carries a reception record with no `studyUID`, so the study is found by joining `patients.patient_id -> patient_pk -> studies.patient_fk` — `patient_fk` is a FK to `patient_pk`, NOT the DICOM PatientID, and a direct comparison returns zero rows silently. Identifiers are tried in order and the FIRST match wins; `test_resolution_stops_at_the_first_identifier_that_matches` exists because unioning them could mix another patient's key images into the report. Load-bearing: **`test_the_upload_normaliser_keeps_the_image`** — the normaliser already strips `<style>`/`<script>`/chrome, and adding `img` to `_DIR_BLOCK_TAGS` would lose the key image for the referring doctor while the author's copy still shows it, the worst failure mode there is. Also pins: the picker's file list matches the viewer's "Captured Images" dropdown exactly; the encoder refuses rather than embedding over the byte ceiling (a report that will not upload is worse than a refused insert); and the resize actually changes the stored width — **behavioural, because the AST guards did not catch a reversed-cursor-selection bug where every button was wired, every handler ran, and nothing moved**. `test_a_document_can_render_a_data_uri` pins behaviour, not mechanism, so it holds on any Qt. |
@@ -364,6 +368,276 @@ Two guards were **re-pinned, not deleted**, and both record why in the file:
 `test_high_is_the_default_only_for_installed_builds` (**the policy changed by
 owner request** — the guard now pins the new rule so a later edit that quietly
 makes HIGH the default for source runs too is still caught).
+
+---
+
+**2026-08-24 (completion pass)** — the measurement gap left open on 08-23 is now
+closed and one piece of tooling was repaired.
+
+`tests/code/builder` finally ran: **85 passed, 6 failed** — the six
+`test_nuitka_arm64_parity` pins, unchanged and unrelated. The seventh failure
+carried since 08-23, `test_release_parity_guards::test_plugin_mirrors_are_fresh`,
+now **passes** (the v3.6.3 release re-synced the plugin mirrors), and the
+`git fetch` inside `check_source_freshness()` no longer hangs. Full picture for
+the CPU-budget work: `system+runtime+utils` 519 passed / 4 failed +
+`builder` 85 passed / 6 failed = **604 passed, 10 failed, none of them ours**.
+
+> **A pre-fix verification script dies the moment its fix is committed — fix that
+> when you write it, not after.** `verify_cpu_budget_guard_fails_prefix_2026_08_23.py`
+> asserted `HEAD:main.py` lacks the fix. The fix shipped in
+> `5deb8ee7 release(v3.6.3)`, so from that commit onward the script aborted with
+> "HEAD already has fix" and the guard's pre-fix proof was **un-runnable**. It now
+> resolves a base ref: HEAD when HEAD still lacks the fix, otherwise it walks
+> `git log` for the newest commit whose `main.py` lacks it (here `c2f79e63`,
+> v3.6.0) and prints which ref it chose; `--base <ref>` overrides. Re-run
+> confirmed: **16 fail at `c2f79e63`, 23 pass after restore, `main.py` clean.**
+
+---
+
+**2026-08-26 (overlay re-entrancy crash)** — `tests/code/{viewer,system,ui_services,
+fast_viewer}` + `test_loading_overlay_liveness_guard.py` → **3,862 passed**, 41
+skipped, 55 xfailed, 5 xpassed, **6 failed — 0 of them ours**. New guard file:
+`tests/code/system/test_overlay_reentrancy_crash.py` (13 guards, **11 fail pre-fix**).
+
+Four of the six are the `test_local_search_progressive` pins carried since 08-21.
+The other two are in `tests/code/ui_services`, a folder new to this index, and were
+**measured rather than argued**: `check_overlay_fix_delta_2026_08_26.py` runs them
+with and without the two changed files and gets the identical failure set.
+
+> **A source pin over a file with several same-named methods must carry a CLASS
+> scope.** `loading_overlay.py` defines three `__init__`s; a bare `ast.walk()`
+> returns `_LogoSpinner.__init__` first, so the first draft of
+> `test_overlay_init_refuses_a_destroyed_anchor` was reading the wrong function
+> and would have guarded nothing. `_func_src(path, name, cls=...)` now takes the
+> class. This is the AST-shaped cousin of the fixed-character-window trap above
+> — same failure mode, different mechanism: the guard is bound to the wrong text
+> and still goes green.
+
+> **Binding a real method to a stub beats constructing the real object.**
+> `QtFastContainer` is a QWidget subclass, so `object.__new__` is refused and a
+> real instance needs a QApplication and a live viewport — neither of which the
+> re-entrancy guard is about. `QtFastContainer.switch_series.__get__(stub, Stub)`
+> runs the SHIPPED method against a plain object, which is how
+> `test_a_nested_switch_is_refused` reproduces a native crash with no Qt at all.
+
+---
+
+**2026-08-26 (Eagle Eye lumbar — wrong series in the panes)** — `tests/code/ai_imaging`
+→ **385 passed**, 8 pre-existing xfail; `tests/code/viewer` green;
+`verify_plugin_mirrors.py` 456/456. Three guards added to
+`test_eagle_eye_protocol_resolution.py`:
+`test_the_tab_does_not_pre_wait_on_the_thumbnail_list`,
+`test_the_controller_asks_by_series_key_never_by_list_position`,
+`test_the_controller_still_refuses_when_the_series_never_arrive`.
+The 10 `tests/code/ui_services` failures seen in the same run were **measured**
+pre-existing: stashing this work reproduces the identical set (a qtawesome
+font-directory `TypeError` plus two stale source pins).
+
+> **A parameter name is not a contract — read the first line of the callee.**
+> `change_series_on_viewer(series_index, …)` opens with
+> `series_number = str(series_index)`: the argument is a series KEY, not a
+> position. Passing a `lst_thumbnails_data` index loaded whichever series was
+> *numbered* "1" and "2" (the localizer and a coronal myelogram) while every
+> log line upstream said the mapping was correct — the defect was invisible
+> from the resolver's side and only the viewport's own metadata revealed it.
+
+> **Waiting for a precondition that your own call would satisfy is a deadlock
+> with a timeout.** The tab polled `lst_thumbnails_data` (LOADED series only)
+> before assigning, but assignment is what triggers the decode. For a study
+> whose other series had never been requested the entries never appeared, so a
+> correct mapping still burned the full 90 s budget. Readiness moved to the
+> layer that can observe the real end state: the viewport.
+
+---
+
+**2026-08-26 (Eagle Eye v1.1.0 — protocol-driven engine + reference-line policy)** —
+`tests/code/ai_imaging` → **426 passed**, `tests/code/viewer` → **2,288 passed**
+(2,714 together), `verify_plugin_mirrors.py` 456/456. Eighteen guards added in two
+new sections of `test_eagle_eye_lumbar_pipeline.py`: §8b the reference-line policy
+(real behaviour against fake viewers) and §8c the protocol architecture.
+
+> **A guard that says "the engine must not know about X" belongs on the AST, not
+> the text.** `test_the_engine_names_no_body_part` first failed on the module
+> docstring — which deliberately explains the lumbar history — and on the
+> back-compat class alias. Parsing instead, and excluding docstring constants,
+> makes it test the values the engine COMPUTES with rather than what it SAYS.
+> The text version would have forced the comments to be worse.
+
+> **Write the guard for the requirement, not for the code you just wrote.** Two
+> of these failed on the first run and were right to: `restore()` on the
+> reference-line policy was never wired into `_finish`/`_fail`, and the engine
+> still carried `"lumbar_mri"` string defaults. Both were real gaps found by
+> guards written from the requirement rather than from the implementation.
+
+> **Derive a rule instead of declaring it where you can.**
+> `hide_reference_lines_on` defaults to `primary + synced` and `sync_groups` is
+> computed from the sessions. Declared copies of a rule drift from the code that
+> enforces it; derived ones cannot. Both still allow an explicit override, so
+> the default is a default rather than a law.
+
+---
+
+**2026-08-27 (Eagle Eye LLM pipeline 3.3.0 — explicit stenosis grades and
+provider-specific stage sampling)** — `tests/code/ai_imaging` → **499 passed**,
+8 pre-existing xfail. Five guards were added to
+`test_eagle_eye_llm_analysis.py`; all five failed before the implementation and
+passed afterward. They protect the immutable/versioned central-canal, neural-
+foraminal and lateral-recess grading catalog; identical grading semantics in
+both passes; ordinal grading fields in the screening contract; temperature in
+stored provenance; and actual forwarding of each stage's temperature across
+the Eagle Eye → EchoMind boundary.
+
+> **Two readers may have opposite dispositions without having different
+> dictionaries.** Screening remains inclusive and verification remains
+> conservative, but both now use one catalog for the meaning of mild, moderate
+> and severe. The transport also no longer applies its shared 0.2 default to
+> Gemini 3 screening: screening requests 1.0, while GPT verification remains
+> at 0.2. This slice deliberately does not change image selection, candidate
+> routing, or final-report rendering, so its effect can be evaluated separately.
+
+---
+
+**2026-08-27 (Eagle Eye — patient-free GapGPT capability matrix)** —
+`tests/code/ai_imaging` → **504 passed**, 8 pre-existing xfail;
+Eagle Eye/GapGPT/EchoMind cross-boundary selection → **94 passed**;
+`verify_plugin_mirrors.py` → **456/456**. New guard file:
+`tests/code/ai_imaging/test_eagle_eye_gapgpt_capability.py` (5 guards; all five
+failed before the pure contract and adapter existed).
+
+The probe sends only deterministic in-memory PNG tiles through the existing
+GapGPT URL, key and HTTP authorities. It pins the two production model ids and
+their stage temperatures; text, high-detail vision, multi-image ordering,
+strict-schema and Responses scenarios; semantic schema evaluation; credential
+redaction; and the absence of any direct OpenAI endpoint or key path.
+
+> **HTTP 200 is not capability success.** Gemini returned an empty JSON object
+> for a strict schema and therefore failed semantically; GPT-5.6 Sol returned
+> the exact required object. Also, `google/<model>` and `openai/<model>` are
+> GapGPT canonical names, not model substitution. The first evaluator used raw
+> string inequality, incorrectly marked every live response as substituted,
+> and the namespace guard failed before that defect was fixed.
+
+---
+
+**2026-08-28 (Eagle Eye workflow/UI boundary)** — New guard file:
+`tests/code/ai_imaging/test_eagle_eye_ui_boundary.py` (4 guards). The architecture
+guard failed before implementation because the coordinator did not exist and all
+capture, analysis, result, and teardown methods were still members of
+`ImagingToolsTab`. The extracted
+`modules/ai_imaging/eagle_eye_lumbar/workflow_coordinator.py` now owns those
+lifecycles. Two behavioral guards protect the validated series-identity handoff and
+close-while-running abort/detach sequence. Focused boundary/resolution gate:
+**56 passed**; capture/resolution/LLM gate: **267 passed**; complete AI Imaging
+gate: **518 passed, 8 pre-existing xfailed**.
+
+> **A UI callback is not the feature boundary.** Moving only the button callback
+> would leave state, error handling, worker ownership, and teardown coupled to the
+> oversized tab. The coordinator owns the entire lifecycle; the tab constructs it,
+> schedules it, displays status, and tears it down.
+
+---
+
+**2026-08-28 (Eagle Eye pipeline 4.0.0 — parallel clinical context)** —
+`tests/code/ai_imaging/test_eagle_eye_llm_analysis.py` now contains 77 guards,
+including four new guards that all failed before implementation. They protect:
+the versioned Gemini clinical-context stage and GPT fusion input; bounded,
+supported, path-redacted attachment packaging; concurrent Gemini MRI screening
+and document extraction before GPT verification; and graceful continuation when
+the document branch is absent or fails. Complete AI Imaging gate: **522 passed,
+8 pre-existing xfailed**.
+
+> Clinical context is an untrusted prior, never current-MRI evidence. The final
+> adapter allowlists the extraction schema, and GPT verification must re-check
+> every historical claim against the MRI. No document means no extra Gemini
+> request; context failure does not discard a successful MRI read.
+
+---
+
+**2026-08-28 (Eagle Eye pipeline 4.1.0 — multi-source context)** — The parallel
+Gemini context branch now reads allowlisted reception facts and prior reports,
+a sanitized full-or-limited PACS series catalogue, DICOMized clinical history
+series `100000`, supported attachment documents, and a bounded MRI overview.
+New guards prove that collection itself overlaps MRI screening; the capture
+boundary snapshots the full catalogue without UIDs; DICOM clinical pages are
+rendered to derived PNGs; and `locally_available_series_only` can never create a
+missing-sequence, absent-postcontrast, or protocol-limitation claim. Focused LLM
+file: **83 passed**; LLM plus lumbar pipeline: **222 passed**; complete AI
+Imaging gate: **529 passed, 8 pre-existing xfailed**; EchoMind scoping plus the
+patient-free GapGPT capability gate: **21 passed**.
+
+> Only `pacs_series_catalog` may support an absence claim. Reception history is
+> a prior, series inventory is protocol metadata, and MRI overview is incomplete
+> context; the final GPT must still establish findings from the full MRI package.
+
+---
+
+**2026-08-29 (Eagle Eye original-tab context handoff repair)** — Three new
+guards failed before the fix and protect the live-discovered loss of patient ID
+and complete series inventory between the original patient tab and the reduced
+Eagle Eye widget. `test_preflight_handoff_snapshots_patient_id_and_the_complete_catalog`
+pins the bounded, UID/path-free snapshot at the source;
+`test_capture_context_uses_complete_handoff_when_the_ai_widget_is_reduced`
+pins patient-ID recovery and six-series full-catalogue authority at capture;
+and `test_original_patient_context_crosses_the_existing_one_shot_handoff`
+pins coordinator threading without returning feature logic to the oversized UI
+tab. Focused lumbar/UI gate: **146 passed**; complete AI Imaging gate:
+**546 passed, 8 pre-existing xfailed**; plugin mirrors: **456 matched**.
+
+> The handoff is application context, not model input. Identity enables the
+> existing reception/prior-report authorities locally and is removed before the
+> model package; the series snapshot contains descriptive protocol metadata but
+> no series UID or path. Live source-build confirmation remains pending.
+
+The same repair is now pinned into every default build path by
+`tests/code/builder/test_eagle_eye_default_build_inclusion.py` (3 guards). The
+Nuitka inclusion guard failed before the builder change; both monolithic and
+staged full-core Nuitka now force-include `modules.ai_imaging`, while
+PyInstaller's existing non-optional `modules` collection remains the third
+path. The guards also inspect the generated staged command, prove there is no
+feature-flag gate, and require the canonical Viewer file to match its package
+payload exactly. Focused builder guard: **3 passed**; module/plugin readiness
+and cross-build coherence: **passed**;
+plugin mirrors: **456 matched**. The broader builder baseline remains red for
+six unrelated ARM64 parity guards, one stale staged-config guard, and one
+network source-freshness timeout; no full-build pass is claimed.
+
+**2026-08-30 (Eagle Eye pipeline 4.2.0 — disc hydration specificity and
+provider-neutral popup)** — Two behavioral guards failed before the fix and
+pass afterward. The LLM guard requires both image-reading stages to treat
+preserved central nucleus-pulposus T2 hyperintensity on adjacent mid-sagittal
+slices as evidence against desiccation, and forbids axial-only or dark-annulus
+calls. The UI guard renders a synthetic stored record and proves that the popup
+shows `AI-PACS AI Lumbar Analysis` without Gemini/GPT/provider identifiers,
+while preserving prompt version, pass/image counts, date, and token metadata.
+Raw model provenance remains stored for audit. Focused proof: **2 passed**;
+changed-boundary files: **90 passed**; complete AI Imaging gate: **559 passed,
+8 pre-existing xfailed**; default-build inclusion guard: **3 passed**. Live
+radiologist validation of pipeline 4.2.0 remains pending.
+
+**2026-08-28 (Eagle Eye — Legion Consult foundation)** — New guard files:
+`tests/code/ai_imaging/test_legion_consult_foundation.py` and
+`tests/code/ai_imaging/test_legion_consult_ui_contract.py` (**14 focused guards**).
+They protect the native/Legion function picker, MRI-only availability, mandatory
+source/T1/T2 roles, role de-duplication, optional/select-all cost control,
+non-diagnostic-series exclusion, deterministic four-corner LPS mapping, atomic
+local-only request persistence, source identity matching, and toolbar routing.
+The UI gate also proves that disarming an unfinished ROI returns the coordinator
+to idle. No capture, provider dispatch, or model-analysis behavior is claimed
+by this foundation gate.
+
+**2026-08-29 (Eagle Eye — Legion Consult post-ROI completion)** —
+`tests/code/ai_imaging/test_legion_consult_analysis.py` adds 10 focused guards,
+with one additional retry-lifecycle guard in
+`tests/code/ai_imaging/test_legion_consult_ui_contract.py`.
+They pin the exact user-supplied Step 1 prompt fingerprint; Gemini screening and
+GPT-5.6 Sol verification routing; clipped ±5 focus slices; exact complete-stack
+overview coverage; LPS-to-series projection; 3D-volume validation; anonymous,
+UID/path-free derived evidence and retry reconstruction; sequential transfer
+of the Step 1 answer into Step 2; the workflow transition from a persisted ROI
+request into analysis; and retention of source candidates when evidence
+preparation fails before its manifest exists. The post-ROI transition guard
+failed before the fix. The foundation persistence guard also verifies atomic
+request-state advancement without changing the saved ROI geometry.
 
 ---
 

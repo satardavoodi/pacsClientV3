@@ -890,6 +890,9 @@ def create_nuitka_command(
         # project than broad forced/include-package lists.
         include_packages = {
             "pydicom",
+            # Eagle Eye enters through lazy UI callbacks; include the internal
+            # package explicitly in the default staged core build.
+            "modules.ai_imaging",
             # settings_ui is imported lazily via package __getattr__/import_module.
             # Force include to avoid runtime "No module named ...settings_ui.settings_ui".
             "PacsClient.pacs.workstation_ui.settings_ui",

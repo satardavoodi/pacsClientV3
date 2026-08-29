@@ -25,6 +25,7 @@ from PacsClient.utils.utils import load_mg_ai_runs
 from modules.ai_imaging.ai_module_ui.csv_table import read_csv_table
 from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv, load_feedback_row, upsert_bone_age_feedback_csv
 from modules.ai_imaging.ai_module_ui.mg_csv_schema import infer_mg_csv_contract, normalize_mg_action
+from modules.ai_imaging.eagle_eye_lumbar.workflow_coordinator import EagleEyeWorkflowCoordinator
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -589,12 +590,9 @@ class MGFindingEditorDialog(QDialog):
 # ------------------------------ Main Tab ------------------------------
 
 def normalize_eagle_eye_mode(mode):
-    value = str(mode or "").strip().lower()
-    if value in ("mg", "mammo", "mammography", "breast"):
-        return "mammography"
-    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
-        return "bone_age"
-    return None
+    """Delegates to the shared authority (modules.ai_imaging.eagle_eye_modes)."""
+    from modules.ai_imaging.eagle_eye_modes import normalize_eagle_eye_mode as _normalize
+    return _normalize(mode)
 
 
 class ImagingToolsTab(AbstractTab):
@@ -609,6 +607,7 @@ class ImagingToolsTab(AbstractTab):
         self._sidebar_store: dict[str, dict] = {}
         self.vtk_initialized = False
         self.current_sidebar = None
+        self._eagle_eye_workflow = EagleEyeWorkflowCoordinator(self)
         self.mg_runs_loaded = False  # ÙÙ„Ú¯ Ø¬Ø¯ÛŒØ¯ Ø¨Ø±Ø§ÛŒ Ù…Ø¯ÛŒØ±ÛŒØª Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ MG runs
 
         # ---- init MG widgets FIRST (important)
@@ -674,6 +673,19 @@ class ImagingToolsTab(AbstractTab):
 
         processing_layout.addWidget(self.processing_label)
         processing_layout.addWidget(self.processing_bar)
+
+        # The way back to a result whose window was closed (§13/§14). Hidden
+        # until a session actually has something to show, so it never advertises
+        # an analysis that does not exist.
+        self.eagle_eye_result_btn = QPushButton("View Eagle Eye Result")
+        self.eagle_eye_result_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.eagle_eye_result_btn.setStyleSheet(
+            "QPushButton { background:#1e293b; color:#e2e8f0; border:1px solid #334155;"
+            " border-radius:6px; padding:4px 12px; font-weight:600; }"
+            "QPushButton:hover { background:#273549; }")
+        self.eagle_eye_result_btn.clicked.connect(self._eagle_eye_workflow.open_result)
+        self.eagle_eye_result_btn.hide()
+        processing_layout.addWidget(self.eagle_eye_result_btn)
 
         self.vertical_layout.addWidget(self.processing_widget)
 
@@ -755,6 +767,31 @@ class ImagingToolsTab(AbstractTab):
         # Load MG runs in background (after loading overlay is removed)
         if self.detect_modality() == "MG":
             QTimer.singleShot(100, self._load_mg_runs_into_dropdown)
+
+        # Lumbar MRI is a one-click session generator: the sweep starts by
+        # itself once the layout is on screen. Deferred so the tab paints first
+        # and the user sees the three panes rather than a frozen window.
+        if self.eagle_eye_mode == "lumbar_mri":
+            QTimer.singleShot(600, self._eagle_eye_workflow.start_capture)
+
+    def closeEvent(self, event):
+        """Detach an in-flight analysis BEFORE this tab's children are freed.
+
+        The analysis worker is a QThread parented into this tab. Destroying a
+        running QThread aborts the whole process with "QThread: Destroyed while
+        thread is still running" - no traceback, the log just stops. This is the
+        same trap OPT-51 and the EchoMind close-while-transcribing crash both
+        landed in; the fix is to detach, never to wait (the HTTP request can
+        take minutes and waiting would freeze the close).
+        """
+        try:
+            self._eagle_eye_workflow.teardown()
+        except Exception:
+            pass
+        try:
+            super().closeEvent(event)
+        except Exception:
+            pass
 
     def _init_mg_widgets(self):
         """
@@ -1421,6 +1458,8 @@ class ImagingToolsTab(AbstractTab):
             return "DX"
         if self.eagle_eye_mode == "mammography":
             return "MG"
+        if self.eagle_eye_mode == "lumbar_mri":
+            return "MR"
 
         study_uid = self.study_uid
 

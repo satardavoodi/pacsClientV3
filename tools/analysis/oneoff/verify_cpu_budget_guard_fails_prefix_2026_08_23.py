@@ -15,10 +15,19 @@ block, `git show HEAD:main.py` would revert unrelated work and the guards would
 The two Win32 probes (test_*_pseudo_handle_is_*_by_windows) are EXPECTED to pass
 pre-fix \u2014 they test Windows' semantics, not our source.
 
+BASE REF (added 2026-08-24). The fix shipped in `5deb8ee7 release(v3.6.3)`, so
+`HEAD:main.py` now CONTAINS it and the original HEAD-only script would abort with
+"HEAD already has fix". It therefore resolves a base ref automatically: HEAD if
+HEAD still lacks the fix, otherwise it walks back through `git log` for the newest
+commit whose `main.py` lacks it (that is `c2f79e63`, the v3.6.0 release) and prints
+which ref it chose. Pass one explicitly with `--base <ref>` to override. Without
+this the guard's pre-fix proof would have become permanently un-runnable the moment
+the fix was committed.
+
 Backup goes to a temp dir whose path is printed before main.py is touched, so a
 crash is always recoverable by hand.
 
-Usage:  python tools/analysis/oneoff/verify_cpu_budget_guard_fails_prefix_2026_08_23.py
+Usage:  python tools/analysis/oneoff/verify_cpu_budget_guard_fails_prefix_2026_08_23.py [--base <ref>]
 """
 
 from __future__ import annotations
@@ -62,6 +71,25 @@ def _git(*args: str) -> str:
     return out.stdout.decode("utf-8", errors="replace")
 
 
+def _resolve_base() -> str:
+    """Newest ref whose main.py still lacks the fix (or an explicit --base)."""
+    argv = sys.argv[1:]
+    if "--base" in argv:
+        ref = argv[argv.index("--base") + 1]
+        print(f"base ref (explicit): {ref}")
+        return ref
+    for ref in ["HEAD"] + _git("log", "--format=%h", "-40").split():
+        try:
+            src = _git("show", f"{ref}:main.py")
+        except subprocess.CalledProcessError:
+            continue
+        if "GetCurrentProcess.restype" not in src and "_pri_default" not in src:
+            print(f"base ref (auto): {ref}"
+                  + ("" if ref == "HEAD" else "  [HEAD already contains the fix]"))
+            return ref
+    raise SystemExit("no ref found whose main.py lacks the fix - widen the log window")
+
+
 def _head_block_lines(head_src: str) -> tuple[int, int]:
     lines = head_src.splitlines()
     start = end = None
@@ -95,16 +123,17 @@ def _diff_stays_inside(head_src: str) -> bool:
 
 
 def main() -> int:
-    head_src = _git("show", "HEAD:main.py")
+    base = _resolve_base()
+    head_src = _git("show", f"{base}:main.py")
 
-    if not _diff_stays_inside(head_src):
+    if base == "HEAD" and not _diff_stays_inside(head_src):
         print("REFUSING: main.py has edits outside the CPU BUDGET block; "
               "git show HEAD: would revert unrelated work.")
         return 2
 
-    assert "GetCurrentProcess.restype" not in head_src, "HEAD already has fix (1)"
-    assert "_pri_default" not in head_src, "HEAD already has fix (2)"
-    assert "SetPriorityClass" in head_src, "HEAD does not contain the block at all"
+    assert "GetCurrentProcess.restype" not in head_src, f"{base} already has fix (1)"
+    assert "_pri_default" not in head_src, f"{base} already has fix (2)"
+    assert "SetPriorityClass" in head_src, f"{base} does not contain the block at all"
 
     tmpdir = Path(tempfile.mkdtemp(prefix="cpu_budget_prefix_"))
     backup = tmpdir / "main.py.bak"

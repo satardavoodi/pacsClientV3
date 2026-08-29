@@ -44,26 +44,23 @@ def test_live_server_is_strict():
     assert p.can_trust_local_cache_as_authoritative("server") is False
 
 
-# ── LocalDatabase: local is the DISPLAY truth, but contentVersion sync is ON ──
-# A DB study is a locally-cached SERVER study, so its contentVersion MUST be checked
-# to detect server growth (STUDY_STORAGE_AND_VERSIONING §4.3/§7). Default ON — this
-# is the synchronization contract; disabling it would regress sync.
+# ── LocalDatabase: strict local by default; server refresh is opt-in/manual ───
 
-def test_local_database_syncs_by_default():
+def test_local_database_does_not_sync_by_default():
     assert p.local_is_source_of_truth("db") is True          # local = display truth
     assert p.can_trust_local_cache_as_authoritative("db") is True
-    assert p.requires_remote_resync("db") is True            # auto contentVersion sync ON
-    assert p.requires_live_server_sync("db") is True
-    assert p.requires_server_version_check("db") is True
-    assert p.missing_files_trigger_server_download("db") is True   # missing → server delta
-
-
-def test_local_database_opt_out_flag_disables_auto_sync(monkeypatch):
-    monkeypatch.setenv("AIPACS_LOCALDB_AUTO_SERVER_SYNC", "0")
-    assert p.requires_remote_resync("db") is False           # strict local-only
+    assert p.requires_remote_resync("db") is False
     assert p.requires_live_server_sync("db") is False
+    assert p.requires_server_version_check("db") is False
     assert p.missing_files_trigger_server_download("db") is False
-    assert p.local_is_source_of_truth("db") is True          # still local
+
+
+def test_local_database_opt_in_flag_enables_auto_sync(monkeypatch):
+    monkeypatch.setenv("AIPACS_LOCALDB_AUTO_SERVER_SYNC", "1")
+    assert p.requires_remote_resync("db") is True
+    assert p.requires_live_server_sync("db") is True
+    assert p.missing_files_trigger_server_download("db") is True
+    assert p.local_is_source_of_truth("db") is True
 
 
 # ── Import: purely local files, never live sync ──────────────────────────────

@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.6.3",
-    "build_date": "2026-08-23",
-    "release_date": "2026-08-23",
+    "version": "3.6.4",
+    "build_date": "2026-08-29",
+    "release_date": "2026-08-29",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "New AiPacs Chat module for team messaging",
-        "More reliable module installation with verification",
-        "Licenses stay valid across reboots (stable machine fingerprint)",
-        "MPR is smoother and more stable during interaction",
-        "Consultation & Education settings gathered into one place",
+        "Eagle Eye AI: lumbar spine MRI analysis with a clinical-context pass",
+        "Legion Consult: draw a region of interest and ask for a focused reading",
+        "Fixed a crash when switching series while the loading overlay was shown",
+        "Fixed a crash when opening Local Server",
+        "Local mode now works fully offline, with richer advanced search",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.6.3",
+        "AI-PACS Version 3.6.4",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۶.۳",
+        "AI-PACS نسخهٔ ۳.۶.۴",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

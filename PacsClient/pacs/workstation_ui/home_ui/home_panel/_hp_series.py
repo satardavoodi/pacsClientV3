@@ -680,6 +680,14 @@ class _HPSeriesMixin:
             if not local_uids and fallback_uid:
                 local_uids = [fallback_uid]
 
+            # Local mode is a hard offline boundary. The policy defaults DB mode
+            # to no automatic remote resync; manual Refresh/Sync still calls the
+            # force path separately.
+            from modules.storage.sync_mode_policy import requires_remote_resync
+            source = getattr(self, 'source_of_patient_load', None)
+            if not requires_remote_resync(source):
+                return local_uids
+
             # Anti-loop + throttle guard.
             inflight = getattr(self, '_patient_study_sync_inflight', None)
             if inflight is None:
@@ -978,7 +986,12 @@ class _HPSeriesMixin:
             # set just grew (e.g. a late-discovered DOC study), back-fill the OPEN tab
             # with the full set via the merge-aware set_server_series_info so it shows
             # without a close/reopen. No-op on single-click (no tab) / already-complete.
-            if _OPEN_TAB_BACKFILL and len(study_uids) > 1 and hasattr(self, '_backfill_open_viewer_studyset'):
+            from modules.storage.sync_mode_policy import requires_remote_resync
+            _remote_resync_allowed = requires_remote_resync(
+                getattr(self, 'source_of_patient_load', None)
+            )
+            if (_OPEN_TAB_BACKFILL and _remote_resync_allowed and len(study_uids) > 1
+                    and hasattr(self, '_backfill_open_viewer_studyset')):
                 # Fire-and-forget so a slow per-study fetch never delays the grouped
                 # right-panel render below. The back-fill updates the OPEN viewer tab
                 # independently and enqueues the late study's missing series.
@@ -1005,7 +1018,7 @@ class _HPSeriesMixin:
             try:
                 if not hasattr(self, '_series_refreshed_uids'):
                     self._series_refreshed_uids = set()
-                if study_uid not in self._series_refreshed_uids:
+                if _remote_resync_allowed and study_uid not in self._series_refreshed_uids:
                     _srv_cnt = int(getattr(self, '_server_series_count_by_study', {}).get(study_uid, 0) or 0)
                     if _srv_cnt > 0:
                         from PacsClient.utils.db_manager import find_study_pk_with_study_uid, get_series_by_study_pk
@@ -1074,6 +1087,16 @@ class _HPSeriesMixin:
                             )
                         print(f"[PROFILE] single-click: thumbnails loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
                         return
+
+                # A missing/corrupt local DB row is a local data-integrity state,
+                # not permission to contact PACS behind the user's back.
+                if self.source_of_patient_load == SourceOfPatientLoad.DB:
+                    try:
+                        if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, 'count_label'):
+                            self.right_panel_widget.count_label.setText('0 series')
+                    except Exception:
+                        pass
+                    return
 
             # Server request only if not cached
 

@@ -15,11 +15,13 @@ live, and four independent event-loop producers mutate the same QTableWidget wit
 no interlock. ``setRowCount(0)`` then destroyed ~180 cell widgets synchronously
 inside the model reset.
 
-These are source-level pins plus a behavioural test of the pure re-entrancy
-predicate — no Qt widget is constructed, so they run headless anywhere.
+These are source-level pins plus behavioural ownership checks against a small
+offscreen ``QTableWidget``. They never construct the production home page or
+touch the database.
 """
 import ast
 import pathlib
+import textwrap
 
 import pytest
 
@@ -35,6 +37,12 @@ def _func_src(path: pathlib.Path, name: str) -> str:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
             return ast.get_source_segment(src, node) or ""
     raise AssertionError(f"{name} not found in {path.name}")
+
+
+def _load_unbound_method(path: pathlib.Path, name: str):
+    namespace = {}
+    exec(textwrap.dedent(_func_src(path, name)), namespace)
+    return namespace[name]
 
 
 # ── clear_table itself ──────────────────────────────────────────────────────
@@ -62,14 +70,81 @@ def test_clear_table_destroys_cell_widgets_deferred():
     body = _func_src(_TABLE, "clear_table")
     assert "_detach_all_cell_widgets" in body
     detach = _func_src(_TABLE, "_detach_all_cell_widgets")
-    assert "removeCellWidget" in detach
-    assert "deleteLater()" in detach, (
+    detach_row = _func_src(_TABLE, "_detach_row_cell_widgets")
+    assert "_detach_row_cell_widgets" in detach
+    assert "removeCellWidget" in detach_row
+    assert "deleteLater()" in detach_row, (
         "cell widgets must be destroyed from the event loop, NOT synchronously "
         "inside setRowCount(0)'s model reset — that is the access-violation window"
     )
     # and the detach must happen BEFORE the model reset (rindex skips the
     # docstring's narrative mention of setRowCount(0))
     assert body.index("self._detach_all_cell_widgets()") < body.rindex("table.setRowCount(0)")
+
+
+def test_add_patient_data_sets_the_order_item_once():
+    """Replacing an owned QTableWidgetItem invalidates its Shiboken wrapper.
+
+    The frozen-build crashes include ``add_patient_data`` at the second write
+    to this exact cell, so the row builder must create the item only once.
+    """
+    body = _func_src(_TABLE, "add_patient_data")
+    assert body.count("COL['order']") == 1, (
+        "the order cell must not be replaced during initial row construction"
+    )
+
+
+def test_clear_table_takes_items_before_resetting_the_model():
+    """Qt-owned item wrappers must leave the table before its model reset."""
+    body = _func_src(_TABLE, "clear_table")
+    assert "_take_all_table_items" in body
+    assert body.index("self._take_all_table_items()") < body.rindex("table.setRowCount(0)")
+
+    helper = _func_src(_TABLE, "_take_all_table_items")
+    assert "takeItem" in helper, (
+        "takeItem transfers ownership to Python so setRowCount(0) cannot "
+        "invalidate every wrapper from inside the Qt model reset"
+    )
+
+
+def test_taken_items_survive_the_real_qt_model_reset():
+    """Exercise the production helper against Qt/Shiboken, not a mock."""
+    import shiboken6
+    from PySide6.QtWidgets import QApplication, QTableWidget, QTableWidgetItem
+
+    app = QApplication.instance() or QApplication([])
+
+    class _SortableProbe(QTableWidgetItem):
+        def __lt__(self, other):
+            return self.text() < other.text()
+
+    table = QTableWidget(3, 2)
+    original_items = []
+    for row in range(table.rowCount()):
+        for col in range(table.columnCount()):
+            item = _SortableProbe(f"{row}:{col}")
+            table.setItem(row, col, item)
+            original_items.append(item)
+
+    assert all(not shiboken6.ownedByPython(item) for item in original_items)
+
+    take_all = _load_unbound_method(_TABLE, "_take_all_table_items")
+    owner = type("_Owner", (), {"results_table": table})()
+    retired_items = take_all(owner)
+
+    assert len(retired_items) == 6
+    assert all(table.item(row, col) is None for row in range(3) for col in range(2))
+    assert all(shiboken6.ownedByPython(item) for item in retired_items)
+    table.setRowCount(0)
+    assert all(shiboken6.isValid(item) for item in retired_items)
+    table.deleteLater()
+    app.processEvents()
+
+
+def test_safe_row_removal_takes_items_before_removing_the_row():
+    body = _func_src(_TABLE, "_remove_provisional_pin_overlay_row")
+    assert "_take_row_items" in body
+    assert body.index("_take_row_items") < body.index("removeRow")
 
 
 def test_clear_table_blocks_signals_and_updates_during_teardown():
@@ -138,4 +213,14 @@ def test_search_server_checks_the_generation_before_clearing():
     assert "home._search_generation != _my_search_gen" in socket_path[:clear_at], (
         "a superseded search must bail BEFORE clear_table() — two overlapping "
         "searches must never both tear the table down"
+    )
+
+
+def test_local_search_does_not_pump_nested_qt_events_after_clear():
+    body = _func_src(_SEARCH, "search_local")
+    clear_at = body.index("home.patient_table_widget.clear_table()")
+    first_await = body.index("await ", clear_at)
+    assert "QApplication.processEvents()" not in body[clear_at:first_await], (
+        "the coroutine already yields explicitly; pumping Qt events between "
+        "clear and that yield can re-enter table producers synchronously"
     )

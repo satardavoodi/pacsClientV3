@@ -861,34 +861,71 @@ class QtFastContainer(QWidget):
             )
             return False
 
-        if self.viewport_spinner:
-            try:
-                self.viewport_spinner.show_loading("Switching series...")
-            except Exception:
-                pass
+        # ── Re-entrancy guard (2026-08-26) ────────────────────────────
+        # A NESTED switch_series on the same container is never legitimate and is
+        # how the process died on 2026-08-26 (pid 217556, 13:40:25): a queued
+        # viewer-controller command was dispatched from inside
+        # `AiPacsLoadingOverlay.show_overlay`'s `processEvents()` and started a
+        # second switch on top of the first, which then built a second overlay on
+        # a viewport the first switch was tearing down — native access violation.
+        # app.log: three `[VIEWER_SWITCH] switch_start` for series 7 in one second,
+        # one `phase_summary`.
+        #
+        # The root cause is fixed in `loading_overlay.show_overlay` (it no longer
+        # re-enters the event loop). This is defence in depth: `processEvents()`
+        # is called from a dozen other places in this codebase, so ANY of them
+        # reached during a switch could nest again. Refusing is strictly better
+        # than crashing — the outer switch is still running and will finish.
+        #
+        # The same-series no-op above could NOT catch this: the first switch of
+        # the crash carried an EMPTY series_uid, so the identity comparison did
+        # not match. Kill switch: AIPACS_SWITCH_REENTRANCY_GUARD=0.
+        _reentrancy_guard = (
+            os.getenv("AIPACS_SWITCH_REENTRANCY_GUARD", "1") or "1"
+        ).strip() != "0"
+        if _reentrancy_guard and getattr(self, "_in_switch_series", False):
+            logger.warning(
+                "[QtFastContainer] switch_series: RE-ENTRANT call refused "
+                "(series=%s) — a switch is already running on this container",
+                series_number,
+            )
+            return False
+        self._in_switch_series = True
 
         try:
-            self._start_qt_viewer(metadata, metadata_fixed or {})
-            self.last_series_show = series_index
-            # Now that this viewport is bound to a (possibly previous-exam) series,
-            # re-color borders by origin (covers thumbnail-click + programmatic
-            # loads; the drop path also refreshes). Selection is unchanged.
-            self.refresh_viewport_borders()
-            logger.info(
-                "[QtFastContainer] switch_series: complete series=%s slices=%d",
-                series_number, self.get_count_of_slices(),
-            )
-        except Exception as e:
-            logger.error("[QtFastContainer] switch_series failed: %s", e, exc_info=True)
             if self.viewport_spinner:
                 try:
-                    self.viewport_spinner.hide_loading()
+                    self.viewport_spinner.show_loading("Switching series...")
                 except Exception:
                     pass
-            return False
 
-        QTimer.singleShot(180, self._safe_hide_spinner)
-        return True
+            try:
+                self._start_qt_viewer(metadata, metadata_fixed or {})
+                self.last_series_show = series_index
+                # Now that this viewport is bound to a (possibly previous-exam) series,
+                # re-color borders by origin (covers thumbnail-click + programmatic
+                # loads; the drop path also refreshes). Selection is unchanged.
+                self.refresh_viewport_borders()
+                logger.info(
+                    "[QtFastContainer] switch_series: complete series=%s slices=%d",
+                    series_number, self.get_count_of_slices(),
+                )
+            except Exception as e:
+                logger.error("[QtFastContainer] switch_series failed: %s", e, exc_info=True)
+                if self.viewport_spinner:
+                    try:
+                        self.viewport_spinner.hide_loading()
+                    except Exception:
+                        pass
+                return False
+
+            QTimer.singleShot(180, self._safe_hide_spinner)
+            return True
+        finally:
+            # MUST clear on every exit path, including the early `return False`
+            # above — a stuck flag would refuse every later switch on this
+            # viewport, turning a crash into a dead pane.
+            self._in_switch_series = False
 
     def _safe_hide_spinner(self):
         """Hide viewport spinner safely (QTimer target — must not raise)."""

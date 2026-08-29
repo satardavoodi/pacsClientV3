@@ -7,8 +7,8 @@ HomeSearchService.search_server_advanced executes:
   - multiple Patient IDs (paste a list — comma / space / newline separated)
   - date range (preset or custom from/to)
   - modalities
-  - body part, age range, reporting physician (server returns the rows;
-    these refine client-side when the row carries the field)
+  - body part, age range, reporting physician (applied by the active source;
+    Local mode uses persisted SQLite metadata)
 
 The query dict is deliberately flat and versioned so future fields
 (reception/admission filters, study description, etc.) extend it without
@@ -202,8 +202,8 @@ class AdvancedSearchDialog(QDialog):
         root.addWidget(ref_group)
 
         note = QLabel(
-            "Patient IDs, dates and modalities filter on the server. Body part, "
-            "age and physician refine the returned results when that data is available."
+            "Filters apply to the active data source. Local mode uses downloaded "
+            "SQLite metadata and does not require a server connection."
         )
         note.setWordWrap(True)
         note.setObjectName("AdvNote")
@@ -317,8 +317,12 @@ class AdvancedSearchDialog(QDialog):
         if idata == "single":
             import_from = import_to = self.import_from.date().toString("yyyy-MM-dd")
         elif idata == "range":
-            import_from = self.import_from.date().toString("yyyy-MM-dd")
-            import_to = self.import_to.date().toString("yyyy-MM-dd")
+            start_date = self.import_from.date()
+            end_date = self.import_to.date()
+            if end_date < start_date:
+                start_date, end_date = end_date, start_date
+            import_from = start_date.toString("yyyy-MM-dd")
+            import_to = end_date.toString("yyyy-MM-dd")
         elif isinstance(idata, int):
             day = QDate.currentDate().addDays(-int(idata))
             import_from = import_to = day.toString("yyyy-MM-dd")

@@ -56,12 +56,12 @@ def _ee_retint_widget_tree(root, theme: dict) -> None:
 
 
 def normalize_eagle_eye_mode(mode):
-    value = str(mode or "").strip().lower()
-    if value in ("mg", "mammo", "mammography", "breast"):
-        return "mammography"
-    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
-        return "bone_age"
-    return None
+    """Delegates to the shared authority (modules.ai_imaging.eagle_eye_modes).
+
+    Kept as a module-level name because existing callers import it from here.
+    """
+    from modules.ai_imaging.eagle_eye_modes import normalize_eagle_eye_mode as _normalize
+    return _normalize(mode)
 
 
 class AiMainWindow(QMainWindow):

@@ -91,6 +91,7 @@ from PacsClient.utils.db_manager import get_study_by_study_uid
 from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
 from PacsClient.utils.structured_logging import emit_download_event as _emit_download_event
+from modules.storage.sync_mode_policy import local_is_source_of_truth
 
 from .widget import SourceOfPatientLoad
 
@@ -375,6 +376,13 @@ class _HPPatientOpenMixin:
         ``_add_socket_patient_to_table`` (``_server_patient_meta_by_pid``).
         """
         resolved = self._resolve_patient_study_uids(patient_id, fallback_study_uid)
+        if local_is_source_of_truth(getattr(self, 'source_of_patient_load', None)):
+            if _PSS_SHADOW:
+                try:
+                    self._pss_record_open_studyset(patient_id, resolved, fallback_study_uid)
+                except Exception:
+                    pass
+            return resolved
         try:
             pid = str(patient_id or '').strip()
             meta = (getattr(self, '_server_patient_meta_by_pid', None) or {}).get(pid)
@@ -924,7 +932,8 @@ class _HPPatientOpenMixin:
                             # refresh THIS viewer's series sidebar so the new series
                             # appear. Tab is already focused above, so neither call
                             # blocks the user; both are best-effort.
-                            if _OPEN_REFRESH_ALREADY_OPEN:
+                            if (_OPEN_REFRESH_ALREADY_OPEN and not local_is_source_of_truth(
+                                    getattr(self, 'source_of_patient_load', None))):
                                 try:
                                     self._schedule_ui_coro(
                                         self._resync_patient_studies_from_server(
@@ -1382,7 +1391,7 @@ class _HPPatientOpenMixin:
             # images are downloaded just because the current patient was opened —
             # download happens only when the user selects + drags a series.
             try:
-                if widget is not None and hasattr(widget, 'init_previous_exams'):
+                if not is_local and widget is not None and hasattr(widget, 'init_previous_exams'):
                     widget.init_previous_exams(patient_id, patient_name)
                     self._log_open_trace(study_uid, 'previous_exams_init', patient_id=str(patient_id))
             except Exception as _pe_err:
@@ -1475,7 +1484,23 @@ class _HPPatientOpenMixin:
                         return covered
 
                     aggregated_series = []
-                    if not is_local:
+                    if is_local:
+                        # A multi-study Local open suppresses the single-study
+                        # thumbnail renderer and therefore needs the complete
+                        # local series map before the grouped sidebar can render.
+                        # Build it only from SQLite + the on-disk thumbnail cache;
+                        # never consult the selected server from this branch.
+                        for current_study_uid in all_study_uids:
+                            local_payload = self._build_local_series_thumbnail_payload(
+                                current_study_uid
+                            ) or {}
+                            for series_info in local_payload.get('thumbnails', []) or []:
+                                if not isinstance(series_info, dict):
+                                    continue
+                                local_series_info = dict(series_info)
+                                local_series_info.setdefault('study_uid', current_study_uid)
+                                aggregated_series.append(local_series_info)
+                    else:
                         try:
                             for current_study_uid in all_study_uids:
                                 study_info = self._get_or_fetch_series_info(current_study_uid, patient_id)

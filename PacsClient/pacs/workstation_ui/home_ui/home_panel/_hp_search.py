@@ -362,9 +362,7 @@ class _HPSearchMixin:
             return
 
         # LOCAL (Local/Import tab, or an import-date filter): search ONLY the
-        # local DB. Map the advanced fields the local query understands; body
-        # part / age / physician have no local column and are not applied — the
-        # server path refines those client-side, the local search does not.
+        # local DB. Every advanced field is preserved for the local repository.
         extra = self._advanced_query_to_local_criteria(query)
         self.source_of_patient_load = SourceOfPatientLoad.DB
         self._search_task = asyncio.create_task(
@@ -375,9 +373,9 @@ class _HPSearchMixin:
     def _advanced_query_to_local_criteria(query: dict) -> dict:
         """Map an advanced-search query to ``search_patients_local`` criteria.
 
-        Only the fields the local DB search supports are mapped. Body part, age
-        and physician (server-side client-refinement fields) have no local
-        column and are intentionally omitted.
+        Keep this mapping lossless. The local repository supports bounded multi-ID,
+        acquisition/import dates, modality, body part, DICOM age, and the persisted
+        reporting-physician field.
         """
         extra: dict = {}
         if query.get('import_date_from'):
@@ -387,15 +385,23 @@ class _HPSearchMixin:
         _mods = query.get('modalities') or []
         if _mods:
             extra['modality'] = ",".join(_mods)
-        _pids = query.get('patient_ids') or []
-        if len(_pids) == 1:
-            extra['patient_id'] = _pids[0]
+        _pids = [str(pid).strip() for pid in (query.get('patient_ids') or []) if str(pid).strip()]
+        if _pids:
+            extra['patient_ids'] = _pids[:20]
         # Acquisition date range (study_date). search_local nulls the home-page
         # date fields, so pass these explicitly to honor the advanced filter.
         if query.get('date_from'):
             extra['date_from'] = query.get('date_from')
         if query.get('date_to'):
             extra['date_to'] = query.get('date_to')
+        if query.get('body_part'):
+            extra['body_part'] = query.get('body_part')
+        if query.get('age_min') is not None:
+            extra['age_min'] = query.get('age_min')
+        if query.get('age_max') is not None:
+            extra['age_max'] = query.get('age_max')
+        if query.get('physician'):
+            extra['physician'] = query.get('physician')
         return extra
 
     def _warmup_download_manager_once(self) -> None:
@@ -979,6 +985,15 @@ class _HPSearchMixin:
                 if self._has_displayable_reporting_name(physician_name):
                     cache[pid] = physician_name
                     self._mark_reporter_cached(pid)   # TTL clock for revalidation
+                    if suid:
+                        try:
+                            from database.dicom_db import update_study_reporting_physician
+                            update_study_reporting_physician(suid, physician_name)
+                        except Exception:
+                            _logger.debug(
+                                "Could not persist reporting physician for local reuse",
+                                exc_info=True,
+                            )
                     emit_download_event(
                         _logger, 'reporter-hydration', phase='resolved',
                         pid=pid, physician=physician_name,
@@ -1079,6 +1094,43 @@ class _HPSearchMixin:
                     'body_part_examined': series_info.get('body_part_examined', ''),
                 }
             )
+        return payload
+
+    def _build_local_series_thumbnail_payload(self, study_uid: str) -> dict:
+        """Build a Local-mode sidebar payload from SQLite and disk only."""
+        payload = {'study_uid': str(study_uid or ''), 'thumbnails': []}
+        try:
+            from pathlib import Path
+            from database.manager import get_study_info_with_series
+            from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
+
+            study_info = get_study_info_with_series(str(study_uid or '')) or {}
+            for index, series in enumerate(study_info.get('series') or [], start=1):
+                if not isinstance(series, dict):
+                    continue
+                series_number = str(series.get('series_number') or index)
+                canonical = Path(canonical_thumbnail_path(study_uid, series_number))
+                hinted_raw = str(series.get('thumbnail_path') or '').strip()
+                hinted = Path(hinted_raw) if hinted_raw else None
+                file_path = ''
+                if canonical.is_file():
+                    file_path = str(canonical)
+                elif hinted is not None and hinted.is_file():
+                    file_path = str(hinted)
+                payload['thumbnails'].append({
+                    'file_path': file_path,
+                    'thumbnail_path': file_path,
+                    'study_uid': str(study_uid or ''),
+                    'series_uid': series.get('series_uid') or '',
+                    'series_number': series_number,
+                    'series_description': series.get('series_description') or f'Series {series_number}',
+                    'modality': series.get('modality') or 'Unknown',
+                    'image_count': int(series.get('image_count') or 0),
+                    'protocol_name': series.get('protocol_name') or '',
+                    'body_part_examined': series.get('body_part_examined') or '',
+                })
+        except Exception:
+            _logger.debug("Local series thumbnail payload failed", exc_info=True)
         return payload
 
     def _is_open_flow_thumbnail_deferral_allowed(self, study_uid: str) -> bool:
@@ -1855,7 +1907,28 @@ class _HPSearchMixin:
             if self.source_of_patient_load == SourceOfPatientLoad.DB:
                 if hasattr(self, '_log_open_trace'):
                     self._log_open_trace(study_uid, 'right_panel_cache_miss_local_mode')
-                db_cache_miss = True
+                local_series_payload = await asyncio.to_thread(
+                    self._build_local_series_thumbnail_payload, study_uid
+                )
+                if hasattr(self, '_is_active_patient_selection') and not self._is_active_patient_selection(patient_id, study_uid):
+                    return
+                local_series = local_series_payload.get('thumbnails', [])
+                if local_series:
+                    self.display_thumbnails(local_series, progressive=False)
+                    self._right_panel_render_study_uid = study_uid_str
+                    if hasattr(self, '_log_open_trace'):
+                        self._log_open_trace(
+                            study_uid,
+                            'right_panel_local_metadata_display',
+                            thumbnail_count=len(local_series),
+                        )
+                else:
+                    try:
+                        if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, 'count_label'):
+                            self.right_panel_widget.count_label.setText('0 series')
+                    except Exception:
+                        pass
+                return
 
             # Server request only if not cached
             thumbnails = None

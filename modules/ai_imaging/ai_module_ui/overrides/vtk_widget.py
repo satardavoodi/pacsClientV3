@@ -200,7 +200,11 @@ class AIVTKWidget(VTKWidget):
         self._ai_boxes_visible = True
         self._boxes_toggle_btn = None
         try:
-            if self.type_viewer != TYPES_VIEWER.fixed_viewer:
+            # Lumbar MRI has no AI boxes to show or hide, and every pane of its
+            # 3x1 layout ends up inside a saved screenshot - an inert toggle
+            # button would be baked into every captured frame.
+            _mode = getattr(patient_widget, 'eagle_eye_mode', None)
+            if self.type_viewer != TYPES_VIEWER.fixed_viewer and _mode != "lumbar_mri":
                 self._create_boxes_toggle_button()
         except Exception:
             pass

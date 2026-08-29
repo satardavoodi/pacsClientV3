@@ -70,23 +70,15 @@ def _localdb_auto_server_sync_enabled() -> bool:
     """Whether a LocalDatabase (DB-source) patient runs the AUTO background
     server contentVersion check on reselect.
 
-    DEFAULT **ON**. A DB/Local patient is a *locally-cached server study*, so the
-    server's ``contentVersion`` must be consulted to detect server-side growth —
-    new instances AND attachments / voice / captures / documents all bump it
-    (STUDY_STORAGE_AND_VERSIONING §4.3), and the client rule is
-    ``server_version > local_version -> re-sync`` (§7). This is the core
-    synchronization contract and must NOT be silently disabled. It does not violate
-    the mode-separation directive: the check is fire-and-forget (never blocks the
-    open), throttled, contentVersion-cheap, and a no-op when the server is
-    unavailable (so a local patient is never blocked or marked stale).
-
-    Set ``AIPACS_LOCALDB_AUTO_SERVER_SYNC=0`` for strict local-only behaviour (no
-    auto server check for DB patients). IMPORT / CD are always skipped regardless
-    (those studies do not exist on the server). A manual "Refresh / Sync from
-    server" always runs for any source.
+    DEFAULT **OFF**. Local mode is a hard offline boundary: selecting or opening a
+    downloaded patient must keep working with the network cable disconnected and
+    must not pay hidden socket timeouts. Set ``AIPACS_LOCALDB_AUTO_SERVER_SYNC=1``
+    to opt into background growth checks for a server-origin cache. IMPORT / CD are
+    always skipped regardless. A manual "Refresh / Sync from server" remains the
+    explicit, user-initiated way to update a Local study.
     """
     return str(
-        os.environ.get("AIPACS_LOCALDB_AUTO_SERVER_SYNC", "1")
+        os.environ.get("AIPACS_LOCALDB_AUTO_SERVER_SYNC", "0")
     ).strip().lower() not in ("0", "false", "no", "off")
 
 

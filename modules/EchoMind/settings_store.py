@@ -26,6 +26,17 @@ def _defaults() -> Dict[str, Any]:
         "openai_text_model": "gpt-5-mini",
         "openai_report_model": "gpt-5.6-terra",
         "openai_vision_model": "gpt-5.4",
+        # Eagle Eye sends a whole capture session (tens of screenshots) in ONE
+        # request and asks for a correlated read, which is a harder job than the
+        # single-image artifact check `vision_model` was chosen for - hence its
+        # own slot rather than sharing that one.
+        #
+        # TWO slots, because Eagle Eye's two passes want different things. The
+        # screening pass casts wide over ~31 frames; the verification pass has
+        # to hold a strict threshold and reject. They are separately swappable
+        # so one can be A/B-tested without disturbing the other.
+        "openai_eagle_eye_model": "gpt-5.6-sol",
+        "openai_eagle_eye_screening_model": "gemini-3.1-pro-preview",
         "openai_transcription_model": "gpt-4o-transcribe",
         "openai_secretary_model": "gpt-5-mini",
         "openai_reasoning_effort": "",
@@ -192,6 +203,10 @@ def get_openai_settings() -> Dict[str, Any]:
         "text_model": _as_str("openai_text_model", "gpt-5-mini") or "gpt-5-mini",
         "report_model": _as_str("openai_report_model", "gpt-5.6-terra") or "gpt-5.6-terra",
         "vision_model": _as_str("openai_vision_model", "gpt-5.4") or "gpt-5.4",
+        "eagle_eye_model": _as_str("openai_eagle_eye_model", "gpt-5.6-sol") or "gpt-5.6-sol",
+        "eagle_eye_screening_model": (
+            _as_str("openai_eagle_eye_screening_model", "gemini-3.1-pro-preview")
+            or "gemini-3.1-pro-preview"),
         "transcription_model": _as_str("openai_transcription_model", "gpt-4o-transcribe") or "gpt-4o-transcribe",
         "secretary_model": _as_str("openai_secretary_model", "gpt-5-mini") or "gpt-5-mini",
         "reasoning_effort": _as_str("openai_reasoning_effort"),
@@ -218,6 +233,12 @@ def get_openai_model_for_feature(feature: str, default: str = "") -> str:
         "vision": "vision_model",
         "image": "vision_model",
         "image_artifact": "vision_model",
+        "eagle_eye": "eagle_eye_model",
+        # Eagle Eye's screening pass has its own slot; an UNMAPPED feature name
+        # silently falls through to `text_model` below, which would send a chat
+        # model 31 screenshots, so a new stage MUST be added here.
+        "eagle_eye_screening": "eagle_eye_screening_model",
+        "eagle_eye_verification": "eagle_eye_model",
         "breast": "report_model",
         "secretary": "secretary_model",
         "transcription": "transcription_model",
@@ -236,6 +257,8 @@ def save_openai_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
         "openai_text_model": str((patch or {}).get("text_model") or "gpt-5-mini").strip() or "gpt-5-mini",
         "openai_report_model": str((patch or {}).get("report_model") or "gpt-5.6-terra").strip() or "gpt-5.6-terra",
         "openai_vision_model": str((patch or {}).get("vision_model") or "gpt-5.4").strip() or "gpt-5.4",
+        "openai_eagle_eye_model": str((patch or {}).get("eagle_eye_model") or "gpt-5.6-sol").strip() or "gpt-5.6-sol",
+        "openai_eagle_eye_screening_model": str((patch or {}).get("eagle_eye_screening_model") or "gemini-3.1-pro-preview").strip() or "gemini-3.1-pro-preview",
         "openai_transcription_model": str((patch or {}).get("transcription_model") or "gpt-4o-transcribe").strip() or "gpt-4o-transcribe",
         "openai_secretary_model": str((patch or {}).get("secretary_model") or "gpt-5-mini").strip() or "gpt-5-mini",
         "openai_reasoning_effort": str((patch or {}).get("reasoning_effort") or "").strip(),

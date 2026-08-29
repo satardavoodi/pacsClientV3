@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 import qtawesome as qta
 
 from PacsClient.utils import search_patients_local
@@ -475,7 +475,6 @@ class HomeSearchService:
             home._update_connection_indicator_by_status('busy', 'Searching local database...')
 
             home.patient_table_widget.clear_table()
-            QApplication.processEvents()
             await asyncio.sleep(0)
 
             # Build search criteria
@@ -567,6 +566,7 @@ class HomeSearchService:
                         body_part=patient.get('body_part'),
                         study_time=patient.get('study_time'),
                         age=patient.get('age'),
+                        reporting_physician=patient.get('reporting_physician'),
                     )
                     return True
 

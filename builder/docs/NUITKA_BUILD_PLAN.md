@@ -174,6 +174,9 @@ Notes:
 
 ## Core vs Optional Plugin Boundary
 At full-core stage:
+- Internal `modules.ai_imaging` is force-included in both the monolithic spec
+  and staged `full_core` profile because Eagle Eye enters through lazy UI
+  callbacks and must be present in every default build.
 - Optional modules are excluded through `--nofollow-import-to`, including:
   - `modules.printing`
   - `modules.cd_burner`

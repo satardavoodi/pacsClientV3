@@ -285,12 +285,32 @@ class _PWPanelsMixin:
                         selected = getattr(self, 'selected_widget', None)
                         metadata = getattr(getattr(selected, 'image_viewer', None), 'metadata', {}) or {}
                         modality = str(metadata.get('series', {}).get('modality', '') or '').upper()
-                        eagle_eye_mode = "bone_age" if modality == "DX" else "mammography" if modality == "MG" else None
+                        # One authority for the modality -> mode mapping, shared
+                        # with the Eagle Eye button itself, so the sidebar route
+                        # and the toolbar route can never disagree.
+                        from modules.ai_imaging.eagle_eye_modes import resolve_eagle_eye_mode
+                        series = metadata.get('series', {}) or {}
+                        fixed = getattr(self, 'metadata_fixed', {}) or {}
+                        eagle_eye_mode = resolve_eagle_eye_mode(modality, [
+                            fixed.get('study_description', ''),
+                            fixed.get('body_part', ''),
+                            series.get('series_description', ''),
+                            series.get('protocol_name', ''),
+                            series.get('body_part_examined', ''),
+                        ])
                     except Exception:
                         eagle_eye_mode = None
+                # Eagle Eye may have resolved a DIFFERENT study than the tab's
+                # primary one (a patient can carry several exams, and the reader
+                # picks which to analyse). Honour that choice; fall back to the
+                # tab's own study when nothing was chosen.
+                target_study_uid = (
+                    getattr(self, '_preferred_eagle_eye_study_uid', None)
+                    or self.study_uid
+                )
                 self.method_add_new_tab(
                     open_ai_client_tab=True,
-                    study_uid=self.study_uid,
+                    study_uid=target_study_uid,
                     eagle_eye_mode=eagle_eye_mode,
                 )
 

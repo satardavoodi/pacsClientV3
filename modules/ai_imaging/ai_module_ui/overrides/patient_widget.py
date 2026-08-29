@@ -18,12 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_eagle_eye_mode(mode):
-    value = str(mode or "").strip().lower()
-    if value in ("mg", "mammo", "mammography", "breast"):
-        return "mammography"
-    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
-        return "bone_age"
-    return None
+    """Delegates to the shared authority (modules.ai_imaging.eagle_eye_modes)."""
+    from modules.ai_imaging.eagle_eye_modes import normalize_eagle_eye_mode as _normalize
+    return _normalize(mode)
+
+
+# Lumbar MRI Eagle Eye: three panes, left to right, always in this order.
+# The pane labels come from the capture pipeline's own slot vocabulary, so the
+# caption a reader sees on screen and the slot name written into every manifest
+# can never drift apart.
+from modules.ai_imaging.eagle_eye_lumbar.constants import SLOT_LABELS, SLOT_ORDER
+
+LUMBAR_LAYOUT = (1, 3)
+LUMBAR_VIEWER_NAMES = tuple(SLOT_LABELS[slot] for slot in SLOT_ORDER)
 
 
 def resolve_thumb_lat_view(thumb: dict) -> tuple:
@@ -105,7 +112,12 @@ class AIPatientWidget(PatientWidget):
             logger.debug(f'[MG][INIT] ║ ❌ Error in override patient widget: {e}')
             import_folder_path = sample_study
 
-        initial_layout = (1, 1) if self.eagle_eye_mode == "bone_age" else (1, 2)
+        if self.eagle_eye_mode == "bone_age":
+            initial_layout = (1, 1)
+        elif self.eagle_eye_mode == "lumbar_mri":
+            initial_layout = LUMBAR_LAYOUT
+        else:
+            initial_layout = (1, 2)
         logger.debug(f'[MG][INIT] ║ Initializing with layout {initial_layout} for mode={self.eagle_eye_mode}')
         logger.debug(f'[MG][INIT] ╚═══════════════════════════════════════')
         
@@ -142,6 +154,14 @@ class AIPatientWidget(PatientWidget):
             self._hide_second_viewer_if_exists()
             return (1, 1)
 
+        if self.eagle_eye_mode == "lumbar_mri":
+            # The lumbar layout is fixed at Sag T2 | Sag T1 | Ax T2 and is never
+            # re-derived from whichever series happens to load first: the three
+            # panes ARE the capture frame.
+            logger.debug(f"[MG][LAYOUT] ║ Lumbar MRI mode, returning {LUMBAR_LAYOUT}")
+            self._ensure_lumbar_viewers_visible()
+            return LUMBAR_LAYOUT
+
         if modality == 'MG':
             logger.debug(f"[MG][LAYOUT] ║ ✓ Returning 1×2 layout for mammography")
             logger.debug(f"[MG][LAYOUT] ║ Both viewers will be visible")
@@ -154,6 +174,17 @@ class AIPatientWidget(PatientWidget):
             logger.debug(f"[MG][LAYOUT] ╚═══════════════════════════════════════")
             self._hide_second_viewer_if_exists()
             return (1, 1)
+
+    def _ensure_lumbar_viewers_visible(self):
+        """Keep all three lumbar panes visible - every capture needs all three."""
+        try:
+            nodes = list(getattr(self, 'lst_nodes_viewer', []) or [])[:3]
+            for i, node in enumerate(nodes):
+                if node and getattr(node, 'widget', None):
+                    node.widget.setVisible(True)
+                    logger.debug(f"[LUMBAR][LAYOUT] ✓ Viewer {i + 1} visible")
+        except Exception as e:
+            logger.debug(f"[LUMBAR][LAYOUT] ❌ Error ensuring lumbar viewers visible: {e}")
 
     def _ensure_both_viewers_visible(self):
         """Ensure both viewers are visible for MG modality"""
@@ -187,6 +218,9 @@ class AIPatientWidget(PatientWidget):
         if self.eagle_eye_mode == "bone_age":
             logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: mode=bone_age, returning (1, 1)")
             return (1, 1)
+        if self.eagle_eye_mode == "lumbar_mri":
+            logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: mode=lumbar_mri, returning {LUMBAR_LAYOUT}")
+            return LUMBAR_LAYOUT
         logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: modality={modality}, returning (1, 2)")
         return (1, 2)
 
@@ -278,8 +312,16 @@ class AIPatientWidget(PatientWidget):
         logger.debug(f"[MG][LAYOUT] ║ create_some_viewers called with count={count}")
         
         index_series_show = 0  # create viewers that all of them show first series of thumbnails
-        lst_names_viewer = [TYPES_VIEWER.your_viewer, TYPES_VIEWER.fixed_viewer]
-        
+        if self.eagle_eye_mode == "lumbar_mri":
+            lst_names_viewer = list(LUMBAR_VIEWER_NAMES)
+        else:
+            lst_names_viewer = [TYPES_VIEWER.your_viewer, TYPES_VIEWER.fixed_viewer]
+
+        # Never index past the name list: an unexpected count used to raise
+        # IndexError here and leave the layout half-built.
+        while len(lst_names_viewer) < count:
+            lst_names_viewer.append(f"Viewer {len(lst_names_viewer) + 1}")
+
         for i in range(count):
             self.type_viewer = lst_names_viewer[i]
             logger.debug(f"[MG][LAYOUT] ║ Creating viewer {i+1}/{count}: type={self.type_viewer}")
@@ -297,9 +339,33 @@ class AIPatientWidget(PatientWidget):
         
         logger.debug(f"[MG][LAYOUT] ╚═══════════════════════════════════════")
 
-    def manage_reference_line(self):
-        """Override to disable reference lines for AI module"""
-        pass  # turn off reference lines for AI
+    def manage_reference_line(self, repaint=True):
+        """Reference lines: off for MG/bone-age, ON (all-pairs) for lumbar MRI.
+
+        Mammography and bone age are single-plane studies where a cross-reference
+        line means nothing and only clutters the AI overlays - that is why this
+        override existed. Lumbar MRI is the opposite case: the whole point of the
+        3-panel capture is that each frame carries its own spatial context, so the
+        sagittal plane must be drawn on the axial pane and the axial plane on both
+        sagittal panes.
+
+        All-pairs is used deliberately rather than the legacy single-source path,
+        because during a sweep there is no "clicked" viewport driving the lines -
+        the controller moves the panes programmatically. Calling the base
+        implementation directly (instead of flipping AIPACS_REFERENCE_LINES_ALL_PAIRS)
+        keeps this scoped to the Eagle Eye widget: the main viewer's reference-line
+        behaviour is untouched.
+
+        The signature now matches the base method. The old zero-argument version
+        silently swallowed the ``repaint`` keyword the throttle passes, which meant
+        any future caller would have raised TypeError instead of no-opping.
+        """
+        if self.eagle_eye_mode != "lumbar_mri":
+            return  # turn off reference lines for AI (MG / bone age)
+        try:
+            self._manage_reference_line_all_pairs(repaint=repaint)
+        except Exception as exc:
+            logger.debug(f"[LUMBAR][REFLINE] reference line pass failed: {exc}")
 
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
                                 vtk_widget=None, slider=None, allow_paired=True, **kwargs):
@@ -339,7 +405,10 @@ class AIPatientWidget(PatientWidget):
 
         # For MG, mirror the same series onto the other viewer — DEFERRED.
         try:
-            if self.eagle_eye_mode == "bone_age":
+            if self.eagle_eye_mode in ("bone_age", "lumbar_mri"):
+                # Lumbar MRI assigns a DIFFERENT series to each of its three
+                # panes on purpose; mirroring would immediately overwrite two of
+                # them with the third.
                 return result
             modality = ''
             if hasattr(self, 'lst_nodes_viewer') and len(self.lst_nodes_viewer) >= 2:

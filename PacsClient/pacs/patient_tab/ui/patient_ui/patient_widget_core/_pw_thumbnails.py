@@ -69,6 +69,46 @@ def series_is_clinical_history(series) -> bool:
 class _PWThumbnailsMixin:
     """Server thumbnails, series info, series resolution."""
 
+    def _local_thumbnail_workflow(self) -> bool:
+        return str(getattr(self, '_deferred_caller', '') or '').strip().lower() in {
+            'import', 'local'
+        }
+
+    def _build_local_thumbnail_entries(self, study_uid: str) -> list[dict]:
+        """Read local series metadata and existing thumbnail paths without network."""
+        entries = []
+        try:
+            from database.manager import get_study_info_with_series
+            from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
+
+            info = get_study_info_with_series(str(study_uid or '')) or {}
+            for index, series in enumerate(info.get('series') or [], start=1):
+                if not isinstance(series, dict):
+                    continue
+                series_number = str(series.get('series_number') or index)
+                canonical = Path(canonical_thumbnail_path(study_uid, series_number))
+                hinted_raw = str(series.get('thumbnail_path') or '').strip()
+                hinted = Path(hinted_raw) if hinted_raw else None
+                file_path = ''
+                if canonical.is_file():
+                    file_path = str(canonical)
+                elif hinted is not None and hinted.is_file():
+                    file_path = str(hinted)
+                entries.append({
+                    'file_path': file_path,
+                    'study_uid': str(study_uid or ''),
+                    'series_uid': series.get('series_uid') or '',
+                    'series_number': series_number,
+                    'series_description': series.get('series_description') or f'Series {series_number}',
+                    'modality': series.get('modality') or 'Unknown',
+                    'image_count': int(series.get('image_count') or 0),
+                    'protocol_name': series.get('protocol_name') or '',
+                    'body_part_examined': series.get('body_part_examined') or '',
+                })
+        except Exception:
+            self.logger.debug("Local thumbnail metadata load failed", exc_info=True)
+        return entries
+
     def _log_open_thumbnail_trace(self, phase: str, level: str = 'info', **fields) -> None:
         study_uid = getattr(self, 'study_uid', None)
         parent_widget = getattr(self, 'parent_widget', None)
@@ -324,6 +364,21 @@ class _PWThumbnailsMixin:
             # active download or fetch from the server.
             self._log_open_thumbnail_trace('ThumbnailCacheMiss', study_uid=self.study_uid)
 
+            if self._local_thumbnail_workflow():
+                series_entries = await asyncio.to_thread(
+                    self._build_local_thumbnail_entries, self.study_uid
+                )
+                self._log_open_thumbnail_trace(
+                    'patient_tab_thumb_cache_miss_local_mode',
+                    thumbnail_count=len(series_entries),
+                )
+                if series_entries:
+                    self._pending_thumbnails_entries = series_entries
+                    QMetaObject.invokeMethod(
+                        self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection
+                    )
+                return
+
             try:
                 from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
 
@@ -446,6 +501,11 @@ class _PWThumbnailsMixin:
             return
         target_study_uids = [str(su) for su in studies_index.keys()]
         if not target_study_uids:
+            return
+        if self._local_thumbnail_workflow():
+            QMetaObject.invokeMethod(
+                self, "_render_multistudy_grouped_slot", Qt.QueuedConnection
+            )
             return
         self._multistudy_prefetch_inflight = True
 
@@ -1011,7 +1071,7 @@ class _PWThumbnailsMixin:
             for series in sorted(series_entries, key=_sort_key):
                 file_path = series.get('file_path')
                 series_number = str(series.get('series_number', ''))
-                if not (file_path and series_number):
+                if not series_number:
                     continue
 
                 # ── Sync _server_series_info with gRPC image_count ──────────

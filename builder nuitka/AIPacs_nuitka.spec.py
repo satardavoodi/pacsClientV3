@@ -108,6 +108,10 @@ INCLUDE_PACKAGES = [
     # First-party
     "PacsClient",
     "database",
+    # Eagle Eye is entered through lazy UI callbacks. Force the complete
+    # internal AI Imaging package into every default build so newly added
+    # workflow modules cannot disappear behind static import analysis.
+    "modules.ai_imaging",
     # NOTE: do NOT blanket-include the whole `modules` package. It does a
     # recursive filesystem walk that sweeps in the 789 MB Advanced 3D Slicer
     # vendored CPython (build/python-install/Lib/test/...) and crashes Nuitka

@@ -158,7 +158,14 @@ def test_ui_routing_and_bone_age_import_guards_are_explicit():
     assert "eagle_eye_mode" in ai_mainwindow
     assert "eagle_eye_mode" in hp_modules
     assert 'self.eagle_eye_mode == "bone_age"' in imaging_tab
-    assert 'initial_layout = (1, 1) if self.eagle_eye_mode == "bone_age" else (1, 2)' in patient_widget
+    # Layout selection became a three-way branch when the lumbar MRI mode was
+    # added (bone age 1x1, lumbar 1x3, MG 1x2). Pin each branch's INTENT rather
+    # than the old one-line ternary, so this guard does not rot again the next
+    # time a mode joins.
+    assert 'if self.eagle_eye_mode == "bone_age":\n            initial_layout = (1, 1)' in patient_widget
+    assert 'elif self.eagle_eye_mode == "lumbar_mri":\n            initial_layout = LUMBAR_LAYOUT' in patient_widget
+    assert 'LUMBAR_LAYOUT = (1, 3)' in patient_widget
+    assert 'initial_layout = (1, 2)' in patient_widget
     assert 'BACKEND_PYDICOM_QT if self.eagle_eye_mode == "bone_age" else BACKEND_VTK' in patient_widget
     assert 'if self.eagle_eye_mode == "bone_age":\n            return super().creator_vtk_widget()' in patient_widget
     assert 'if self.eagle_eye_mode == "bone_age":\n            return super().create_dummy_vtk_widget()' in patient_widget

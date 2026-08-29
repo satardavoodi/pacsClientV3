@@ -4579,6 +4579,8 @@ class PatientTableWidget(QWidget):
         if merged_study_uids:
             study_uid_item.setData(Qt.UserRole + 10, merged_study_uids)
         self.results_table.setItem(row, COL['study_uid'], study_uid_item)
+        # Set this owned item exactly once. Replacing the same cell during row
+        # construction synchronously invalidates the first Shiboken wrapper.
         self.results_table.setItem(row, COL['order'], _mk(str(self._insert_seq), self._insert_seq))
 
         # ── "Imported On" — when the study first entered THIS computer's DB ──
@@ -4591,9 +4593,6 @@ class PatientTableWidget(QWidget):
         self.results_table.setItem(
             row, COL['imported_on'], _mk(_imported_display, _imported_key)
         )
-
-        # ستون «order» برای بازگشت به ترتیب اولیه
-        self.results_table.setItem(row, COL['order'], _mk(str(self._insert_seq), self._insert_seq))
 
         # وضعیت‌ها
         self.results_table.setCellWidget(row, COL['status'], status_widget)
@@ -6327,7 +6326,12 @@ class PatientTableWidget(QWidget):
             if it is None or str(it.text()).strip() != pid:
                 continue
             if bool(it.data(self._PIN_OVERLAY_ROLE)):
+                self._detach_row_cell_widgets(row)
+                retired_items = self._take_row_items(row)
                 self.results_table.removeRow(row)
+                # Release Python-owned wrappers only after removeRow() has
+                # completed, never from inside the table's model mutation.
+                retired_items.clear()
 
     def _arm_pin_overlay_refresh(self, delay_ms: int = 350) -> None:
         """(Re)start the debounced overlay pass — it runs once after the result
@@ -6894,6 +6898,58 @@ class PatientTableWidget(QWidget):
         """
         return bool(getattr(self, '_table_rebuilding', False))
 
+    def _take_row_items(self, row: int) -> list:
+        """Transfer every item in *row* out of Qt ownership.
+
+        ``QTableWidget`` normally owns its items and invalidates their Shiboken
+        wrappers synchronously when a row is removed. Keeping the objects in a
+        Python list makes that release happen after the model mutation instead.
+        """
+        items = []
+        table = self.results_table
+        for col in range(table.columnCount()):
+            try:
+                item = table.takeItem(row, col)
+            except Exception:
+                continue
+            if item is not None:
+                items.append(item)
+        return items
+
+    def _take_all_table_items(self) -> list:
+        """Transfer all body items out of Qt ownership before a model reset."""
+        items = []
+        table = self.results_table
+        for row in range(table.rowCount()):
+            for col in range(table.columnCount()):
+                try:
+                    item = table.takeItem(row, col)
+                except Exception:
+                    continue
+                if item is not None:
+                    items.append(item)
+        return items
+
+    def _detach_row_cell_widgets(self, row: int) -> int:
+        """Detach one row's cell widgets and defer their destruction."""
+        detached = 0
+        table = self.results_table
+        for col in range(table.columnCount()):
+            try:
+                widget = table.cellWidget(row, col)
+            except Exception:
+                continue
+            if widget is None:
+                continue
+            try:
+                table.removeCellWidget(row, col)
+                widget.setParent(None)
+                widget.deleteLater()
+                detached += 1
+            except Exception:
+                pass
+        return detached
+
     def _detach_all_cell_widgets(self) -> int:
         """FIX-3: detach every cell widget and hand it to Qt's DEFERRED delete.
 
@@ -6919,22 +6975,8 @@ class PatientTableWidget(QWidget):
         try:
             table = self.results_table
             rows = table.rowCount()
-            cols = table.columnCount()
             for row in range(rows):
-                for col in range(cols):
-                    try:
-                        w = table.cellWidget(row, col)
-                    except Exception:
-                        continue
-                    if w is None:
-                        continue
-                    try:
-                        table.removeCellWidget(row, col)  # detach (Qt deletes it otherwise)
-                        w.setParent(None)
-                        w.deleteLater()                   # destroy from the event loop
-                        detached += 1
-                    except Exception:
-                        pass
+                detached += self._detach_row_cell_widgets(row)
         except Exception:
             pass
         return detached
@@ -6980,6 +7022,13 @@ class PatientTableWidget(QWidget):
         Nothing about the visible result changes — the table still ends up empty
         (or pinned-rows-only). Kill switch: ``AIPACS_SAFE_CLEAR_TABLE=0``
         restores the byte-identical legacy clear.
+
+        Follow-up (2026-08-28): cell widgets were only half of the ownership
+        boundary. ``QTableWidget`` also owns every ``SortableItem`` and destroys
+        them synchronously in ``setRowCount(0)``. The v3.6.3 native dumps resolve
+        to ``Shiboken::BindingManager::releaseWrapper`` at this call. Safe clear
+        therefore takes every item first, keeps it alive through the reset, and
+        releases the Python-owned wrappers only after the model is stable.
         """
         if (os.getenv("AIPACS_SAFE_CLEAR_TABLE", "1") or "1").strip() == "0":
             return self._clear_table_legacy()
@@ -6990,6 +7039,7 @@ class PatientTableWidget(QWidget):
             return
 
         self._table_rebuilding = True
+        retired_items = []
         # Drop the per-search "Imported On" memo so a study downloaded or
         # imported since the last search shows its new timestamp instead of a
         # cached blank. Cheap: it is rebuilt lazily as rows are added.
@@ -7044,25 +7094,21 @@ class PatientTableWidget(QWidget):
                                 pid_item = table.item(row, COL['patient_id'])
                                 pid = str(pid_item.text()).strip() if pid_item is not None else ''
                                 if pid not in pinned_ids:
-                                    # Detach this row's widgets first, then remove
-                                    # the row — same reasoning as the full clear.
-                                    for col in range(table.columnCount()):
-                                        try:
-                                            w = table.cellWidget(row, col)
-                                            if w is not None:
-                                                table.removeCellWidget(row, col)
-                                                w.setParent(None)
-                                                w.deleteLater()
-                                        except Exception:
-                                            pass
+                                    # Transfer both widgets and items out of Qt
+                                    # ownership before mutating the model.
+                                    self._detach_row_cell_widgets(row)
+                                    retired_items.extend(self._take_row_items(row))
                                     table.removeRow(row)
                             pinned_rows_kept = True
                 except Exception:
                     pinned_rows_kept = False
 
                 if not pinned_rows_kept:
-                    # 3. Deferred widget destruction, THEN the model reset.
+                    # 3. Transfer every Qt-owned cell object out of the model,
+                    #    THEN reset it. This keeps Shiboken wrapper release out
+                    #    of QTableWidget's synchronous reset transaction.
                     self._detach_all_cell_widgets()
+                    retired_items.extend(self._take_all_table_items())
                     table.setRowCount(0)
             finally:
                 if _blocked:
@@ -7110,6 +7156,11 @@ class PatientTableWidget(QWidget):
             self._update_results_count()
         finally:
             self._table_rebuilding = False
+
+        # ``takeItem`` transferred ownership to these Python references. Drop
+        # them only after every table/model operation and the rebuild guard have
+        # completed, so wrapper destruction cannot re-enter a half-reset model.
+        retired_items.clear()
 
         # Re-assert the pinned overlay after the stream settles (the table was
         # just cleared for a new search). Debounced; no-op when disabled.
@@ -7916,7 +7967,15 @@ class PatientTableWidget(QWidget):
     
     def set_row_count(self, count):
         """Set the number of rows in the table"""
+        count = max(0, int(count))
+        retired_items = []
+        current_count = self.results_table.rowCount()
+        if count < current_count:
+            for row in range(current_count - 1, count - 1, -1):
+                self._detach_row_cell_widgets(row)
+                retired_items.extend(self._take_row_items(row))
         self.results_table.setRowCount(count)
+        retired_items.clear()
         self._update_results_count()
     
     def show_thumbnails_for_selected(self):

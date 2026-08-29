@@ -271,6 +271,38 @@ def ImageQualityAnalyzer(
     )
 
 
+def EagleEyeImageAnalysis(
+    system_prompt: str,
+    header: str = "",
+    items: Optional[list] = None,
+    CENTER_Key: str = "",
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    """One request carrying a whole Eagle Eye capture session.
+
+    The OpenAI-direct twin of `openai_reporter.EagleEyeImageAnalysis`. Both
+    build their content with the SHARED helper so the two backends cannot drift
+    in image ordering, MIME type or detail level - the same rule the report
+    prompts already follow.
+    """
+    from modules.EchoMind.viewer_chat.openai_reporter import (
+        build_eagle_eye_user_content, EAGLE_EYE_MAX_TOKENS,
+    )
+    user_content = build_eagle_eye_user_content(header, items or [])
+    return _call(
+        feature_name="eagle_eye",
+        system_prompt=system_prompt,
+        user_content=user_content,
+        user_msg=header,
+        model=model,
+        api_key_override=(CENTER_Key or None),
+        temperature=(0.2 if temperature is None else temperature),
+        max_tokens=int(max_tokens or EAGLE_EYE_MAX_TOKENS),
+    )
+
+
 def BreastExpertAssistant(
     user_msg: str = "",
     CENTER_Key: str = "",

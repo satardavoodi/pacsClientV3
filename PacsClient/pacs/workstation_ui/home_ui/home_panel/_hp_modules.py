@@ -17,6 +17,7 @@ from modules.network.socket_client import PatientListSocketClient
 from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes, save_series_json, check_study_exists, get_all_series_thumbnail_from_study_folder, load_json_as_dict, get_study_source_path, get_name_file_from_path, check_study_complete, validate_thumbnail_files, clear_study_cache, get_count_dicom_files_exist, save_image_as_png
 from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 from aipacs_runtime import is_module_enabled
+from modules.storage.sync_mode_policy import local_is_source_of_truth, requires_remote_resync
 
 from .widget import _ensure_patient_widget, _ensure_ai_main_window, PRIORITY_MANAGER_AVAILABLE
 
@@ -696,10 +697,18 @@ Study UID: {study_uid}
         # patient's thumbnails under another (patient-safety guard).
         _request_id = int(getattr(self, '_active_thumb_request_id', 0) or 0)
 
-        server = self.data_access_panel_widget.get_server_selected()
-        if not server:
-            QMessageBox.warning(self, "Server Error", "No PACS server selected. Please select a server first.")
-            return
+        _source = getattr(self, 'source_of_patient_load', None)
+        _local_only = (
+            local_is_source_of_truth(_source)
+            and not requires_remote_resync(_source)
+            and not force_server_merge
+        )
+        server = None
+        if not _local_only:
+            server = self.data_access_panel_widget.get_server_selected()
+            if not server:
+                QMessageBox.warning(self, "Server Error", "No PACS server selected. Please select a server first.")
+                return
 
         combined_thumbnails = []
         seen_studies = []
@@ -745,10 +754,19 @@ Study UID: {study_uid}
                     }
                 )
 
+            if _local_only and not study_thumbs:
+                local_payload = await asyncio.to_thread(
+                    self._build_local_series_thumbnail_payload, study_uid
+                )
+                for thumb in local_payload.get('thumbnails', []):
+                    thumb['study_label'] = study_label
+                    thumb['_study_order'] = index
+                    study_thumbs.append(thumb)
+
             # Fetch server thumbnails when nothing is local (non-downloaded study)
             # OR when a resync asked us to merge — so newly-added server series are
             # revealed even though older series already exist on local disk.
-            if (not study_thumbs) or force_server_merge:
+            if (not _local_only) and ((not study_thumbs) or force_server_merge):
                 def _fetch_in_background() -> dict | None:
                     host = server.get('host') or server.get('socket_host')
                     from modules.network.socket_config import get_socket_server_settings

@@ -1,9 +1,35 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.6.3 (2026-08-23)
-**Previous Stable:** v3.6.0 (2026-08-16)
-**Release Date:** 2026-08-23
+**Current Stable Version:** v3.6.4 (2026-08-29)
+**Previous Stable:** v3.6.3 (2026-08-23)
+**Release Date:** 2026-08-29
 **Branch:** beta-version
+
+---
+
+## v3.6.4 (2026-08-29) - Minor release: Eagle Eye lumbar-spine AI, Legion Consult, two native-crash fixes, strict-offline Local mode
+
+### Summary
+
+Two new AI reading workflows and two crash fixes. **Eagle Eye - Lumbar Spine MRI**
+becomes a full two-stage reading pipeline (4.2.0): capture -> Gemini MRI screening
+running beside a Gemini clinical-context branch -> GPT verification, with a frozen
+qualitative grading catalogue, per-stage sampling recorded in provenance, opt-in
+`focused-v1` evidence sheets, and a negative-evidence rule for disc desiccation.
+**Legion Consult** is a new ROI-directed MRI consultation function: draw one
+rectangle, ask one question, get a two-pass reading over projected ROI evidence.
+
+Stability: a native access violation caused by `processEvents()` re-entrancy in the
+loading overlay during a series switch is fixed at the cause (plus a re-entrancy
+guard and an anchor guard), and the Shiboken ownership crash when opening Local
+Server is closed. Local mode is now strict-offline by default, multi-study Local
+opens push disk series metadata to the viewer, and Advanced Patient Search applies
+multi-ID / body-part / age / physician / reversed-import-date filters that it
+previously dropped. Both Nuitka build paths now force-include `modules.ai_imaging`.
+
+Full record: `docs/releases/VERSION_3.6.4_RELEASE.md` - including the open items
+(committed credential-shaped strings, `run_test.ps1 -Fast` masking failures, no
+clean release artifact, no CI enforcement) that still block shipping an installer.
 
 ---
 

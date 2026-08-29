@@ -857,8 +857,25 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         self.patient_widget = patient_widget
 
         modality_raw: str = self.image_viewer.metadata_fixed.get("modality", "").upper()
+
+        # ---- MR: lumbar spine visual session (stage 1 - capture only)
+        # Handled entirely on the workstation: no server request, no upload, no
+        # model. Eagle Eye opens its own 3x1 layout and captures the study; the
+        # MG/DX server pipeline below is not involved.
+        if modality_raw == "MR":
+            if self._open_lumbar_eagle_eye(patient_widget):
+                return
+            # Only reached when the lumbar path itself could not run (module
+            # import or panel switch failed) — the "wrong region" and "user
+            # declined" cases are reported inside _open_lumbar_eagle_eye.
+            show_message(
+                "Eagle Eye could not open the lumbar spine layout for this study.\n"
+                "See the log for details."
+            )
+            return
+
         if modality_raw not in ["MG", "DX"]:
-            show_message("This tool is only available for MG and DX images.")
+            show_message("This tool is only available for MG, DX and lumbar MR images.")
             return
 
         study_uid = self.image_viewer.metadata_fixed["study_uid"]
@@ -914,6 +931,90 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
                 return
 
             self.start_dx_process(study_uid)
+
+    def _open_lumbar_eagle_eye(self, patient_widget) -> bool:
+        """Resolve study -> protocol -> series, then open Eagle Eye.
+
+        NOTHING opens until every required viewport has a validated series behind
+        it. A sweep started against a half-filled layout produces a session that
+        looks complete and is wrong, so the whole pre-flight happens here, before
+        the tab exists.
+
+        Facts come from the study's DICOM headers on disk, never from what the
+        GUI happens to hold in memory. A real Siemens lumbar study (2026-08-26)
+        was refused by an earlier text-only gate because the local DB had an
+        empty StudyDescription and NULL series body parts, while every header on
+        disk said ``BodyPartExamined = 'LSPINE'``.
+
+        Returns True when the click was handled — including "the user cancelled"
+        and "this region is not supported", both of which are reported by the
+        resolver itself.
+        """
+        try:
+            from modules.ai_imaging.eagle_eye_lumbar import resolver as ee_resolver
+            from modules.ai_imaging.eagle_eye_lumbar import session_request
+            from modules.ai_imaging.eagle_eye_lumbar.selection_dialogs import QtPrompts
+            from modules.ai_imaging.eagle_eye_modes import normalize_eagle_eye_mode
+        except Exception as exc:
+            print(f"[EAGLE-EYE] resolver unavailable: {exc}")
+            return False
+
+        try:
+            context = ee_resolver.ResolveContext.for_widget(patient_widget)
+            prompts = QtPrompts(self._live_dialog_parent())
+            resolution = ee_resolver.resolve(context, prompts)
+        except Exception as exc:
+            print(f"[EAGLE-EYE] resolution failed: {exc}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+        if resolution is None:
+            print("[EAGLE-EYE] resolution produced no runnable mapping; nothing opened")
+            return True  # handled — the resolver already told the user why
+
+        self._log_resolution(resolution)
+
+        mode = normalize_eagle_eye_mode(resolution.protocol.id)
+        if mode is None:
+            print(f"[EAGLE-EYE] no Eagle Eye mode for protocol {resolution.protocol.id}")
+            return False
+
+        try:
+            payload = session_request.with_study_context(
+                resolution.as_dict(),
+                patient_widget,
+                resolution.selection,
+                candidates=resolution.candidates,
+            )
+            session_request.stash(resolution.study.study_uid, payload)
+            patient_widget._preferred_eagle_eye_mode = mode
+            # The chosen study is not necessarily the tab's primary one.
+            patient_widget._preferred_eagle_eye_study_uid = resolution.study.study_uid
+            patient_widget.switch_right_panel('ai_module')
+            return True
+        except Exception as exc:
+            print(f"[EAGLE-EYE] failed to open the Eagle Eye tab: {exc}")
+            return False
+
+    @staticmethod
+    def _log_resolution(resolution) -> None:
+        """One readable block per run — the first thing to read when a run looks wrong."""
+        try:
+            print(f"[EAGLE-EYE] study    : {resolution.study.label} "
+                  f"({resolution.study.study_uid})")
+            print(f"[EAGLE-EYE] protocol : {resolution.protocol.name} "
+                  f"[{resolution.detection.confidence}] {resolution.detection.reason}")
+            for slot_key in resolution.protocol.slot_keys:
+                slot = resolution.selection[slot_key]
+                spec = resolution.protocol.slot(slot_key)
+                chosen = slot.chosen
+                print(f"[EAGLE-EYE]   {spec.label:<14} -> "
+                      f"series {chosen.series_number} {chosen.series_description!r} "
+                      f"score={slot.score:.1f} confidence={slot.confidence} "
+                      f"by={'user' if slot.manual else 'auto'}")
+        except Exception as exc:
+            print(f"[EAGLE-EYE] could not log the resolution: {exc}")
 
     def open_ai_module(self):
         if self.patient_widget is not None:

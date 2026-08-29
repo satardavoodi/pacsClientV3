@@ -95,6 +95,7 @@ def init_database():
                 institution_name   TEXT DEFAULT NULL,
                 modality         TEXT DEFAULT NULL,
                 body_part        TEXT DEFAULT NULL,
+                reporting_physician TEXT DEFAULT NULL,
                 number_of_series   INTEGER DEFAULT 0,
                 number_of_instances INTEGER DEFAULT 0,
                 study_path      TEXT DEFAULT NULL,
@@ -124,6 +125,15 @@ def init_database():
         except sqlite3.OperationalError:
             cur.execute("ALTER TABLE studies ADD COLUMN imported_at TEXT DEFAULT NULL")
             logger.info("[DB-MIGRATION] studies.imported_at added (existing rows left NULL)")
+
+        # Local Advanced Search needs a durable physician field. Existing rows
+        # remain NULL because inventing a value from unrelated metadata would be
+        # clinically misleading; new/online-refreshed rows populate it when known.
+        try:
+            cur.execute("SELECT reporting_physician FROM studies LIMIT 1")
+        except sqlite3.OperationalError:
+            cur.execute("ALTER TABLE studies ADD COLUMN reporting_physician TEXT DEFAULT NULL")
+            logger.info("[DB-MIGRATION] studies.reporting_physician added")
 
         cur.execute(
             """
@@ -526,7 +536,8 @@ def insert_patient(patient_id: str, name: str, birth_date: str = None, sex: str 
 def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_time: str = None,
                  study_description: str = None, institution_name: str = None, modality: str = None,
                  body_part: str = None, number_of_series: int = 0,
-                 number_of_instances: int = 0, study_path: str = None) -> int:
+                 number_of_instances: int = 0, study_path: str = None,
+                 reporting_physician: str = None) -> int:
     """Insert a study row and return its PK. Updates study_path if study already exists."""
     with get_db_connection() as conn:
         cur = conn.cursor()
@@ -536,13 +547,14 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                 """
                 INSERT INTO studies
                     (study_uid, patient_fk, study_date, study_time, study_description,
-                     institution_name, modality, body_part, number_of_series, number_of_instances,
-                     study_path, imported_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                     institution_name, modality, body_part, reporting_physician,
+                     number_of_series, number_of_instances, study_path, imported_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
                 """,
                 (
                     study_uid, patient_fk, study_date, study_time, study_description,
-                    institution_name, modality, body_part, number_of_series, number_of_instances, study_path,
+                    institution_name, modality, body_part, reporting_physician,
+                    number_of_series, number_of_instances, study_path,
                 ),
             )
             study_pk = cur.lastrowid
@@ -581,13 +593,14 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                 UPDATE studies
                 SET patient_fk = ?, study_date = ?, study_time = ?, study_description = ?,
                     institution_name = ?, modality = ?, body_part = ?,
+                    reporting_physician = COALESCE(NULLIF(?, ''), reporting_physician),
                     number_of_series = ?, number_of_instances = ?,
                     study_path = COALESCE(?, study_path)
                 WHERE study_uid = ?
                 """,
                 (
                     effective_patient_fk, study_date, study_time, study_description,
-                    institution_name, modality, body_part,
+                    institution_name, modality, body_part, reporting_physician,
                     number_of_series, number_of_instances,
                     study_path, study_uid,
                 ),
@@ -977,6 +990,7 @@ def search_patients_local(search_data: dict) -> list:
             - date_from, date_to  (YYYYMMDD)
             - study_description, series_description
             - modality  (comma-separated, e.g. "CT,MR")
+            - patient_ids (bounded list), body_part, age_min/max, physician
 
     Returns:
         List of patient dictionaries matching the criteria
@@ -1019,6 +1033,21 @@ def search_patients_local(search_data: dict) -> list:
             query += " AND LOWER(p.patient_id) = LOWER(?)"
             params.append(search_data['patient_id'])
 
+        patient_ids = []
+        seen_patient_ids = set()
+        for value in (search_data.get('patient_ids') or []):
+            patient_id = str(value or '').strip()
+            patient_key = patient_id.casefold()
+            if patient_id and patient_key not in seen_patient_ids:
+                patient_ids.append(patient_id)
+                seen_patient_ids.add(patient_key)
+            if len(patient_ids) >= 20:
+                break
+        if patient_ids:
+            placeholders = ','.join('?' for _ in patient_ids)
+            query += f" AND LOWER(p.patient_id) IN ({placeholders})"
+            params.extend(patient_id.lower() for patient_id in patient_ids)
+
         if search_data.get('patient_name'):
             query += " AND LOWER(p.patient_name) LIKE LOWER(?)"
             params.append(f"%{search_data['patient_name']}%")
@@ -1033,27 +1062,34 @@ def search_patients_local(search_data: dict) -> list:
 
         # Skip date filters when searching by Patient ID (Patient ID is unique, dates are irrelevant)
         if not has_patient_id_search:
+            normalized_study_date = (
+                "REPLACE(REPLACE(REPLACE(COALESCE(s.study_date, ''), '/', ''), '-', ''), '.', '')"
+            )
             if search_data.get('date_from') and search_data['date_from'] is not None:
-                query += " AND s.study_date >= ?"
+                query += f" AND {normalized_study_date} >= ?"
                 params.append(search_data['date_from'])
 
             if search_data.get('date_to') and search_data['date_to'] is not None:
-                query += " AND s.study_date <= ?"
+                query += f" AND {normalized_study_date} <= ?"
                 params.append(search_data['date_to'])
 
         # Import-date filter (2026-07-24) — uses studies.imported_at (when the
         # study FIRST entered THIS local DB), NOT study_date (acquisition). This
         # is a LOCAL-only field, so it applies even to a Patient-ID search.
-        # imported_at is stored 'YYYY-MM-DD HH:MM:SS' (local), so a lexicographic
-        # string compare against a day boundary is correct. from/to are 'YYYY-MM-DD'.
-        _imp_from = search_data.get('import_date_from')
-        _imp_to = search_data.get('import_date_to')
+        # imported_at is stored 'YYYY-MM-DD HH:MM:SS' (local). Bounds arrive as
+        # YYYY-MM-DD, are ordered defensively, and use a half-open next-day end.
+        _imp_from = str(search_data.get('import_date_from') or '').strip()
+        _imp_to = str(search_data.get('import_date_to') or '').strip()
+        if _imp_from and _imp_to and _imp_to < _imp_from:
+            _imp_from, _imp_to = _imp_to, _imp_from
         if _imp_from:
             query += " AND s.imported_at >= ?"
-            params.append(f"{str(_imp_from).strip()} 00:00:00")
+            params.append(f"{_imp_from} 00:00:00")
         if _imp_to:
-            query += " AND s.imported_at <= ?"
-            params.append(f"{str(_imp_to).strip()} 23:59:59")
+            # Half-open upper bound includes the whole selected day even if a
+            # future writer stores sub-second precision.
+            query += " AND s.imported_at < datetime(?, '+1 day')"
+            params.append(_imp_to)
 
         if search_data.get('study_description'):
             query += " AND LOWER(s.study_description) LIKE LOWER(?)"
@@ -1064,19 +1100,77 @@ def search_patients_local(search_data: dict) -> list:
             params.append(f"%{search_data['series_description']}%")
 
         if search_data.get('modality'):
-            modalities = [m.strip() for m in search_data['modality'].split(',') if m.strip()]
+            modalities = [m.strip().upper() for m in search_data['modality'].split(',') if m.strip()]
             if modalities:
-                placeholders = ','.join(['?' for _ in modalities])
-                query += f" AND s.modality IN ({placeholders})"
-                params.extend(modalities)
+                normalized_modality = "(',' || REPLACE(UPPER(COALESCE(s.modality, '')), ' ', '') || ',')"
+                clauses = [f"{normalized_modality} LIKE ?" for _ in modalities]
+                query += f" AND ({' OR '.join(clauses)})"
+                params.extend(f"%,{modality},%" for modality in modalities)
+
+        if search_data.get('body_part'):
+            query += " AND LOWER(COALESCE(s.body_part, '')) LIKE LOWER(?)"
+            params.append(f"%{str(search_data['body_part']).strip()}%")
+
+        if search_data.get('physician'):
+            query += " AND LOWER(COALESCE(s.reporting_physician, '')) LIKE LOWER(?)"
+            params.append(f"%{str(search_data['physician']).strip()}%")
 
         query += " ORDER BY p.patient_name, s.study_date DESC"
 
         cur.execute(query, params)
         rows = cur.fetchall()
         result = [dict(r) for r in rows]
+
+        age_min = search_data.get('age_min')
+        age_max = search_data.get('age_max')
+        if age_min is not None or age_max is not None:
+            filtered = []
+            for row in result:
+                age_years = _parse_dicom_age_years(row.get('age'))
+                if age_years is None:
+                    continue
+                if age_min is not None and age_years < float(age_min):
+                    continue
+                if age_max is not None and age_years > float(age_max):
+                    continue
+                filtered.append(row)
+            result = filtered
         logger.debug("[DB_SEARCH] Returned %d results", len(result))
         return result
+
+
+def _parse_dicom_age_years(raw) -> float | None:
+    """Convert DICOM AS values (042Y/006M/003W/010D) or plain years."""
+    text = str(raw or '').strip().upper()
+    if not text:
+        return None
+    try:
+        if text.endswith('Y'):
+            return float(text[:-1])
+        if text.endswith('M'):
+            return float(text[:-1]) / 12.0
+        if text.endswith('W'):
+            return float(text[:-1]) / 52.0
+        if text.endswith('D'):
+            return float(text[:-1]) / 365.0
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def update_study_reporting_physician(study_uid: str, physician: str) -> bool:
+    """Persist a locally reusable physician name when an online payload supplies it."""
+    value = str(physician or '').strip()
+    if not study_uid or not value:
+        return False
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE studies SET reporting_physician = ? WHERE study_uid = ?",
+            (value, str(study_uid)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def get_patient_by_id(patient_id: str) -> dict:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-PACS Precision Bug Fix"
+  short_description: "Evidence-driven, regression-guarded AI-PACS fixes"
+  default_prompt: "Use $ai-pacs-bug-fix to diagnose and fix this AI-PACS defect with the repository's guarded maintenance workflow."

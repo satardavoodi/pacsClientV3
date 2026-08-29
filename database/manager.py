@@ -17,9 +17,10 @@ def insert_patient(patient_id: str, name: str, birth_date: str = None, sex: str 
 def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_time: str = None,
                  study_description: str = None, institution_name: str = None, modality: str = None,
                  body_part: str = None, number_of_series: int = 0, number_of_instances: int = 0,
-                 study_path: str = None) -> int:
+                 study_path: str = None, reporting_physician: str = None) -> int:
     return database.insert_study(study_uid, patient_fk, study_date, study_time, study_description, institution_name,
-                                 modality, body_part, number_of_series, number_of_instances, study_path)
+                                 modality, body_part, number_of_series, number_of_instances, study_path,
+                                 reporting_physician)
 
 
 def insert_series(series_uid: str, study_fk: int, series_name: str = None, series_number: str = None,

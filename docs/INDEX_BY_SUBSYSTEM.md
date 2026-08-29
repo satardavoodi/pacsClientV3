@@ -6,6 +6,8 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ## Master indexes
 
+- **[Pre-development system map (2026-08-27)](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** — verified startup, subsystem connections, data/network boundaries, packaging flow, skills, MCPs, and the pre-code gate
+- **[Codex repository readiness (2026-08-27)](reports/CODEX_REPOSITORY_READINESS_2026-08-27.md)** — verified environment, test baseline, security blockers, and development order
 - **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** — every stage report linked
 - **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** — every fix + its guard test (56 rows)
 - **[Test inventory](../tests/INDEX_BY_GUARD.md)** — every guard test and what it protects
@@ -230,6 +232,46 @@ press handler returns `True` only when it actually placed or changed something;
 
 ---
 
+### Cardiac phase-contrast (flow) export — cvi42 compatibility
+
+**The recurring lesson here: check what the OTHER tool actually does before blaming our side.** The leading hypothesis in this investigation was refuted by reading one DCMTK-produced DICOMDIR that cvi42 had already ingested.
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/FLOW_CVI42_55241_2026-08-24.md`](reports/FLOW_CVI42_55241_2026-08-24.md)** | Patient 55241 (SIEMENS Amira, syngo MR E11), flow series **45–56** — not 44–49. cvi42 will not quantify flow on our export. **Cause NOT found.** Everything measurable is correct: CSA blocks intact with `FlowVenc=150`, `ImageType` P/MAG markers, phase pixels 0–4094 rescaling to ±4092, MAG/P sharing geometry and trigger times, 1,570 files with 1,570 distinct SOP UIDs, DICOMDIR fully resolving. Includes a **retraction** of the DICOMDIR hypothesis. |
+
+**Invariants and facts established:**
+- Our CD export with anonymisation OFF and format "Original" is **pure passthrough** (`DicomPreparer.needs_processing` is False) — exported files are byte-identical to stored ones. Do not look for export-stage damage in that configuration.
+- `modules/dicom_media/dicomdir.py` builds with `pydicom.fileset.FileSet`, so SERIES records carry `Modality, SeriesInstanceUID, SeriesNumber`. **A real DCMTK `dcmmkdir` DICOMDIR carries exactly the same three** (verified against `OFFIS_DCMTK_363` output in cvi42's own store) — our DICOMDIR is NOT deficient, and `SeriesDescription` is not expected in a SERIES record.
+- Of 34 cvi42 study folders, **33 have no DICOMDIR and 1 does**. cvi42 ingests both shapes.
+- Files leaving our server are stamped `PACS_SERVER_1.0` / `1.2.826.0.1.3680043.8.498.1` (the pydicom UID root): **the server re-encodes rather than storing scanner bytes verbatim.** The only VR casualty found is `(0051,1014)` → `UN`, 12 bytes, in all 240 flow files.
+- Siemens E11 emits a **three-series** flow triplet (M / MAG / P) with the VENC encoded in `SequenceName` as `*fl2d1_v150in`; XA20 emits a different private layout (`(0021,xxxx)` SDS/SDI/SDR) and `MFSPLIT` in ImageType. **Do not diff an E11 study against an XA20 study and read the delta as loss.**
+
+**Open — needed to close this:** the other PACS's export of **patient 55241 specifically**. A different patient on a different scanner generation cannot serve as a control.
+
+---
+
+### Loading overlay / viewport spinner — teardown races
+
+**The recurring lesson: `QApplication.processEvents()` is not “paint now”, it is “run arbitrary queued work now”.** Both crashes in this area came from calling it inside a series switch.
+
+| Doc | What's in it |
+|---|---|
+| **[`reports/OVERLAY_REENTRANCY_CRASH_2026-08-26.md`](reports/OVERLAY_REENTRANCY_CRASH_2026-08-26.md)** | pid 217556 died at 13:40:25 with a native access violation, no `[SHUTDOWN-INITIATOR]`, no OS-level event. `show_overlay`'s double `processEvents()` re-entered the event loop mid-switch and started a **second series switch on top of the first**; the nested overlay was built against a viewport the outer switch was tearing down. app.log shows three `switch_start` for series 7 in one second and one `phase_summary`. Trigger: stack-scrolling during a switch. |
+
+**Invariants:**
+- **Never call `processEvents()` to force a paint.** `widget.repaint()` paints synchronously without running the event loop. Kill switch `AIPACS_OVERLAY_SYNC_PAINT=0` keeps the old path for comparison only.
+- **`switch_series` must never run re-entrantly** on one container. The flag clears in a `finally` that covers the early `return False` — a stuck flag turns a crash into a permanently dead pane. `AIPACS_SWITCH_REENTRANCY_GUARD=0`.
+- The same-series no-op **cannot** be relied on to catch a duplicate switch: the first switch of the 08-26 crash carried an **empty `series_uid`**, so the identity comparison did not match.
+- **Anything that touches an anchor/overlay across a teardown must check liveness first**, and `shiboken6` being unimportable must degrade to **alive**, never to dead. Guards exist at three sites now: `hide_overlay._start_fade` (2026-06-05), `_hp_layout._hide/_show_loading_overlay` (2026-06-15), `AiPacsLoadingOverlay.__init__` (2026-08-26). **Fixing one site does not fix the race** — that is the whole history of this file.
+- Diagnostic gap: faulthandler dumps in `native_fault.log` carry **no pid**, so attribution is by stack content. Worth stamping.
+
+**Guard tests:**
+- `tests/code/system/test_overlay_reentrancy_crash.py` (13) — the cause, both defence-in-depth guards, and the prior-art anchor
+- `tests/code/test_loading_overlay_liveness_guard.py` — the 2026-06-05/06-15 fade guards
+
+---
+
 ### Download Manager (Zeta) + bulk download
 
 | Doc | What's in it |
@@ -316,7 +358,9 @@ press handler returns `True` only when it actually placed or changed something;
 |---|---|
 | [`AUDIT_STAGE_2_2026-05-28.md`](plans/architecture/AUDIT_STAGE_2_2026-05-28.md) | Search workflow audit, `_hp_search.py` print-to-logger fixes. |
 
-**Guard test:** `tests/code/system/test_hp_search_logging_guard.py` (5 guards)
+**Guard tests:**
+- `tests/code/system/test_hp_search_logging_guard.py` (5 guards)
+- `tests/code/ui_services/test_clear_table_crash_guard.py` (16 guards) — patient-table Qt/Shiboken ownership-safe clear/removal, producer interlock, and Local Server no-nested-event-loop contract
 
 ---
 
@@ -346,8 +390,19 @@ press handler returns `True` only when it actually placed or changed something;
 | Doc | What's in it |
 |---|---|
 | [`AUDIT_STAGE_7_2026-05-28.md`](plans/architecture/AUDIT_STAGE_7_2026-05-28.md) | Three-layer defense map (structural + canonical pywinauto + modality gate). |
+| [`plans/EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md`](plans/EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md) | Lumbar series resolution, capture protocol, geometry, and reference-line invariants. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md) | As-built multi-stage LLM pipeline, parallel multi-source context, measured live runs, grading contract, disc-hydration false-positive control, provider-neutral result metadata, and the patient-free GapGPT capability matrix. |
+| [`plans/EAGLE_EYE_LLM_PROMPT_DRAFT_2026-08-26.md`](plans/EAGLE_EYE_LLM_PROMPT_DRAFT_2026-08-26.md) | Prompt-design history and the sequence/plane evidence rules. |
+| [`plans/LEGION_CONSULT_FOUNDATION_2026-08-28.md`](plans/LEGION_CONSULT_FOUNDATION_2026-08-28.md) | MRI-only function picker, mandatory source/T1/T2 selection, optional/all-series cost control, Fast ROI geometry, local request schema, and the capture/model boundary. |
 
 **Guard tests:**
+- `tests/code/ai_imaging/test_eagle_eye_llm_analysis.py` (package, model routing, parallel multi-source context fusion, inventory-scope guards, DICOM document rendering, grading and disc-hydration contracts, stage sampling, persistence, and transport parity)
+- `tests/code/ai_imaging/test_eagle_eye_gapgpt_capability.py` (synthetic capability matrix, strict-schema evaluation, redaction, and GapGPT authority reuse)
+- `tests/code/ai_imaging/test_eagle_eye_lumbar_pipeline.py` (protocol and capture behavior)
+- `tests/code/ai_imaging/test_eagle_eye_protocol_resolution.py` (series identity and readiness)
+- `tests/code/ai_imaging/test_eagle_eye_ui_boundary.py` (feature coordinator ownership, mapping handoff, provider-neutral result metadata, and teardown)
+- `tests/code/ai_imaging/test_legion_consult_foundation.py` (pure series policy, ROI geometry, and local persistence contract)
+- `tests/code/ai_imaging/test_legion_consult_ui_contract.py` (function picker, selection dialog, source identity, and toolbar routing)
 - `tests/code/system/test_2026_05_27_regression_guards.py::test_mg_mirror_is_deferred_via_qtimer` (structural)
 - `tests/gui/pywinauto/test_eagle_eye_dragdrop.py` (canonical Win32 OLE drag-drop)
 
@@ -374,6 +429,21 @@ press handler returns `True` only when it actually placed or changed something;
 | [`plans/architecture/IMPLEMENTATION_PLAN_2026-05-27.md`](plans/architecture/IMPLEMENTATION_PLAN_2026-05-27.md) | Phase-by-phase spec. |
 
 **Guard tests:** every file under `tests/code/echomind/` (12 files).
+
+---
+
+### Agent control and MCP gateways
+
+| Doc | What's in it |
+|---|---|
+| **[`architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md`](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** | **Start here.** Separates the production paired-device Agent Gateway from the source-only developer test MCP and records their trust boundaries. |
+| [`for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md`](for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md) | CommandBus testing workflow and tool-selection guidance. |
+| [`../tools/testing/aipacs_control_mcp/README.md`](../tools/testing/aipacs_control_mcp/README.md) | `aipacs-control` setup, tool catalog, safety rules, and fidelity tiers. |
+
+**Guard tests:**
+- `tests/code/agent_gateway/` — pairing, auth, TLS, relay, MCP, permission, lifecycle, and wiring
+- `tests/code/echomind/test_test_server.py` — source-only QLocalServer gate and transport
+- `tests/code/echomind/test_command_bus_unit.py` — shared command execution seam
 
 ---
 

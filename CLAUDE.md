@@ -6223,3 +6223,19 @@ survives whole) rather than deleted. That is the fifth time; the pattern is now 
 test naming a modality's absence has to be re-read whenever a library is added.
 
 Gate: **2270 passed, 0 failed** (+40). Mirrors: 1 synced, 1 added.
+
+
+---
+
+## Recovery documentation
+
+If projects, skills, MCP servers or agent configuration ever need to be reconstructed
+(for example after switching Claude accounts), start here:
+
+```text
+Document Recovery Account Vahid
+D:\_RECOVERY\Document Recovery Account Vahid.md
+```
+
+This project also has its own `RECOVERY.md` in its root.
+<!-- added 2026-08-27 by environment recovery; nothing above this line was modified -->

@@ -107,11 +107,18 @@ def test_stt_labels_renamed_ids_stable():
 
 # ── A4: one transport, one URL, status before json ───────────────────────────
 
+# 2026-08-26: 10 -> 11. `EagleEyeImageAnalysis` (the Eagle Eye capture-session
+# call) is the eleventh outbound request in this module. The count is the point
+# of the guard - a new call that did NOT go through the authority would leave it
+# at 10 and pass, so the number is bumped deliberately, once, per added call.
+_REPORTER_OUTBOUND_CALLS = 11
+
+
 def test_reporter_uses_the_transport_authority():
     src = _read(_REPORTER)
-    assert src.count("echomind_http.post(url, headers=headers, json=payload)") == 10
+    assert src.count("echomind_http.post(url, headers=headers, json=payload)") == _REPORTER_OUTBOUND_CALLS
     assert "requests.post(" not in src, "no raw requests.post may remain"
-    assert src.count("url = GAPGPT_API_URL") == 10
+    assert src.count("url = GAPGPT_API_URL") == _REPORTER_OUTBOUND_CALLS
     assert 'url = "https://api.gapgpt.app' not in src, "inline GapGPT URL literal must be gone"
     assert "from modules.EchoMind.ai_chat_config import GAPGPT_API_URL" in src
 
@@ -121,7 +128,8 @@ def test_reporter_checks_status_before_json():
     assert "    result = response.json()\n    if response.status_code != 200:" not in src, (
         "json() must not run before the status check"
     )
-    assert src.count("_err_detail = response.json()") == 10, "error branch must tolerate non-JSON bodies"
+    assert src.count("_err_detail = response.json()") == _REPORTER_OUTBOUND_CALLS, \
+        "error branch must tolerate non-JSON bodies"
 
 
 def test_reporter_requests_import_dropped():

@@ -40,6 +40,7 @@ from database.dicom_db import (  # noqa: F401
     deserialize_instance_metadata,
     get_all_patients,
     search_patients_local,
+    update_study_reporting_physician,
     get_patient_by_id,
     find_patient_pk,
     find_study_pk,

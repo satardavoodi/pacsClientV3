@@ -232,6 +232,34 @@ def _anchor_has_native_render_window(anchor) -> bool:
     return False
 
 
+def _overlay_sync_paint_enabled() -> bool:
+    """Paint the overlay with repaint() instead of re-entering the event loop."""
+    return (os.getenv("AIPACS_OVERLAY_SYNC_PAINT", "1") or "1").strip() != "0"
+
+
+def _overlay_anchor_guard_enabled() -> bool:
+    """Refuse to build an overlay on an anchor whose C++ object is gone."""
+    return (os.getenv("AIPACS_OVERLAY_ANCHOR_GUARD", "1") or "1").strip() != "0"
+
+
+def _widget_is_alive(widget) -> bool:
+    """True unless the wrapped C++ QWidget has already been destroyed.
+
+    shiboken6 is the authority; if it cannot be imported we must NOT guess the
+    widget is dead, so the fallback is True (old behaviour).
+    """
+    if widget is None:
+        return False
+    try:
+        import shiboken6
+    except ImportError:
+        return True
+    try:
+        return bool(shiboken6.isValid(widget))
+    except Exception:
+        return True
+
+
 class AiPacsLoadingOverlay(QWidget):
     """Loading overlay. In FAST mode it is a **child of the target viewport** (so it
     is clipped, correctly layered above the image/metadata/annotations, and never
@@ -263,6 +291,29 @@ class AiPacsLoadingOverlay(QWidget):
         pass_through: bool = False,
         child_mode: Optional[bool] = None,
     ):
+        # ── Dead-anchor guard (2026-08-26) ─────────────────────────────────
+        # EVERY line below touches the anchor — `_anchor_has_native_render_window`
+        # reads it, `super().__init__(anchor)` reparents to it, `_sync_geometry`
+        # measures it, `installEventFilter` attaches to it. If its C++ object has
+        # already been destroyed (a series switch tore the viewport down while
+        # this overlay was being built) the first of those is a native access
+        # violation that takes the whole process down — measured pid 217556,
+        # 2026-08-26 13:40:25, crashing at `QProgressBar(self)`.
+        #
+        # This mirrors the identical guard added at the FADE site on 2026-06-05
+        # (see `hide_overlay._start_fade`). That fix treated one call site; the
+        # same race then reappeared at CONSTRUCTION.
+        #
+        # Raising is correct and safe: both callers of `show_overlay`
+        # (`ViewportSpinner.show_loading` and `QtFastContainer.switch_series`)
+        # already wrap it in try/except and degrade to no overlay.
+        # Kill switch: AIPACS_OVERLAY_ANCHOR_GUARD=0.
+        if _overlay_anchor_guard_enabled() and not _widget_is_alive(anchor):
+            raise RuntimeError(
+                "AiPacsLoadingOverlay: anchor widget is already destroyed — refusing "
+                "to build an overlay on it"
+            )
+
         # ── Layering fix (2026-06-24) ─────────────────────────────────────────
         # Be a CHILD of the viewport when possible. The overlay used to be a
         # top-level Qt.Tool + WindowStaysOnTopHint window — the only way to paint
@@ -657,9 +708,35 @@ class AiPacsLoadingOverlay(QWidget):
         overlay.raise_()
         if not pass_through:
             overlay.activateWindow()
-        # Force the event loop to paint the overlay immediately
-        QApplication.processEvents()
-        QApplication.processEvents()
+        # ── Re-entrancy fix (2026-08-26) ───────────────────────────────
+        # These two lines were `QApplication.processEvents()` × 2, commented
+        # "Force the event loop to paint the overlay immediately". They did far
+        # more than paint. processEvents() RE-ENTERS the Qt event loop, so a
+        # QUEUED viewer-controller command can be dispatched from inside a
+        # series switch and start a SECOND switch on top of the first.
+        #
+        # Measured crash, pid 217556, 2026-08-26 13:40:25 — native access
+        # violation, stack (bottom-up):
+        #     main.notify → _ui_apply → _apply_loaded_series_data
+        #       → switch_series → show_loading → show_overlay
+        #         → processEvents      <-- re-enters here
+        #           → main.notify → _finish_on_ui
+        #             → _perform_series_switch_optimized → switch_series
+        #               → show_loading → show_overlay → __init__  <-- dies
+        # app.log corroborates: three `[VIEWER_SWITCH] switch_start` for series 7
+        # inside one second, and only ONE `phase_summary`.
+        #
+        # `repaint()` paints the widget SYNCHRONOUSLY without running the event
+        # loop, so the overlay still appears immediately and nothing can nest.
+        # Kill switch AIPACS_OVERLAY_SYNC_PAINT=0 restores the old behaviour.
+        if _overlay_sync_paint_enabled():
+            try:
+                overlay.repaint()
+            except Exception:
+                pass
+        else:
+            QApplication.processEvents()
+            QApplication.processEvents()
         return overlay
 
     @staticmethod

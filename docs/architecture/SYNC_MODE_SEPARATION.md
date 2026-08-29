@@ -1,4 +1,4 @@
-# AI-PACS — Workflow Mode Separation: Live-Server vs Local/Offline Sync (as-built + policy, 2026-06-15)
+# AI-PACS — Workflow Mode Separation: Live-Server vs Local/Offline Sync (as-built + policy, updated 2026-08-29)
 
 Authoritative reference for the **mode-aware synchronization** rule: the client must
 clearly distinguish workflows that depend on **live-server** synchronization from
@@ -38,7 +38,7 @@ The policy maps these onto explicit workflow modes:
 | Mode | Source of truth | Live-server sync required? | Server **version** check? | Trust local cache? | Missing files → server download? | Server unavailable → |
 |---|---|---|---|---|---|---|
 | **LiveServer** (`SERVER`) | **Server** | **Yes (mandatory)** | **Yes** (`contentVersion`) | Display only — never authoritative | **Yes** | Degrade: show cache, log, retry; never crash the open |
-| **LocalDatabase** (`DB`) | Local DB + disk for **display**; server `contentVersion` governs growth | **Yes** — background, non-blocking contentVersion check (default on; `AIPACS_LOCALDB_AUTO_SERVER_SYNC=0` for strict local) | **Yes** (`contentVersion`) | For fast paint — but a higher server `contentVersion` wins | **Yes** (the detected delta only) | Degrade: keep local, never block the open or mark it stale |
+| **LocalDatabase** (`DB`) | **Local DB + disk** | **No by default**; manual refresh or `AIPACS_LOCALDB_AUTO_SERVER_SYNC=1` opt-in | No by default | **Yes — authoritative** | No by default | Fully functional offline; no hidden socket timeout |
 | **Import** (`IMPORT`) | **Provided local files** | **No** | **No** | Yes (just imported) | No | Irrelevant — import is local-only |
 | **OfflineServer** (`OFFLINE_CLOUD`) | **Offline-cloud package + metadata** | No live-server sync; offline-cloud sync only | No live-server version check | Yes | No (live); offline-cloud rules govern | Follow offline-cloud availability, not live-server rules |
 | **CDBurn** (action) | **Local selected data** | **No** | **No** | Yes | No — missing file = **local** missing-file error | Irrelevant — never a live-server error |
@@ -120,8 +120,9 @@ credentials.
 **LiveServer:** open checks `contentVersion`; changed version → delta sync; new
 series/instances detected; status/report/reception refreshed; cache not blindly trusted;
 UI responsive; no duplicate downloads.
-**LocalDatabase:** opens without a live server; not marked stale when the server is down;
-list reflects local DB/files; manual "Refresh from server" still available on demand.
+**LocalDatabase:** search, advanced filters, single/multi-study thumbnails, and opening a
+downloaded patient work with the network disconnected; no automatic socket call or timeout;
+manual "Refresh from server" remains available on demand.
 **Import:** processed from local files; no live-server version check; stored consistently.
 **OfflineServer:** follows offline-cloud availability/metadata; not forced into
 live-server sync.
@@ -132,16 +133,9 @@ error.
 
 ## 8. Rollout
 
-`sync_mode_policy` is additive and behavior-preserving on adoption: each predicate
-returns the value matching the **current correct** behavior for that mode, so swapping an
-ad-hoc check for the policy is a no-op refactor that only centralizes + documents + logs.
-
-**Synchronization is preserved — no regression.** The auto contentVersion resync still
-runs for **LiveServer**, **OfflineServer**, and **LocalDatabase** (a DB study is a
-locally-cached *server* study, so its `contentVersion` must be checked — §4.3/§7;
-default on, `AIPACS_LOCALDB_AUTO_SERVER_SYNC=0` for strict local). The **only** intended
-behavior change vs. before this work is that the auto resync no longer fires for
-**Import / CD / Unknown** sources — those studies do not exist on the server, so the
-server has no `contentVersion` for them and the call was a wasteful no-op (a manual
-refresh still works for any source). Remaining ad-hoc sites migrate to the policy
-incrementally; this doc is the guard.
+`sync_mode_policy` is the runtime authority. Since 2026-08-29, LocalDatabase auto-sync is
+**opt-in**, not opt-out: `AIPACS_LOCALDB_AUTO_SERVER_SYNC=1` enables the background
+contentVersion/growth check for centers that explicitly want it. LiveServer remains
+mandatory version-aware sync; OfflineServer retains its own package rules; Import/CD
+remain local-only. A manual refresh still works for any source. This default is guarded
+by `tests/code/storage/test_sync_mode_policy.py` and the Local offline-contract suite.

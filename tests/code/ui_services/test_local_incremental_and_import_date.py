@@ -78,6 +78,20 @@ def test_import_date_filter_range(tmp_path, monkeypatch):
     assert {x["study_uid"] for x in r} == {"u_yest", "u_2days"}
 
 
+def test_import_date_filter_normalizes_reversed_range(tmp_path, monkeypatch):
+    """A reversed custom range must not silently produce an empty result set."""
+    _isolate_db(tmp_path, monkeypatch)
+    from database import dicom_db
+    dicom_db.init_database()
+    with dicom_db.get_db_connection() as conn:
+        _seed(conn)
+
+    r = dicom_db.search_patients_local(
+        {"import_date_from": "2026-07-24", "import_date_to": "2026-07-22"}
+    )
+    assert {x["study_uid"] for x in r} == {"u_today", "u_yest", "u_2days"}
+
+
 def test_import_date_filter_uses_imported_at_not_study_date(tmp_path, monkeypatch):
     """All rows share study_date 20200101; the filter must key on imported_at."""
     _isolate_db(tmp_path, monkeypatch)
@@ -166,6 +180,18 @@ def test_dialog_custom_single_and_range():
     d.import_to.setDate(QDate(2026, 7, 10))
     q = d.get_query()
     assert q["import_date_from"] == "2026-07-01" and q["import_date_to"] == "2026-07-10"
+
+
+def test_dialog_normalizes_reversed_import_range():
+    from PySide6.QtCore import QDate
+    d = _dialog()
+
+    _set_import_preset(d, "range")
+    d.import_from.setDate(QDate(2026, 7, 10))
+    d.import_to.setDate(QDate(2026, 7, 1))
+    q = d.get_query()
+    assert q["import_date_from"] == "2026-07-01"
+    assert q["import_date_to"] == "2026-07-10"
 
 
 def test_dispatch_routes_import_date_to_local_search():

@@ -3031,6 +3031,123 @@ def ImageQualityAnalyzer(
         }
     }
 
+# ── Eagle Eye: a whole capture session in ONE request ────────────────────────
+# `ImageQualityAnalyzer` above takes exactly one image and hardcodes
+# `data:image/jpeg` for it. Eagle Eye sends tens of PNG screenshots that must
+# arrive IN CAPTURE ORDER, each introduced by the caption that says which sweep
+# and which pane it is - so it needs its own builder rather than a loop around
+# the single-image one. This builder is the ONE authority for that content;
+# `openai_parallel_backend.EagleEyeImageAnalysis` imports it rather than
+# growing a second copy that could drift in ordering, MIME or detail.
+
+# A level-by-level correlated read does not fit the 2000-token ceiling the
+# single-image call uses; a truncated report is worse than a slow one.
+EAGLE_EYE_MAX_TOKENS = 6000
+
+# Screenshots put the diagnostic content in a few hundred pixels of a downscaled
+# pane. Low detail would resize that away before the model ever saw it.
+EAGLE_EYE_IMAGE_DETAIL = "high"
+
+
+def build_eagle_eye_user_content(header: str, items) -> list:
+    """`[header, caption, image, caption, image, ...]` in capture order.
+
+    Each item is an object with ``path`` (a real file), ``caption`` and
+    ``mime``. The caption goes BEFORE its image so the model reads what the
+    frame is before looking at it, which is also the order the manifests
+    already impose.
+    """
+    content: list = []
+    if header:
+        content.append({"type": "text", "text": str(header)})
+
+    for item in (items or []):
+        path = getattr(item, "path", None) or item["path"]
+        caption = getattr(item, "caption", "") or ""
+        mime = getattr(item, "mime", "") or "image/png"
+        with open(path, "rb") as handle:
+            encoded = base64.b64encode(handle.read()).decode("utf-8")
+        if caption:
+            content.append({"type": "text", "text": caption})
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime};base64,{encoded}",
+                "detail": EAGLE_EYE_IMAGE_DETAIL,
+            },
+        })
+    return content
+
+
+def EagleEyeImageAnalysis(
+    system_prompt: str,
+    header: str = "",
+    items=None,
+    CENTER_Key: str = "",
+    model: str = "",
+    max_tokens: int = 0,
+    temperature: float = 0.2):
+    """Company/GapGPT path for one Eagle Eye capture session.
+
+    ONE key source, exactly like every other GapGPT call in this module: the
+    center's shared key from `Manage`. `CENTER_Key` is accepted for signature
+    parity with the OpenAI twin and is deliberately IGNORED here - an override
+    would be a way for a future caller to send Eagle Eye through a different
+    key than the rest of EchoMind, which is the opposite of the requirement.
+    """
+    m = Manage.instance()
+    center, api_key = m.get_center_and_gapgpt_key()
+
+    user_content = build_eagle_eye_user_content(header, items or [])
+
+    payload = {
+        "model": (_to_str(model).strip() or "Unknown"),
+        "messages": [
+            {"role": "system", "content": _to_str(system_prompt)},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens or EAGLE_EYE_MAX_TOKENS),
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    url = GAPGPT_API_URL
+
+    # Same shape as every other outbound call in this module, on purpose: the
+    # transport authority is counted by `test_reporter_uses_the_transport_authority`,
+    # and a call written differently is exactly the drift that guard exists to
+    # catch. Status is checked BEFORE .json() so a non-JSON error body reports
+    # the real HTTP error instead of a JSONDecodeError.
+    response = echomind_http.post(url, headers=headers, json=payload)
+    if response.status_code != 200:
+        try:
+            _err_detail = response.json()
+        except Exception:
+            _err_detail = (response.text or "")[:500]
+        raise Exception(f"GapGPT API Error {response.status_code}: {_err_detail}")
+    result = response.json()
+
+    usage = result.get("usage", {})
+    _log_usage_safe(m, center, model,
+                    usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0),
+                    header)
+
+    return {
+        "content": result["choices"][0]["message"]["content"],
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+            "model": (_to_str(model).strip() or "Unknown"),
+            "center": (_to_str(center).strip() or "Unknown"),
+        },
+    }
+
+
 def BreastExpertAssistant(
     user_msg: str = "",
     CENTER_Key: str = "",

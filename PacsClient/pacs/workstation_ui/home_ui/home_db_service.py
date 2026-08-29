@@ -37,6 +37,20 @@ logger = logging.getLogger(__name__)
 class HomeDbService:
     """Stateless service – instantiate once and keep for the app lifetime."""
 
+    @staticmethod
+    def _reporting_physician(source: dict) -> str:
+        """Extract a physician name from server metadata without inventing one."""
+        source = source if isinstance(source, dict) else {}
+        report = source.get("report") if isinstance(source.get("report"), dict) else {}
+        return str(
+            source.get("reporting_physician_name")
+            or source.get("reporting_physician")
+            or source.get("radiologist_name")
+            or report.get("reporting_physician_name")
+            or report.get("reporting_physician")
+            or ""
+        ).strip()
+
     # ------------------------------------------------------------------
     # Patient / Study persistence
     # ------------------------------------------------------------------
@@ -62,6 +76,10 @@ class HomeDbService:
         if pk is not None:
             # Update path + metadata if stale
             from PacsClient.utils.db_manager import update_study_missing_fields
+            physician = HomeDbService._reporting_physician(study_info)
+            if physician:
+                from database.dicom_db import update_study_reporting_physician
+                update_study_reporting_physician(study_uid, physician)
             study_path = SOURCE_PATH / study_uid
             study_path.mkdir(parents=True, exist_ok=True)
             update_study_missing_fields(
@@ -96,6 +114,7 @@ class HomeDbService:
                 s.get("image_count", 0) for s in study_info.get("series", [])
             ),
             study_path=str(study_path),
+            reporting_physician=HomeDbService._reporting_physician(study_info),
         )
         return pk
 
@@ -326,6 +345,10 @@ class HomeDbService:
 
             study_uid = patient.get("latest_study_uid")
             if study_uid and study_uid != "N/A":
+                physician = HomeDbService._reporting_physician(patient)
+                if physician:
+                    from database.dicom_db import update_study_reporting_physician
+                    update_study_reporting_physician(study_uid, physician)
                 study_pk = find_study_pk(pk)
                 if study_pk is None:
                     study_date = patient.get("latest_study_date", "N/A")
@@ -348,6 +371,7 @@ class HomeDbService:
                         patient.get("count_of_series", 0),
                         patient.get("count_of_instances", 0),
                         study_path=study_path,
+                        reporting_physician=physician,
                     )
         except Exception as exc:
             logger.exception("Error saving Socket patient to database: %s", exc)
