@@ -25,6 +25,8 @@
   zero plaintext center access codes.
 - [x] Center codes now open independent scrypt/AES-GCM credential envelopes, and Company Server 3
   uses the validated center credential instead of an independent embedded fallback.
+- [x] Hardening code commit `a2919adb` was published by fast-forward to `main` and `beta-version`
+  on all three configured remotes; no force-push or tag rewrite was used.
 - [x] A documented clean-build and artifact-verification procedure now exists in
   `docs/reports/BUILD_READINESS_PYINSTALLER_NUITKA_2026-08-30.md`.
 
@@ -44,9 +46,9 @@
 - [ ] Reproducibility guards — dirty trees are not rejected, staged versions are not compared
   with source, Nuitka resume state is not source-fingerprinted, and cross-build coherence can
   pass when both outputs are stale.
-- [ ] Source traceability — the immutable release tag predates the client-hardening commit; the
-  exact hardening commit must be recorded as the artifact source and the published tag must not
-  be force-moved merely to conceal that history.
+- [ ] Source traceability — the immutable release tag predates client-hardening commit `a2919adb`;
+  the build gate must accept that exact approved SHA (or a later reviewed documentation-only
+  descendant), and the published tag must not be force-moved merely to conceal that history.
 - [ ] Repository-wide test evidence — the PowerShell fast-test wrapper can mask failure.
 - [ ] Clinical validation — source-build clinical checks, logs, clean-machine installer QA,
   upgrade, uninstall, downgrade, and rollback have not been signed off for v3.6.4.
@@ -67,4 +69,5 @@ procedures. Record SHA-256 hashes and complete the installer QA checklist before
 
 ## Sign-off
 
-Manual approval given by: NOT YET GIVEN
+Source publication approval: user explicitly requested push to the three GitHub repositories.
+Installer build/distribution approval: NOT YET GIVEN

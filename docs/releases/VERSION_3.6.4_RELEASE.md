@@ -284,6 +284,11 @@ Published to `main` + `beta-version` with an annotated `v3.6.4` tag
 - https://github.com/satardavoodi/PacsClientV2
 - https://github.com/satardavoodi/pacsClientV3
 
+Client credential hardening was published afterward as fast-forward commit `a2919adb` to both
+branches on all three remotes. The original annotated tag was not force-moved. Any new installer
+must use the reviewed hardening commit (or a later documentation-only descendant), not the older
+tag target.
+
 Excluded from the release commit by design (local/generated state):
 `builder nuitka/output/**`, `generated-files/runtime_profile.json`,
 `generated-files/gapgpt/**`, `config/patient_table_sort.json`.

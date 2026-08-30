@@ -22,20 +22,21 @@ No v3.6.4 installer was created during this evaluation.
 ## Evaluated release state
 
 - Current branch: `beta-version`
-- Current branch commit: `a6ff2010e8c807ae781cb5bbe8f136ab7fc33295`
+- Approved hardening candidate code commit: `a2919adb`
 - v3.6.4 tag target: `7f96b392a1cda47673f71b0c4917dedbaa74b149`
-- Difference from the tag target to branch HEAD: release documentation only
+- Difference from the tag target to the hardening candidate: client credential protection,
+  regression coverage, packaged-mirror updates, and release documentation
 - `pyproject.toml`, `main.py`, package feeds, module manifests, and version-resource metadata:
   `3.6.4`
-- Current local remote-tracking refs for `origin`, `p2`, and `satar`: `a6ff2010`
+- Published `main` and `beta-version` refs for `origin`, `p2`, and `satar` include `a2919adb`
 - Working tree: eight modified tracked generated or machine-local files and an untracked
   `generated-files/gapgpt/` tree; none were reset or included in a release build
 
-The tag is on the release code commit and the branch contains a later documentation-only
-commit. A release build must record one exact source commit. The preferred artifact source is
-the immutable `v3.6.4` tag target. Before executing the build, either teach the release gate to
-accept an exact verified release tag or record a deliberate, reviewed tagged-build procedure.
-Do not move or force-update the published tag merely to include the later documentation commit.
+The published tag predates the credential hardening and must not be used as the installer source.
+A release build must record one exact source commit; the current approved candidate is
+`a2919adb`. Teach the release gate to accept that exact reviewed SHA or create a new, non-rewritten
+release reference after approval. Do not move or force-update the published `v3.6.4` tag merely to
+hide the follow-up history.
 
 ## Toolchain and payload readiness
 
@@ -146,7 +147,8 @@ git rev-parse "v3.6.4^{}"
 .\.venv_build\Scripts\python.exe -m pytest -p no:debugging tests/code/builder -q
 ```
 
-Required results: empty Git status, the recorded source SHA, matching mirrors, dependency check
+Required results: empty Git status, `HEAD` equal to the approved hardening candidate SHA (not the
+older tag target), matching mirrors, dependency check
 pass, and a green builder suite for the selected x64 release scope. Do not use `run_test.ps1` as
 release evidence until its exit-code defect is fixed.
 
