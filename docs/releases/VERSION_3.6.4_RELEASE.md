@@ -3,7 +3,7 @@
 **Version:** 3.6.4
 **Release date:** 2026-08-29
 **Previous stable:** v3.6.3 (2026-08-23)
-**Branch:** `beta-version` (published to `main` + `beta-version` on `origin` and `p2`)
+**Branch:** `beta-version` (published to `main` + `beta-version` on all three remotes)
 **Type:** Minor — Eagle Eye lumbar-spine AI, Legion Consult, two native-crash fixes, strict-offline Local mode
 
 ---
@@ -256,10 +256,12 @@ an installer** even though the source is now tagged:
 
 ## 10. Publication
 
-Published to `main` + `beta-version` with an annotated `v3.6.4` tag:
+Published to `main` + `beta-version` with an annotated `v3.6.4` tag
+(release commit `7f96b392`):
 
 - https://github.com/Vahid-INO/ai-pacs
 - https://github.com/satardavoodi/PacsClientV2
+- https://github.com/satardavoodi/pacsClientV3
 
 Excluded from the release commit by design (local/generated state):
 `builder nuitka/output/**`, `generated-files/runtime_profile.json`,
