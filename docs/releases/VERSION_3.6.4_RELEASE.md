@@ -183,6 +183,20 @@ still external and the Viewer payload synchronised byte-for-byte.
 Files: `builder nuitka/{AIPacs_nuitka.spec.py,build_nuitka_release.py}`,
 `builder/docs/NUITKA_BUILD_PLAN.md`.
 
+### EchoMind client credential protection
+
+The installed EchoMind payload no longer ships plaintext center access codes or plaintext
+GapGPT provider credentials in Python source. A center access code is reduced to a lookup digest,
+derives a per-code key with scrypt, and opens only that center's AES-GCM authenticated credential
+envelope. Company Server 3 uses the credential opened by the validated EchoMind center and no
+longer carries an independent fallback bearer key.
+
+This implements the release owner's requested client-only extraction resistance without adding an
+AI-PACS server dependency. It raises the cost of casual source/binary inspection but cannot prevent
+a determined runtime debugger from observing a credential in process memory. Dashboard quotas and
+center controls remain the operational enforcement boundary. Previously published Git history is
+also outside this client-side protection and requires separate rotation or explicit risk acceptance.
+
 ---
 
 ## 7. Supporting work
@@ -213,11 +227,17 @@ Offscreen (test lane), all with guards that **failed before the fix**:
 | Legion Consult | `test_legion_consult_{analysis,foundation,ui_contract}.py` |
 | Local offline / search | `test_local_offline_contract.py`, `test_advanced_search_routing.py`, `tests/code/database/test_local_advanced_search.py`, `test_local_incremental_and_import_date.py` |
 | Build inclusion | `tests/code/builder/test_eagle_eye_default_build_inclusion.py` |
+| EchoMind credential protection | `tests/code/echomind/test_credential_obfuscation.py` (6; 3 fail pre-fix) |
 
 Domain gates at the time of the last slice: AI Imaging **559 passed, 8
 pre-existing xfailed**; viewer/system/ui_services/fast_viewer **3,862 passed, 6
 failed** (all pre-existing and measured as *caused by this work: 0*); plugin
 mirrors **456/456**.
+
+After the credential hardening slice, the complete non-live EchoMind suite is **2,315 passed,
+12 skipped, 15 live tests deselected, 4 pre-existing xfailed**; plugin mirrors are **458/458**.
+The current source and installer payload scan reports **zero** plaintext provider credentials and
+**zero** plaintext center access codes.
 
 **Still required — live verification:**
 
@@ -239,10 +259,11 @@ These are carried forward from
 `deploy-record-workstation-2026-08-28.md`, and remain **blockers for shipping
 an installer** even though the source is now tagged:
 
-- **Credential incident** — API-key-shaped strings are present in committed
-  EchoMind source, packaged mirrors, tests and documentation. Rotation, runtime
-  secret loading, history cleanup and automated scanning are incomplete. *(This
-  release adds no new key-shaped strings — the changed files were scanned.)*
+- **Residual credential risk** — current source and installer payloads are clean and protected by
+  a regression scan, but a determined runtime debugger can observe credentials in memory and
+  previously published Git history may contain earlier plaintext values. Dashboard quotas are the
+  accepted operational control; provider-key rotation/history remediation remains a separate
+  release-owner decision.
 - **`run_test.ps1 -Fast` masks failures** — `$Fast` and `$fast` collide in
   case-insensitive PowerShell, so the wrapper can return success after pytest
   fails. Use direct pytest until this is fixed.

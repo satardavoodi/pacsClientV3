@@ -254,9 +254,14 @@ def test_server3_is_a_valid_provider():
     assert ss.normalize_stt_provider("aipacs_3") == "aipacs_3"
 
 
-def test_server3_posts_openai_transcriptions_format(cfg, captured_openai, tmp_path):
+def test_server3_posts_openai_transcriptions_format(
+    cfg, captured_openai, tmp_path, monkeypatch
+):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"RIFF....WAVE")
+    monkeypatch.setattr(
+        vt, "resolve_auth_token", lambda cfg=None: "unit-center-provider-token"
+    )
     ss.save_stt_settings({"provider": "aipacs_3"})
     out = vt.VoiceTranscriptionService().transcribe([str(wav)])
 
@@ -264,7 +269,7 @@ def test_server3_posts_openai_transcriptions_format(cfg, captured_openai, tmp_pa
     assert call["url"] == vt.AIPACS_SERVER_3_BASE + "/audio/transcriptions"
     assert call["file_fields"] == ["file"]                       # OpenAI format
     assert call["data"] == {"model": vt.AIPACS_SERVER_3_MODEL}   # gapgpt/whisper-1
-    assert call["headers"]["Authorization"] == f"Bearer {vt.AIPACS_SERVER_3_KEY}"
+    assert call["headers"]["Authorization"] == "Bearer unit-center-provider-token"
 
     # response contract both callers depend on
     assert out["ok"] is True
@@ -275,12 +280,29 @@ def test_server3_posts_openai_transcriptions_format(cfg, captured_openai, tmp_pa
     assert out["endpoint"] == ""                # Server 3 address never surfaced
 
 
-def test_server3_configured_token_overrides_builtin_key(cfg, captured_openai, tmp_path):
+def test_server3_uses_validated_center_credential(
+    cfg, captured_openai, tmp_path, monkeypatch
+):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"RIFF")
-    ss.save_stt_settings({"provider": "aipacs_3", "auth_token": "sk-override"})
+    monkeypatch.setattr(
+        vt, "resolve_auth_token", lambda cfg=None: "unit-center-provider-token"
+    )
+    ss.save_stt_settings({"provider": "aipacs_3", "auth_token": "configured-stt-token"})
     vt.VoiceTranscriptionService().transcribe([str(wav)])
-    assert captured_openai[-1]["headers"]["Authorization"] == "Bearer sk-override"
+    assert captured_openai[-1]["headers"]["Authorization"] == (
+        "Bearer unit-center-provider-token"
+    )
+
+
+def test_server3_denies_without_validated_center_credential(cfg, tmp_path):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF")
+    ss.save_stt_settings({"provider": "aipacs_3"})
+    out = vt.VoiceTranscriptionService().transcribe([str(wav)])
+    assert out["ok"] is False
+    assert out["transcript"] == ""
+    assert "Authenticate EchoMind" in out["error"]
 
 
 def test_server3_upload_failure_is_reported_not_raised(cfg, monkeypatch, tmp_path):
@@ -291,6 +313,9 @@ def test_server3_upload_failure_is_reported_not_raised(cfg, monkeypatch, tmp_pat
         raise RuntimeError("network down")
 
     monkeypatch.setattr(vt.requests, "post", boom)
+    monkeypatch.setattr(
+        vt, "resolve_auth_token", lambda cfg=None: "unit-center-provider-token"
+    )
     ss.save_stt_settings({"provider": "aipacs_3"})
     out = vt.VoiceTranscriptionService().transcribe([str(wav)])
     assert out["ok"] is False and out["transcript"] == ""

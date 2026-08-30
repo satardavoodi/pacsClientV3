@@ -34,6 +34,7 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 **Guard tests:**
 - `tests/code/echomind/test_turbo_template.py` - 103 guards on the template, the region packages and the gate
 - `tests/code/echomind/test_turbo_prompt_seam.py` - the Turbo/Send seam
+- `tests/code/echomind/test_credential_obfuscation.py` - packaged center/provider credential confidentiality and fail-closed Company Server 3 authorization
 - `tests/code/echomind/test_metadata_detection.py`, `test_metadata_card.py`, `test_reception_prefetch.py`
 
 ### Medical Report Editor (Reception Data tab)

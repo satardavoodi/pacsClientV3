@@ -18,7 +18,7 @@ The recent fixes improved consistency, but the system still has multiple adjacen
 - expected slice count
 - completion state
 - terminal download authority
-- disk-vs-viewer-vs-metadata reconciliation
+- di<redacted-legacy-provider-credential> reconciliation
 
 That means the current runtime is **coordinated**, but not yet **single-authority**.
 

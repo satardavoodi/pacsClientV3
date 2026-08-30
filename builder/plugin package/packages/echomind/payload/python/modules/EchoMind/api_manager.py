@@ -14,9 +14,22 @@ from datetime import datetime
 import os
 import json
 import hashlib
+import hmac
+import logging
 import threading
 
 from PySide6.QtCore import QObject, Signal
+
+from modules.EchoMind.center_registry import ENCRYPTED_CENTERS
+from modules.EchoMind.credential_envelope import (
+    CredentialEnvelope,
+    CredentialEnvelopeError,
+    access_code_lookup,
+    open_provider_key,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 # ── F10 (2026-07-28): the usage file is a read-modify-write with no lock ─────
@@ -36,166 +49,90 @@ _USAGE_LOCK = threading.Lock()
 
 
 # ============================================================
-# ✅ 1) HARD-CODED CENTERS REGISTRY (single source of truth)
-#    Add as many centers/keys as you want here.
+# 1) PROTECTED CENTERS REGISTRY (single source of truth)
 # ============================================================
 
 @dataclass(frozen=True)
 class CenterRecord:
     center_code: str
     center_display: str
-    gapgpt_key: str
-    irannobat_keys: List[str]
+    credentials: tuple[CredentialEnvelope, ...]
 
 
-CENTERS: List[CenterRecord] = [
+def _load_center_records(raw_centers) -> List[CenterRecord]:
+    records: List[CenterRecord] = []
+    for raw in raw_centers or ():
+        credentials = tuple(
+            CredentialEnvelope(
+                lookup_digest=str(item.get("lookup_digest") or ""),
+                kdf_salt_b64=str(item.get("kdf_salt_b64") or ""),
+                nonce_b64=str(item.get("nonce_b64") or ""),
+                ciphertext_b64=str(item.get("ciphertext_b64") or ""),
+            )
+            for item in raw.get("credentials", ())
+        )
+        records.append(
+            CenterRecord(
+                center_code=str(raw.get("center_code") or "").strip().upper(),
+                center_display=str(raw.get("center_display") or "").strip(),
+                credentials=credentials,
+            )
+        )
+    return records
 
 
-    # ---------- RAZI ----------
-    CenterRecord(
-        center_code="RAZI",
-        center_display="RAZI",
-        gapgpt_key="sk-97OrEW0kPBVNqMsH0JOBIOHvCHAo3RsZKxpaEABzheRp42M0",
-        irannobat_keys=[
-            "Ai-pacs/razi245608",
-        ],
-    ),
-    # ---------- IMA ----------
-    CenterRecord(
-        center_code="IMA",
-        center_display="Ima Center (Dr. Somayeh Karimi)",
-        gapgpt_key="sk-wZi7MgxTzepbXEEn3dIXuvAfJLmbgPKtOm8td1nZcrTSY8JX",
-        irannobat_keys=[
-            "Ai-pacs/lma25106",
-        ],
-    ),
+CENTERS: List[CenterRecord] = _load_center_records(ENCRYPTED_CENTERS)
 
-    # ---------- ROOHANI ----------
-    CenterRecord(
-        center_code="ROOHANI",
-        center_display="Dr. Mohammad Mojtaba Roohani Center",
-        gapgpt_key="sk-m1SzlAt5EObPWzsL16HJ6LJ7uT1I9ghus9kWcwJmv5tvLkKc",
-        irannobat_keys=[
-            "Ai-Pacs/#Mojtabaro1028",
-        ],
-    ),
-
-    # ---------- HASANPOUR ----------
-    CenterRecord(
-        center_code="HASANPOUR",
-        center_display="Dr. Hasanpour Center",
-        gapgpt_key="sk-73j1VOTkU9T0RXj9bGPxSQgN7pjcCi7Uaz8CgMnC7JMoryBt",
-        irannobat_keys=[
-            "Ai-Pacs/Ctmrisono53&",
-        ],
-    ),  
-      
-    # ---------- ASSARZADEGAN ----------
-    CenterRecord(
-        center_code="ASSARZADEGAN",
-        center_display="Dr. Assarzadegan Center",
-        gapgpt_key="sk-qv9AOqM7AN0z4jUF4Ajo2DhlBuaGi2PiZecpsdWP8t23iwJf",
-        irannobat_keys=[
-            "Ai-Pacs/Assar@1394",
-        ],
-    ),    
-
-    # ---------- BRAKE ----------
-    CenterRecord(
-        center_code="BRAKE",
-        center_display="Dr. Somayeh Brake Center",
-        gapgpt_key="sk-SKMmphBGVb0OeEw7HtA8Fk7bWH9OGOpTnDaMa3lnatDbfQBY",
-        irannobat_keys=[
-            "Ai-Pacs/Brake@3161",
-        ],
-    ),    
-
-    # ---------- FAZEL ----------
-    CenterRecord(
-        center_code="FAZEL",
-        center_display="Dr. FAZEL Center",
-        gapgpt_key="sk-bY7LLAxclaMMu3soG9D8bKIdpjx6KPzJoBUok0bTdMj5HhNM",
-        irannobat_keys=[
-            "Ai-Pacs/Fazel20260522*#",
-        ],
-    ),    
-    # ---------- TEST ----------
-    CenterRecord(
-        center_code="TEST",
-        center_display="Test Center",
-        gapgpt_key="sk-Bhs8WJthiuEtybwnRuuXoeG4ZjqsBtP7HSTFvhH2Orf3uumI",
-        irannobat_keys=[
-            "Ai-Pacs/TestKey123",
-        ],
-    ),   
-]
-
-#: Centre codes that must never be reachable in a shipped build. The TEST key is a
-#: literal string inside the distributed binary, and `validate_key` is a purely local
-#: lookup — so anyone who runs `strings` on the exe could authorise themselves and
-#: spend company GapGPT budget. Set AIPACS_ALLOW_TEST_CENTER=1 to re-enable it for
-#: local testing; no shipped build sets it.
+#: Development-only records remain encrypted and are omitted from both runtime maps unless
+#: explicitly enabled. No shipped build sets this environment variable.
 _DEV_ONLY_CENTER_CODES = ("TEST",)
 _ENV_ALLOW_TEST_CENTER = "AIPACS_ALLOW_TEST_CENTER"
 
 
 def test_center_enabled() -> bool:
-    """Whether the dev-only centres are part of the registry. Default OFF."""
+    """Whether development-only centers are part of the runtime registry."""
     raw = os.environ.get(_ENV_ALLOW_TEST_CENTER)
     return bool(raw) and str(raw).strip().lower() not in ("0", "false", "no", "off")
 
 
-def _normalize_key(k: str) -> str:
-    return (k or "").strip()
-
-
-def _build_registry_maps(centers: List[CenterRecord]) -> tuple[Dict[str, CenterRecord], Dict[str, str]]:
-    """
-    Build:
-      - centers_by_code[CODE] -> CenterRecord
-      - key_to_center_code[IRANNOBAT_KEY] -> CODE
-
-    This ensures O(1) validation for large number of keys.
-    """
+def _build_registry_maps(
+    centers: List[CenterRecord],
+) -> tuple[Dict[str, CenterRecord], Dict[str, str]]:
+    """Build center and access-code lookup maps without retaining plaintext secrets."""
     centers_by_code: Dict[str, CenterRecord] = {}
-    key_to_center_code: Dict[str, str] = {}
-
+    lookup_to_center_code: Dict[str, str] = {}
     allow_dev = test_center_enabled()
-    for c in centers:
-        code = (c.center_code or "").strip().upper()
-        if not code:
+    for center in centers:
+        code = str(center.center_code or "").strip().upper()
+        if not code or (code in _DEV_ONLY_CENTER_CODES and not allow_dev):
             continue
-        if code in _DEV_ONLY_CENTER_CODES and not allow_dev:
-            # Excluded from BOTH maps, so the key cannot validate and the code cannot
-            # be detected. Silently skipping is deliberate: logging "TEST centre
-            # disabled" on every start would advertise that it exists.
+        credentials = tuple(center.credentials or ())
+        if not credentials:
             continue
-
-        centers_by_code[code] = CenterRecord(
+        record = CenterRecord(
             center_code=code,
-            center_display=(c.center_display or code).strip(),
-            gapgpt_key=_normalize_key(c.gapgpt_key),
-            irannobat_keys=[_normalize_key(x) for x in (c.irannobat_keys or []) if _normalize_key(x)],
+            center_display=str(center.center_display or code).strip(),
+            credentials=credentials,
         )
-
-        for k in centers_by_code[code].irannobat_keys:
-            key_to_center_code[k] = code
-
-    return centers_by_code, key_to_center_code
+        centers_by_code[code] = record
+        for credential in credentials:
+            lookup = str(credential.lookup_digest or "").strip().lower()
+            if not lookup:
+                continue
+            if lookup in lookup_to_center_code:
+                raise ValueError("Duplicate protected EchoMind access-code lookup.")
+            lookup_to_center_code[lookup] = code
+    return centers_by_code, lookup_to_center_code
 
 
 _CENTERS_BY_CODE, _KEY_TO_CENTER_CODE = _build_registry_maps(CENTERS)
 
 
 def register_center(center: CenterRecord) -> None:
-    """
-    Optional: allow runtime registration (still "hardcoded", but usable).
-    """
+    """Register an already-protected center record for this process."""
     global _CENTERS_BY_CODE, _KEY_TO_CENTER_CODE, CENTERS
     CENTERS.append(center)
     _CENTERS_BY_CODE, _KEY_TO_CENTER_CODE = _build_registry_maps(CENTERS)
-
-
 
 class APIKeyManager(QObject):
     """
@@ -222,6 +159,7 @@ class APIKeyManager(QObject):
 
         self._current_api_key: Optional[str] = None
         self._current_center_code: Optional[str] = None
+        self._current_provider_key: Optional[str] = None
         self._is_validated: bool = False
 
     @classmethod
@@ -233,15 +171,46 @@ class APIKeyManager(QObject):
             return False, None, "API Key cannot be empty"
 
         api_key = api_key.strip()
-        center_code = _KEY_TO_CENTER_CODE.get(api_key)
+        try:
+            lookup = access_code_lookup(api_key)
+            center_code = _KEY_TO_CENTER_CODE.get(lookup)
+            record = _CENTERS_BY_CODE.get(center_code or "")
+            envelope = next(
+                (
+                    item
+                    for item in (record.credentials if record else ())
+                    if hmac.compare_digest(item.lookup_digest, lookup)
+                ),
+                None,
+            )
+            if not center_code or record is None or envelope is None:
+                raise CredentialEnvelopeError("Invalid EchoMind access code.")
+            provider_key = open_provider_key(api_key, envelope, center_code)
+        except (CredentialEnvelopeError, ValueError):
+            center_code = None
+            provider_key = ""
+        except Exception as exc:
+            # Credential validation is a fail-closed boundary. Missing crypto
+            # support or an unexpected registry/runtime failure must deny access
+            # without leaking credential details to the UI or logs.
+            logger.error(
+                "EchoMind credential validation failed closed (%s).",
+                type(exc).__name__,
+            )
+            center_code = None
+            provider_key = ""
 
-        if center_code:
+        if center_code and provider_key:
             self._current_api_key = api_key
             self._current_center_code = center_code
+            self._current_provider_key = provider_key
             self._is_validated = True
             self.keyValidated.emit(center_code, api_key)
             return True, center_code, None
 
+        self._current_api_key = None
+        self._current_center_code = None
+        self._current_provider_key = None
         self._is_validated = False
         error_msg = "❌ Invalid API Key. Please contact administrator."
         self.keyInvalid.emit(error_msg)
@@ -253,12 +222,16 @@ class APIKeyManager(QObject):
     def get_current_center(self) -> Optional[str]:
         return self._current_center_code if self._is_validated else None
 
+    def get_current_provider_key(self) -> Optional[str]:
+        return self._current_provider_key if self._is_validated else None
+
     def is_validated(self) -> bool:
         return self._is_validated
 
     def reset(self):
         self._current_api_key = None
         self._current_center_code = None
+        self._current_provider_key = None
         self._is_validated = False
 
 
@@ -309,22 +282,34 @@ class Manage:
         if not k:
             raise ValueError("❌ Empty IRANNOBAT key.")
 
-        self._last_api_key = k 
-
-        center_code = _KEY_TO_CENTER_CODE.get(k)
+        try:
+            lookup = access_code_lookup(k)
+        except CredentialEnvelopeError as exc:
+            raise ValueError("❌ Invalid Center API key. Contact provider.") from exc
+        center_code = _KEY_TO_CENTER_CODE.get(lookup)
         if not center_code:
             raise ValueError("❌ Invalid Center API key. Contact provider.")
 
         rec = _CENTERS_BY_CODE.get(center_code)
         if not rec:
-            raise ValueError(f"❌ Center '{center_code}' not found in hardcoded registry.")
+            raise ValueError(f"❌ Center '{center_code}' not found in protected registry.")
+
+        current_key = self._mgr.get_current_key()
+        if not self._mgr.is_validated() or current_key != k:
+            ok, _validated_center, error = self._mgr.validate_key(k)
+            if not ok:
+                raise ValueError(error or "❌ Invalid Center API key. Contact provider.")
+        provider_key = self._mgr.get_current_provider_key()
+        if not provider_key:
+            raise ValueError("❌ Center provider credential could not be opened.")
 
         info = CenterInfo(
             center_code=rec.center_code,
             center_display=rec.center_display,
             irannobat_key=k,
-            gapgpt_key=rec.gapgpt_key,
+            gapgpt_key=provider_key,
         )
+        self._last_api_key = k
         self._detected = info
         return info
 

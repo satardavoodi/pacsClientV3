@@ -71,13 +71,11 @@ AIPACS_SERVER_2_BASE = "http://80.210.31.214:8085"   # Windows server
 # Unlike Servers 1/2 (multipart ``audio_files`` + ``quality_mode`` at
 # ``/generate_transcript``), Server 3 speaks the OpenAI transcription REST API:
 # ``POST {base}/audio/transcriptions`` with ``model`` + ``file`` and a Bearer
-# key. Shown in the UI ONLY as "Company Server 3"; the base URL / key / model
-# live here and are never surfaced (same product rule as Servers 1/2). A token
-# entered in Settings would override the built-in key, but the field is hidden
-# for this name-only server, so the built-in key is used.
+# key. Shown in the UI ONLY as "Company Server 3"; the base URL / model are not
+# surfaced (same product rule as Servers 1/2). Its Bearer credential is opened
+# from the validated EchoMind center envelope and is never stored independently.
 AIPACS_SERVER_3_BASE = "https://api.gapgpt.app/v1"
 AIPACS_SERVER_3_MODEL = "gapgpt/whisper-1"
-AIPACS_SERVER_3_KEY = "sk-WRCKo4GRoH4N7gCVVD1AeILMZe6DGsrLIHmF1ZVKZ2BzIP1k"
 
 #: (provider_id, display label) — the Settings combo renders exactly this.
 STT_PROVIDER_CHOICES = (
@@ -172,14 +170,14 @@ def _legacy_endpoint() -> str:
 def resolve_auth_token(cfg: Optional[Dict[str, Any]] = None) -> str:
     """Bearer token for the AI-PACS server.
 
-    The configured token wins. When empty we fall back to the GapGPT key the chat
-    has always sent — so the chat's authenticated behaviour is preserved exactly,
-    and Secretary (which used to send NO header to the same endpoint) now sends the
-    same valid key instead of nothing.
+    Custom and native servers may use their configured token. Company Server 3
+    always uses the provider credential opened by the validated EchoMind center
+    access code, so it cannot bypass the company entitlement boundary.
     """
     cfg = cfg or get_stt_settings()
+    provider = str(cfg.get("provider") or "").strip().lower()
     token = str(cfg.get("auth_token") or "").strip()
-    if token:
+    if token and provider != STT_PROVIDER_AIPACS_3:
         return token
     try:  # best-effort; never raise into the audio path
         from modules.EchoMind.viewer_chat.api_manager import Manage
@@ -240,7 +238,12 @@ class VoiceTranscriptionService:
         if provider == STT_PROVIDER_AIPACS_3:
             # OpenAI-compatible server: probe the base without exposing its
             # address in the (user-visible) detail string.
-            key = str(cfg.get("auth_token") or "").strip() or AIPACS_SERVER_3_KEY
+            key = resolve_auth_token(cfg)
+            if not key:
+                return {
+                    "ok": False,
+                    "detail": "Authenticate EchoMind before testing Company Server 3.",
+                }
             headers = {"Authorization": f"Bearer {key}"} if key else {}
             try:
                 r = echomind_http.get(f"{AIPACS_SERVER_3_BASE}/models", headers=headers, timeout=8)
@@ -451,9 +454,12 @@ class VoiceTranscriptionService:
         ``quality_mode`` / ``accepted`` here, so ``quality_report`` is always ``[]``
         (a Whisper endpoint has no low-quality "noisy" retry signal).
         """
-        # A configured token may override the built-in key; the built-in key is
-        # the normal case (the token field is hidden for this name-only server).
-        key = str(cfg.get("auth_token") or "").strip() or AIPACS_SERVER_3_KEY
+        key = resolve_auth_token(cfg)
+        if not key:
+            return self._error(
+                cfg,
+                "Authenticate EchoMind before using Company Server 3.",
+            )
         endpoint = build_endpoint(AIPACS_SERVER_3_BASE, "/audio/transcriptions")
         request_timeout = int(timeout or cfg.get("timeout_seconds") or DEFAULT_TIMEOUT_S)
         headers = {"Authorization": f"Bearer {key}"} if key else {}

@@ -62,8 +62,9 @@ When you ship a fix:
 | `test_bus_factory.py` | `build_command_bus()` wires adapters correctly given different launcher dicts |
 | `test_kpi_auto_record.py` | `hook_bus(bus)` auto-records `<action>.elapsed_ms` to the sink |
 | `test_module_catalog_coverage.py` | Catalog vs CommandBus drift reporter; INFRASTRUCTURE_ACTIONS ⊥ catalog actions invariant |
+| `test_credential_obfuscation.py` | EchoMind center access codes and provider credentials never ship as plaintext; access-code-derived AES-GCM envelopes open only the selected center; tampering and missing Company Server 3 entitlement fail closed |
 
-**Subtotal: 12 unit-test files.**
+**Subtotal: 13 unit-test files.**
 
 ---
 

@@ -3190,8 +3190,11 @@ editing EchoMind, know these five rules — each replaced a real defect:
   `test_run_async_cancel_and_busy_state` / `test_no_clinical_content_on_stdout` /
   `test_backend_authority_and_hardening`. All EchoMind files ARE plugin-mirrored — run
   `tools/dev/sync_plugin_mirrors.py` (`--add` for a NEW file) after editing.
-  **NEEDS live source-build verify.** NOT done: the embedded per-centre API keys
-  (`api_manager.py:34-114`) still ship every centre's key in every build — product decision.
+  **NEEDS live source-build verify.** The client-only center registry is protected rather than
+  plaintext: each access code derives an scrypt key that opens only its center's AES-GCM
+  provider-credential envelope. This prevents casual extraction from packaged Python payloads;
+  it does not claim to defeat a determined runtime debugger. Generate updates only with
+  `tools/security/generate_echomind_center_registry.py` and keep its plaintext input outside Git.
 - **Send-to-Reception must be fed FULLY-INLINE HTML.** EchoMind reports arrived at Reception
   stripped of colour/font/size while the Medical Report Editor's arrived intact — even though
   both build the same payload and both call `prepare_report_html_for_server()`. The transfer
@@ -4034,7 +4037,7 @@ the review-only phase. Five files changed + two test harnesses updated.
 - **A1 — Turbo is PINNED to the company GapGPT pipeline** (`ai_chat_pages.py::
   _on_hq_all_modality_clicked`). It no longer reads `llm_backend`: `backend =
   "company"`, model = `PRIMARY_REPORT_MODEL`, authorization = a validated center
-  key from the hardcoded `CENTERS` registry (`APIKeyManager.get_current_key()`,
+  key from the protected `CENTERS` registry (`APIKeyManager.get_current_key()`,
   falling back to validating the stored license key). **Behaviour change:** with
   Send switched to OpenAI, Turbo used to silently run on the user's key/model/
   endpoint; now, without an authorized company key it shows "Turbo requires an
@@ -4330,7 +4333,7 @@ spends the company's paid GapGPT budget, so every knob is in-code:
 ```
 provider -> TURBO_BACKEND ("company")     endpoint -> GAPGPT_API_URL
 model    -> PRIMARY_REPORT_MODEL          prompt   -> build_report_system_prompt
-who may  -> the hardcoded CENTERS registry (api_manager)
+who may  -> the protected CENTERS registry (api_manager)
 ```
 
 `TURBO_BACKEND` / `TURBO_USER_CONFIGURABLE = False` are named constants in

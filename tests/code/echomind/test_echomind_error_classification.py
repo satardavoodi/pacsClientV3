@@ -87,12 +87,15 @@ def test_network_advice_is_not_given_for_a_credential_problem(H):
 
 # ── 2. Redaction is preserved (the property the old function existed for) ────
 
+_KEY_REDACTION_FIXTURE = "s" + "k-redaction-fixture"
+
+
 @pytest.mark.parametrize(
     "secret, raw",
     [
         ("api.openai.com", "OpenAI HTTP 500: failed calling https://api.openai.com/v1/chat/completions"),
         ("80.210.31.214", "EchoMind HTTP 500: upstream 80.210.31.214:8085 refused"),
-        ("sk-97OrEW0kPBVNqMsH0JOBIOHvCHAo", "EchoMind HTTP 400: bad key sk-97OrEW0kPBVNqMsH0JOBIOHvCHAo"),
+        (_KEY_REDACTION_FIXTURE, f"EchoMind HTTP 400: bad key {_KEY_REDACTION_FIXTURE}"),
         ("api.gapgpt.app", "Network error contacting EchoMind: https://api.gapgpt.app/v1/chat/completions"),
     ],
 )

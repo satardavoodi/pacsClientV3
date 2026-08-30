@@ -42,24 +42,40 @@ from modules.EchoMind import api_manager as am                          # noqa: 
 from modules.EchoMind import entitlement as ent                         # noqa: E402
 from modules.EchoMind import llm_client                                 # noqa: E402
 from modules.EchoMind import settings_store                             # noqa: E402
-from modules.EchoMind.api_manager import APIKeyManager, CENTERS, Manage  # noqa: E402
+from modules.EchoMind.api_manager import (  # noqa: E402
+    APIKeyManager,
+    CenterRecord,
+    Manage,
+)
+from modules.EchoMind.credential_envelope import seal_provider_key  # noqa: E402
 
 _PAGES = os.path.join(_ROOT, "modules", "EchoMind", "viewer_chat", "ai_chat_pages.py")
 
 
+_REAL_ACCESS_CODE = "unit-real-center-access"
+_TEST_ACCESS_CODE = "unit-development-center-access"
+
+
+def _record(code: str, access_code: str) -> CenterRecord:
+    return CenterRecord(
+        center_code=code,
+        center_display=f"{code} Center",
+        credentials=(seal_provider_key(access_code, f"provider-token-{code}", code),),
+    )
+
+
+_TEST_CENTERS = [
+    _record("UNIT", _REAL_ACCESS_CODE),
+    _record("TEST", _TEST_ACCESS_CODE),
+]
+
+
 def _test_key():
-    for c in CENTERS:
-        if c.center_code == "TEST":
-            ks = getattr(c, "irannobat_keys", []) or []
-            return ks[0] if ks else None
-    return None
+    return _TEST_ACCESS_CODE
 
 
 def _real_key():
-    for c in CENTERS:
-        if c.center_code != "TEST" and (getattr(c, "irannobat_keys", []) or []):
-            return c.irannobat_keys[0]
-    return None
+    return _REAL_ACCESS_CODE
 
 
 @pytest.fixture(autouse=True)
@@ -68,8 +84,15 @@ def _isolate(monkeypatch):
     Both are restored, or these tests would licence (or de-licence) the rest of the
     suite depending on ordering."""
     mgr = APIKeyManager.instance()
-    saved = (mgr._current_api_key, mgr._current_center_code, mgr._is_validated)
+    saved = (
+        mgr._current_api_key,
+        mgr._current_center_code,
+        mgr._current_provider_key,
+        mgr._is_validated,
+    )
     saved_maps = (am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE)
+    monkeypatch.setattr(am, "CENTERS", list(_TEST_CENTERS))
+    am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE = am._build_registry_maps(am.CENTERS)
     stored = {"v": ""}
     monkeypatch.setattr(settings_store, "get_echomind_api_key", lambda: stored["v"])
     monkeypatch.setattr(llm_client, "get_echomind_api_key", lambda: stored["v"])
@@ -78,7 +101,12 @@ def _isolate(monkeypatch):
         yield stored
     finally:
         am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE = saved_maps
-        mgr._current_api_key, mgr._current_center_code, mgr._is_validated = saved
+        (
+            mgr._current_api_key,
+            mgr._current_center_code,
+            mgr._current_provider_key,
+            mgr._is_validated,
+        ) = saved
 
 
 # ── the target access model, end to end ──────────────────────────────────────
@@ -135,7 +163,7 @@ def test_the_dev_flag_restores_it_for_local_testing(_isolate, monkeypatch):
     if not k:
         pytest.skip("no TEST centre defined")
     monkeypatch.setenv("AIPACS_ALLOW_TEST_CENTER", "1")
-    am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE = am._build_registry_maps(CENTERS)
+    am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE = am._build_registry_maps(am.CENTERS)
     assert am.test_center_enabled() is True
     assert "TEST" in am._CENTERS_BY_CODE
     ok, code, _e = APIKeyManager.instance().validate_key(k)
@@ -151,9 +179,9 @@ def test_the_dev_flag_is_off_for_every_falsey_spelling(_isolate, monkeypatch, va
 def test_the_real_centres_are_untouched(_isolate):
     """Excluding TEST must not cost a paying centre its licence."""
     codes = set(am._CENTERS_BY_CODE)
-    expected = {c.center_code.upper() for c in CENTERS if c.center_code != "TEST"}
+    expected = {c.center_code.upper() for c in am.CENTERS if c.center_code != "TEST"}
     assert codes == expected
-    assert len(codes) >= 5
+    assert codes == {"UNIT"}
 
 
 # ── the chokepoint protects all eleven call sites ────────────────────────────

@@ -174,42 +174,34 @@ class TestGapGptConfigConstants(unittest.TestCase):
 # ===========================================================================
 
 class TestCenterKeyRegistry(unittest.TestCase):
-    """Verify the CENTERS registry in api_manager.py is well-formed."""
+    """Verify the protected CENTERS registry is well-formed."""
 
     def test_centers_list_not_empty(self):
         self.assertIsNotNone(CENTERS)
         self.assertGreater(len(CENTERS), 0, "CENTERS registry is empty")
 
-    def test_every_center_has_gapgpt_key(self):
+    def test_every_center_has_protected_credentials(self):
         for c in (CENTERS or []):
             self.assertTrue(
-                (c.gapgpt_key or "").strip(),
-                f"Center {c.center_code!r} has no gapgpt_key",
+                c.credentials,
+                f"Center {c.center_code!r} has no protected credentials",
             )
 
-    def test_every_center_has_irannobat_key(self):
+    def test_every_credential_has_an_encrypted_envelope(self):
         for c in (CENTERS or []):
-            self.assertTrue(
-                c.irannobat_keys and any(k.strip() for k in c.irannobat_keys),
-                f"Center {c.center_code!r} has no irannobat_keys",
-            )
+            for credential in c.credentials:
+                self.assertRegex(credential.lookup_digest, r"^[0-9a-f]{32}$")
+                self.assertTrue(credential.kdf_salt_b64)
+                self.assertTrue(credential.nonce_b64)
+                self.assertTrue(credential.ciphertext_b64)
 
-    def test_gapgpt_keys_start_with_sk(self):
-        for c in (CENTERS or []):
-            self.assertTrue(
-                c.gapgpt_key.startswith("sk-"),
-                f"Center {c.center_code!r} gapgpt_key doesn't start with 'sk-'",
-            )
-
-    def test_no_duplicate_gapgpt_keys(self):
-        keys = [c.gapgpt_key for c in (CENTERS or [])]
-        self.assertEqual(len(keys), len(set(keys)), "Duplicate gapgpt_key values in CENTERS")
-
-    def test_no_duplicate_irannobat_keys(self):
-        all_keys: list[str] = []
-        for c in (CENTERS or []):
-            all_keys.extend(c.irannobat_keys or [])
-        self.assertEqual(len(all_keys), len(set(all_keys)), "Duplicate irannobat_keys across centers")
+    def test_no_duplicate_access_code_lookups(self):
+        lookups = [
+            credential.lookup_digest
+            for center in (CENTERS or [])
+            for credential in center.credentials
+        ]
+        self.assertEqual(len(lookups), len(set(lookups)))
 
     def test_center_codes_are_uppercase(self):
         for c in (CENTERS or []):
@@ -295,8 +287,18 @@ class TestGapGptLiveConnection(unittest.TestCase):
 
     _URL   = "https://api.gapgpt.app/v1/chat/completions"
     _MODEL = "gpt-5.2"
-    # Use the RAZI key for the generic ping test
-    _KEY   = "sk-97OrEW0kPBVNqMsH0JOBIOHvCHAo3RsZKxpaEABzheRp42M0"
+    _ACCESS_CODE = os.environ.get("AIPACS_ECHOMIND_TEST_ACCESS_KEY", "").strip()
+
+    @classmethod
+    def setUpClass(cls):
+        if not cls._ACCESS_CODE:
+            raise unittest.SkipTest("AIPACS_ECHOMIND_TEST_ACCESS_KEY is not configured")
+        from modules.EchoMind.api_manager import APIKeyManager, Manage
+
+        ok, _center, _error = APIKeyManager.instance().validate_key(cls._ACCESS_CODE)
+        if not ok:
+            raise unittest.SkipTest("Configured EchoMind test access code is invalid")
+        _display, cls._KEY = Manage.instance().get_center_and_gapgpt_key()
 
     def _post(self, key: str, content: str = "Reply: OK", max_tokens: int = 8) -> dict:
         import requests
@@ -313,7 +315,7 @@ class TestGapGptLiveConnection(unittest.TestCase):
         )
         return resp
 
-    def test_razi_key_returns_200(self):
+    def test_configured_center_key_returns_200(self):
         resp = self._post(self._KEY)
         self.assertEqual(resp.status_code, 200, f"Unexpected HTTP {resp.status_code}: {resp.text[:200]}")
 
@@ -359,31 +361,11 @@ class TestGapGptLiveConnection(unittest.TestCase):
         resp = requests.post(
             self._URL,
             json={"model": self._MODEL, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 4},
-            headers={"Authorization": "Bearer sk-INVALID_KEY_00000000000000000000000000000000000"},
+            headers={"Authorization": "Bearer deliberately-invalid-test-token"},
             timeout=10,
         )
         self.assertIn(resp.status_code, (401, 403),
                       f"Expected 401/403 for bad key, got {resp.status_code}")
-
-    def test_all_center_keys_authenticate(self):
-        """Every registered gapgpt_key must return HTTP 200."""
-        import requests
-        failures = []
-        for c in (CENTERS or []):
-            resp = requests.post(
-                self._URL,
-                json={"model": self._MODEL,
-                      "messages": [{"role": "user", "content": "OK"}],
-                      "max_tokens": 4, "temperature": 0.0},
-                headers={"Authorization": f"Bearer {c.gapgpt_key}",
-                         "Content-Type": "application/json"},
-                timeout=20,
-            )
-            if resp.status_code != 200:
-                failures.append(f"{c.center_code}: HTTP {resp.status_code}")
-        self.assertFalse(failures,
-                         "The following center keys failed:\n" + "\n".join(failures))
-
 
 # ===========================================================================
 # 5. Live AI backend (port 8085) — skipped when unreachable
