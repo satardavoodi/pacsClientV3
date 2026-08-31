@@ -237,3 +237,65 @@ def test_service_class_api():
     assert pss.PatientStudySetService.merge_study_uids is pss.merge_study_uids
     assert pss.PatientStudySetService.resolve_study_uids is pss.resolve_study_uids
     assert pss.PatientStudySetService.build_download_payload is pss.build_download_payload
+
+
+def test_duplicate_raw_series_numbers_get_digit_only_ui_handles_deterministically():
+    """Storage folder keys may contain suffixes; drag/display keys never may."""
+    records = [
+        {
+            "study_uid": "study-a",
+            "series_uid": "uid-still",
+            "series_number": "1",
+            "folder_key": "1",
+            "image_count": 25,
+        },
+        {
+            "study_uid": "study-a",
+            "series_uid": "uid-cine",
+            "series_number": "1",
+            "folder_key": "1_2",
+            "image_count": 2,
+        },
+        {
+            "study_uid": "study-a",
+            "series_uid": "uid-other",
+            "series_number": "4",
+            "folder_key": "4",
+            "image_count": 1,
+        },
+    ]
+
+    forward = pss.allocate_series_display_keys(records)
+    reverse = pss.allocate_series_display_keys(list(reversed(records)))
+    by_uid_forward = {row["series_uid"]: row for row in forward}
+    by_uid_reverse = {row["series_uid"]: row for row in reverse}
+
+    assert by_uid_forward["uid-still"]["display_key"] == "1"
+    assert by_uid_forward["uid-cine"]["display_key"] == "900001"
+    assert by_uid_forward["uid-other"]["display_key"] == "4"
+    assert all(row["display_key"].isdigit() for row in forward)
+    assert {
+        uid: row["display_key"] for uid, row in by_uid_forward.items()
+    } == {
+        uid: row["display_key"] for uid, row in by_uid_reverse.items()
+    }
+    assert by_uid_forward["uid-cine"]["folder_key"] == "1_2"
+    assert by_uid_forward["uid-cine"]["_orig_series_number"] == "1"
+
+    tie = pss.allocate_series_display_keys([
+        {"study_uid": "study-b", "series_uid": "uid-b", "series_number": "7", "image_count": 3},
+        {"study_uid": "study-b", "series_uid": "uid-a", "series_number": "7", "image_count": 3},
+    ])
+    tie_by_uid = {row["series_uid"]: row["display_key"] for row in tie}
+    assert tie_by_uid == {"uid-b": "900001", "uid-a": "7"}
+
+    incremental_loser = pss.allocate_series_display_keys([{
+        "study_uid": "study-a",
+        "series_uid": "uid-cine",
+        "series_number": "900001",
+        "_orig_series_number": "1",
+        "folder_key": "1_2",
+        "image_count": 2,
+    }])
+    assert incremental_loser[0]["display_key"] == "900001"
+    assert incremental_loser[0]["_orig_series_number"] == "1"

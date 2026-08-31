@@ -104,6 +104,47 @@ def test_header_scan_captures_number_of_frames(tmp_path):
     assert int(entries[0].num_frames) == 8
 
 
+def test_metadata_path_expands_multiple_cine_objects_when_db_omits_frame_count(tmp_path):
+    """Imported US cine may contain several multi-frame DICOM objects.
+
+    The legacy metadata projection carries one row per object but no
+    NumberOfFrames. Probing only a single-file series leaves a two-object cine
+    at two slices instead of its full frame stack.
+    """
+    pytest.importorskip("pydicom")
+    pytest.importorskip("PySide6")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from modules.viewer.fast import lightweight_2d_pipeline as lw
+
+    series_dir = tmp_path / "cine"
+    series_dir.mkdir()
+    first = series_dir / "first.dcm"
+    second = series_dir / "second.dcm"
+    _make_multiframe_dicom(first, n_frames=2, rows=8, cols=6)
+    _make_multiframe_dicom(second, n_frames=3, rows=8, cols=6)
+    metadata = {
+        "series": {"series_number": "1", "modality": "US"},
+        "instances": [
+            {"instance_path": str(first), "rows": 8, "columns": 6, "instance_number": 1},
+            {"instance_path": str(second), "rows": 8, "columns": 6, "instance_number": 2},
+        ],
+    }
+
+    pipeline = lw.Lightweight2DPipeline(
+        config=lw.PipelineConfig(prefetch_radius=0, prefetch_workers=1)
+    )
+    try:
+        pipeline.open_series(str(series_dir), metadata=metadata)
+        assert len(pipeline._slices) == 5
+        assert [slice_meta.frame_index for slice_meta in pipeline._slices] == [0, 1, 0, 1, 2]
+        assert int(pipeline._decode_slice(4).flat[0]) == 2
+    finally:
+        pipeline.close_series()
+
+
 def test_pixel_array_frame_indexing_assumption(tmp_path):
     pydicom = pytest.importorskip("pydicom")
     p = tmp_path / "mf.dcm"
@@ -146,14 +187,17 @@ def test_expansion_wired_in_open_series():
 def test_expansion_logic_pins():
     src = _pipeline_src()
     fn = src.find("def _expand_multiframe_slices")
-    body = src[fn:fn + 3200]
+    # The metadata-frame probe enlarged this function; keep the source pin
+    # bounded to the full function rather than truncating before the fallback.
+    body = src[fn:fn + 5200]
     assert "if not _FAST_MULTIFRAME or not slices:" in body
     assert 'int(getattr(sm, "num_frames", 1) or 1)' in body
     # per-frame geometry stamping (spatial frame) + the legacy fallback branch
     assert "geoms = self._read_multiframe_geometry(sm.path, n)" in body
     assert "g is not None and g.has_spatial_geometry" in body
     assert "_dc_replace(sm, frame_index=k, num_frames=n)" in body  # fallback path
-    assert "len(slices) == 1" in body
+    assert "first_count = self._probe_number_of_frames(slices[0].path)" in body
+    assert "for sm in slices[1:]" in body
 
 
 def test_decode_selects_own_frame_and_frame_aware_cache_key():

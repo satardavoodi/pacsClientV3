@@ -135,14 +135,25 @@ class _HPImportMixin:
             if not series_number or not series_uid:
                 continue
 
-            thumbnail_path = thumbnail_root / f"{series_number}.png"
+            # Storage identity is not always the raw DICOM SeriesNumber.  Two
+            # distinct SeriesInstanceUIDs may share that number; Import already
+            # assigned each one a canonical collision-aware folder key.
+            storage_key = str(
+                series.get("folder_key")
+                or series.get("series_path_name")
+                or series_number
+            ).strip()
+            if not storage_key:
+                continue
+
+            thumbnail_path = thumbnail_root / f"{storage_key}.png"
             if thumbnail_path.exists():
                 continue
 
             try:
                 preview = load_series_preview(
                     study_path=str(study_path),
-                    series_number=series_number,
+                    series_number=storage_key,
                     patient_pk=patient_pk,
                     study_pk=study_pk,
                 )
@@ -162,7 +173,7 @@ class _HPImportMixin:
 
             metadata.setdefault("series", {})
             metadata["series"]["series_pk"] = series_pk
-            metadata["series"]["series_number"] = series_number
+            metadata["series"]["series_number"] = storage_key
 
             try:
                 save_image_as_png(

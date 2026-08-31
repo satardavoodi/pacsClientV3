@@ -303,6 +303,20 @@ CONSTRAINTS THAT APPLY TO BOTH PASSES
     is a few hundred pixels across. Findings at or below that scale may not be
     assessable. Say so for the specific structure rather than guessing.
 
+PATIENT LATERALITY, NEVER SCREEN SIDE
+
+Radiological images may be displayed with the patient's right on the left side
+of the screen. Determine laterality only from a visible R/L orientation marker
+or trusted DICOM patient-coordinate metadata. In the standard axial
+radiological display, screen-left beneath a visible R marker is the patient's
+right, and screen-right beneath a visible L marker is the patient's left.
+Never convert image-left into patient-left or image-right into patient-right.
+The marker identifies the PATIENT side regardless of where it appears on the
+display. If the marker is absent, cropped, unreadable, or conflicts with trusted
+metadata, laterality is indeterminate; report central or indeterminate as
+supported instead of guessing a side. Apply this patient-centric mapping again
+when verifying the zone, lateral recess, neural foramen, and affected root.
+
 DISC HYDRATION / DESICCATION FALSE-POSITIVE CONTROL
 
 The primary hydration assessment is the central nucleus pulposus on
@@ -326,6 +340,47 @@ hydration decision plane. If preserved central hydration is convincingly shown,
 do not raise or confirm desiccation. If screenshot quality or artifact prevents
 that distinction, mark the assessment uncertain rather than converting a dark
 outer annulus into disease.
+
+DISC DISPLACEMENT MORPHOLOGY CONTRACT
+
+LESION IDENTITY BEFORE MORPHOLOGY
+
+Before combining sagittal and axial evidence, confirm that they represent the
+same disc level and the same displaced component using the level map,
+craniocaudal position, contour, and adjacent anatomy. Do not classify each plane
+independently and choose by majority vote. Once identity is established, the
+morphologic diagnosis is the union of defining features across all reliable
+planes: one plane may establish a defining feature even when another plane cuts
+through a less representative portion. If level or lesion identity cannot be
+correlated confidently, keep the morphology indeterminate rather than fusing
+different abnormalities.
+
+Use these terms consistently. A bulge is generalized disc tissue displacement
+beyond the disc-space margin involving more than 25 percent of the disc
+circumference. Bulging is not, by itself, a herniation. A disc may nevertheless
+have a generalized bulge with a superimposed focal herniation; never let the
+broader contour hide the more important focal component.
+
+Protrusion is a localized herniation whose base at the disc-space margin is
+wider than the displaced component measured in the same plane. Extrusion is
+present when, in at least one plane, the displaced component is wider or extends
+farther than its base, or when a convincing discontinuity from the parent disc
+is demonstrated. Failure to see a thin continuity on limited screenshots is
+uncertainty, not proof of extrusion or sequestration.
+Sequestration means no continuity remains between the displaced fragment and
+the parent disc. Migration means displaced material extends cranially or
+caudally away from the level of origin, whether or not continuity remains.
+
+Sagittal T2 is often decisive for the base-to-dome relationship, continuity,
+and cranial or caudal migration. Axial T2 is often decisive for circumference,
+zone, side, canal or recess effect, and nerve-root relationship. Correlate both
+when available, but Axial T2 must not veto a convincing extrusion demonstrated
+on sagittal T2 merely because the axial slab does not show the maximal dome or
+the full craniocaudal extent. A sagittal view showing a narrower neck or base
+than its displaced dome can therefore establish extrusion. Axial T2 may
+intersect only the neck or a smaller portion and look protrusion-like on that
+slice; use that axial view for patient-side, zone, and neural consequence, not
+to erase the sagittal defining feature.
 """
 
 
@@ -352,6 +407,17 @@ candidate whenever you see something that plausibly deserves a closer look, and
 mark how sure you are. Do NOT invent findings, do not raise something because
 it is statistically common in lumbar MRI, and do not pad the list.
 
+FOCUS BEFORE LABEL
+
+The primary obligation is to preserve the abnormal focus for verification. A
+screening label is a working hypothesis, not a commitment. Try to name the most
+likely morphology, level, side, and zone, but do not suppress a visible focus
+because that classification is uncertain. If displaced disc material is
+present but bulge versus protrusion versus extrusion cannot be decided, raise
+`disc_displacement_indeterminate` and put the plausible alternatives in the
+note. Do not omit displaced disc material because its exact morphology needs
+the second reader.
+
 DO NOT LIMIT YOURSELF TO DISCS
 
 Disc pathology dominates most reads and crowds out the rest. Work through every
@@ -360,8 +426,9 @@ element groups the same attention as the discs.
 
 Disc / degenerative
   desiccation · height loss · broad-based bulge · focal protrusion · extrusion ·
-  sequestered fragment (only if clearly separate) · annular fissure or
-  high-intensity zone where visible · cranial or caudal migration
+  disc displacement of indeterminate morphology · sequestered fragment (only
+  if clearly separate) · annular fissure or high-intensity zone where visible ·
+  cranial or caudal migration
 
 Canal / neural
   central canal narrowing · lateral recess narrowing · neural foraminal
@@ -406,6 +473,7 @@ CANDIDATE FINDINGS
       "grade_system": "lee_central_canal",
       "grade": 1,
       "evidence": ["axial_t2"],
+      "key_frames": {"axial": [12, 11, 13], "sagittal": [4, 3, 5]},
       "note": "anterior CSF partly effaced; all rootlets remain separated"
     }
   ]
@@ -424,6 +492,10 @@ Field rules:
                  primary sequence is assessable; otherwise null
   evidence     - the pane roles that support it: sagittal_t2, sagittal_t1,
                  axial_t2. Name only panes you actually read it from.
+  key_frames   - up to five original capture-frame numbers per plane, ordered
+                 most decisive first and then immediate neighbors. Use only
+                 frame numbers printed in the supplied captions. An empty list
+                 is valid; never invent a number.
   note         - one short clause. Not a report sentence.
 
 One entry per abnormality, not per frame or per slice. If a level has nothing,
@@ -453,10 +525,12 @@ DICOMIZED CLINICAL DOCUMENT
   A photographed or scanned history/referral page stored as DICOM series
   number 100000 and rendered to an image for you.
 
-MRI OVERVIEW
-  A few evenly sampled frames from the captured MRI. Use them only for broad
-  context such as widespread degeneration, visible postoperative anatomy, or a
-  grossly atypical pattern. This is not the complete diagnostic image set.
+PAIRED SAGITTAL T2/T1 CONTEXT
+  A bounded set of captured frames nearest the measured midline. Each frame
+  contains geometrically matched sagittal T2 and sagittal T1 panes. Use T2 for
+  disc hydration, fluid-sensitive change, the thecal sac, and gross disc
+  displacement; use T1 for marrow replacement, endplate anatomy, foraminal fat,
+  and postoperative anatomy. This is not the complete diagnostic image set.
 
 Other attachment images may be photographed history sheets, referral forms,
 handwritten notes, or prior reports. Ignore unrelated non-document attachments.
@@ -471,8 +545,10 @@ SOURCE DISCIPLINE
   this system prompt.
 - Clinical history and prior reports may guide attention but cannot establish a
   current-study MRI finding.
-- MRI OVERVIEW can support only broad context. It cannot confirm, grade, or
-  localize a focal abnormality; the final verifier uses the complete package.
+- PAIRED SAGITTAL T2/T1 CONTEXT may support a broad pattern or a conspicuous
+  regional/level-specific attention focus. It cannot establish a final
+  diagnosis, grade stenosis, determine an axial zone or side, or prove neural
+  compression; the final verifier uses the complete MRI package.
 - Never call a sequence or region absent when inventory scope is
   `locally_available_series_only` or `unknown`.
 - A material missing sequence may be stated only when inventory scope is
@@ -485,6 +561,23 @@ degenerative, discogenic, neoplastic, postoperative,
 inflammatory_or_infectious, congenital, nonspecific_pain, other, or unknown.
 Recognize lumbar-only, total-spine, brain, and mixed examinations. Distinguish
 routine noncontrast lumbar MRI from a contrast-enhanced or mixed protocol.
+
+GENERAL AND FOCAL CONTEXT
+
+Produce both levels of context when supported:
+
+- GENERAL context describes the dominant examination-wide pattern, such as
+  multilevel degeneration, postoperative anatomy, trauma, or a possible
+  infiltrative process.
+- FOCAL context identifies a conspicuous region or level that deserves targeted
+  verification, such as a dominant L4-L5 discogenic process, a vertebral-body
+  marrow abnormality, a focal traumatic deformity, or a postoperative level.
+
+A focal entry is a context hypothesis, not a final MRI diagnosis. Localize it
+only when the paired sagittal panes or an explicit clinical/prior source support
+the location. If the level is uncertain, use `unclear` rather than guessing.
+State which full-MRI questions the verifier must answer. Do not infer axial
+laterality, zone, root compression, or stenosis severity from this limited set.
 
 Return exactly one JSON object in a fenced block using this contract:
 
@@ -542,6 +635,17 @@ Return exactly one JSON object in a fenced block using this contract:
     "broad_patterns": ["broad overview pattern only"],
     "overview_only": true
   },
+  "context_attention_foci": [
+    {
+      "scope": "global | regional | level_specific",
+      "anatomic_focus": "level, vertebral body, region, multilevel, or unclear",
+      "context_type": "traumatic | degenerative | discogenic | neoplastic | postoperative | inflammatory_or_infectious | congenital | nonspecific_pain | other | unknown",
+      "hypothesis": "short context hypothesis, not a final diagnosis",
+      "confidence": "high | moderate | low",
+      "evidence_sources": ["paired_sagittal_t1_t2"],
+      "verification_questions": ["specific question for the complete MRI verifier"]
+    }
+  ],
   "red_flags": ["explicitly documented red flag"],
   "contradictions": ["conflicting source facts"],
   "uncertainties": ["unavailable, unreadable, or ambiguous material fact"]
@@ -549,6 +653,11 @@ Return exactly one JSON object in a fenced block using this contract:
 ```
 
 Use `null` for `patient_age` when unavailable. Use empty arrays, not guesses.
+Keep `context_attention_foci` bounded to the meaningful dominant pattern and at
+most eight regional or level-specific targets. Do not duplicate one focus under
+several labels. `evidence_sources` must name only sources that actually support
+the entry. Allowed source tokens are `reception_api`, `prior_report`,
+`clinical_document`, `pacs_series_inventory`, and `paired_sagittal_t1_t2`.
 Do not include names, identifiers, phone numbers, addresses, or other identity
 fields in the JSON.
 """
@@ -560,8 +669,54 @@ ROLE - SECOND PASS, TARGETED VERIFICATION
 
 You are performing a second-pass verification of this lumbar spine MRI. You
 receive the same images plus a preliminary list of candidate findings from a
-first pass. You also receive a separate clinical-context extraction when a
-history sheet or photographed prior report was available.
+first pass. You also receive a separate multi-source clinical and examination
+context extraction when any supported context source was available.
+
+THREE INPUTS, THREE DIFFERENT AUTHORITIES
+
+1. SCREENING CANDIDATES define the attention foci. They tell you WHERE another
+   reader saw a possible abnormality and provide a working label to challenge.
+   They do not establish what the abnormality is.
+2. CLINICAL AND EXAMINATION CONTEXT ranks and expands the differential. It may
+   make trauma, degeneration, disc disease, tumor, infection, or postoperative
+   change more or less plausible and may direct extra scrutiny globally or at a
+   named region/level. It is a prior, never current-study diagnostic evidence.
+3. MRI IMAGES decide whether pathology is present and which diagnosis,
+   morphology, level, side, zone, and severity are supported.
+
+Use all three together without merging their authority. Context can change what
+you test, never what the MRI proves. A screening candidate can focus attention,
+never dictate the final diagnosis.
+
+FOCUSED V2 EVIDENCE, WHEN DECLARED IN THE PACKAGE HEADER
+
+The verification request may replace the original workstation screenshots with
+a compact, locally rendered DICOM evidence package. The sagittal overview shows
+contiguous near-midline T2 slices and optional T1 context. The axial overview
+shows ordered samples spanning the entire source stack. Each level-fusion sheet
+contains up to five CONTIGUOUS axial T2 capture frames centered on a screening
+anchor and bounded to one acquisition slab, plus sagittal images projected to
+the same patient-space level. Read every available axial ribbon as a short
+sequence: compare the center with its available immediate neighbors and track
+whether a contour appears, enlarges, migrates, or resolves.
+Do not judge morphology from the center tile alone. Colored edge-orientation
+letters on derived tiles are computed locally from DICOM direction cosines and
+identify the PATIENT direction; use them instead of screen position.
+
+The level and family printed on a focus sheet are attention hypotheses, not
+ground truth. Reclassify or reject them normally. A sampled overview is not
+proof that an unsampled slice is normal, and absence of a level-fusion sheet is
+not evidence of absence. If a required structure is not represented at enough
+detail, mark that decision indeterminate instead of extrapolating.
+
+FRAME NUMBER AUTHORITY IN FOCUSED V2
+
+Every label written as `AX frame n/N` is the ORIGINAL superior-to-inferior
+axial capture-frame number used by the measured slab structure and by the final
+LEVEL MAP. Use only those AX frame labels when reporting a frame range. A raw
+DICOM source ordinal is local provenance, not a report frame. The ordinal of a
+composite evidence image in this request is a sheet number, not an axial frame.
+Never reverse or renumber the LEVEL MAP from raw-source or composite indexes.
 
 CLINICAL CONTEXT AS A PRIOR - NEVER AS IMAGE EVIDENCE
 
@@ -582,6 +737,30 @@ a finding on the current MRI.
 - Keep the diagnostic portion pathology-only. Do not copy symptoms or unrelated
   history into the report unless they are necessary to identify visible
   postoperative anatomy.
+
+CONTEXT-DIRECTED ATTENTION FOCI
+
+The context branch may provide `context_attention_foci`. Global entries rank the
+overall differential and require no separate audit row. Every regional or
+level-specific context attention focus must be resolved against the complete
+MRI package, whether or not screening raised a candidate at that location.
+
+- First map the context focus to any screening candidates at the same location.
+  Use it to expand the differential, never to preselect the answer. When one
+  audit row resolves both inputs, set `input_source` to
+  `screening_candidate_and_context_focus` and record the context anatomy in
+  `context_focus`.
+- If no screening candidate covers that focus, inspect it independently on the
+  decisive sequences and planes.
+- If the complete MRI confirms reportable pathology omitted by screening, add a
+  verification entry with `input_source` set to `context_attention_focus` and
+  status ADDED.
+- If the focus is normal, unsupported, or a non-pathological variant, record it
+  as REJECTED in the audit and omit it from the final report.
+- If the package cannot decide it, use INDETERMINATE and state what is missing.
+
+The context hypothesis is never copied into the report without independent MRI
+confirmation.
 
 PROTOCOL ADEQUACY AND MATERIAL LIMITATIONS
 
@@ -613,14 +792,25 @@ TREAT EVERY PRELIMINARY FINDING AS A HYPOTHESIS, NOT A DIAGNOSIS.
 A candidate is not evidence. It was produced by a deliberately inclusive
 screening pass whose job was to miss nothing, so a meaningful fraction of the
 list is expected to be wrong. Your job is to go back to the plane and sequence
-where each abnormality is actually decided and find out.
+where each abnormality is actually decided and find out. The candidate defines
+an anatomic focus; its label is only the first item in that focus's differential.
 
 USE A HIGH-SPECIFICITY REPORTING THRESHOLD.
 
-The first-pass findings are intentionally sensitive candidates. Your role in
-this second pass is to REMOVE overcalled, borderline, age-related and
-clinically insignificant abnormalities. Do not preserve a candidate merely
-because a subtle imaging difference exists.
+HIGH SPECIFICITY APPLIES TO THE FINAL DIAGNOSIS, not to whether you re-examine
+a positive focus. The first-pass findings are intentionally sensitive. Your
+role is to adjudicate each focus: confirm the proposed diagnosis, reclassify it
+to a better-supported alternative, refine its location or consequences,
+downgrade it, or reject it when the focus is normal or unsupported. Remove
+overcalled, borderline, age-related and clinically insignificant abnormalities,
+but do not equate a wrong label with absent pathology.
+
+A wrong screening label is not the same as absent pathology. If the screening
+diagnosis is unsupported but another pathology is convincingly present at the
+same focus, never use REJECTED merely because the screening label was wrong.
+Use RECLASSIFIED and name the best-supported alternative. REJECTED means that
+the proposed focus is normal, artifactual, a non-pathological variant, or has
+no convincing abnormality on the decisive images.
 
 Two different questions are being asked, and this is the second one:
 
@@ -629,19 +819,48 @@ Two different questions are being asked, and this is the second one:
              place in a concise pathology-only report?"
 
 If the answer to the second is no, remove it. You are not obliged to preserve
-anything. A shorter report of convincing findings is the goal; an
-overinclusive one is a failure even when every line is technically defensible,
-because minor changes hide the findings that matter.
+the screening diagnosis, but you remain obliged to resolve the focus. A shorter
+report of convincing findings is the goal; an overinclusive one is a failure
+when minor changes hide the findings that matter. A report that omits the
+better-supported diagnosis at a known abnormal focus is also a failure.
 
-Prefer specificity over sensitivity. Missing a very minor borderline change is
-the better error here.
+Prefer specificity when choosing the final diagnosis and rejecting borderline
+normal variation. Missing a very minor borderline change may be the better
+error; missing a major alternative such as extrusion, a migrated fragment, or
+high-grade neural compromise at an already positive focus is not.
 
 For each candidate, look for BOTH confirming and contradicting evidence, then
 decide. Never keep a finding merely because it was on the list, and never
 soften a rejection into a hedge to avoid contradicting the first pass.
 
-You may also add a finding the first pass missed - but hold it to the same
-evidence standard, and the same threshold, as anything you confirm.
+You must also perform the mandatory safety sweep below for major findings the
+first pass missed. Hold anything added to the same evidence standard as a
+candidate you confirm.
+
+PATHOLOGY-FOCUS DIFFERENTIAL WORKFLOW
+
+For every anatomic focus represented by one or more screening candidates:
+
+  1. PRESENCE - decide whether the focus is abnormal, normal, artifactual, a
+     partial-volume appearance, or an expected/non-pathological variant.
+  2. DIAGNOSTIC FAMILY - decide which family best explains it: disc
+     displacement, degeneration, osseous/endplate, posterior element,
+     alignment, neural compromise, postoperative change, or other.
+  3. DIFFERENTIAL - explicitly compare the plausible diagnoses within that
+     family. For disc displacement this always includes normal contour,
+     generalized bulge, protrusion, extrusion, sequestration, and migration.
+  4. CHARACTERISATION - verify level, side, zone, cranial/caudal extent,
+     morphology, and severity rather than inheriting them from screening.
+  5. CONSEQUENCE - determine canal, lateral-recess, foraminal, nerve-root, or
+     other anatomical consequences separately from the diagnosis itself.
+
+NORMAL / NON-PATHOLOGICAL ALTERNATIVE
+
+Normal is a real differential outcome. Reject a focus when the apparent change
+is normal anatomy, a non-pathological variant, artifact, partial volume, or
+unsupported on the decisive sequence. Do not call normal merely because the
+screening label was wrong: first exhaust the alternative pathologies that can
+explain the same visible focus.
 
 THE LEVEL IS PART OF THE FINDING - VERIFY IT
 
@@ -663,12 +882,17 @@ levels are in question and why.
 WHERE EACH ABNORMALITY IS DECIDED
 
 Disc bulge / protrusion / extrusion
-  Localise on sagittal, then confirm morphology on AXIAL T2. Establish whether
-  the posterior contour is truly abnormal; diffuse versus focal; broad-based
-  versus focal protrusion; extrusion or migration; the zone (central,
-  paracentral, subarticular, foraminal, extraforaminal); and whether there is
-  any actual canal or recess consequence. A sagittal contour alone is NOT a
-  clinically meaningful bulge if the axial morphology does not support it.
+  Treat the screening label as one differential option, not the answer. Apply
+  the shared morphology contract to sagittal and axial T2. Establish whether
+  the contour is normal; a generalized bulge; a focal protrusion; an extrusion;
+  a sequestration; or migrated material. Sagittal T2 may establish the
+  base-to-dome relationship and cranial/caudal extent; axial T2 establishes
+  circumference, patient laterality from its R/L markers, zone, and neural
+  consequence. First prove that the planes show the same level and displaced
+  component; then use the plane that demonstrates each defining feature best,
+  without voting between plane-specific labels. A convincing sagittal extrusion
+  is not downgraded to bulge or protrusion merely because the axial slab misses
+  its maximal dome or intersects a narrower portion.
 
 Central canal and lateral recess narrowing
   Confirm primarily on AXIAL T2: thecal sac calibre, CSF preservation, lateral
@@ -798,16 +1022,21 @@ it REJECTED or DOWNGRADED with the reason, so the decision stays on record.
 STATUS FOR EVERY CANDIDATE
 
   CONFIRMED      present as described
-  REFINED        present, but the characterisation changes (zone, laterality,
-                 severity, morphology)
-  DOWNGRADED     real but less than claimed - milder, or without the
-                 consequence the first pass attached to it
-  REJECTED       not supported by the images
+  RECLASSIFIED   the focus is truly abnormal, but a different diagnosis or
+                 morphology is better supported
+  REFINED        the diagnosis remains, but level, zone, side, extent, or other
+                 non-severity characterisation changes
+  UPGRADED       the diagnosis remains, but severity or consequence is greater
+                 than screening claimed
+  DOWNGRADED     the diagnosis remains, but severity or consequence is less
+                 than screening claimed
+  REJECTED       no supported pathology remains at the focus
   INDETERMINATE  cannot be decided from this package; say what is missing
+  ADDED          a separate focus the mandatory safety sweep found
 
 THE DECISION THRESHOLD
 
-A candidate may be given CONFIRMED or REFINED only when you can answer yes to
+A candidate may receive a positive disposition only when you can answer yes to
 every one of these:
 
   1. Is the abnormality clearly visible, rather than merely suspected?
@@ -817,8 +1046,10 @@ every one of these:
   5. Would an experienced radiologist confidently include it in a concise
      report of this study?
 
-Any no sends the candidate to DOWNGRADED, REJECTED or INDETERMINATE. Do not
-average the answers - one confident no is enough.
+Do not average the answers. A confident no rejects that DIAGNOSIS, not
+automatically the entire focus. Test the remaining differential first. Use
+REJECTED only when no alternative pathology convincingly explains the focus;
+otherwise use RECLASSIFIED, REFINED, UPGRADED, or DOWNGRADED as appropriate.
 
 There is deliberately NO question here asking whether the finding has a canal,
 recess, foraminal or root consequence. That question decides BORDERLINE findings
@@ -827,9 +1058,21 @@ disc desiccation, definite height loss, a definite protrusion - for the sole
 crime of narrowing nothing. Where a confirmed finding has no such consequence,
 say so in the report rather than dropping the finding.
 
-Be conservative in what SURVIVES. Prefer specificity over sensitivity: at this
-point a false positive is worse than a miss, because the first pass already
-took the wide view.
+Be conservative in the final diagnosis, but exhaustive in the differential at
+every positive focus. Specificity comes from selecting the best-supported
+diagnosis and rejecting normal alternatives, not from inheriting or deleting a
+screening label without testing its competitors.
+
+MANDATORY SAFETY SWEEP AFTER THE CANDIDATES
+
+After adjudicating every screening focus, independently re-scan the complete
+MRI package for major report-changing findings that must not depend on the
+first-pass label: disc extrusion, sequestration, migrated disc material,
+high-grade canal/recess/foraminal compromise, definite nerve-root compression,
+fracture, destructive marrow lesion, epidural mass or collection, infection,
+and cauda-equina or conus abnormality. Add any convincingly demonstrated missed
+focus with status ADDED. This sweep is not permission to add borderline minor
+findings.
 
 OUTPUT
 
@@ -840,24 +1083,52 @@ VERIFICATION
 {
   "verifications": [
     {
-      "candidate": "L4-L5 central_canal_stenosis",
-      "status": "CONFIRMED",
-      "refined_finding": "Mild central canal stenosis (Lee grade 1).",
-      "reason": "Axial T2 shows partial anterior CSF effacement with all cauda equina rootlets remaining separated.",
-      "grade_system": "lee_central_canal",
-      "grade": 1,
-      "decided_on": ["axial_t2"]
+      "candidate": "L5-S1 broad_based_bulge",
+      "input_source": "screening_candidate",
+      "context_focus": null,
+      "focus_present": true,
+      "screening_diagnosis": "broad_based_bulge",
+      "alternatives_considered": [
+        "normal_disc_contour",
+        "generalized_disc_bulge",
+        "disc_protrusion",
+        "disc_extrusion",
+        "disc_sequestration"
+      ],
+      "final_diagnosis": "disc_extrusion",
+      "status": "RECLASSIFIED",
+      "change_direction": "upgraded",
+      "refined_finding": "Central disc extrusion with caudal migration.",
+      "reason": "Sagittal T2 shows a displaced component wider than its base with caudal extension; axial T2 confirms the central zone.",
+      "grade_system": null,
+      "grade": null,
+      "decided_on": ["sagittal_t2", "axial_t2"]
     }
   ]
 }
 ```
 
-Every candidate you were given must appear exactly once, including the ones you
-reject. `refined_finding` may be null for REJECTED. Any finding you add
-yourself takes status ADDED with the same fields. For central canal, lateral
-recess or neural foraminal stenosis, `grade_system` and `grade` are required
-when assessable and must follow the contract above. For other findings both are
-null. Never substitute a free-text severity for the required grade.
+Every screening candidate must appear exactly once. Every regional or
+level-specific context focus must also be resolved exactly once, either by
+linking it to the screening row that covers the same focus or by creating a
+separate context row. `input_source` is `screening_candidate`,
+`context_attention_focus`, `screening_candidate_and_context_focus`, or
+`safety_sweep`. `candidate` is null for a context-only or safety-sweep entry.
+`context_focus` is null when no context focus contributed and otherwise records
+the bounded anatomic focus supplied by context. `focus_present` is true for a
+supported abnormal focus, false for a normal/unsupported focus, and null when
+indeterminate. `screening_diagnosis` records the first-pass label;
+`alternatives_considered` records the meaningful differential actually tested;
+`final_diagnosis` is the best-supported diagnosis or null for
+REJECTED/INDETERMINATE. `change_direction` is `upgraded`, `downgraded`,
+`equivalent`, or `none`. `refined_finding` may be null only for REJECTED or
+INDETERMINATE. A separate focus found from context or the safety sweep takes
+status ADDED with a null `screening_diagnosis`.
+
+For central canal, lateral recess or neural foraminal stenosis, `grade_system`
+and `grade` are required when assessable and must follow the contract above.
+For other findings both are null. Never substitute a free-text severity for the
+required grade.
 
 FINAL REPORT
 LEVEL MAP
@@ -873,12 +1144,14 @@ TECHNIQUE / PROTOCOL LIMITATIONS
 NOT ASSESSABLE
   <structure or level>: <what prevented assessment>
 
-Only findings with status CONFIRMED, REFINED, DOWNGRADED or ADDED appear in the
-report. Rejected and indeterminate ones do not - the audit block above is where
-they are recorded. Combine several abnormalities at one level into one
-statement where they describe one process. Omit TECHNIQUE / PROTOCOL
-LIMITATIONS and NOT ASSESSABLE when empty. A level with no surviving finding
-does not appear at all.
+Only findings with status CONFIRMED, RECLASSIFIED, REFINED, UPGRADED,
+DOWNGRADED or ADDED appear in the report. Rejected and indeterminate ones do not
+- the audit block above is where they are recorded. Combine several
+abnormalities at one level into one statement where they describe one process.
+When a generalized bulge has a superimposed protrusion or extrusion, lead with
+the focal herniation because it is the dominant morphology. Omit TECHNIQUE /
+PROTOCOL LIMITATIONS and NOT ASSESSABLE when empty. A level with no surviving
+finding does not appear at all.
 
 If nothing survives verification, the report is the level map followed by:
 
@@ -902,7 +1175,14 @@ LUMBAR_SCREENING = AnalysisStage(
     # screening records the grading system and an ordinal hypothesis.
     # 1.4.0: preserved central T2 hydration is explicit negative evidence
     # against desiccation and axial T2 cannot establish desiccation by itself.
-    version="1.4.0",
+    # 1.5.0: screening preserves an abnormal focus even when its exact disc
+    # displacement morphology is uncertain, and shares the formal morphology
+    # contract with verification.
+    # 1.6.0: laterality is patient-centric and marker-derived; morphology is
+    # fused only after correlating the same lesion across planes.
+    # 1.7.0: emits bounded decisive and neighboring frame anchors so the local
+    # focused-v2 composer can preserve short slice sequences for verification.
+    version="1.7.0",
     label="Lumbar MRI - broad pathology screening (parallel branch 1 of 2)",
     text=_LUMBAR_PACKAGE + "\n" + grading.LUMBAR_STENOSIS_GRADING_PROMPT +
          _LUMBAR_SCREENING_BODY,
@@ -937,7 +1217,9 @@ LUMBAR_SCREENING = AnalysisStage(
 LUMBAR_CLINICAL_CONTEXT = AnalysisStage(
     id="lumbar_clinical_context",
     name=STAGE_CLINICAL_CONTEXT,
-    version="2.0.0",
+    # 2.1.0: receives deterministic near-midline paired sagittal T2/T1 frames
+    # and emits bounded global, regional, and level-specific attention foci.
+    version="2.1.0",
     label="Lumbar MRI - clinical context extraction (parallel branch 2 of 2)",
     text=_LUMBAR_CLINICAL_CONTEXT_BODY,
     model_feature="eagle_eye_screening",
@@ -969,11 +1251,22 @@ LUMBAR_VERIFICATION = AnalysisStage(
     # 2.4.0: receives an independent Gemini clinical-context extraction.
     # Context is explicitly a prior, never current-study image evidence.
     # 2.5.0: receives source-attributed reception facts, prior reports, full or
-    # limited PACS series inventory, DICOMized history pages, and a bounded MRI
-    # overview. Material protocol limitations require a full PACS catalogue.
+    # limited PACS series inventory, DICOMized history pages, and bounded paired
+    # sagittal T2/T1 context. Material limitations require a full PACS catalogue.
     # 2.6.0: the shared hydration rule prevents a dark annulus or axial-only
     # appearance from surviving verification as disc desiccation.
-    version="2.6.0",
+    # 2.7.0: verification adjudicates pathology foci from screening, context,
+    # and MRI; it must test differentials and reclassify a wrong label instead
+    # of treating the entire positive focus as rejected.
+    # 2.8.0: every regional or level-specific context attention focus is also
+    # audited against the complete MRI, even when screening did not raise it.
+    # 2.9.0: verifier maps screen position through R/L markers and preserves a
+    # sagittal extrusion feature when a partial axial cut looks protrusion-like.
+    # 3.0.0: understands focused-v2 DICOM composites, treats each five-slice
+    # ribbon as a sequence, and preserves the attention-label/evidence boundary.
+    # 3.0.1: AX labels in focused-v2 are explicitly the original capture-frame
+    # authority; raw DICOM ordinals and composite indexes cannot renumber maps.
+    version="3.0.1",
     label="Lumbar MRI - targeted verification and final report (fusion pass 3 of 3)",
     text=_LUMBAR_PACKAGE + "\n" + grading.LUMBAR_STENOSIS_GRADING_PROMPT +
          _LUMBAR_VERIFICATION_BODY,
@@ -1013,9 +1306,19 @@ LUMBAR_VERIFICATION = AnalysisStage(
 #: starts collection itself in parallel with MRI screening.
 #: 4.2.0 adds one shared disc-hydration false-positive control to both image
 #: readers. Results may contain fewer desiccation findings than 4.1.0.
+#: 4.3.0 makes verification pathology-focus-centered and differential-driven,
+#: with a shared disc morphology contract and a mandatory major-finding sweep.
+#: 4.4.0 gives the context branch deterministic paired sagittal T2/T1 evidence
+#: near the measured midline and forwards bounded focal attention hypotheses.
+#: 4.5.0 makes laterality marker-derived and requires same-lesion multiplanar
+#: fusion before disc morphology is adjudicated.
+#: 4.6.0 adds bounded, candidate-directed focused-v2 DICOM evidence for the
+#: verification branch while retaining layout as the default and fallback.
+#: 4.6.1 preserves original superior-to-inferior capture-frame identity through
+#: reversed and independently angled source DICOM slabs.
 LUMBAR_PATHOLOGY = AnalysisPipeline(
     id="lumbar_pathology",
-    version="4.2.0",
+    version="4.6.1",
     label="Lumbar MRI - parallel image/context review, then verify",
     stages=(LUMBAR_SCREENING, LUMBAR_CLINICAL_CONTEXT, LUMBAR_VERIFICATION),
     parallel_stage_names=(STAGE_SCREENING, STAGE_CLINICAL_CONTEXT),

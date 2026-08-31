@@ -22,7 +22,7 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 - Product: Windows desktop DICOM workstation built with Python, PySide6, VTK, SimpleITK,
   pydicom, SQLite, and packaged plugin payloads.
 - Source entry point: `main.py`.
-- Canonical current version: `3.6.3` in `pyproject.toml`, `main.py`, and release docs.
+- Canonical current version: `3.6.4` in `pyproject.toml`, `main.py`, and release docs.
 - Supported interpreter in this checkout: Python `3.13.5` from `.venv`.
 - The public AI-PACS website is a separate project. Read `WORKSPACE.md` before adding a
   website endpoint, shared identity/licensing work, Case-of-the-Day publishing, or ATI work.

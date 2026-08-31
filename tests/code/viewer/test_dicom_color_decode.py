@@ -16,7 +16,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from pydicom.dataset import Dataset
+from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -183,3 +184,95 @@ def test_source_backend_routes_colour_by_ndim():
     # embedded-palette with SamplesPerPixel==1 still take the RGB path).
     assert "if arr.ndim == 3:" in src
     assert "if sm.samples_per_pixel >= 3:" not in src  # old gate removed
+
+
+def test_fast_pipeline_recovers_rgb_facts_when_db_metadata_omits_them(tmp_path, monkeypatch):
+    """A colour single-frame object must not be sliced as a multi-frame stack.
+
+    Local database projections can contain rows/columns/path without
+    SamplesPerPixel or is_rgb. The DICOM header remains authoritative.
+    """
+    from modules.viewer.fast import lightweight_2d_pipeline as lw
+
+    rgb = np.zeros((4, 5, 3), dtype=np.uint8)
+    rgb[..., 0] = np.arange(20, dtype=np.uint8).reshape(4, 5) * 10
+    rgb[..., 1] = 70
+    rgb[..., 2] = 180
+
+    file_meta = FileMetaDataset()
+    file_meta.MediaStorageSOPClassUID = SecondaryCaptureImageStorage
+    file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    path = tmp_path / "rgb.dcm"
+    ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+    ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+    ds.StudyInstanceUID = generate_uid()
+    ds.SeriesInstanceUID = generate_uid()
+    ds.PatientID = "TEST"
+    ds.Modality = "US"
+    ds.Rows, ds.Columns = rgb.shape[:2]
+    ds.SamplesPerPixel = 3
+    ds.PhotometricInterpretation = "RGB"
+    ds.PlanarConfiguration = 0
+    ds.BitsAllocated = 8
+    ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.PixelRepresentation = 0
+    ds.PixelData = rgb.tobytes()
+    ds.save_as(path, write_like_original=False)
+
+    class _NoDiskCache:
+        def get(self, **_kwargs):
+            return None
+
+        def put(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(lw, "get_disk_pixel_cache", lambda: _NoDiskCache())
+
+    class _MetadataTrustingDecodeService:
+        is_available = True
+
+        def __init__(self):
+            self.calls = 0
+
+        def decode(self, *, rows, cols, samples_per_pixel, **_kwargs):
+            self.calls += 1
+            # Mirrors the failure mode: projected SamplesPerPixel=1 causes a
+            # colour object to be returned as a narrow grayscale strip.
+            assert samples_per_pixel == 1
+            return np.zeros((cols, 3), dtype=np.uint8)
+
+    decode_service = _MetadataTrustingDecodeService()
+    monkeypatch.setattr(lw, "get_decode_service", lambda: decode_service)
+    pipeline = lw.Lightweight2DPipeline(
+        config=lw.PipelineConfig(prefetch_radius=0, prefetch_workers=1)
+    )
+    try:
+        pipeline.open_series(
+            str(tmp_path),
+            metadata={
+                "series": {"series_number": "1", "modality": "US"},
+                "instances": [{
+                    "instance_path": str(path),
+                    "rows": 4,
+                    "columns": 5,
+                    "instance_number": 1,
+                    # Some DB projections materialize this default even though
+                    # SamplesPerPixel itself was never read from the object.
+                    "is_rgb": False,
+                }],
+            },
+        )
+        assert pipeline._slices[0].pixel_facts_authoritative is False
+        pipeline._current_index = 0
+        pipeline._decode_into_cache(0)
+        decoded = pipeline._pixel_cache.get(0)
+        assert decode_service.calls == 0
+        assert decoded.shape == rgb.shape
+        assert np.array_equal(decoded, rgb)
+        assert pipeline._slices[0].samples_per_pixel == 3
+        assert pipeline._slices[0].is_rgb is True
+    finally:
+        pipeline.close_series()

@@ -1592,6 +1592,10 @@ class ThumbnailManager(QObject):
                     _orig = (
                         series_info.get('_orig_series_number')
                         or (series_info.get('series') or {}).get('_orig_series_number')
+                        or series_info.get('_display_series_number')
+                        or (series_info.get('series') or {}).get('_display_series_number')
+                        or series_info.get('series_number')
+                        or (series_info.get('series') or {}).get('series_number')
                     )
                     if _orig:
                         display_series = _orig
@@ -1735,7 +1739,9 @@ class ThumbnailManager(QObject):
                 # Image count -> populate the header-row count label created above
                 # (redesigned 2026-06-21: the count shows top-right next to
                 # "Series N", not as a separate centered label at the bottom).
-                image_count = series_info.get('image_count', 0)
+                image_count = series_info.get(
+                    'display_image_count', series_info.get('image_count', 0)
+                )
                 if image_count is not None and image_count > 0:
                     try:
                         widget.count_label.setText(f"{image_count} images")

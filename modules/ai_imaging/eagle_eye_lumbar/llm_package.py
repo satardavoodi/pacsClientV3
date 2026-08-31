@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .constants import EAGLE_EYE_VERSION, MANIFEST_JSON, SESSION_JSON
+from .session_store import LOCAL_SERIES_SOURCES_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -109,11 +110,12 @@ class AnalysisPackage:
     """Everything one analysis request needs, in the order it must be sent."""
 
     __slots__ = ("session_dir", "session_id", "protocol_id", "analysis",
-                 "header", "images", "study_instance_uid")
+                 "header", "images", "study_instance_uid", "source_series")
 
     def __init__(self, session_dir: Path, session_id: str, protocol_id: str,
                  analysis, header: str, images: Sequence[PackagedImage],
-                 study_instance_uid: str = ""):
+                 study_instance_uid: str = "",
+                 source_series: Optional[Dict[str, Dict[str, Any]]] = None):
         self.session_dir = Path(session_dir)
         self.session_id = str(session_id)
         self.protocol_id = str(protocol_id)
@@ -125,6 +127,11 @@ class AnalysisPackage:
         self.header = str(header)
         self.images = list(images)
         self.study_instance_uid = str(study_instance_uid or "")
+        self.source_series = {
+            str(role): dict(source)
+            for role, source in (source_series or {}).items()
+            if role and isinstance(source, dict)
+        }
 
     @property
     def image_count(self) -> int:
@@ -175,6 +182,30 @@ def _load_json(path: Path) -> Dict[str, Any]:
         raise PackageError(f"{path.name} is missing from the session") from exc
     except (OSError, ValueError) as exc:
         raise PackageError(f"{path.name} could not be read: {exc}") from exc
+
+
+def _load_local_series_sources(root: Path) -> Dict[str, Dict[str, Any]]:
+    path = root / LOCAL_SERIES_SOURCES_JSON
+    if not path.is_file():
+        return {}
+    try:
+        document = _load_json(path)
+    except PackageError:
+        logger.warning(
+            "[EAGLE-EYE-LLM] ignored unreadable optional local series provenance"
+        )
+        return {}
+    series = document.get("series")
+    if not isinstance(series, dict):
+        logger.warning(
+            "[EAGLE-EYE-LLM] ignored malformed optional local series provenance"
+        )
+        return {}
+    return {
+        str(role): dict(source)
+        for role, source in series.items()
+        if role and isinstance(source, dict)
+    }
 
 
 def _fmt(value: Any, digits: int = 1) -> str:
@@ -433,6 +464,7 @@ def build_package(session_dir, protocol=None) -> AnalysisPackage:
         header="\n".join(header_lines),
         images=images,
         study_instance_uid=str(session_doc.get("study_instance_uid") or ""),
+        source_series=_load_local_series_sources(root),
     )
     logger.info("[EAGLE-EYE-LLM] packaged %d image(s) from %s",
                 package.image_count, package.session_id)

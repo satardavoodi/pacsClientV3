@@ -546,7 +546,9 @@ class _PWPanelsMixin:
                 return thumb_index  # we don't add new thumbnail
 
             series_name = canonical_series_key
-            series_info = metadata['series']
+            # Rendering owns a display-only numeric key. Never overwrite the
+            # caller's raw DICOM SeriesNumber/storage identity in-place.
+            series_info = dict(metadata['series'])
             if str(series_info.get('series_number', '')) != canonical_series_key:
                 print(f"⚠️ [THUMB FIX] metadata series_number mismatch: meta={series_info.get('series_number')} key={canonical_series_key} -> using key")
             series_info['series_number'] = canonical_series_key
@@ -557,6 +559,7 @@ class _PWPanelsMixin:
                 
         elif series_info:
             # Use series_info from server (passed as parameter)
+            series_info = dict(series_info)
             if str(series_info.get('series_number', '')) != canonical_series_key:
                 print(f"⚠️ [THUMB FIX] server series_number mismatch: server={series_info.get('series_number')} key={canonical_series_key} -> using key")
             series_info['series_number'] = canonical_series_key

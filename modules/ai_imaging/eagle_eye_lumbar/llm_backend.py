@@ -31,7 +31,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from . import analysis_store, clinical_context, evidence_bundle, llm_package
+from . import (
+    analysis_store,
+    clinical_context,
+    evidence_bundle,
+    focus_evidence,
+    llm_package,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -522,6 +528,59 @@ def _normalize_clinical_context(
         "overview_only": True,
     }
 
+    raw_foci = value.get("context_attention_foci")
+    if not isinstance(raw_foci, list):
+        raw_foci = []
+    allowed_evidence_sources = {
+        "reception_api",
+        "prior_report",
+        "clinical_document",
+        "pacs_series_inventory",
+        "paired_sagittal_t1_t2",
+    }
+    context_attention_foci = []
+    for raw_focus in raw_foci[:8]:
+        if not isinstance(raw_focus, dict):
+            continue
+        hypothesis = text(raw_focus.get("hypothesis"), 300)
+        questions = text_list(raw_focus.get("verification_questions"), 8)
+        if not hypothesis and not questions:
+            continue
+        raw_evidence = raw_focus.get("evidence_sources")
+        if not isinstance(raw_evidence, list):
+            raw_evidence = []
+        evidence_sources = [
+            source
+            for source in (
+                choice(item, allowed_evidence_sources, "")
+                for item in raw_evidence[:8]
+            )
+            if source
+        ]
+        context_attention_foci.append({
+            "scope": choice(
+                raw_focus.get("scope"),
+                {"global", "regional", "level_specific"},
+                "regional",
+            ),
+            "anatomic_focus": text(
+                raw_focus.get("anatomic_focus"), 160
+            ) or "unclear",
+            "context_type": choice(
+                raw_focus.get("context_type"),
+                allowed_scenarios,
+                "other",
+            ),
+            "hypothesis": hypothesis,
+            "confidence": choice(
+                raw_focus.get("confidence"),
+                {"high", "moderate", "low"},
+                "low",
+            ),
+            "evidence_sources": evidence_sources,
+            "verification_questions": questions,
+        })
+
     prior = value.get("prior_imaging")
     if not isinstance(prior, dict):
         prior = {}
@@ -571,6 +630,7 @@ def _normalize_clinical_context(
         "study_scope": study_scope,
         "protocol_context": protocol_context,
         "global_imaging_context": global_imaging_context,
+        "context_attention_foci": context_attention_foci,
         "red_flags": text_list(value.get("red_flags")),
         "contradictions": text_list(value.get("contradictions")),
         "uncertainties": text_list(value.get("uncertainties")),
@@ -614,6 +674,7 @@ def _no_clinical_context() -> Tuple[str, Dict[str, Any]]:
             "broad_patterns": [],
             "overview_only": True,
         },
+        "context_attention_foci": [],
         "red_flags": [],
         "contradictions": [],
         "uncertainties": ["no supported clinical document image was available"],
@@ -756,9 +817,11 @@ def run_analysis(
     # The runner enters this function inside ApiWorker. Focused evidence is
     # therefore decoded, cropped and composed off the Qt GUI thread. Layout
     # mode is the default and returns the original package without image I/O.
+    selected_evidence_mode = evidence_bundle.MODE_LAYOUT
     if prepare_evidence:
+        selected_evidence_mode = evidence_bundle.resolve_mode()
         package = evidence_bundle.prepare_package(
-            package, mode=evidence_bundle.resolve_mode())
+            package, mode=selected_evidence_mode)
 
     resolved_backend = backend or resolve_backend()
 
@@ -970,7 +1033,47 @@ def run_analysis(
                 ),
             )
         merged_context = f"{candidate_context}\n\n{clinical_prior}"
-        final_header = f"{package.header}\n\n{merged_context}"
+        verification_package = package
+        if selected_evidence_mode in evidence_bundle.VERIFICATION_ONLY_MODES:
+            normalized_context = None
+            if (
+                not context_failed
+                and context_outcome is not None
+                and isinstance(context_outcome.get("structured"), dict)
+            ):
+                normalized_context = _normalize_clinical_context(
+                    context_outcome["structured"],
+                    inventory_scope=str(
+                        getattr(built_context_package, "inventory_scope", "unknown")
+                        or "unknown"
+                    ),
+                    trusted_source_status=(
+                        source_status if isinstance(source_status, dict) else None
+                    ),
+                )
+            try:
+                verification_package = focus_evidence.prepare_verification_package(
+                    package,
+                    screening_outcome["answer"],
+                    screening_outcome["structured"],
+                    normalized_context,
+                    mode=selected_evidence_mode,
+                )
+                started["verification_evidence_mode"] = selected_evidence_mode
+            except focus_evidence.FocusedEvidenceError as exc:
+                # Underscored, matching the existing focused_v2_fallback marker
+                # that operators and guards already grep for.
+                mode_marker = selected_evidence_mode.replace("-", "_")
+                warning = f"{mode_marker}_fallback:{exc.code}"
+                started.setdefault("warnings", []).append(warning)
+                started["verification_evidence_mode"] = evidence_bundle.MODE_LAYOUT
+                logger.warning(
+                    "[EAGLE-EYE-LLM] %s fell back to layout (%s)",
+                    selected_evidence_mode,
+                    exc.code,
+                )
+        started["verification_image_count"] = verification_package.image_count
+        final_header = f"{verification_package.header}\n\n{merged_context}"
 
         report_progress(verification_number, verification_stage.name)
         try:
@@ -980,7 +1083,7 @@ def run_analysis(
                 total=total,
                 stage=verification_stage,
                 stage_model=verification_model,
-                package=package,
+                package=verification_package,
                 backend=resolved_backend,
                 send=send,
                 header=final_header,

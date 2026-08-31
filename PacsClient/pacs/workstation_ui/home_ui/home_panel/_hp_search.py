@@ -1103,13 +1103,27 @@ class _HPSearchMixin:
             from pathlib import Path
             from database.manager import get_study_info_with_series
             from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
+            from PacsClient.utils.dicom_displayability import inspect_series_pixel_inventory
+            from PacsClient.utils.patient_study_set import (
+                allocate_series_display_keys,
+                persisted_series_folder_key,
+            )
 
             study_info = get_study_info_with_series(str(study_uid or '')) or {}
             for index, series in enumerate(study_info.get('series') or [], start=1):
                 if not isinstance(series, dict):
                     continue
                 series_number = str(series.get('series_number') or index)
-                canonical = Path(canonical_thumbnail_path(study_uid, series_number))
+                series_path = str(series.get('series_path') or '').strip()
+                folder_key = persisted_series_folder_key(series_number, series_path)
+                pixel_inventory = inspect_series_pixel_inventory(series_path)
+                if not pixel_inventory.has_pixel_data:
+                    _logger.info(
+                        "[LOCAL_SERIES_SKIPPED] reason=no_pixel_data series_key=%s",
+                        folder_key,
+                    )
+                    continue
+                canonical = Path(canonical_thumbnail_path(study_uid, folder_key))
                 hinted_raw = str(series.get('thumbnail_path') or '').strip()
                 hinted = Path(hinted_raw) if hinted_raw else None
                 file_path = ''
@@ -1123,14 +1137,19 @@ class _HPSearchMixin:
                     'study_uid': str(study_uid or ''),
                     'series_uid': series.get('series_uid') or '',
                     'series_number': series_number,
+                    '_display_series_number': series_number,
+                    'folder_key': folder_key,
+                    'series_path': series_path,
                     'series_description': series.get('series_description') or f'Series {series_number}',
                     'modality': series.get('modality') or 'Unknown',
-                    'image_count': int(series.get('image_count') or 0),
+                    'image_count': pixel_inventory.pixel_instance_count,
+                    'display_image_count': pixel_inventory.display_image_count,
                     'protocol_name': series.get('protocol_name') or '',
                     'body_part_examined': series.get('body_part_examined') or '',
                 })
         except Exception:
             _logger.debug("Local series thumbnail payload failed", exc_info=True)
+            payload['thumbnails'] = allocate_series_display_keys(payload['thumbnails'])
         return payload
 
     def _is_open_flow_thumbnail_deferral_allowed(self, study_uid: str) -> bool:

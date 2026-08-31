@@ -1552,6 +1552,74 @@ def clear_study_cache(study_uid=None):
         _thumbnail_cache.clear()
 
 
+def repair_local_series_thumbnail(
+    study_uid: str,
+    study_info: dict,
+    series: dict,
+    folder_key: str,
+    series_path: str,
+) -> str:
+    """Rebuild one missing PNG from its exact persisted local series folder.
+
+    This function is disk/SQLite-only and must be called from a worker. Failure
+    returns an empty string so the caller can retain its Local-safe placeholder.
+    """
+    try:
+        persisted_path = Path(str(series_path or ''))
+        if not folder_key or not persisted_path.is_dir():
+            return ''
+
+        patient_id = str((study_info or {}).get('patient_id') or '').strip()
+        series_uid = str((series or {}).get('series_uid') or '').strip()
+        if not patient_id or not series_uid:
+            return ''
+
+        from database.manager import (
+            find_patient_pk as _find_patient_pk,
+            find_series_pk as _find_series_pk,
+            find_study_pk_with_study_uid,
+        )
+        from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
+
+        patient_pk = _find_patient_pk(patient_id)
+        study_pk = find_study_pk_with_study_uid(study_uid)
+        series_pk = _find_series_pk(series_uid)
+        if not patient_pk or not study_pk or not series_pk:
+            return ''
+
+        preview = load_series_preview(
+            study_path=str(persisted_path.parent),
+            series_number=folder_key,
+            patient_pk=patient_pk,
+            study_pk=study_pk,
+        )
+        if not preview:
+            return ''
+
+        vtk_image_data, metadata, _patient_info, _total_files = preview
+        metadata.setdefault('series', {})
+        metadata['series']['series_pk'] = series_pk
+        metadata['series']['series_number'] = folder_key
+        repaired = save_image_as_png(
+            vtk_image_data=vtk_image_data,
+            metadata=metadata,
+            metadata_fixed={
+                'study_uid': study_uid,
+                'patient_pk': patient_pk,
+                'study_pk': study_pk,
+            },
+            file=str(persisted_path.parent),
+        )
+        clear_study_cache(study_uid)
+        repaired_path = Path(str(repaired or ''))
+        return str(repaired_path) if repaired_path.is_file() else ''
+    except Exception as exc:
+        _logging.getLogger(__name__).debug(
+            "Local thumbnail repair failed error_type=%s", type(exc).__name__
+        )
+        return ''
+
+
 def check_study_exists(study_uid):
     study_dir = THUMBNAIL_PATH / study_uid
     if study_dir.exists():

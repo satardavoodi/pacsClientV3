@@ -64,6 +64,8 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 | [`AUDIT_STAGE_5_2026-05-28.md`](plans/architecture/AUDIT_STAGE_5_2026-05-28.md) | Read-only `ViewerAdapter` live verification. |
 | [`AUDIT_STAGE_6_2026-05-28.md`](plans/architecture/AUDIT_STAGE_6_2026-05-28.md) | Multi-study live workflow audit (239 series across 5+ studies). |
 | [`pipelines/thumbnail-pipeline.md`](pipelines/thumbnail-pipeline.md) | THUMBNAIL_PATH conventions, memory-first vs disk fallback. |
+| **[`reports/IMPORT_DUPLICATE_SERIES_NUMBER_IDENTITY_2026-08-30.md`](reports/IMPORT_DUPLICATE_SERIES_NUMBER_IDENTITY_2026-08-30.md)** | **Read before changing Import/Local series naming or displayability.** `SeriesInstanceUID` identity, raw `SeriesNumber`, collision-aware `folder_key`, digit-only `display_key`, exact `SeriesRef.storage_key`, pixel-object vs frame counts, mixed colour metadata recovery, multi-object cine expansion, and live validation. |
+| **[`viewer/DICOM_FORMAT_COMPATIBILITY_OPERATING_GUIDE_2026-08-30.md`](viewer/DICOM_FORMAT_COMPATIBILITY_OPERATING_GUIDE_2026-08-30.md)** | **Read before diagnosing a new DICOM/IOD/codec/multiframe/waveform/ophthalmic compatibility case.** Separates preservation, classification, decoding, rendering, package parity, interoperability, and clinical verification. |
 | **[`reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md`](reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md)** | **Read before touching reference lines.** Two modes ship: single-source (default — the ACTIVE viewport is the source and stays clean) and bidirectional all-pairs (`AIPACS_REFERENCE_LINES_ALL_PAIRS=1`). Explains why the source overlay must be *cleared*, not skipped. |
 | **[`reports/TEXT_ANNOTATION_INPUT_2026-08-18.md`](reports/TEXT_ANNOTATION_INPUT_2026-08-18.md)** | **Read before touching the annotation tools.** Why `ToolController` is Qt-free and how the Qt layer injects behaviour into it (`_pixel_data_fn`, `_pixel_spacing_fn`, `_text_prompt_fn`); why a tool press returning `False` is the "place nothing, stay armed" contract; why text annotations are single-line. |
 
@@ -392,13 +394,22 @@ press handler returns `True` only when it actually placed or changed something;
 |---|---|
 | [`AUDIT_STAGE_7_2026-05-28.md`](plans/architecture/AUDIT_STAGE_7_2026-05-28.md) | Three-layer defense map (structural + canonical pywinauto + modality gate). |
 | [`plans/EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md`](plans/EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md) | Lumbar series resolution, capture protocol, geometry, and reference-line invariants. |
-| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md) | As-built multi-stage LLM pipeline, parallel multi-source context, measured live runs, grading contract, disc-hydration false-positive control, provider-neutral result metadata, and the patient-free GapGPT capability matrix. |
+| [`reports/EAGLE_EYE_SLICER_TOOL_AUGMENTATION_FEASIBILITY_2026-08-31.md`](reports/EAGLE_EYE_SLICER_TOOL_AUGMENTATION_FEASIBILITY_2026-08-31.md) | Research assessment of Slicer/MCP augmentation: current integration limits, MRI anatomy models versus lesion diagnosis, bounded tool architecture, and fixed-versus-adaptive evidence experiments. No runtime implementation or clinical validation. |
+| [`reports/SLICER_RUNTIME_CONTROL_AUDIT_2026-08-31.md`](reports/SLICER_RUNTIME_CONTROL_AUDIT_2026-08-31.md) | Executed control audit of the existing custom Slicer runtime: external loopback commands, synthetic DICOM/NRRD loading, threshold changes, segmentation/NIfTI save/reload, measurement, inventory, Mask Volume setup failure, and proposed LLM function boundary. |
+| [`modules/ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md`](modules/ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md) | Practical control reference: runtime identity, repeatable synthetic probe, load/segment/read/save APIs, geometry, safe named tools, and tested versus proposed MCP behavior. |
+| [`modules/SLICER_EXTENSIONS_INSTALL_AND_CONTROL_GUIDE.md`](modules/SLICER_EXTENSIONS_INSTALL_AND_CONTROL_GUIDE.md) | Extension download/install/control guide: pinned source audit, executed third-party measurements, separate GUI failure, TotalSegmentator/MONAI/MedSAM/Raidionics APIs, model download evidence, dependencies, and qualification sequence. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md) | As-built multi-stage LLM pipeline, parallel multi-source context, paired near-midline sagittal T2/T1 evidence, global and focal attention contracts, measured live runs, marker-derived patient laterality, same-lesion multiplanar disc morphology, pathology-focus differential adjudication, focused-v2 geometry-aligned DICOM evidence, provider-neutral result metadata, and the patient-free GapGPT capability matrix. |
 | [`plans/EAGLE_EYE_LLM_PROMPT_DRAFT_2026-08-26.md`](plans/EAGLE_EYE_LLM_PROMPT_DRAFT_2026-08-26.md) | Prompt-design history and the sequence/plane evidence rules. |
+| [`plans/EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md`](plans/EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md) | Research and phased proposal: V3 limitations, localization-first screening, independent multiplanar diagnosis through GapGPT, neutral attention, and benchmark repair. Section 16 records OPT-55 axial backfill, opt-in additive bilateral sagittal coverage, scoped root-negation scorer 1.1.0, and offline verification. Full Phase 0 and model experiments remain pending. |
 | [`plans/LEGION_CONSULT_FOUNDATION_2026-08-28.md`](plans/LEGION_CONSULT_FOUNDATION_2026-08-28.md) | MRI-only function picker, mandatory source/T1/T2 selection, optional/all-series cost control, Fast ROI geometry, local request schema, and the capture/model boundary. |
 
 **Guard tests:**
-- `tests/code/ai_imaging/test_eagle_eye_llm_analysis.py` (package, model routing, parallel multi-source context fusion, inventory-scope guards, DICOM document rendering, grading and disc-hydration contracts, stage sampling, persistence, and transport parity)
+- `tests/code/ai_imaging/test_eagle_eye_llm_analysis.py` (package, model routing, parallel multi-source context fusion, paired sagittal T2/T1 context selection, focal-attention normalization/forwarding, patient-laterality and same-lesion multiplanar morphology contracts, inventory-scope guards, DICOM document rendering, grading and disc-hydration contracts, stage sampling, persistence, and transport parity)
 - `tests/code/ai_imaging/test_eagle_eye_gapgpt_capability.py` (synthetic capability matrix, strict-schema evaluation, redaction, and GapGPT authority reuse)
+- `tests/code/ai_imaging/test_eagle_eye_focused_v2.py` (bounded focus planning, per-slice multi-slab geometry, capture-frame authority under reversed source order, same-slab boundary backfill without moving sagittal anchors in V2/V3, manifest coverage, quality/budget gates, private provenance, verification-only dispatch, and immutable-layout fallback)
+- `tests/code/ai_imaging/test_eagle_eye_focused_v3.py` (physical crop geometry, retained source resolution, render-profile separation, sampling provenance, unchanged slice selection between V2/V3, and deliberate opt-in mode)
+- `tests/code/ai_imaging/test_eagle_eye_parasagittal.py` (opt-in bilateral LPS supplements, exact V3 baseline retention, explicit source numbering/offsets, partial coverage, all budget caps, and verification-only dispatch/failure)
+- `tests/code/ai_imaging/test_eagle_eye_bench_scoring.py` (prose parsing, attribute-scoped root negation, contact-versus-compression scoring, and scorer version provenance; full Phase 0 repair remains pending)
 - `tests/code/ai_imaging/test_eagle_eye_lumbar_pipeline.py` (protocol and capture behavior)
 - `tests/code/ai_imaging/test_eagle_eye_protocol_resolution.py` (series identity and readiness)
 - `tests/code/ai_imaging/test_eagle_eye_ui_boundary.py` (feature coordinator ownership, mapping handoff, provider-neutral result metadata, and teardown)
@@ -490,6 +501,12 @@ press handler returns `True` only when it actually placed or changed something;
 - `tools/kpi_build_compare.py` — cross-build divergence detector
 
 ---
+
+### Version 3.6.4 publication
+
+- [Release notes](releases/VERSION_3.6.4_RELEASE.md)
+- [2026-08-31 source follow-up, verification, and exclusions](releases/VERSION_3.6.4_FOLLOWUP_2026-08-31.md)
+- [2026-08-31 source-publication safety record](../deploy-record-workstation-2026-08-31.md)
 
 ### Testing architecture
 

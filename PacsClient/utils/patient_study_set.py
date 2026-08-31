@@ -365,6 +365,149 @@ def resolve_series_folder_key(series_number, series_uid, study_series) -> str:
         return str(series_number)
 
 
+def persisted_series_folder_key(series_number, series_path="") -> str:
+    """Return the exact storage key recorded for a local series.
+
+    ``series_number`` is DICOM metadata and is not unique inside a study.  The
+    database's ``series_path`` records the authoritative collision-aware folder
+    selected when bytes were written.  Local thumbnail and viewer projections
+    must therefore use its final path component as their UI/storage key while
+    retaining the raw series number for display and ordering.
+
+    Both slash styles are accepted so offline packages and restored databases
+    remain portable.  A missing/invalid path falls back to the raw number,
+    preserving the common unique-series behavior exactly.
+    """
+    raw_number = _clean(series_number)
+    try:
+        normalized = _clean(series_path).rstrip("/\\")
+        if normalized:
+            folder_key = normalized.replace("\\", "/").rsplit("/", 1)[-1].strip()
+            if folder_key and folder_key not in (".", ".."):
+                return folder_key
+    except Exception:
+        pass
+    return raw_number
+
+
+def allocate_series_display_keys(series_records: Iterable[dict]) -> list[dict]:
+    """Return shallow-copied series records with drag-safe numeric UI keys.
+
+    DICOM ``SeriesNumber`` is not unique inside a study, while the persisted
+    collision folder key may contain a suffix (for example ``1__abcd1234`` or a
+    restored legacy ``1_2``).  Those folder names are storage identities, not
+    valid viewer handles: thumbnail drag payloads and the viewport switch path
+    require a digit-only key.
+
+    The canonical storage winner keeps its raw number.  Other series sharing
+    that number receive deterministic aliases from the existing reserved
+    ``900001..999999`` band.  Raw metadata, SeriesInstanceUID, folder key, and
+    exact series path are preserved; only ``display_key`` is synthetic.
+    """
+    rows = [dict(record) for record in (series_records or []) if isinstance(record, dict)]
+    if not rows:
+        return rows
+
+    def _raw_series_number(row: dict) -> str:
+        """Return immutable DICOM identity even after a UI rendering pass."""
+        original = _clean(row.get("_orig_series_number"))
+        return original or _clean(row.get("series_number"))
+
+    try:
+        from modules.network.series_identity import (
+            SYNTHETIC_SERIES_NUMBER_BASE,
+            SYNTHETIC_SERIES_NUMBER_MAX,
+            parse_series_number,
+        )
+    except Exception:
+        SYNTHETIC_SERIES_NUMBER_BASE = 900_000
+        SYNTHETIC_SERIES_NUMBER_MAX = 999_999
+
+        def parse_series_number(value):
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                return None
+
+    taken = {
+        parsed
+        for parsed in (parse_series_number(_raw_series_number(row)) for row in rows)
+        if parsed is not None and 0 <= parsed < 1_000_000
+    }
+    groups: dict[tuple[str, str], list[int]] = {}
+    for index, row in enumerate(rows):
+        raw = _raw_series_number(row)
+        study_uid = _clean(row.get("study_uid"))
+        groups.setdefault((study_uid, raw), []).append(index)
+
+    alias_targets: list[int] = []
+    for (_study_uid, raw), indices in sorted(groups.items()):
+        parsed = parse_series_number(raw)
+        if parsed is None or parsed < 0:
+            alias_targets.extend(indices)
+            continue
+
+        # A collision loser may arrive on its own during an incremental refresh.
+        # Its persisted folder identity still proves that the raw number is not a
+        # safe viewer handle, even when the canonical sibling is not in this batch.
+        if len(indices) == 1:
+            folder_key = _clean(rows[indices[0]].get("folder_key"))
+            if folder_key and folder_key != raw:
+                alias_targets.extend(indices)
+                continue
+
+        def _winner_rank(index: int):
+            row = rows[index]
+            folder_key = _clean(row.get("folder_key"))
+            is_canonical_folder = 1 if folder_key == raw else 0
+            try:
+                image_count = int(row.get("image_count") or 0)
+            except (TypeError, ValueError):
+                image_count = 0
+            return (
+                is_canonical_folder,
+                image_count,
+                _clean(row.get("series_uid")),
+                folder_key,
+            )
+
+        winner = sorted(
+            indices,
+            key=lambda index: (
+                -_winner_rank(index)[0],
+                -_winner_rank(index)[1],
+                _winner_rank(index)[2],
+                _winner_rank(index)[3],
+            ),
+        )[0]
+        rows[winner]["display_key"] = raw
+        alias_targets.extend(index for index in indices if index != winner)
+
+    alias_targets.sort(
+        key=lambda index: (
+            _clean(rows[index].get("study_uid")),
+            _raw_series_number(rows[index]),
+            _clean(rows[index].get("series_uid")),
+            _clean(rows[index].get("folder_key")),
+        )
+    )
+    candidate = SYNTHETIC_SERIES_NUMBER_BASE + 1
+    for index in alias_targets:
+        while candidate in taken and candidate <= SYNTHETIC_SERIES_NUMBER_MAX:
+            candidate += 1
+        if candidate > SYNTHETIC_SERIES_NUMBER_MAX:
+            raise ValueError("No collision-safe series display key remains in the reserved band")
+        rows[index]["display_key"] = str(candidate)
+        taken.add(candidate)
+        candidate += 1
+
+    for row in rows:
+        raw = _raw_series_number(row)
+        row["_orig_series_number"] = raw
+        row.setdefault("_display_series_number", raw)
+    return rows
+
+
 class PatientStudySetService:
     """Facade — the single named API for patient study-set resolution and download
     planning that workflows should migrate to. Thin by design: the logic lives in
@@ -377,3 +520,5 @@ class PatientStudySetService:
     resolve_study_uids = staticmethod(resolve_study_uids)
     build_download_payload = staticmethod(build_download_payload)
     resolve_series_folder_key = staticmethod(resolve_series_folder_key)
+    persisted_series_folder_key = staticmethod(persisted_series_folder_key)
+    allocate_series_display_keys = staticmethod(allocate_series_display_keys)

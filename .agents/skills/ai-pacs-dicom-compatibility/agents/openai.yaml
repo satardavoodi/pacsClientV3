@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-PACS DICOM Compatibility"
+  short_description: "Diagnose DICOM format and rendering compatibility"
+  default_prompt: "Use $ai-pacs-dicom-compatibility to investigate this DICOM study or medical-imaging format and produce a guarded AI-PACS fix."

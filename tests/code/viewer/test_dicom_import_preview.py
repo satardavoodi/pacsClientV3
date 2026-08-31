@@ -4,13 +4,20 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pydicom.dataset import FileDataset, FileMetaDataset
-from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
+from pydicom.uid import (
+    EnhancedSRStorage,
+    ExplicitVRLittleEndian,
+    SecondaryCaptureImageStorage,
+    generate_uid,
+)
 
 from PacsClient.pacs.workstation_ui.home_ui.import_preview_dialog import (
     filter_scan_result_for_selection,
     import_scanned_dicom_studies,
     scan_dicom_import_folder,
 )
+from PacsClient.utils.patient_study_set import resolve_series_folder_key
+from PacsClient.utils.dicom_displayability import dicom_file_has_pixel_data
 
 
 def _write_test_dicom(
@@ -55,6 +62,35 @@ def _write_test_dicom(
     ds.BitsAllocated = 16
     ds.HighBit = 15
     ds.PixelData = b"\0\0" * 4
+    ds.save_as(str(path), write_like_original=False)
+
+
+def _write_non_pixel_dicom(
+    path: Path,
+    *,
+    patient_id: str,
+    patient_name: str,
+    study_uid: str,
+    series_uid: str,
+    series_number: int,
+) -> None:
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = EnhancedSRStorage
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    meta.ImplementationClassUID = generate_uid()
+
+    ds = FileDataset(str(path), {}, file_meta=meta, preamble=b"\0" * 128)
+    ds.PatientName = patient_name
+    ds.PatientID = patient_id
+    ds.StudyInstanceUID = study_uid
+    ds.SeriesInstanceUID = series_uid
+    ds.SeriesNumber = int(series_number)
+    ds.SeriesDescription = "Structured Report"
+    ds.InstanceNumber = 1
+    ds.SOPClassUID = EnhancedSRStorage
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.Modality = "SR"
     ds.save_as(str(path), write_like_original=False)
 
 
@@ -113,6 +149,48 @@ def test_scan_dicom_import_folder_groups_files_by_study_and_series(tmp_path):
     assert study_info["study_date"] == "20260315"
     assert study_info["study_time"] == "104512"
     assert [series["image_count"] for series in study_info["series"]] == [2, 1]
+
+
+def test_scan_distinguishes_displayable_images_from_non_pixel_dicom_objects(tmp_path):
+    root = tmp_path / "mixed-dicom-objects"
+    root.mkdir()
+    study_uid = generate_uid()
+    image_series_uid = generate_uid()
+    report_series_uid = generate_uid()
+
+    _write_test_dicom(
+        root / "image.dcm",
+        patient_id="P100",
+        patient_name="Alpha^Patient",
+        study_uid=study_uid,
+        series_uid=image_series_uid,
+        series_number=1,
+        instance_number=1,
+    )
+    _write_non_pixel_dicom(
+        root / "report.dcm",
+        patient_id="P100",
+        patient_name="Alpha^Patient",
+        study_uid=study_uid,
+        series_uid=report_series_uid,
+        series_number=2,
+    )
+
+    scan_result = scan_dicom_import_folder(root)
+    by_uid = {
+        series["series_uid"]: series
+        for series in scan_result["studies"][0]["series"]
+    }
+
+    assert scan_result["dicom_file_count"] == 2
+    assert by_uid[image_series_uid]["instance_count"] == 1
+    assert by_uid[image_series_uid]["image_count"] == 1
+    assert by_uid[image_series_uid]["has_pixel_data"] is True
+    assert by_uid[report_series_uid]["instance_count"] == 1
+    assert by_uid[report_series_uid]["image_count"] == 0
+    assert by_uid[report_series_uid]["has_pixel_data"] is False
+    assert dicom_file_has_pixel_data(root / "image.dcm") is True
+    assert dicom_file_has_pixel_data(root / "report.dcm") is False
 
 
 def test_scan_dicom_import_folder_warns_for_multiple_patients_and_studies(tmp_path):
@@ -245,10 +323,31 @@ def test_import_scanned_dicom_studies_copies_files_into_managed_study_structure(
     assert import_result["primary_study"]["study_uid"] == study_uid
 
     imported_study = import_result["studies"][0]
-    series_path_names = [series["series_path_name"] for series in imported_study["series"]]
+    imported_series = imported_study["series"]
+    series_path_names = [series["series_path_name"] for series in imported_series]
 
     assert len(series_path_names) == 2
     assert len(set(series_path_names)) == 2
+
+    # Import must use the same stable SeriesInstanceUID-aware folder identity as
+    # Download Manager and the viewer.  The old order-dependent ``5`` / ``5_2``
+    # names made the imported collision invisible to the viewer, whose canonical
+    # resolver looked for ``5`` / ``5__<uid8>`` instead.
+    study_series = [
+        (series["series_number"], series["series_uid"], series["image_count"])
+        for series in imported_series
+    ]
+    expected_by_uid = {
+        series["series_uid"]: resolve_series_folder_key(
+            series["series_number"], series["series_uid"], study_series
+        )
+        for series in imported_series
+    }
+    actual_by_uid = {
+        series["series_uid"]: series["series_path_name"]
+        for series in imported_series
+    }
+    assert actual_by_uid == expected_by_uid
 
     study_output_dir = import_root / study_uid
     assert study_output_dir.exists()

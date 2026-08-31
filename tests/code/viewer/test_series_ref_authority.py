@@ -258,6 +258,34 @@ def test_multistudy_entries_ARE_authoritative():
         assert ref.is_authoritative is True
 
 
+def test_collision_alias_keeps_numeric_display_but_loads_exact_suffixed_folder():
+    info = {
+        "900001": {
+            "series_number": "900001",
+            "display_key": "900001",
+            "_orig_series_number": "1",
+            "folder_key": "1_2",
+            "series_path": f"{SRC}/{PRIMARY}/1_2",
+            "study_uid": PRIMARY,
+            "series_uid": "uid-cine",
+            "_study_slot": 0,
+        }
+    }
+    ref = resolve_series_ref(
+        "900001",
+        build_series_ref_table(info, PRIMARY, SRC),
+        server_series_info=info,
+        primary_study_uid=PRIMARY,
+        source_root=SRC,
+    )
+
+    assert ref.display_key == "900001" and ref.display_key.isdigit()
+    assert ref.series_number == "1"
+    assert ref.disk_series_number == "1_2"
+    assert _same_path(ref.series_path, f"{SRC}/{PRIMARY}/1_2")
+    assert _same_path(ref.study_path, f"{SRC}/{PRIMARY}")
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # The offset-key slot fallback (entry dropped by a later rebuild)
 # ══════════════════════════════════════════════════════════════════════════

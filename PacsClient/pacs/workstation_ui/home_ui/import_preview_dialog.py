@@ -11,6 +11,7 @@ import shutil
 import time
 
 import pydicom
+from pydicom.filereader import read_partial
 from pydicom.misc import is_dicom
 from pydicom.uid import UID, ExplicitVRLittleEndian
 
@@ -68,6 +69,8 @@ from PySide6.QtWidgets import (
 )
 
 from PacsClient.utils.config import SOURCE_PATH
+from PacsClient.utils.dicom_displayability import PIXEL_DATA_TAGS
+from PacsClient.utils.patient_study_set import resolve_series_folder_key
 from PacsClient.utils.theme_manager import get_theme_manager
 
 
@@ -89,6 +92,7 @@ _DICOM_TAGS = [
     "InstanceNumber",
     "SOPInstanceUID",
     "SOPClassUID",
+    "NumberOfFrames",
 ]
 
 
@@ -114,13 +118,23 @@ def _read_import_dicom_header(file_path: Path):
 
     read_errors = []
     for force in ((not looks_standard), True):
+        has_pixel_data = False
+
+        def _stop_at_pixel_data(tag, _vr, _length) -> bool:
+            nonlocal has_pixel_data
+            if tag in PIXEL_DATA_TAGS:
+                has_pixel_data = True
+                return True
+            return False
+
         try:
-            ds = pydicom.dcmread(
-                str(file_path),
-                stop_before_pixels=True,
-                force=force,
-                specific_tags=_DICOM_TAGS,
-            )
+            with file_path.open("rb") as stream:
+                ds = read_partial(
+                    stream,
+                    stop_when=_stop_at_pixel_data,
+                    force=force,
+                    specific_tags=_DICOM_TAGS,
+                )
 
             # Validate this is likely a real DICOM object.
             has_core_id = any(
@@ -130,7 +144,7 @@ def _read_import_dicom_header(file_path: Path):
             if not has_core_id:
                 continue
 
-            return ds
+            return ds, has_pixel_data
         except Exception as e:
             read_errors.append(str(e))
 
@@ -383,18 +397,16 @@ def _sanitize_filename(value: str) -> str:
     return clean.strip("._") or "dicom"
 
 
-def _build_series_storage_name(series_info: dict, used_names: set[str]) -> str:
+def _build_series_storage_name(series_info: dict, study_series: list[tuple]) -> str:
     base = _safe_text(series_info.get("series_number"))
     if not base or base.upper() == "N/A":
-        base = f"series_{len(used_names) + 1:03d}"
-    name = _sanitize_filename(base)
-    candidate = name
-    suffix = 2
-    while candidate in used_names:
-        candidate = f"{name}_{suffix}"
-        suffix += 1
-    used_names.add(candidate)
-    return candidate
+        base = "series"
+    resolved = resolve_series_folder_key(
+        base,
+        series_info.get("series_uid"),
+        study_series,
+    )
+    return _sanitize_filename(resolved)
 
 
 def _build_destination_name(file_info: dict, index: int) -> str:
@@ -452,9 +464,10 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
                 "elapsed_s=%.1f", scanned_file_count, total_dicom_files,
                 cloud_placeholder_count, time.monotonic() - _t_scan,
             )
-        dataset = _read_import_dicom_header(file_path)
-        if dataset is None:
+        header_result = _read_import_dicom_header(file_path)
+        if header_result is None:
             continue
+        dataset, has_pixel_data = header_result
 
         tsuid = _extract_transfer_syntax_uid(dataset)
         is_compressed = False
@@ -500,6 +513,9 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
                 "series_description": _safe_text(getattr(dataset, "SeriesDescription", None), "Untitled Series"),
                 "modality": _safe_text(getattr(dataset, "Modality", None), "N/A"),
                 "image_count": 0,
+                "instance_count": 0,
+                "frame_count": 0,
+                "has_pixel_data": False,
                 "protocol_name": _safe_text(getattr(dataset, "ProtocolName", None)),
                 "body_part_examined": _safe_text(getattr(dataset, "BodyPartExamined", None)),
                 "manufacturer": _safe_text(getattr(dataset, "Manufacturer", None)),
@@ -524,9 +540,16 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
                 "sop_class_uid": _safe_text(getattr(dataset, "SOPClassUID", None)),
                 "transfer_syntax_uid": tsuid,
                 "is_compressed": is_compressed,
+                "has_pixel_data": has_pixel_data,
             }
         )
-        series["image_count"] += 1
+        series["instance_count"] += 1
+        if has_pixel_data:
+            series["has_pixel_data"] = True
+            series["image_count"] += 1
+            series["frame_count"] += max(
+                1, _safe_int(getattr(dataset, "NumberOfFrames", None), 1)
+            )
         total_dicom_files += 1
         patient_keys.add((patient_id, patient_name))
 
@@ -700,11 +723,20 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
 
         target_study_dir = output_root / study_uid
         target_study_dir.mkdir(parents=True, exist_ok=True)
-        used_names: set[str] = set()
+        study_series = [
+            (
+                series.get("series_number"),
+                series.get("series_uid"),
+                series.get("image_count") or 0,
+            )
+            for series in study.get("series", []) or []
+            if isinstance(series, dict)
+        ]
 
         for series in study.get("series", []) or []:
-            storage_name = _build_series_storage_name(series, used_names)
+            storage_name = _build_series_storage_name(series, study_series)
             series["series_path_name"] = storage_name
+            series["folder_key"] = storage_name
 
             target_series_dir = target_study_dir / storage_name
             target_series_dir.mkdir(parents=True, exist_ok=True)

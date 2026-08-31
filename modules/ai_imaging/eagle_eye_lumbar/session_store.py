@@ -4,6 +4,7 @@ Layout (spec 8 / 11 / 12)::
 
     user_data/ai/eagle_eye/<StudyInstanceUID>/<session_id>/
         session.json
+        series_sources.local.json
         Sagittal/
             manifest.json
             sagittal_001.png ...
@@ -15,6 +16,10 @@ The manifests are the contract the later analysis stage reads, so every capture
 carries enough DICOM identity to reconstruct exactly where the frame came from:
 source series UIDs, the SOP Instance UID shown in each pane, the slice position
 in patient coordinates and the spatial-context labels.
+
+The optional ``series_sources.local.json`` file contains local DICOM paths for
+worker-side evidence composition. It is private provenance and is never part of
+the model request document.
 
 Pure python (pathlib + json). Writing an image is delegated to a caller-supplied
 callback, so the store itself never imports Qt and is fully testable headless.
@@ -47,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 PASS_SAGITTAL = "sagittal"
 PASS_AXIAL = "axial"
+LOCAL_SERIES_SOURCES_JSON = "series_sources.local.json"
 
 
 class PassSpec:
@@ -174,6 +180,7 @@ class EagleEyeCaptureSession:
 
         self._study_context: Dict[str, Any] = {}
         self._selection: Dict[str, Any] = {}
+        self._series_sources: Dict[str, Dict[str, Any]] = {}
         self._layout: Dict[str, Any] = {
             "rows": 1,
             "columns": 3,
@@ -221,6 +228,14 @@ class EagleEyeCaptureSession:
     def set_selection(self, selection: Dict[str, Any]) -> None:
         """The full classifier verdict, including alternatives and confidence."""
         self._selection = dict(selection or {})
+
+    def set_series_sources(self, sources: Dict[str, Dict[str, Any]]) -> None:
+        """Persist local-only DICOM locations outside the model request contract."""
+        self._series_sources = {
+            str(role): dict(source)
+            for role, source in (sources or {}).items()
+            if role and isinstance(source, dict)
+        }
 
     def set_pass_geometry(self, pass_name: str, geometry: Dict[str, Any]) -> None:
         """Capture-order metadata for one pass (direction, axis, slice count)."""
@@ -303,6 +318,14 @@ class EagleEyeCaptureSession:
             self._completed_at = _utc_now_iso()
         for name in self._pass_order:
             _write_json(self.pass_dir(name) / MANIFEST_JSON, self._manifest(name))
+        if self._series_sources:
+            _write_json(
+                self.path / LOCAL_SERIES_SOURCES_JSON,
+                {
+                    "schema_version": "1.0.0",
+                    "series": self._series_sources,
+                },
+            )
         _write_json(self.path / SESSION_JSON, self._session_document())
         return self.path
 

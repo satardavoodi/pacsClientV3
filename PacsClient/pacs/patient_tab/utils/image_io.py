@@ -1584,6 +1584,7 @@ _HEADER_STUB_TAGS = [
     "SliceThickness", "SpacingBetweenSlices",
     "RescaleSlope", "RescaleIntercept",
     "BitsAllocated", "PixelRepresentation",
+    "NumberOfFrames", "SamplesPerPixel", "PlanarConfiguration",
 ]
 
 
@@ -1619,6 +1620,9 @@ def _build_instance_header_stub(dicom_file: Path, fallback_index: int):
             "rescale_intercept": _safe_float(dcm.get("RescaleIntercept", None), 0.0),
             "bits_allocated": int(dcm.get("BitsAllocated", 16) or 16),
             "pixel_representation": int(dcm.get("PixelRepresentation", 1) or 1),
+            "number_of_frames": int(dcm.get("NumberOfFrames", 1) or 1),
+            "samples_per_pixel": int(dcm.get("SamplesPerPixel", 1) or 1),
+            "planar_configuration": dcm.get("PlanarConfiguration", None),
         }
     except Exception:
         return None

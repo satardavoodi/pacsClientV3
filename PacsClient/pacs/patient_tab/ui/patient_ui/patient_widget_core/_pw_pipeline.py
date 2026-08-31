@@ -403,7 +403,22 @@ class _PWPipelineMixin:
     def pipeline_manager(self, caller, size_init_viewers=(1, 1)):
         _t0 = time.perf_counter()
         size_init_viewers = self._get_default_layout_from_config()
-        count_exist_thumbnails = self.show_exist_thumbnails()
+        local_thumbnail_workflow = bool(
+            getattr(self, '_local_thumbnail_workflow', lambda: False)()
+        )
+        if local_thumbnail_workflow:
+            # Local thumbnail filenames use the persisted storage key. A
+            # collision member can therefore be named ``1_2.png`` or
+            # ``1__<uid>.png``; neither is a valid drag/viewer handle. Do not
+            # render those stems during the synchronous startup pass. The
+            # existing background Local projection reads SQLite + disk,
+            # allocates digit-only display keys, and supplies authoritative
+            # per-series object/frame counts before creating the cards.
+            count_exist_thumbnails = len(
+                check_and_get_thumbnails(self.import_folder_path, self.study_uid) or []
+            )
+        else:
+            count_exist_thumbnails = self.show_exist_thumbnails()
         print(f"[PROFILE] pipeline_manager: show_exist_thumbnails={count_exist_thumbnails} in {(time.perf_counter() - _t0)*1000:.1f}ms (study={self.study_uid})")
         print(f"🔍 [PIPELINE] count_exist_thumbnails = {count_exist_thumbnails}")
 

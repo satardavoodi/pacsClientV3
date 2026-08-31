@@ -1,6 +1,6 @@
 # Thumbnail Pipeline — As-Built Reference
 
-**Status:** ✅ Audited and corrected (2026-05-24).
+**Status:** ✅ Audited and corrected (2026-05-24; collision/cine contract updated 2026-08-30).
 **Scope:** Every place a series thumbnail is produced, cached, or rendered.
 
 > This is a permanent reference + regression-guard. If you touch any thumbnail
@@ -15,8 +15,8 @@ A series thumbnail is a small PNG (a few KB). Three layers hold it:
 
 | Layer | Where | Notes |
 |-------|-------|-------|
-| **Disk cache (canonical)** | `THUMBNAIL_PATH/<study_uid>/<series_number>.png` | The single source of truth on disk. |
-| **In-memory cache** | `ThumbnailStore` singleton (`modules/storage/thumbnail_store.py`) | Thread-safe LRU, 300 entries / 50 MB, keyed `(study_uid, series_number)`. On a miss it reads the canonical disk path and warms itself. |
+| **Disk cache (canonical)** | `THUMBNAIL_PATH/<study_uid>/<folder_key>.png` | The single source of truth on disk. `folder_key == series_number` unless a study has duplicate numbers. |
+| **In-memory cache** | `ThumbnailStore` singleton (`modules/storage/thumbnail_store.py`) | Thread-safe LRU, 300 entries / 50 MB, keyed `(study_uid, folder_key)`. On a miss it reads the canonical disk path and warms itself. |
 | **DB hint column** | `series.thumbnail_path` (TEXT, nullable) | A convenience pointer; populated only by `save_image_as_png`. Treated as a *hint*, never the authority. |
 
 ### Canonical path — one definition, no aliases that diverge
@@ -29,6 +29,48 @@ A series thumbnail is a small PNG (a few KB). Three layers hold it:
 * **Do not** build a thumbnail path from `BASE_PATH` (`= PROJECT_ROOT`, the
   code root). `BASE_PATH/thumbnails` is the *legacy pre-migration* location and
   is empty after migration. This was the print-module bug fixed on 2026-05-24.
+
+### Series-number collision rule (2026-08-30)
+
+`SeriesNumber` is DICOM display/order metadata, not a unique series identity.
+Two distinct `SeriesInstanceUID` values may share it. The shared
+`resolve_series_folder_key` authority therefore defines the storage key:
+
+* unique number: `<folder_key> == <series_number>` (legacy/common behavior);
+* collision winner: bare number;
+* other collision members: `<series_number>__<uid8>`.
+
+Import, Download Manager, Local SQLite projection, viewer loading, and thumbnail
+filenames must use the same key. For persisted Local data, `series.series_path`
+is authoritative and `persisted_series_folder_key` returns its final component.
+The raw `series_number` must remain unchanged for display and ordering. A
+separate digit-only `display_key` is allocated for thumbnail maps and drag/drop;
+the collision loser uses a deterministic reserved-band alias. `SeriesRef`
+threads the raw number, exact `series_path`, and final `folder_key`/`storage_key`
+independently so the viewport never reconstructs the wrong folder. See
+`docs/reports/IMPORT_DUPLICATE_SERIES_NUMBER_IDENTITY_2026-08-30.md`.
+
+The multi-study offset layer still requires digit-only UI handles. Apply the
+existing offset to `display_key`; never inject a suffixed `folder_key` into that
+arithmetic or into a drag payload.
+
+### Pixel-bearing series gate (2026-08-30 follow-up)
+
+A readable DICOM object is not necessarily an image. SR, presentation state,
+and vendor metadata objects may have a study/series identity but no Pixel Data.
+Import therefore keeps object, pixel-bearing-object, and frame counts. Local image-viewer projections verify
+the persisted folder through `inspect_series_pixel_inventory` on the existing
+background path, omit metadata-only series from thumbnail/viewer cards, and use
+total frames as the card's display count for cine while retaining object count
+for file completeness.
+
+The inspection reads each object only up to the pixel element header and never
+reads or decodes its value. This permits an exact sum of `NumberOfFrames` without
+materializing a large cine payload. Both current callers already execute on
+background paths, so the complete header inventory cannot block the Qt thread.
+Metadata-only objects remain on disk and in SQLite for future dedicated
+document/SR consumers. Never replace this gate with a modality-name allowlist:
+displayability is determined by the pixel payload contract, not by `Modality`.
 
 ---
 
@@ -122,7 +164,7 @@ disk read — never to a blank thumbnail.
 ## 6. Regression guardrails — read before touching this area
 
 1. **Disk is the authority.** Every consumer must resolve to
-   `THUMBNAIL_PATH/<study_uid>/<series_number>.png`. The DB column and
+   `THUMBNAIL_PATH/<study_uid>/<folder_key>.png`. The DB column and
    `ThumbnailStore` are accelerators — never the sole source.
 2. **Never use `BASE_PATH` for thumbnails.** `BASE_PATH` is the code root.
    Thumbnails live under `USER_DATA_ROOT` (`THUMBNAIL_PATH` / `THUMBNAILS_DIR`).
@@ -135,6 +177,29 @@ disk read — never to a blank thumbnail.
    key cannot match the widget's primary `study_uid`.
 6. **Do not make a consumer depend on the DB `thumbnail_path` column** being
    populated — only `save_image_as_png` writes it.
+7. **Never key a series solely by raw `SeriesNumber`.** Use `SeriesInstanceUID`
+   for clinical identity, canonical/persisted `folder_key` for disk/PNG identity,
+   and digit-only `display_key` for viewer maps, cards, and drag/drop.
+8. **Never equate a DICOM object count with an image count.** Before creating a
+   Local image-viewer card, require a pixel-bearing series. Persist count updates
+   by `SeriesInstanceUID` so duplicate raw numbers remain isolated.
+9. **Never infer colour or frame structure from incomplete DB metadata.** The
+   DICOM dataset is authoritative for `SamplesPerPixel`, photometric state, and
+   `NumberOfFrames`; preserve separate colour and multi-frame branches. Do not
+   admit an instance to metadata-driven subprocess prefetch until its own pixel
+   facts are authoritative.
+10. **Never render a Local cache filename stem as a card or drag handle.** A
+    collision stem such as `1_2` is a storage key, not a display identity. Wait
+    for the SQLite/disk Local projection to provide the digit-only `display_key`
+    and its exact storage path together. Drop parsers must validate decimal
+    digits before `int()`; Python otherwise accepts numeric separators and would
+    reinterpret `1_2` as Series 12.
+
+**Live result (2026-08-30):** The source-build Local/Fast workflow was confirmed
+by the human operator: the original 25-image still series retained its correct
+card count and displayed normally while the duplicate-number cine series also
+rendered. The broader re-import, explicit cable-disconnect, packaged-runtime,
+and multi-study comparison gates remain independent.
 
 ## 7. Known non-blocking follow-ups
 

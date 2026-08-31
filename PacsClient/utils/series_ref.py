@@ -26,7 +26,8 @@ derives nothing.
         study_pk       that study's pk (filled by the consumer; see below)
         series_uid     globally unique — THE identity
         series_number  the series' own (disk / original) number
-        series_path    SOURCE_PATH/<study_uid>/<series_number>
+        series_path    exact persisted series directory
+        storage_key    final folder name (may differ from the raw number)
         study_slot     0 = primary study
         source         'entry' | 'slot_fallback' | 'derived'  (see CONFIDENCE)
 
@@ -148,8 +149,9 @@ class SeriesRef:
 
     display_key: str            # the UI handle — ALWAYS a digit string (C10/C11)
     study_uid: str              # the series' OWN study (never the tab's, unless it is)
-    series_number: str          # the series' own disk/original number (C3: type preserved)
-    series_path: str            # SOURCE_PATH/<study_uid>/<series_number>
+    series_number: str          # the series' original DICOM number (C3: type preserved)
+    series_path: str            # exact persisted series directory
+    storage_key: Optional[str] = None  # final folder name; may be collision-suffixed
     series_uid: Optional[str] = None   # globally unique — THE identity (C4)
     study_pk: Optional[int] = None     # filled by the consumer: pk_of(ref.study_uid)
     study_slot: int = 0
@@ -160,6 +162,11 @@ class SeriesRef:
     def study_path(self) -> str:
         """The STUDY folder (the parent of ``series_path``) — what the disk loader wants."""
         return str(PurePath(self.series_path).parent)
+
+    @property
+    def disk_series_number(self) -> str:
+        """Folder key passed to the legacy ``study_path / series`` loader."""
+        return str(self.storage_key or PurePath(self.series_path).name or self.series_number)
 
     @property
     def is_primary(self) -> bool:
@@ -221,6 +228,7 @@ def _ref_from_entry(
         study_uid=study_uid,
         series_number=str(orig),
         series_path=str(path),
+        storage_key=str(entry.get("folder_key") or PurePath(str(path)).name or orig),
         series_uid=_entry_series_uid(entry),
         study_slot=slot,
         source="entry",
@@ -335,6 +343,7 @@ def resolve_series_ref(
                 study_uid=study_uid,
                 series_number=str(orig),
                 series_path=str(PurePath(source_root) / study_uid / str(orig)),
+                storage_key=str(orig),
                 series_uid=None,
                 study_slot=slot,
                 source="slot_fallback",
@@ -349,6 +358,7 @@ def resolve_series_ref(
         study_uid=primary,
         series_number=key,
         series_path=str(PurePath(source_root) / primary / key),
+        storage_key=key,
         series_uid=None,
         study_slot=0,
         source="derived",

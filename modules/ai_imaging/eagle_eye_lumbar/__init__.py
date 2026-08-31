@@ -13,6 +13,8 @@ Package layout
 ``session_store``      on-disk session + JSON manifests.
 ``capture_controller`` Qt-side, timer-driven sweep over the 3x1 Eagle Eye layout.
 ``evidence_bundle``    optional model-facing evidence composition.
+``evidence_request``   bounded model-attention normalization and focus planning.
+``focus_evidence``     worker-side focused-v2 DICOM composite construction.
 ``clinical_context``   bounded clinical-document attachment package.
 ``llm_runner``         off-thread bridge to the shared EchoMind/GapGPT transport.
 ``workflow_coordinator`` capture, analysis, result, retry, and teardown lifecycle.

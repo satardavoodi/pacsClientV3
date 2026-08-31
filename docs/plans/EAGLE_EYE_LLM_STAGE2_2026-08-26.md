@@ -1,10 +1,12 @@
 # Eagle Eye — Stage 2: sending a capture session to the LLM
 
-**Date:** 2026-08-26 · **Current status (2026-08-30):** pipeline 4.2.0,
+**Date:** 2026-08-26 · **Current status (2026-08-30):** pipeline 4.6.1,
 parallel Gemini screening/multi-source-context branches plus GPT verification,
-with a shared disc-hydration false-positive control and provider-neutral result
-metadata. Pipeline 4.1.0 completed a live three-stage run; pipeline 4.2.0 still
-requires live clinical validation.
+with deterministic near-midline paired sagittal T2/T1 context evidence,
+bounded global and level-specific attention foci, pathology-focus differential
+adjudication, marker-derived patient laterality, same-lesion multiplanar disc
+morphology fusion, shared hydration contracts, and provider-neutral result
+metadata. Pipeline 4.6.1 requires live clinical validation.
 **Scope:** captured session → ordered image package → EchoMind OpenAI path → pathology-only
 result, stored with the session and reopenable.
 **Consumes** the session produced by stage 1 (`EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md`)
@@ -20,7 +22,8 @@ Eagle Eye capture finishes  (capture stage, unchanged)
 llm_package.build_package()      ordered images + captions + PID-0 request doc
         ↓
 llm_backend.run_analysis()       ┬─ Gemini MRI screening → candidate list
-        │                        └─ Gemini multi-source context → clinical prior
+        │                        └─ Gemini paired sagittal T2/T1 + multi-source
+        │                           context → global prior + attention foci
         ↓                          (the two branches run concurrently)
 GPT-5.6 Sol verification         candidates + prior + MRI → final report
         ↓                        (llm_runner puts this on an ApiWorker thread)
@@ -40,7 +43,7 @@ So the pipeline runs two passes with opposite briefs:
 
 | | pass 1 — screening | pass 2 — verification |
 |---|---|---|
-| disposition | inclusive; a missed candidate can never be recovered | conservative; a false positive is worse than a miss |
+| disposition | inclusive; preserve every plausible abnormal focus | high-specificity adjudication; resolve each focus and select the best-supported diagnosis |
 | output | candidate list (structured) | audit + the report the user sees |
 | cost of error | cheap — pass 2 removes it | expensive — it reaches the report |
 
@@ -1652,3 +1655,762 @@ changed-boundary files                                             90 passed
 tests/code/ai_imaging                                  559 passed, 8 xfailed
 default-build inclusion guard                                      3 passed
 ```
+
+---
+
+## 23. Pathology-focus differential adjudication — pipeline 4.3.0 (2026-08-30)
+
+A radiologist-reviewed live pipeline 4.2.0 result localized a genuine abnormal
+disc focus but reported only a broad-based bulge where the dominant morphology
+was an extrusion. Privacy-filtered artifacts showed that screening produced 17
+candidates and correctly raised the affected disc focus, but emitted no
+protrusion, extrusion, sequestration, or migration candidate anywhere. The
+verifier produced 19 decisions and successfully added two unrelated findings,
+proving that its `ADDED` path worked, but it inherited the bulge label and never
+performed the required herniation differential. Every stage parsed without
+truncation and the matching log contained no error or warning. The defect was
+the role and diagnostic contract, not capture, transport, parsing, or token
+budget.
+
+### 23a. Preserved separation of responsibilities
+
+Screening 1.5.0 remains sensitivity-oriented. Its primary obligation is to
+preserve an abnormal focus for verification. A candidate label is explicitly a
+working hypothesis; when displaced disc material is visible but its exact
+morphology is uncertain, screening now emits
+`disc_displacement_indeterminate` instead of dropping the focus or forcing a
+false precision.
+
+Verification 2.7.0 consumes three inputs with separate authorities:
+
+1. Screening candidates define the attention foci and working labels.
+2. Clinical/examination context ranks and expands the differential but cannot
+   establish a current MRI finding.
+3. The complete MRI package alone decides presence, diagnosis, morphology,
+   level, side, zone, and severity.
+
+High specificity now applies to the final diagnosis, not to whether a positive
+focus is re-examined. For every focus the verifier must decide presence,
+diagnostic family, plausible alternatives, characterization, and anatomical
+consequences. A wrong screening label is not equivalent to absent pathology:
+if the focus remains abnormal but another diagnosis is better supported, the
+disposition is `RECLASSIFIED`, never `REJECTED`. Normal anatomy, artifact,
+partial volume, and non-pathological variants remain explicit differential
+outcomes and may correctly produce `REJECTED`.
+
+### 23b. Disc morphology and output contract
+
+Both image readers now share a disc-displacement morphology contract based on
+the NASS/ASSR/ASNR Lumbar Disc Nomenclature 2.0. It distinguishes generalized
+bulge from localized herniation, protrusion from extrusion by the displaced
+component-to-base relationship in at least one plane, sequestration by absent
+continuity, and migration by cranial or caudal displacement. Sagittal T2 may be
+decisive for base-to-dome relationship, continuity, and migration; axial T2 may
+be decisive for circumference, zone, side, and neural consequence. An axial
+slab that misses the maximal dome cannot veto a convincing sagittal extrusion.
+
+The verification audit now requests `focus_present`, `screening_diagnosis`,
+`alternatives_considered`, `final_diagnosis`, `status`, and
+`change_direction`. Positive statuses are `CONFIRMED`, `RECLASSIFIED`,
+`REFINED`, `UPGRADED`, `DOWNGRADED`, and `ADDED`. `REJECTED` requires no
+supported alternative pathology at the focus; `INDETERMINATE` records an
+unresolvable package limitation. A mandatory final safety sweep independently
+rechecks major report-changing findings, including extrusion, sequestration,
+migration, high-grade neural compromise, fracture, destructive marrow lesion,
+epidural disease, infection, and conus/cauda-equina abnormality.
+
+Clinical basis: Fardon et al., *The Spine Journal* 2014,
+doi:10.1016/j.spinee.2014.04.022.
+
+Four new regression guards failed before implementation and pass afterward.
+Two older guards were deliberately re-pinned rather than removed: the old
+contract required axial confirmation of every disc morphology and described
+verification primarily as a deletion filter; both now guard multi-plane
+morphology adjudication and focus-preserving reclassification. Automated prompt
+tests prove the contract and execution wiring, not diagnostic accuracy. The
+radiologist must re-run the known extrusion case and a balanced labelled set
+before clinical promotion.
+
+```text
+tests/code/ai_imaging/test_eagle_eye_llm_analysis.py                 88 passed
+tests/code/ai_imaging                                  563 passed, 8 xfailed
+default-build inclusion guard                                      3 passed
+```
+
+---
+
+## 24. Paired sagittal context and focal attention — pipeline 4.4.0 (2026-08-30)
+
+The prior context branch sampled the first and last frames of both sagittal and
+axial sweeps when given the usual four-image budget. It therefore did not
+guarantee a near-midline sagittal view, despite receiving measured sagittal
+offsets, and its prompt explicitly restricted MRI input to global context. The
+structured contract and allowlist had no field for a regional or level-specific
+context hypothesis, so any such model output would be discarded before final
+verification.
+
+Pipeline 4.4.0 changes only the context service and the prompt/data contracts:
+
+- the bounded context image selector accepts only captured sagittal frames that
+  contain both geometrically matched `sagittal_t2` and `sagittal_t1` panes;
+- it ranks frames by absolute measured midline offset, selects the nearest
+  frames, and then restores acquisition order; when geometry is unavailable it
+  chooses the central contiguous window rather than the sweep endpoints;
+- the context prompt uses paired T2/T1 for general examination context and for
+  conspicuous regional or level-specific attention hypotheses, while forbidding
+  axial side/zone, stenosis grade, neural compression, or a final diagnosis;
+- `context_attention_foci` carries bounded scope, anatomy, context type,
+  hypothesis, confidence, allowlisted evidence sources, and explicit full-MRI
+  verification questions;
+- the final verifier audits every regional or level-specific context focus even
+  when screening did not raise it, and may confirm an omitted pathology as
+  `ADDED`, reject a normal focus, or mark it `INDETERMINATE`;
+- an invalid or absent study UID still permits session-local paired sagittal
+  context and series inventory, while all external reception, attachment, and
+  DICOM-document lookups remain disabled for that unsafe identity.
+
+Context remains an untrusted prior. The complete MRI package remains the only
+authority for diagnosis, location, morphology, side, zone, severity, and neural
+consequence. No UI, capture, model routing, GapGPT transport, database, or
+packaged mirror changed.
+
+Four behavioral guards failed before the fix and pass afterward. They cover
+paired near-midline evidence selection, the general/focal prompt contract,
+bounded normalization and forwarding, and safe session-local degradation when
+the study UID cannot authorize external lookup. Automated tests validate the
+evidence and prompt wiring, not clinical accuracy. Live validation requires a
+radiologist-reviewed source-build rerun on the known cases.
+
+```text
+tests/code/ai_imaging/test_eagle_eye_llm_analysis.py                 92 passed
+tests/code/ai_imaging                                  567 passed, 8 xfailed
+default-build inclusion guard                                      3 passed
+combined changed-boundary gate                                    570 passed
+```
+
+---
+
+## 25. Patient laterality and same-lesion multiplanar fusion — pipeline 4.5.0 (2026-08-30)
+
+A privacy-filtered review of the latest complete source-build run found no
+transport, parse, or output-ceiling failure. All three stages completed. The
+parallel context branch raised an extrusion hypothesis, but the final verifier
+downgraded the visible disc focus to protrusion and assigned the display side
+as the patient side. The axial screenshot itself carried an `R` marker on the
+screen-left edge and an `L` marker on the screen-right edge, so that mapping was
+clinically inverted. The sagittal pane also demonstrated the base-to-dome
+relationship more directly than the sampled axial section.
+
+Pipeline 4.5.0 changes the two image-reader prompt contracts only:
+
+- patient laterality must come from visible `R/L` orientation markers or
+  trusted DICOM patient-coordinate metadata, never from screen-left or
+  screen-right;
+- standard radiological display mapping is stated explicitly: screen-left
+  under `R` is patient-right and screen-right under `L` is patient-left;
+- absent, cropped, unreadable, or conflicting orientation evidence produces an
+  indeterminate side instead of a guess;
+- sagittal and axial findings must first be correlated to the same level and
+  the same displaced component before their evidence is combined;
+- morphology is the union of defining features across reliable planes, not a
+  majority vote between independently assigned plane labels;
+- a sagittal dome wider than its neck or base may establish extrusion even when
+  an axial slice intersects only a narrower, protrusion-like portion; axial
+  remains authoritative for patient-side, zone, and neural consequence.
+
+Screening remains sensitivity-oriented and verification remains the
+high-specificity adjudicator. The execution graph, context service, UI,
+GapGPT/OpenAI transport, model routing, capture, database, and build packaging
+did not change.
+
+Two prompt-contract guards failed before the fix and pass afterward. Automated
+tests prove the decision contract and wiring, not diagnostic accuracy. The next
+required step is a radiologist-reviewed source-build rerun on the known case.
+
+```text
+tests/code/ai_imaging/test_eagle_eye_llm_analysis.py                 94 passed
+tests/code/ai_imaging                                  569 passed, 8 xfailed
+default-build inclusion guard                                      3 passed
+combined changed-boundary gate                                    572 passed
+```
+
+---
+
+## 26. Agent-directed Focused Evidence V2 — implementation plan (2026-08-30)
+
+### 26a. Decision
+
+The next evidence revision will not let Gemini manipulate the live viewer or
+request arbitrary screenshots. Gemini will produce a bounded, structured
+attention plan. A local Eagle Eye orchestrator will validate that plan, resolve
+it against immutable DICOM identity and geometry, and ask a worker-side DICOM
+evidence service to build the smallest useful multi-planar package for GPT-5.6
+Sol.
+
+This design deliberately keeps the current model-call topology for the first
+implementation:
+
+```text
+captured study snapshot
+        |
+        +-- Gemini screening -------- candidates + supporting frame references
+        |
+        +-- Gemini context ---------- global context + attention foci
+                    (parallel)
+        |
+        v
+local FocusPlanner + EvidenceRequestValidator
+        |
+        v
+worker-side DICOM EvidenceComposer
+        |
+        v
+one GPT-5.6 Sol verification request
+        |
+        v
+deterministic result normalization and storage
+```
+
+The first version therefore remains three model calls: two Gemini calls in
+parallel and one GPT verification call. Native tool calling, per-level GPT
+calls, and a model-driven repair loop are deferred until the compact evidence
+package has been measured. This avoids adding latency and failure modes before
+proving that the evidence representation itself improves accuracy.
+
+### 26b. Why the live viewer is not the evidence engine
+
+The current workstation agent can read viewport context, change series, scroll
+slices, capture the viewport, and place measurements. `change_layout` is still
+explicitly unimplemented. More importantly, these actions mutate clinical UI
+state and several execute on the Qt event path. The MCP bridge currently returns
+tool results as text JSON and is not an image transport.
+
+The focused verifier path must therefore not depend on a sequence such as
+`change_layout -> change_series -> scroll -> wait -> screen grab`. That sequence
+would be vulnerable to stale applies, partially rendered OpenGL surfaces,
+reference-line repaint races, user interaction, and black or blank captures.
+
+The primary focused path will render directly from the locally stored DICOM
+series. The existing Legion Consult evidence implementation already proves the
+required primitives in this repository: headless SimpleITK volume loading,
+patient-LPS ROI projection, adjacent-slice selection, stable series windowing,
+overview contact sheets, focused context/zoom derivatives, and an immutable
+manifest. Its reusable geometry and rendering code should be extracted into a
+shared `modules.ai_imaging.evidence_core` package without changing Legion
+Consult behavior.
+
+MCP remains useful as an optional adapter over the same service. If exposed in
+a later phase, it should offer high-level asynchronous operations such as
+`build_eagle_eye_focus_pack` and `get_eagle_eye_focus_pack_status`; it must not
+carry pixel bytes through CommandBus or run decode/composition on the GUI
+thread.
+
+### 26c. Contracts and trust boundaries
+
+Gemini output is untrusted model input. The application, not the model, owns
+study identity, series identity, slice order, patient laterality, geometry,
+resource budgets, and the final list of executable operations.
+
+The additive `EvidenceRequestV1` contract should contain:
+
+- a stable `focus_id` and references to screening/context candidate IDs;
+- semantic anatomy (`level`, `region`, and pathology family), with `unknown`
+  permitted instead of guessing;
+- supporting captured evidence IDs and an optional normalized 0..1 attention
+  rectangle tied to a specific captured pane;
+- the clinical question to adjudicate, such as bulge versus protrusion versus
+  extrusion, right recess compromise, foraminal stenosis, marrow lesion, or
+  postoperative change;
+- requested evidence templates selected from an allowlist, never arbitrary
+  commands or file paths;
+- priority and model confidence, used only for ordering and never as image
+  evidence.
+
+The validator will reject unknown IDs, cross-study references, invalid ranges,
+unavailable series, excessive focus counts, excessive image/pixel/byte budgets,
+and any request that cannot be resolved without guessing. A rejected model plan
+degrades to a deterministic plan derived from the normalized screening
+candidates; it does not fail the whole study.
+
+Absolute patient-LPS coordinates must be computed locally from the captured
+frame geometry. Gemini may identify an approximate region in a named evidence
+frame, but it must not invent DICOM coordinates. Laterality is resolved from
+DICOM patient coordinates and trusted orientation metadata; screen-left and
+screen-right are never accepted as patient side.
+
+### 26d. Compact evidence representation
+
+Focused V2 will package adjacent slices into composite evidence sheets instead
+of uploading one crop per disc or one image per slice.
+
+The default package contains:
+
+1. **Sagittal overview sheet.** Five ordered near-midline sagittal T2 slices in
+   one sheet, cropped vertically to include the clinically useful lumbar span
+   and posterior elements. A matched central T1 tile is included when marrow,
+   postoperative, infection, or tumor context requires it.
+2. **Axial stack overview.** The complete selected axial stack represented in
+   acquisition order as one or, when necessary, two bounded contact sheets.
+   This preserves a global safety sweep without sending every axial frame as a
+   separate image.
+3. **One level-fusion sheet per positive focus.** The upper row contains five
+   adjacent axial slices centered on the best-supported slice. The lower row
+   contains three adjacent sagittal views cropped around the same level. The
+   sheet keeps morphology, continuity, zone, laterality, and neural consequence
+   in one visual object.
+4. **Optional template-specific sheet.** Added only when the diagnostic question
+   requires evidence not represented above: paired parasagittal T1/T2 foraminal
+   views, matched T1/T2 marrow views, or available postcontrast/STIR evidence.
+
+Candidates at the same level share one fusion sheet. Adjacent positive levels
+may share a two-row level sheet when native tile resolution remains adequate.
+For a typical single-level disc herniation case, the target is three to four
+images total rather than 30-40 screenshots: sagittal overview, axial overview,
+one level-fusion sheet, and at most one optional sheet.
+
+Initial guardrail targets, to be tuned only through measurement, are:
+
+- no more than 8 model-facing images;
+- no more than 4 focus levels;
+- no more than 12 megapixels across all derived images;
+- no more than 12 MiB before base64 encoding;
+- no derived tile larger than its source pixels;
+- total derived pixels at or below the selected source evidence pixel count.
+
+PNG remains the baseline because small MRI morphology and labels are sensitive
+to lossy artifacts. Every sheet receives a short stable evidence ID, ordered
+slice indices, plane/weighting labels, source-series identity in the private
+local manifest, patient-space provenance, crop bounds, and source/derived
+pixel and byte totals. No patient text is burned into the derivative.
+
+### 26e. Non-blocking execution and black-frame prevention
+
+The orchestrator will be a service-level state machine rather than logic added
+to the imaging tab:
+
+```text
+SNAPSHOTTED
+  -> SCREENING_CONTEXT_RUNNING
+  -> FOCUS_PLAN_VALIDATED
+  -> EVIDENCE_BUILDING
+  -> VERIFICATION_RUNNING
+  -> AGGREGATING
+  -> COMPLETE | DEGRADED | FAILED | CANCELLED
+```
+
+Only a small immutable snapshot of study/series/frame identity is taken from
+the UI. DICOM indexing, decoding, windowing, crop projection, sheet composition,
+PNG encoding, base64 encoding, network calls, and result parsing all remain off
+the Qt GUI thread. Jobs are single-flight per study, use a bounded worker queue,
+carry cancellation and correlation IDs, and ignore late results after the user
+has cancelled or changed study.
+
+Black/blank prevention is primarily architectural: focused evidence does not
+screen-grab a newly scrolled or newly laid-out OpenGL viewport. Each DICOM
+derivative is validated before dispatch for successful decode, finite pixels,
+non-empty projected bounds, plausible percentile spread, non-uniform content,
+expected dimensions, and a source-to-output provenance match. A dark MRI image
+is not rejected merely for being dark; only uniform/placeholder/failed output is
+rejected.
+
+If focused DICOM evidence cannot be built, the run falls back to the already
+stored, immutable layout capture package. It must not attempt a live emergency
+layout change or fresh viewer capture. The existing source images remain
+untouched, so the fallback cannot corrupt or replace the captured session.
+
+### 26f. Orchestrator placement
+
+The implementation should introduce a thin Eagle Eye domain orchestrator and a
+shared evidence core, while leaving the UI as a signal/status coordinator:
+
+```text
+modules/ai_imaging/evidence_core/
+    contracts.py
+    dicom_volume.py
+    roi_projection.py
+    rendering.py
+    quality.py
+    budget.py
+
+modules/ai_imaging/eagle_eye_lumbar/
+    evidence_request.py
+    focus_planner.py
+    focus_evidence.py
+    pipeline_orchestrator.py
+    verification_dispatcher.py
+    result_aggregator.py
+```
+
+The first extraction from Legion Consult must be behavior-preserving and keep
+its existing tests green. Eagle Eye then consumes the shared pure functions;
+it must not copy them into a second implementation. The existing GapGPT
+transport authority remains the only outbound route.
+
+### 26g. Phased implementation
+
+**Phase 0 — contracts and capability gates (approximately 0.5-1 day).** Add the
+versioned request/manifest schemas, stable evidence IDs, strict validator,
+resource budgets, state machine, and synthetic fixtures. Extend the existing
+patient-free GapGPT probe to test image detail modes and function/tool support,
+but do not switch the production path based only on provider documentation.
+
+**Phase 1 — shared evidence core and compact composer (approximately 1-2
+days).** Extract the proven pure DICOM geometry/rendering primitives from Legion
+Consult. Implement sagittal overview, complete axial overview, level-fusion,
+quality validation, and budget enforcement. All work runs in a bounded worker.
+
+**Phase 2 — pipeline integration (approximately 1 day).** Merge and deduplicate
+screening candidates and context attention foci, build one compact verification
+package, and send it through the current single GPT-5.6 Sol request. Add a
+`focused-v2` A/B mode while retaining `layout` as the live default and fallback.
+
+**Phase 3 — measured clinical validation (approximately 1 engineering day plus
+radiologist review).** Compare identical de-identified session copies using
+`layout` and `focused-v2`. Include the known L5-S1 extrusion case, normal discs,
+true desiccation, foraminal stenosis, multilevel disease, postoperative metal,
+marrow lesions, and limited protocols. Measure diagnostic performance,
+stability, latency, failures, image count, pixels, bytes, and tokens.
+
+**Phase 4 — optional bounded agent loop.** Only if Phase 3 demonstrates an
+evidence gap, allow GPT to return one `needs_more_evidence` request from an
+allowlisted schema. The composer may supply one additional sheet and GPT may be
+called once more. Per-level concurrent verification and MCP-exposed job tools
+belong here, not in the initial implementation.
+
+A testable focused package should be achievable in roughly two to three
+engineering days because the DICOM evidence primitives already exist. A guarded
+candidate for default-on promotion is more realistically three to five days,
+excluding the time required for a clinically representative reader-labelled
+evaluation.
+
+### 26h. Acceptance and rollback gates
+
+Focused V2 is not promotable until all of the following are true:
+
+- no DICOM decode, image composition, base64 conversion, or network request runs
+  on the GUI thread;
+- changing the live viewer layout, series, or slice is not required;
+- every dispatched image passes quality and provenance validation;
+- budget overflow fails before network dispatch and falls back to `layout`;
+- single-level cases meet the three-to-four-image target and all cases remain
+  within the declared image/pixel/byte caps;
+- the known extrusion remains localized to the correct level and patient side,
+  and multiplanar morphology is not downgraded because one slice misses the
+  maximal dome;
+- the global overview still detects major findings omitted by screening;
+- cancellation, study change, partial DICOM availability, decode failure,
+  missing geometry, and GapGPT timeout have deterministic terminal states;
+- logs contain only correlation IDs, counts, timings, budgets, stage outcomes,
+  and safe error classes, never patient identifiers, images, prompts, reports,
+  UIDs, paths, or API keys;
+- source captures and the current `layout` path remain byte-for-byte available
+  as the rollback path;
+- focused regression suites, neighboring Eagle Eye/Legion tests, agent-gateway
+  guards, direct pytest exit codes, and required package-mirror checks pass.
+
+Promotion should remain a runtime A/B decision until the paired clinical cohort
+shows improved herniation morphology/level/laterality performance without a
+material sensitivity loss, false-positive increase, timeout increase, or
+inter-run stability regression.
+
+## 27. Focused V2 implementation result (2026-08-30)
+
+Phases 0-2 of Section 26 are now implemented behind the strict
+`AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v2` A/B switch. `layout` remains the
+default and the automatic fallback. No UI controller, model credential, API
+endpoint, or GapGPT transport was added or changed.
+
+### 27a. Implemented execution path
+
+The production order is now:
+
+```text
+immutable captured layout package
+  -> Gemini screening ───────────────┐
+  -> Gemini context (parallel) ──────┤
+                                      v
+                          bounded local focus plan
+                                      |
+                    worker-side DICOM composition
+                                      |
+                         GPT verification through
+                         the existing EchoMind/GapGPT route
+```
+
+Screening contract 1.7.0 adds bounded `key_frames` arrays. These are attention
+anchors only. `evidence_request.py` accepts no commands, paths, coordinates, or
+arbitrary tools from model output; it allowlists lumbar levels, normalizes and
+deduplicates findings/context, sanitizes positive frame numbers, prioritizes at
+most four levels, and falls back from an invalid key frame to the explicit
+screening level map.
+
+At capture time, each selected role's local series path and Series Instance UID
+are written to `series_sources.local.json`. This file is separate from
+`session.json`, captions, manifests, and the `sent` request document. Existing
+sessions without this optional file remain valid; focused-v2 degrades to layout.
+
+`focus_evidence.py` loads sagittal T2 and axial T2 directly with the shared
+headless DICOM core. Sagittal T1 is optional. The representative captured axial
+frame contributes its stored Image Position Patient. The composer transforms
+that LPS point into the raw axial volume instead of assuming that viewer slice
+indices and SimpleITK ordering are identical, then projects the same point into
+the sagittal volume.
+
+The model-facing package contains:
+
+1. one sagittal sheet with five contiguous near-midline T2 slices and optional
+   T1 context;
+2. one ordered axial overview with up to 25 samples spanning the whole stack;
+3. one level-fusion sheet per resolved focus, containing five adjacent axial T2
+   source slices and three geometry-projected sagittal T2 slices, plus one
+   sagittal T1 tile when available.
+
+Candidates at the same level share one sheet. A typical single-level case is
+therefore three images. Every caption tells the verifier to read the five axial
+slices as one short sequence, and verification prompt 3.0.0 states that sheet
+labels remain hypotheses rather than diagnoses.
+
+### 27b. Safety, quality, and budgets
+
+The shared `modules/ai_imaging/evidence_core` package now owns immutable volume
+geometry, LPS transforms, DICOM loading, robust volume windowing, no-upscale
+tile fitting, ROI projection, derived-image quality inspection, and evidence
+budgets. Legion Consult imports these primitives rather than retaining a second
+copy.
+
+Focused-v2 rejects missing required provenance, absent Series Instance UID,
+unavailable local series, UID-specific DICOM indexing failure, non-finite or
+effectively uniform source renders, undecodable output, invalid focus geometry,
+and request-budget overflow. The initial hard caps are 8 images, 4 focus levels,
+12 megapixels, and 12 MiB before base64. Patient-orientation edge labels are
+computed from DICOM direction cosines; no screen-side assumption is used.
+Legitimately dark MRI is accepted when it retains meaningful intensity
+variation. No VTK/Qt/OpenGL object is created,
+no viewer is scrolled or relaid out, and no fresh screen grab is attempted.
+
+All composition occurs inside the existing `run_analysis` worker path after the
+parallel branches return. Any focused-v2 failure records only a safe error code
+and switches GPT verification back to the stored layout package. Screening is
+never delayed by DICOM composition and never receives the reduced package.
+
+### 27c. Verification result
+
+Direct pytest exit codes are green:
+
+- focused-v2 plus changed Eagle Eye/Legion boundaries: **262 passed**;
+- complete `tests/code/ai_imaging`: **576 passed, 8 pre-existing xfailed**.
+
+The seven focused-v2 regression guards cover plan validation, frame sanitization,
+patient-LPS alignment, DICOM-derived patient orientation, adjacent-slice
+composition, privacy separation, quality and budget gates, stage-specific
+dispatch, and layout fallback. No live model
+request or release build was run during implementation.
+
+### 27d. Deliberately deferred work
+
+This implementation does not promote focused-v2 to default, add an MCP tool,
+allow arbitrary agentic viewer control, add a second GPT repair call, or create
+separate per-level model calls. The axial overview is a bounded ordered sample,
+not a claim that every source slice is shown at diagnostic size. Optional STIR,
+postcontrast, parasagittal foraminal, and marrow-specific templates remain Phase
+3 evidence-gap decisions. The next required step is the paired radiologist
+cohort from Section 26g, including the known L5-S1 extrusion case, before any
+default-on decision.
+
+---
+
+## 28. Focused V2 capture-frame authority — pipeline 4.6.1 (2026-08-30)
+
+The first focused-v2 live run completed successfully but printed a reversed
+level map. The immutable workstation capture and Gemini screening were correct:
+axial capture frames were ordered superior-to-inferior and the lower lumbar
+attention anchors used the high-numbered frames. The compact verifier package,
+however, decoded the source series as one SimpleITK volume. GDCM ordered the raw
+files inferior-to-superior, and the composer wrote those raw source ordinals on
+the derived tiles. GPT therefore interpreted source slice 1 as capture frame 1
+and reversed the final level map.
+
+That series also contained six independently angled acquisition slabs. Loading
+all slabs into one regular 3D affine produced a non-uniform-sampling warning and
+made a single volume transform an unsafe authority for cross-plane projection.
+The captured DICOM position matched the corresponding source Image Position
+Patient to sub-millimetre precision, so the reliable seam is a one-to-one
+per-slice geometry match rather than an inferred global volume index.
+
+Pipeline 4.6.1 makes the following corrections:
+
+- each axial DICOM object is decoded as an independent scalar slice with its own
+  Image Position Patient, Image Orientation Patient, Pixel Spacing, inversion,
+  and bounded source ordinal;
+- every original axial capture frame is matched one-to-one to the nearest source
+  slice within a strict 2 mm tolerance; a missing, duplicate, or mismatched
+  identity fails closed to the existing immutable-layout fallback;
+- axial overview and level-fusion tiles are emitted in original
+  superior-to-inferior capture order and labeled only as `AX frame n/N`;
+- raw source ordinals remain local manifest provenance and are explicitly
+  forbidden as report or level-map frame numbers;
+- neighboring focus slices stop at an orientation or measured-gap slab boundary,
+  preventing a five-slice ribbon from crossing into another prescribed level;
+- the cross-plane point is the physical center of the selected axial image,
+  derived from per-slice orientation and pixel spacing, rather than the DICOM
+  top-left origin or a synthetic multi-slab affine;
+- verification prompt 3.0.1 names capture frames as the sole level-map numbering
+  authority and distinguishes them from composite-sheet indexes.
+
+Four new synthetic guards reproduce reversed source order, independently angled
+slab boundaries, physical image-center projection, and the verifier numbering
+contract. A read-only probe against the affected local session mapped capture
+frame 1 to raw ordinal 25 and capture frame 25 to raw ordinal 1 while preserving
+the model-facing 1-to-25 capture order; all tested sagittal projections remained
+inside the selected sagittal volume. No patient data or local paths are stored
+in tests or documentation. A new source-build model run and radiologist review
+remain required before this correction is live-verified.
+
+Automated verification completed with direct exit code 0: the focused-v2 file
+passed **11 tests**; the Eagle Eye/Legion changed-boundary set passed **134
+tests**; complete `tests/code/ai_imaging` passed **580 tests** with **8
+pre-existing xfails**; default-build inclusion passed **3 tests**; and all
+**458 plugin mirror pairs** matched.
+
+## 29. Focused V2/V3 axial-window coverage preflight (2026-08-31)
+
+The focused-axial selector previously clipped a radius-two window at a slab
+boundary without filling its unused slots. An edge-adjacent anchor could
+therefore produce four slices even when five were available in the same slab.
+The correction in `focus_evidence.py::_same_slab_neighbors` backfills from the
+opposite side without crossing the existing gap/orientation boundary. It does
+not move the screening anchor or its sagittal projection point. This applies
+to both focused render profiles; shared sagittal selection remains unchanged.
+
+Manifest schema **1.3.0** adds per-focus `axial_window` provenance under policy
+`same-slab-backfill-v1`: anchor, available slab depth and frame bounds,
+requested/expected/selected counts, and whether clipping required adjustment.
+Prompts, model routing through GapGPT, benchmark scoring, reference negatives,
+and the default evidence mode are unchanged. No additional GUI-thread work,
+network round trip, runtime module, dependency, or feature flag was introduced.
+
+The new guards demonstrated **20 failures and 21 passes before the fix**.
+Afterward, focused V2/V3 passed **63 tests**; complete AI Imaging passed **643
+tests with 8 existing xfails**; default-build inclusion passed **3 tests**;
+and **458 plugin mirror pairs** matched, all with exit code 0. The source is
+included in the core AI Imaging package and has no separate payload mirror.
+
+A private replay of saved screening/context and original local image evidence
+restored two four-slice focuses to five slices, retained a true four-slice slab,
+and kept five total model-facing images. Encoded bytes increased from
+4,364,552 to 4,546,578 within the unchanged budget. The original 57 session
+files, both overview PNGs, and all sagittal anchors/sampling remained unchanged.
+No model call was made. This is deterministic coverage verification, not a
+claim that the clinical interpretation has improved.
+
+See the [V3 research plan, section 16](EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md#16-phased-implementation-plan)
+for the experiment record and pending Phase 0/E1/E2 work; reliability tracking
+is **OPT-55**. Live source-build/radiologist verification remains pending.
+The existing `AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout` path remains the bypass.
+
+## 30. V3 bilateral sagittal experiment and scoped root scoring (2026-08-31)
+
+Two bounded changes are implemented. Neither changes the model selection,
+GapGPT transport, clinical system prompts, reference annotations, or default
+evidence mode. The ordinary `focused-v3` path remains the comparison baseline.
+
+### Evidence interpretation corrected before implementation
+
+The reviewed saved run already contained five sagittal overview slices, while
+each dedicated focus contained three. DICOM InstanceNumber and decoded-volume
+index ran in opposite directions. The approximately 9.6 mm right-sided plane
+was present in the overview, but not the dedicated focus. The approximately
+14.4 mm plane was outside both selections. Thus a claim of complete absence
+of the 9.6 mm plane from the diagnostic request is incorrect. The testable
+hypothesis is insufficient focused coverage or emphasis, not a proven cause
+of the model's morphology decision. A model's written rationale cannot prove
+which tile drove its answer.
+
+### Opt-in additive coverage
+
+`AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v3-parasagittal` builds the complete,
+unchanged V3 package first, then appends one bounded sagittal T2 sheet per
+resolved focus while the existing image/pixel/byte limits permit. Screening
+and clinical-context inputs are unchanged. Evidence headers/captions explain
+the extra sheets; clinical system prompts are unchanged.
+
+- The selection is bilateral in patient LPS coordinates, independent of the
+  screening side. Sampling targets are -15, -10, -5, 0, 5, 10, and 15 mm from
+  the unchanged geometric reference. These are engineering targets, not
+  anatomical zone definitions or a claim to have localized the lesion.
+- The reference is the axial image-center projection, not verified anatomical
+  midline. Seven targets yield at most seven distinct source slices. Missing
+  targets and incomplete bilateral coverage are recorded; coarse spacing can
+  merge targets, and samples need not be contiguous.
+- Tiles retain the V3 100 x 100 mm crop and 384 x 384 no-upscale tile. They are
+  ordered patient-right to patient-left, with actual offsets and explicit
+  source-volume numbering. Existing axial capture numbering is untouched.
+- Manifest **1.4.0** in the new mode adds `parasagittal_supplements`, policy
+  `bilateral-lps-supplement-v1`, source slices, offsets, crop/sampling, and
+  `included`, `unavailable`, or `budget_excluded` dispositions. Ordinary V3
+  stays at manifest 1.3.0. Optional rendering/quality failure retains the base
+  package; failure of base composition retains the existing layout fallback.
+- Supplements follow existing focus priority within the unchanged caps:
+  8 images, 4 focuses, 12,000,000 pixels, and 12,582,912 encoded bytes. This
+  does not guarantee a supplement for every focus. No focus means overview
+  evidence only, not proof of a normal study.
+
+The implementation remains in the headless lumbar service, called by the
+existing analysis worker. No scrolling, viewer mutation, GUI-thread image
+work, new agent loop, extra provider request, or Slicer launch is introduced.
+
+### Root-effect scorer correction
+
+Scorer **1.1.0** attaches negation to contact/deviation/compression assertions,
+not to an entire nearby root mention. Synthetic example: "Contact, but no
+deviation, of the traversing right L4 root" retains contact and separately
+records absent deviation. Against a compression reference this is `under`,
+not `miss`. The selected root carries additive `effect_assertions` provenance;
+individual score JSON includes `scorer_version`.
+
+This is a narrow repair, not completion of Phase 0. The prose parser is still
+bounded; multiple-root representation, independent identity/effect scoring,
+morphology categories and coexisting components, failed-attempt denominators,
+and clinician adjudication of reference negatives remain open. Do not use the
+old aggregate or this single replay to claim diagnostic improvement.
+
+### Verification and measured offline result
+
+- Before implementation: root-negation guards **6 failed, 7 passed**; initial
+  parasagittal guards **11 failed**. Self-review also reproduced a missing
+  partial-coverage warning, then corrected it with a regression test.
+- Afterward: scorer **25 passed**, parasagittal **18 passed**, complete AI
+  Imaging **675 passed, 8 existing xfailed**, default-build inclusion **3
+  passed**. All **458 plugin mirror pairs** matched; process exit codes were 0.
+- Offline replay used saved stage outputs and local DICOM with outbound
+  connections disabled. All **57 original files** and all **4 base image
+  bytes/captions** remained unchanged. Two supplements brought the package
+  from **4 to 6 images**, **6,731,520 to 9,361,152 pixels**, and **3,978,659 to
+  4,897,937 bytes**. Both sampled seven slices spanning approximately 14.4 mm
+  on each side of the geometric reference; no coverage/budget warning arose.
+  One local render took **2.551 s** for the experimental package, versus
+  **2.852 s** for baseline; cache/order effects prevent a speed comparison.
+- Rescoring the saved report correctly retained root contact and returned
+  `under` against compression. No report or private reference was overwritten.
+- No model call, application launch, build, deployment, or clinical validation
+  occurred. The new mode is ready for a clinician-supervised source trial,
+  not promoted as more accurate.
+
+Packaging checklist: the modified files belong to the existing core AI Imaging
+tree; there is no corresponding plugin payload mirror. No runtime module,
+installable feature, dependency, or config family was added. The new value of
+an existing environment switch needs no runtime catalog, installer component,
+profile writer, or config-family migration. Core inclusion and mirror checks
+passed without producing a build.
+
+For a source trial, close the existing instance first and launch once from CMD:
+
+```cmd
+set AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v3-parasagittal
+.\.venv\Scripts\python.exe main.py
+```
+
+Set the same variable to `focused-v3` to compare the unchanged base renderer,
+or `layout` to bypass focused composition. Setting a terminal variable does
+not alter installed/build defaults. The next research gates remain full
+Phase 0 repair and controlled E1/E2 comparisons with frozen evidence.

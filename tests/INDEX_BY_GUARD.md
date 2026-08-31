@@ -156,11 +156,16 @@ system table above. Each pairs with a 2026-08 row in the regression catalog.
 | `code/viewer/test_series_file_warm.py` | **12** | The patient-open file warm stays read-only, daemon-threaded, budget-capped, kill-switchable, and refuses blank/duplicate work. It must never become the thing that verifies series files — the switch-time scan still does that. |
 | `code/viewer/test_disk_pixel_cache_async_init.py` | **10** | `initialize()` stays synchronous for direct callers; only the singleton goes background. Includes a threaded writer-vs-scan race and the LRU-order-after-merge invariant (the index's ORDER is the eviction order). |
 | `code/viewer/test_viewer_import_warm.py` | **8** | The import warm creates **no Qt object** (it runs off the GUI thread) and fails loudly if the windowing path stops using the numpy calls it warms. |
+| `code/viewer/test_dicom_import_preview.py` | **5** | Import groups by immutable study/series UID, assigns duplicate raw numbers through the shared collision resolver, and distinguishes copied DICOM object count from pixel-bearing image count. Metadata-only SR/vendor objects remain importable but must report zero displayable images. |
 | `code/viewer/test_disk_pixel_cache_persistence.py` | **20** | The L2 cache SURVIVES shutdown (before this it was `rmtree`'d every exit and had never served a cross-session hit). Pins: persistence is the default; `AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1` really restores the wipe; **`clear()` itself stays unconditional** so an explicit user clear always clears; the shutdown path calls `clear_on_exit()` not `clear()` (AST pin — a comment naming `.clear()` cannot fool it); and eviction still bounds a *persisted* cache, with LRU order surviving a restart. |
 | `code/ui_services/test_thumbnail_active_state_and_strip.py` | **20** | **Behavioural, on real Qt widgets.** The download bar is not buried by the re-parenting `addWidget`; the red active line is stacked above it; A→B→A returns a series to the active state. A source-string pin cannot see a z-order bug — that is exactly how the buried bar survived `test_thumbnail_panel_ui_fixes.py`. |
 | `code/ui_services/test_main_footer_bar_removed.py` | **6** | The empty main-page footer stays hidden and its widgets stay alive (so `apply_theme` keeps working); fails if anyone starts writing to its labels or introduces a real `QSizeGrip`. |
 | `code/ui_services/test_clear_table_crash_guard.py` | **16** | Patient-table item and widget teardown stays outside Qt model mutation: each order cell is created once, safe row/full clears use `takeItem` before `removeRow`/`setRowCount(0)`, producers respect the rebuild guard, and Local Server search does not pump a nested event loop. Includes a real offscreen Qt/Shiboken ownership check. |
-| `code/ui_services/test_local_offline_contract.py` | **7** | LocalDatabase defaults to no remote resync; single-click reconcile, right-panel cache miss, grouped preview, viewer thumbnail cache miss, existing-tab focus, and local patient open return through DB/disk paths before any PACS socket access. A multi-study Local open must also aggregate every study's SQLite/disk series metadata and push it into the grouped patient-tab renderer. |
+| `code/ui_services/test_local_offline_contract.py` | **20** | LocalDatabase defaults to no remote resync; single-click reconcile, right-panel cache miss, grouped preview, viewer thumbnail cache miss, existing-tab focus, and local patient open return through DB/disk paths before any PACS socket access. Multi-study Local open must aggregate every study's SQLite/disk series metadata. Duplicate-SeriesNumber imports preserve exact `series_path`/`folder_key` but use a digit-only UI handle; missing PNGs rebuild from the exact folder off the GUI thread; metadata-only DICOM groups are excluded; cine cards show total frames without changing file-completeness counts; and count persistence targets `SeriesInstanceUID`. Local startup must not render collision storage stems as drag handles before authoritative projection, and the FAST parser must reject them rather than reinterpret underscores as numeric separators. |
+| `code/ui_services/test_patient_study_set.py` | **27** | Pure patient/study/series authority, including deterministic digit-only display aliases for duplicate raw SeriesNumber values while preserving the raw number and collision folder. |
+| `code/viewer/test_dicom_color_decode.py` | **12** | DICOM colour conversion plus the FAST metadata-recovery regression: an RGB/YBR single frame remains `Rows x Columns x 3` when DB metadata omits colour facts. |
+| `code/viewer/test_fast_multiframe.py` | **20** | Multi-frame decode, cache, geometry and metadata expansion, including several cine DICOM objects whose DB rows omit NumberOfFrames. |
+| `code/viewer/test_series_ref_authority.py` | **29** | Immutable display/study/series authority; a numeric collision alias retains the original DICOM number but loads the exact suffixed storage folder. |
 | `code/ui_services/test_advanced_search_routing.py` + `code/database/test_local_advanced_search.py` | **8 + 3** | Advanced Search follows the active source and preserves bounded multi-ID, normalized acquisition/import date, multi-valued modality, body part, DICOM age, and persisted physician filters in Local SQLite. Valid online physician hydration is persisted for later offline reuse; the database tests use an isolated patched `DATABASE_FILE` and cleared pool. |
 | `code/ui_services/test_local_incremental_and_import_date.py` | **13** | Imported Date means the immutable first entry into this computer's Local SQLite, never acquisition date or last refresh. Single-day/preset/range queries use full-day boundaries, NULL legacy timestamps do not match, import-date queries stay Local, and reversed custom ranges are normalized in both the dialog and repository. Also retains the incremental Local-list guards. |
 | `code/viewer/test_reference_line_active_viewport.py` | **17** | The ACTIVE viewport carries no reference line — it is the source and stays clean; the line goes only on the series being cross-referenced. Load-bearing pin: the source overlay is **cleared**, not merely skipped, so a line drawn while a viewport was inactive vanishes the instant it becomes active. Also pins that `AIPACS_REFERENCE_LINES_ALL_PAIRS=1` restores bidirectional lines end-to-end. |
@@ -614,6 +619,103 @@ Raw model provenance remains stored for audit. Focused proof: **2 passed**;
 changed-boundary files: **90 passed**; complete AI Imaging gate: **559 passed,
 8 pre-existing xfailed**; default-build inclusion guard: **3 passed**. Live
 radiologist validation of pipeline 4.2.0 remains pending.
+
+**2026-08-30 (Eagle Eye pipeline 4.3.0 — pathology-focus differential
+adjudication)** — Four new prompt-contract guards failed before the fix. They
+pin screening as a sensitivity-oriented attention map, a shared multi-plane
+disc-displacement nomenclature, separate authorities for screening/context/MRI,
+and mandatory differential reclassification at every positive focus. A wrong
+screening label with a supported alternative pathology must be
+`RECLASSIFIED`, not `REJECTED`; normal and non-pathological variants remain
+valid rejection outcomes. Two older guards were intentionally re-pinned from
+the former deletion-filter/axial-veto policy to the clarified owner contract.
+Focused LLM file: **88 passed**. Live radiologist validation of pipeline 4.3.0
+remains pending. Complete AI Imaging gate: **563 passed, 8 pre-existing
+xfailed**; default-build inclusion guard: **3 passed**.
+
+**2026-08-30 (Eagle Eye pipeline 4.4.0 — paired sagittal context and focal
+attention)** — Four behavioral guards failed before the fix. They require the
+context branch to select paired sagittal T2/T1 captures nearest the measured
+midline instead of sagittal/axial sweep endpoints; extract bounded general,
+regional, and level-specific `context_attention_foci`; preserve only allowlisted
+fields and evidence sources when forwarding context; and retain safe
+session-local sagittal context when an invalid study UID disables external
+lookups. The final verifier must audit every non-global context focus against
+the complete MRI and may add, reject, or mark it indeterminate. Focused LLM
+file: **92 passed**; complete AI Imaging gate: **567 passed, 8 pre-existing
+xfailed**; default-build inclusion guard: **3 passed**; combined gate:
+**570 passed**. Live radiologist validation remains pending.
+
+**2026-08-30 (Eagle Eye pipeline 4.5.0 — patient laterality and same-lesion
+multiplanar morphology)** — Two prompt-contract guards failed before the fix.
+They require both image readers to derive patient side from visible `R/L`
+markers or trusted DICOM patient coordinates, never screen position, and to
+return indeterminate laterality when orientation evidence is unavailable or
+conflicting. They also require sagittal and axial observations to be correlated
+to the same level and displaced component before morphology is fused. A
+sagittal extrusion-defining neck/base-to-dome relationship cannot be outvoted
+by a partial axial slice that looks protrusion-like. Focused LLM file: **94
+passed**; complete AI Imaging gate: **569 passed, 8 pre-existing xfailed**;
+default-build inclusion guard: **3 passed**; combined gate: **572 passed**.
+Live radiologist validation remains pending.
+
+**2026-08-31 (OPT-55 — opt-in bilateral sagittal supplements; root scorer 1.1.0)** —
+`test_eagle_eye_parasagittal.py`: **18 passed**, covering LPS sampling under
+reversed/oblique geometry, short/invalid coverage, exact V3 image/caption
+preservation, screening-side independence, image/pixel/byte caps, optional
+failure retention, no-focus overviews, and verification-only mocked dispatch.
+Initial feature guards failed in **11 cases** before implementation. Root
+negation guards reproduced **6 failures / 7 passes** before the scorer repair;
+`test_eagle_eye_bench_scoring.py` now passes **25 tests**. Contact with negated
+deviation is `under` against compression, not a total miss. Complete AI Imaging:
+**675 passed, 8 existing xfailed**; core-build inclusion **3 passed**; **458
+mirror pairs** matched. Offline replay preserved 57 original files and all four
+baseline images/captions, then added two supplements within unchanged caps.
+No model call, default promotion, or diagnostic improvement claim. Remaining
+Phase 0 scorer/reference defects are documented, not silently declared fixed.
+
+**2026-08-31 (OPT-55 — focused V2/V3 bounded axial-window coverage)** —
+`tests/code/ai_imaging/test_eagle_eye_focused_v2.py` adds **41 synthetic cases**
+covering short/long slabs, every anchor, both boundaries, interior windows,
+gap/orientation isolation, reversed source ordinals, unchanged shared sagittal
+selection, preserved projection anchors, original capture bytes, and audited
+manifest/budget behavior in both render modes. Before the fix: **20 failed,
+21 passed**, exit code 1. Afterward: focused V2/V3 **63 passed**; complete AI
+Imaging **643 passed, 8 existing xfailed**; default-build inclusion **3 passed**;
+**458 plugin mirror pairs** matched, all with exit code 0. A fresh private
+offline replay restored available five-slice focus coverage without changing
+original artifacts or sagittal sampling. No model call or clinical accuracy
+claim. Manifest schema 1.3.0 records policy `same-slab-backfill-v1`; live
+source-build/radiologist validation remains pending.
+
+**2026-08-30 (Eagle Eye pipeline 4.6.0 — candidate-directed focused-v2 DICOM
+evidence)** — `tests/code/ai_imaging/test_eagle_eye_focused_v2.py` adds seven
+behavioral guards. They pin the versioned allowlisted focus plan; decisive-frame
+sanitization and level-map fallback; patient-LPS mapping from stored capture
+geometry into the immutable axial volume; DICOM-derived patient orientation;
+five-slice axial and three-slice
+sagittal sequence sheets; no-upscale rendering, uniform-image rejection, and
+image/pixel/byte caps; local-only series-path provenance; layout evidence for
+parallel Gemini screening; focused evidence only for GPT verification; and
+deterministic fallback to the original stored layout when DICOM provenance or
+composition is unavailable. The shared headless volume primitives now serve
+both Legion Consult and Eagle Eye. Focused changed-boundary gate: **262 passed**;
+complete AI Imaging gate: **576 passed, 8 pre-existing xfailed**. `layout`
+remains the runtime default pending paired radiologist validation.
+
+**2026-08-30 (Eagle Eye pipeline 4.6.1 — focused-v2 capture-frame
+authority)** — Four additional behavioral guards cover the live reversed-level
+map defect. They require raw inferior-to-superior DICOM order to remain distinct
+from original superior-to-inferior capture-frame identity, prevent adjacent
+focus ribbons from crossing independently angled slab boundaries, calculate the
+cross-plane point from the physical image center rather than Image Position
+Patient alone, and require verification to use only `AX frame n/N` labels for
+the final level map. The numbering guard failed pre-fix with no
+`axial_capture_frames` authority. The focused file now contains **11 guards**.
+The changed-boundary set passed **134 tests**, complete AI Imaging passed **580
+tests with 8 pre-existing xfails**, default-build inclusion passed **3 tests**,
+and **458 plugin mirror pairs** matched. Live source-build model and radiologist
+validation remain pending.
 
 **2026-08-28 (Eagle Eye — Legion Consult foundation)** — New guard files:
 `tests/code/ai_imaging/test_legion_consult_foundation.py` and

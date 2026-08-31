@@ -1088,7 +1088,12 @@ class QtFastContainer(QWidget):
         try:
             if mime_data.hasFormat(_SERIES_DROP_MIME):
                 raw = bytes(mime_data.data(_SERIES_DROP_MIME)).decode("utf-8", errors="ignore").strip()
-                return int(raw)
+                # Python accepts underscores as numeric separators
+                # (int("1_2") == 12). Collision-suffixed folder/PNG keys are
+                # storage identity, never viewer identity; reject them instead
+                # of silently routing the drop to a different series.
+                if raw and raw.lstrip("-").isdigit():
+                    return int(raw)
             if mime_data.hasText():
                 text = (mime_data.text() or "").strip()
                 if text.lstrip("-").isdigit():

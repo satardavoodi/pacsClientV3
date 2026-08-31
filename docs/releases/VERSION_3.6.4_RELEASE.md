@@ -285,10 +285,24 @@ Published to `main` + `beta-version` with an annotated `v3.6.4` tag
 - https://github.com/satardavoodi/pacsClientV3
 
 Client credential hardening was published afterward as fast-forward commit `a2919adb` to both
-branches on all three remotes. The original annotated tag was not force-moved. Any new installer
-must use the reviewed hardening commit (or a later documentation-only descendant), not the older
-tag target.
+branches on all three remotes. The original annotated tag was not force-moved. The later
+2026-08-31 source follow-up below also changes runtime code. Any new installer must record its
+exact reviewed source SHA; the original tag alone does not include these follow-ups.
 
 Excluded from the release commit by design (local/generated state):
 `builder nuitka/output/**`, `generated-files/runtime_profile.json`,
 `generated-files/gapgpt/**`, `config/patient_table_sort.json`.
+
+## 11. Source follow-up — 2026-08-31
+
+The application version remains **3.6.4**. The latest source batch adds DICOM import/displayability
+and duplicate-series identity fixes, Fast Viewer color/cine handling, Eagle Eye pipeline **4.6.1**
+with opt-in focused evidence modes, benchmark tooling, and Slicer control/research documentation.
+Experimental evidence modes and research proposals are not claims of clinical validation.
+
+Publication preflight: **675 AI Imaging tests passed, 8 existing xfailed**; **174 related
+viewer/import/security/build checks passed, 3 existing local-fixture tests skipped**; **458 plugin
+mirror pairs matched**. This is source publication, not a newly built or approved installer.
+
+See [the complete follow-up scope and exclusions](VERSION_3.6.4_FOLLOWUP_2026-08-31.md) and
+[the source-publication safety record](../../deploy-record-workstation-2026-08-31.md).

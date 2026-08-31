@@ -6,7 +6,7 @@ It runs in the LLM worker branch and combines four forms of context:
 * allowlisted facts from the canonical reception API and prior reports;
 * a sanitized snapshot of the PACS series catalogue stored in ``session.json``;
 * photographed history pages, including DICOM series number 100000; and
-* a small overview sample from the already-built MRI capture package.
+* paired near-midline sagittal T2/T1 context frames from the MRI package.
 
 Patient names, identifiers, local paths, and filenames are never included in the
 model request. Context remains a clinical prior; it is not current-study finding
@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
@@ -128,8 +129,9 @@ class ClinicalContextPackage:
             f"{inventory}\n\n"
             "CONTEXT IMAGES IN ATTACHMENT ORDER\n"
             + ("\n".join(image_lines) if image_lines else "  none")
-            + "\nTreat source labels as provenance. MRI overview images provide only "
-              "broad study context; the final verifier decides findings from the "
+            + "\nTreat source labels as provenance. Paired sagittal T2/T1 images "
+              "may provide general context and bounded regional or level-specific "
+              "attention hypotheses; the final verifier decides findings from the "
               "complete MRI evidence package."
         )
 
@@ -626,20 +628,6 @@ def _dicom_document_images(
     return [], "unreadable" if unreadable else "unavailable"
 
 
-def _evenly_sample(items: Sequence[Any], limit: int) -> List[Any]:
-    if limit <= 0 or not items:
-        return []
-    if len(items) <= limit:
-        return list(items)
-    if limit == 1:
-        return [items[len(items) // 2]]
-    indexes = [
-        round(index * (len(items) - 1) / (limit - 1))
-        for index in range(limit)
-    ]
-    return [items[index] for index in indexes]
-
-
 def _mri_overview_images(
     analysis_package: Any,
     *,
@@ -647,42 +635,61 @@ def _mri_overview_images(
 ) -> List[ClinicalDocumentImage]:
     if analysis_package is None or limit <= 0:
         return []
-    grouped: Dict[str, List[Any]] = {}
-    for image in list(getattr(analysis_package, "images", ()) or ()):
-        grouped.setdefault(
-            str(getattr(image, "session", "unknown") or "unknown"),
-            [],
-        ).append(image)
-    if not grouped:
+
+    paired_sagittal = []
+    for position, image in enumerate(
+        list(getattr(analysis_package, "images", ()) or ())
+    ):
+        if str(getattr(image, "session", "") or "").strip().lower() != "sagittal":
+            continue
+        capture = getattr(image, "capture", None)
+        capture = capture if isinstance(capture, dict) else {}
+        panes = capture.get("panes")
+        panes = panes if isinstance(panes, dict) else {}
+        if "sagittal_t2" not in panes or "sagittal_t1" not in panes:
+            continue
+        spatial = capture.get("spatial_context")
+        spatial = spatial if isinstance(spatial, dict) else {}
+        try:
+            offset = float(spatial.get("offset_mm"))
+        except (TypeError, ValueError):
+            offset = math.inf
+        if not math.isfinite(offset):
+            offset = math.inf
+        paired_sagittal.append((position, offset, image))
+
+    if not paired_sagittal:
         return []
 
-    sessions = list(grouped)
-    base = max(1, limit // len(sessions))
-    selected = []
-    for name in sessions:
-        selected.extend(_evenly_sample(grouped[name], base))
-    if len(selected) < limit:
-        remaining = [
-            item
-            for name in sessions
-            for item in grouped[name]
-            if item not in selected
-        ]
-        selected.extend(_evenly_sample(remaining, limit - len(selected)))
-    selected = selected[:limit]
+    if any(math.isfinite(offset) for _position, offset, _image in paired_sagittal):
+        ranked = sorted(
+            paired_sagittal,
+            key=lambda entry: (abs(entry[1]), entry[0]),
+        )
+        selected_entries = ranked[:limit]
+    else:
+        count = min(limit, len(paired_sagittal))
+        start = max(0, (len(paired_sagittal) - count) // 2)
+        selected_entries = paired_sagittal[start:start + count]
+
+    # Preserve acquisition order after choosing the frames nearest the measured
+    # midline. The paired T2/T1 panes remain geometrically matched in each image.
+    selected_entries.sort(key=lambda entry: entry[0])
     out = []
-    for index, item in enumerate(selected, start=1):
+    for index, (_position, offset, item) in enumerate(selected_entries, start=1):
         path = Path(getattr(item, "path", ""))
         if not path.is_file():
             continue
-        session = _clean_text(
-            getattr(item, "session", "unknown"),
-            40,
-        ) or "unknown"
+        offset_text = (
+            f"offset {offset:+.1f} mm from estimated midline"
+            if math.isfinite(offset)
+            else "midline offset unavailable"
+        )
         out.append(
             ClinicalDocumentImage(
                 path,
-                f"MRI OVERVIEW {index} of {len(selected)} ({session} sweep)",
+                "PAIRED SAGITTAL T2/T1 CONTEXT "
+                f"{index} of {len(selected_entries)} ({offset_text})",
                 str(
                     getattr(item, "mime", "")
                     or _SUPPORTED_MIME_BY_SUFFIX.get(
@@ -716,12 +723,12 @@ def build_context_package(
 ) -> ClinicalContextPackage:
     """Collect bounded context using existing reception and PACS authorities."""
     root = Path(session_dir)
-    normalized_study_uid = str(study_uid or "").strip()
-    if (
-        not normalized_study_uid
-        or not _SAFE_STUDY_UID.fullmatch(normalized_study_uid)
-    ):
-        return empty_context_package(study_uid, root)
+    requested_study_uid = str(study_uid or "").strip()
+    normalized_study_uid = (
+        requested_study_uid
+        if requested_study_uid and _SAFE_STUDY_UID.fullmatch(requested_study_uid)
+        else ""
+    )
 
     document = _read_session(root)
     patient_id = str(document.get("patient_id") or "").strip()
@@ -736,7 +743,10 @@ def build_context_package(
     }
 
     fetch_record = reception_fetch or _default_reception_fetch
-    if patient_id:
+    # External patient and study lookups require a validated study identity.
+    # Session-local inventory and captured sagittal evidence remain safe and
+    # useful when that identity is unavailable.
+    if patient_id and normalized_study_uid:
         try:
             reception_record = fetch_record(patient_id)
         except Exception:
@@ -774,24 +784,31 @@ def build_context_package(
         )
 
     attachment_limit = max(0, min(int(max_images), DEFAULT_MAX_IMAGES))
-    attachment_images = _attachment_images(
-        normalized_study_uid,
-        Path(attachment_root) if attachment_root is not None else _attachment_root(),
-        limit=attachment_limit,
-        validate=validate_images,
+    attachment_images = (
+        _attachment_images(
+            normalized_study_uid,
+            Path(attachment_root) if attachment_root is not None else _attachment_root(),
+            limit=attachment_limit,
+            validate=validate_images,
+        )
+        if normalized_study_uid
+        else []
     )
     if attachment_images:
         status["attachment_documents"] = "available"
 
-    dicom_images, dicom_status = _dicom_document_images(
-        normalized_study_uid,
-        Path(source_root) if source_root is not None else _source_root(),
-        root,
-        limit=max(
-            0,
-            min(int(max_dicom_documents), DEFAULT_MAX_DICOM_DOCUMENTS),
-        ),
-    )
+    if normalized_study_uid:
+        dicom_images, dicom_status = _dicom_document_images(
+            normalized_study_uid,
+            Path(source_root) if source_root is not None else _source_root(),
+            root,
+            limit=max(
+                0,
+                min(int(max_dicom_documents), DEFAULT_MAX_DICOM_DOCUMENTS),
+            ),
+        )
+    else:
+        dicom_images, dicom_status = [], "unavailable"
     status["dicomized_clinical_document"] = dicom_status
 
     overview_images = _mri_overview_images(

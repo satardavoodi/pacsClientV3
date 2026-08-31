@@ -634,17 +634,17 @@ class _VCLoadMixin:
             )
             if _SERIESREF_DISK and _series_ref is not None and _series_ref.is_authoritative:
                 if (str(study_path or '') != _series_ref.study_path
-                        or str(ms_disk_series_number) != str(_series_ref.series_number)):
+                        or str(ms_disk_series_number) != str(_series_ref.disk_series_number)):
                     self._identity_log(
                         "info",
                         "[SERIESREF] key=%s -> study_path=%s disk_series=%s "
                         "(authority source=%s slot=%s study_uid=%s) — was study_path=%s disk_series=%s",
-                        series_key, _series_ref.study_path, _series_ref.series_number,
+                        series_key, _series_ref.study_path, _series_ref.disk_series_number,
                         _series_ref.source, _series_ref.study_slot, _series_ref.study_uid,
                         study_path, ms_disk_series_number,
                     )
                 study_path = _series_ref.study_path
-                ms_disk_series_number = _series_ref.series_number
+                ms_disk_series_number = _series_ref.disk_series_number
                 _ms_resolved = True
                 _ms_study_uid = _series_ref.study_uid or _ms_study_uid
 

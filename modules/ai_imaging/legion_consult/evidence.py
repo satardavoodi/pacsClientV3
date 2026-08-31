@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 from uuid import uuid4
@@ -18,6 +17,18 @@ from uuid import uuid4
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from modules.ai_imaging.evidence_core import (
+    EvidenceError,
+    ROIProjection,
+    SeriesVolume,
+    display_slice as _display_slice,
+    fit_grayscale as _fit_grayscale,
+    focus_slice_indices,
+    intensity_window as _intensity_window,
+    load_series_volume,
+    overview_page_indices,
+    project_patient_roi,
+)
 from modules.ai_imaging.eagle_eye_lumbar.llm_package import (
     AnalysisPackage,
     PackagedImage,
@@ -33,239 +44,6 @@ EVIDENCE_MANIFEST = "evidence_manifest.json"
 TILES_PER_PAGE = 20
 TILE_SIZE = (256, 256)
 MIN_PROJECTED_ROI_SIZE = 12
-
-
-class EvidenceError(RuntimeError):
-    """The selected DICOM evidence cannot be prepared safely."""
-
-
-@dataclass(frozen=True)
-class SeriesVolume:
-    """One decoded 3D scalar volume with SimpleITK-compatible geometry."""
-
-    pixels: np.ndarray
-    origin: tuple[float, float, float]
-    spacing: tuple[float, float, float]
-    direction: tuple[float, ...]
-    plane: str = "unknown"
-    inverted: bool = False
-
-    def __post_init__(self) -> None:
-        pixels = np.asarray(self.pixels)
-        if pixels.ndim != 3:
-            raise ValueError("Legion Consult requires a 3D scalar image volume.")
-        if not all(int(size) > 0 for size in pixels.shape):
-            raise ValueError("Legion Consult received an empty 3D volume.")
-        if len(self.origin) != 3 or len(self.spacing) != 3 or len(self.direction) != 9:
-            raise ValueError("The volume geometry is incomplete.")
-        if any(float(value) <= 0 for value in self.spacing):
-            raise ValueError("The volume spacing must be positive.")
-
-    @property
-    def depth(self) -> int:
-        return int(self.pixels.shape[0])
-
-    @property
-    def height(self) -> int:
-        return int(self.pixels.shape[1])
-
-    @property
-    def width(self) -> int:
-        return int(self.pixels.shape[2])
-
-    def patient_to_continuous_index(
-        self, point: Sequence[float]
-    ) -> tuple[float, float, float]:
-        """Map patient LPS millimetres to continuous x/y/z voxel indices."""
-        if len(point) < 3:
-            raise ValueError("A patient-space point requires three coordinates.")
-        direction = np.asarray(self.direction, dtype=np.float64).reshape(3, 3)
-        delta = np.asarray(point[:3], dtype=np.float64) - np.asarray(
-            self.origin, dtype=np.float64
-        )
-        try:
-            axis_distance = np.linalg.solve(direction, delta)
-        except np.linalg.LinAlgError as exc:
-            raise EvidenceError("The DICOM orientation matrix is singular.") from exc
-        index = axis_distance / np.asarray(self.spacing, dtype=np.float64)
-        return tuple(float(value) for value in index)
-
-
-@dataclass(frozen=True)
-class ROIProjection:
-    """Projected attention rectangle for one stack."""
-
-    center_slice: int
-    bounds: tuple[int, int, int, int]
-    continuous_points: tuple[tuple[float, float, float], ...]
-
-
-def focus_slice_indices(center: int, depth: int, padding: int = 5) -> tuple[int, ...]:
-    """Return a clipped inclusive slice window around the projected center."""
-    if depth <= 0:
-        return ()
-    center = min(max(int(center), 0), int(depth) - 1)
-    padding = max(int(padding), 0)
-    return tuple(range(max(0, center - padding), min(depth, center + padding + 1)))
-
-
-def overview_page_indices(
-    depth: int, tiles_per_page: int = TILES_PER_PAGE
-) -> tuple[tuple[int, ...], ...]:
-    """Partition a stack so every slice appears once in an overview page."""
-    if depth <= 0:
-        return ()
-    if tiles_per_page <= 0:
-        raise ValueError("tiles_per_page must be positive")
-    indices = tuple(range(int(depth)))
-    return tuple(
-        indices[start : start + int(tiles_per_page)]
-        for start in range(0, len(indices), int(tiles_per_page))
-    )
-
-
-def _expanded_axis_bounds(low: float, high: float, limit: int) -> tuple[int, int]:
-    center = (float(low) + float(high)) / 2.0
-    half = max(abs(float(high) - float(low)) / 2.0, MIN_PROJECTED_ROI_SIZE / 2.0)
-    first = max(0, int(math.floor(center - half)))
-    last = min(int(limit), int(math.ceil(center + half)))
-    if last <= first:
-        first = min(max(int(round(center)), 0), max(int(limit) - 1, 0))
-        last = min(int(limit), first + 1)
-    return first, last
-
-
-def project_patient_roi(
-    volume: SeriesVolume,
-    patient_lps_corners: Sequence[Sequence[float]],
-) -> ROIProjection:
-    """Project the four patient-space ROI corners into one selected series."""
-    if len(patient_lps_corners) != 4:
-        raise EvidenceError("The attention ROI must contain four patient-space corners.")
-    points = tuple(
-        volume.patient_to_continuous_index(point) for point in patient_lps_corners
-    )
-    xs = [point[0] for point in points]
-    ys = [point[1] for point in points]
-    zs = [point[2] for point in points]
-    center_slice = min(
-        max(int(round(sum(zs) / len(zs))), 0),
-        volume.depth - 1,
-    )
-    x0, x1 = _expanded_axis_bounds(min(xs), max(xs), volume.width)
-    y0, y1 = _expanded_axis_bounds(min(ys), max(ys), volume.height)
-    return ROIProjection(
-        center_slice=center_slice,
-        bounds=(x0, y0, x1, y1),
-        continuous_points=points,
-    )
-
-
-def _dicom_files(candidate: SeriesCandidate) -> list[str]:
-    directory = Path(candidate.series_path)
-    if not directory.is_dir():
-        raise EvidenceError("A selected MRI series is no longer available locally.")
-    try:
-        import SimpleITK as sitk
-
-        filenames = list(
-            sitk.ImageSeriesReader.GetGDCMSeriesFileNames(
-                str(directory), str(candidate.series_uid or "")
-            )
-        )
-        if not filenames:
-            filenames = list(sitk.ImageSeriesReader.GetGDCMSeriesFileNames(str(directory)))
-    except Exception as exc:
-        raise EvidenceError("The selected MRI series headers could not be indexed.") from exc
-    if not filenames:
-        raise EvidenceError("A selected MRI series contains no readable DICOM images.")
-    return filenames
-
-
-def _reject_burned_annotations(first_file: str) -> bool:
-    """Fail closed when the DICOM explicitly declares burned-in annotation."""
-    try:
-        import pydicom
-
-        dataset = pydicom.dcmread(
-            first_file,
-            stop_before_pixels=True,
-            specific_tags=["BurnedInAnnotation", "PhotometricInterpretation"],
-        )
-    except Exception as exc:
-        raise EvidenceError("The selected MRI privacy metadata could not be read.") from exc
-    value = str(getattr(dataset, "BurnedInAnnotation", "") or "").strip().upper()
-    if value == "YES":
-        raise EvidenceError(
-            "A selected series declares burned-in annotations and cannot be sent safely."
-        )
-    return str(getattr(dataset, "PhotometricInterpretation", "") or "").upper() == (
-        "MONOCHROME1"
-    )
-
-
-def load_series_volume(candidate: SeriesCandidate) -> SeriesVolume:
-    """Decode one selected DICOM series without constructing Qt or VTK objects."""
-    filenames = _dicom_files(candidate)
-    inverted = _reject_burned_annotations(filenames[0])
-    try:
-        import SimpleITK as sitk
-
-        reader = sitk.ImageSeriesReader()
-        reader.SetFileNames(filenames)
-        image = reader.Execute()
-        pixels = sitk.GetArrayFromImage(image)
-        if int(image.GetDimension()) != 3:
-            raise EvidenceError("A selected MRI series is not a 3D image stack.")
-        return SeriesVolume(
-            pixels=np.asarray(pixels),
-            origin=tuple(float(value) for value in image.GetOrigin()),
-            spacing=tuple(float(value) for value in image.GetSpacing()),
-            direction=tuple(float(value) for value in image.GetDirection()),
-            plane=str(candidate.plane or "unknown"),
-            inverted=inverted,
-        )
-    except EvidenceError:
-        raise
-    except Exception as exc:
-        raise EvidenceError("A selected MRI series could not be decoded.") from exc
-
-
-def _intensity_window(volume: SeriesVolume) -> tuple[float, float]:
-    """Estimate a robust window from a bounded sample of the volume."""
-    values = np.asarray(volume.pixels)
-    flat = values.reshape(-1)
-    stride = max(1, int(math.ceil(flat.size / 1_000_000)))
-    sample = np.asarray(flat[::stride], dtype=np.float32)
-    finite = sample[np.isfinite(sample)]
-    if finite.size == 0:
-        raise EvidenceError("A selected MRI series contains no finite pixel values.")
-    low, high = np.percentile(finite, (1.0, 99.0))
-    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
-        low = float(np.min(finite))
-        high = float(np.max(finite))
-    return float(low), float(high)
-
-
-def _display_slice(
-    pixels: np.ndarray, low: float, high: float, inverted: bool
-) -> np.ndarray:
-    values = np.asarray(pixels, dtype=np.float32)
-    if high <= low:
-        scaled = np.zeros(values.shape, dtype=np.uint8)
-    else:
-        scaled = np.clip((values - low) * (255.0 / (high - low)), 0, 255).astype(
-            np.uint8
-        )
-    return 255 - scaled if inverted else scaled
-
-
-def _fit_grayscale(array: np.ndarray, size: tuple[int, int]) -> Image.Image:
-    image = Image.fromarray(array, mode="L")
-    image.thumbnail(size, Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", size, "black")
-    canvas.paste(image.convert("RGB"), ((size[0] - image.width) // 2, (size[1] - image.height) // 2))
-    return canvas
 
 
 def _safe_role(request: LegionConsultRequest, key: str, ordinal: int) -> str:

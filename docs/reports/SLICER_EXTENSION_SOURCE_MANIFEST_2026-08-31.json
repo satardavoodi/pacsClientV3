@@ -1,0 +1,293 @@
+{
+  "verified_date": "2026-08-31",
+  "scope": "Public source review and synthetic-only runtime experiment; no clinical inference or production installation",
+  "repositories": [
+    {
+      "repository": "bowang-lab/MedSAMSlicer",
+      "commit": "14c756fdd8ec49af17b083f07deae482c1013f6b",
+      "commit_date": "2024-10-04T14:03:17Z",
+      "files": [
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/bowang-lab/MedSAMSlicer/14c756fdd8ec49af17b083f07deae482c1013f6b/README.md",
+          "http_status": 200,
+          "bytes": 3356,
+          "sha256": "df71450f33462d5f6c0e8c5130ca8ad713415197996fcf00f7293ab5ec90b826"
+        },
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/bowang-lab/MedSAMSlicer/14c756fdd8ec49af17b083f07deae482c1013f6b/LICENSE",
+          "http_status": 200,
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "MedSAMLite/MedSAMLite.py",
+          "url": "https://github.com/bowang-lab/MedSAMSlicer/blob/14c756fdd8ec49af17b083f07deae482c1013f6b/MedSAMLite/MedSAMLite.py",
+          "download_method": "GitHub contents API; raw URL returned HTTP 400",
+          "http_status": 200,
+          "bytes": 49294,
+          "sha256": "4aa92405425f83a83c9510be65ab6ff0c72b93c20ead3c6c5d4d6781271e58ed"
+        }
+      ]
+    },
+    {
+      "repository": "dbouget/Raidionics-Slicer",
+      "commit": "2b551daf4fc1d5a581be23ec2af5b2e41eec1328",
+      "commit_date": "2025-11-10T15:28:22Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/dbouget/Raidionics-Slicer/2b551daf4fc1d5a581be23ec2af5b2e41eec1328/LICENSE",
+          "http_status": 200,
+          "bytes": 1318,
+          "sha256": "7ab0a1e7242506e0003ae8059a7ad992eb996233163ac09a2bd3891ece521718"
+        },
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/dbouget/Raidionics-Slicer/2b551daf4fc1d5a581be23ec2af5b2e41eec1328/README.md",
+          "http_status": 200,
+          "bytes": 8897,
+          "sha256": "6aa0f42ed8452c1f4df873a10b1cec393e17fec2f0601d2a2a86dcbc799e35e5"
+        },
+        {
+          "path": "Raidionics/Raidionics.py",
+          "url": "https://raw.githubusercontent.com/dbouget/Raidionics-Slicer/2b551daf4fc1d5a581be23ec2af5b2e41eec1328/Raidionics/Raidionics.py",
+          "http_status": 200,
+          "bytes": 1721,
+          "sha256": "2c1cc63d733715b6744aaab261cb43ff9a98e1a5414afdb424ab6d88d3f79a33"
+        },
+        {
+          "path": "Raidionics/src/RaidionicsLogic.py",
+          "url": "https://raw.githubusercontent.com/dbouget/Raidionics-Slicer/2b551daf4fc1d5a581be23ec2af5b2e41eec1328/Raidionics/src/RaidionicsLogic.py",
+          "http_status": 200,
+          "bytes": 25619,
+          "sha256": "65a54268a1b4ce7ccd6ea0fdab4540faaae34d919021add61f9d061eddcdf748"
+        },
+        {
+          "path": "Raidionics/src/__init__.py",
+          "url": "https://raw.githubusercontent.com/dbouget/Raidionics-Slicer/2b551daf4fc1d5a581be23ec2af5b2e41eec1328/Raidionics/src/__init__.py",
+          "http_status": 200,
+          "bytes": 18,
+          "sha256": "be1c8aa5a5689cc2969f1beab99d44b135c4186bc5013f5b0da72679367fd678"
+        }
+      ]
+    },
+    {
+      "repository": "lassoan/SlicerMONAIAuto3DSeg",
+      "commit": "9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca",
+      "commit_date": "2026-03-19T12:30:05Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/LICENSE",
+          "http_status": 200,
+          "bytes": 1069,
+          "sha256": "fe4ee93e04eb499c9d3f17c766edebf9ccb3eeaafdf09bed5e9ebfafcef30736"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSeg.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSeg.py",
+          "http_status": 200,
+          "bytes": 95716,
+          "sha256": "e17ea9b699ddcf08c221e7274b8f9d4dbac471ffbcf791aa56bcdc427eddd193"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegLib/__init__.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegLib/__init__.py",
+          "http_status": 200,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegLib/dependency_handler.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegLib/dependency_handler.py",
+          "http_status": 200,
+          "bytes": 5984,
+          "sha256": "c8555131992a29bc4a0ceb2edb7c86609edc29fdc427ff858bb3219ea7cc7bb6"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegLib/model_database.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegLib/model_database.py",
+          "http_status": 200,
+          "bytes": 9084,
+          "sha256": "311eeaede024848f2df2e365eff460034a7beb6402f9edd6c88db60437fdce27"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegLib/process.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegLib/process.py",
+          "http_status": 200,
+          "bytes": 8620,
+          "sha256": "d07b79faba0ced38b471e09d726e7eed2206143ed8bbb09f7733152659591101"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegLib/utils.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegLib/utils.py",
+          "http_status": 200,
+          "bytes": 429,
+          "sha256": "cdf8feec9473eff91afcae7f2baca36b1c3e2c12f378a37896511e6bbdf940db"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegServer/__init__.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegServer/__init__.py",
+          "http_status": 200,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "MONAIAuto3DSeg/MONAIAuto3DSegServer/main.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/MONAIAuto3DSegServer/main.py",
+          "http_status": 200,
+          "bytes": 5256,
+          "sha256": "d3c3e79031f53d6d6a1af93fb903cc07f9dfff8349b581d8c52cd248487fd72f"
+        },
+        {
+          "path": "MONAIAuto3DSeg/Resources/Models.json",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/Resources/Models.json",
+          "http_status": 200,
+          "bytes": 47931,
+          "sha256": "f5292aa24c5b660f0dea57711191aa7f14b5bc5abe6e1730d6efbde381d42399"
+        },
+        {
+          "path": "MONAIAuto3DSeg/Scripts/auto3dseg_segresnet_inference.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/MONAIAuto3DSeg/Scripts/auto3dseg_segresnet_inference.py",
+          "http_status": 200,
+          "bytes": 14748,
+          "sha256": "31dd1363d2cb83c7d10ff4466cfae57136d84c0d3be30f62e7af0a7764b8a5cb"
+        },
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerMONAIAuto3DSeg/9cdf2df4e8b3a5351ad11a3f934b0c13ffb15cca/README.md",
+          "http_status": 200,
+          "bytes": 15890,
+          "sha256": "9b2d38379c13cf1ba0c1df354af1ac86e2b039abe64fa878abcac78e9621ffb2"
+        }
+      ]
+    },
+    {
+      "repository": "PerkLab/SlicerSandbox",
+      "commit": "7211da97bf65edc26fc67f1c69668be584409786",
+      "commit_date": "2026-07-08T02:59:24Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/PerkLab/SlicerSandbox/7211da97bf65edc26fc67f1c69668be584409786/LICENSE",
+          "http_status": 200,
+          "bytes": 1355,
+          "sha256": "34a00d81aab217badd1ab4ee632d5f909b74cb361014cae79979aa5405f8b2d7"
+        },
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/PerkLab/SlicerSandbox/7211da97bf65edc26fc67f1c69668be584409786/README.md",
+          "http_status": 200,
+          "bytes": 19769,
+          "sha256": "2aac58e075058e0af3def847b1e22a44b4b9308c88d4d410d565e0abbd94d5d9"
+        },
+        {
+          "path": "SegmentCrossSectionArea/Resources/UI/SegmentCrossSectionArea.ui",
+          "url": "https://raw.githubusercontent.com/PerkLab/SlicerSandbox/7211da97bf65edc26fc67f1c69668be584409786/SegmentCrossSectionArea/Resources/UI/SegmentCrossSectionArea.ui",
+          "http_status": 200,
+          "bytes": 10935,
+          "sha256": "1ce6d5524e908d719e654b71299bca99ea9b169d88cf206c8b38c0adce11574c"
+        },
+        {
+          "path": "SegmentCrossSectionArea/SegmentCrossSectionArea.py",
+          "url": "https://raw.githubusercontent.com/PerkLab/SlicerSandbox/7211da97bf65edc26fc67f1c69668be584409786/SegmentCrossSectionArea/SegmentCrossSectionArea.py",
+          "http_status": 200,
+          "bytes": 22591,
+          "sha256": "6147e0153543f5a5c5542573e5f62b6153d2c996ec5c5d82d699cb6d2c270637"
+        }
+      ]
+    },
+    {
+      "repository": "lassoan/SlicerTotalSegmentator",
+      "commit": "270cac20b78a282505e4f6a25d268666e4056019",
+      "commit_date": "2026-07-21T01:05:14Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerTotalSegmentator/270cac20b78a282505e4f6a25d268666e4056019/LICENSE",
+          "http_status": 200,
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerTotalSegmentator/270cac20b78a282505e4f6a25d268666e4056019/README.md",
+          "http_status": 200,
+          "bytes": 13822,
+          "sha256": "298440ed06d20f55e24319121200895c399a99618f391582b8d889094cf99050"
+        },
+        {
+          "path": "TotalSegmentator/TotalSegmentator.py",
+          "url": "https://raw.githubusercontent.com/lassoan/SlicerTotalSegmentator/270cac20b78a282505e4f6a25d268666e4056019/TotalSegmentator/TotalSegmentator.py",
+          "http_status": 200,
+          "bytes": 83385,
+          "sha256": "19c48021aec04c66f7df64663b7de05f6cf5c99be2c348c04b47164c73557b70"
+        }
+      ]
+    }
+  ],
+  "model_download_probe": {
+    "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/download/Models/brats-gli-v1.0.0.zip",
+    "http_status": 206,
+    "content_range": "bytes 0-31/322685643",
+    "content_length_header": "32",
+    "bytes_read": 32,
+    "zip_magic": true,
+    "full_model_downloaded": false
+  },
+  "release_metadata": [
+    {
+      "repository": "bowang-lab/MedSAMSlicer",
+      "tag": "v0.13",
+      "url": "https://github.com/bowang-lab/MedSAMSlicer/releases/tag/v0.13",
+      "assets": []
+    },
+    {
+      "repository": "dbouget/Raidionics-Slicer",
+      "tag": "v1.2.0",
+      "url": "https://github.com/raidionics/Raidionics-Slicer/releases/tag/v1.2.0",
+      "assets": []
+    },
+    {
+      "repository": "lassoan/SlicerMONAIAuto3DSeg",
+      "tag": "Models",
+      "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/tag/Models",
+      "assets": [
+        {
+          "name": "brats-gli-v1.0.0.zip",
+          "bytes": 322685643,
+          "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/download/Models/brats-gli-v1.0.0.zip"
+        },
+        {
+          "name": "brats-men-v1.0.0.zip",
+          "bytes": 323000150,
+          "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/download/Models/brats-men-v1.0.0.zip"
+        },
+        {
+          "name": "brats-met-v1.0.0.zip",
+          "bytes": 322896830,
+          "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/download/Models/brats-met-v1.0.0.zip"
+        },
+        {
+          "name": "brats-ped-v1.0.0.zip",
+          "bytes": 322696468,
+          "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/download/Models/brats-ped-v1.0.0.zip"
+        },
+        {
+          "name": "brats-ssa-v1.0.0.zip",
+          "bytes": 322942422,
+          "url": "https://github.com/lassoan/SlicerMONAIAuto3DSeg/releases/download/Models/brats-ssa-v1.0.0.zip"
+        }
+      ],
+      "total_asset_count": 63
+    }
+  ],
+  "runtime_experiment": {
+    "result_path": "generated-files/slicer-control-probe/ce29efba6e7f466eb9aef604f9d0fa51/result.json",
+    "computation_passed": true,
+    "gui_initialized": false,
+    "process_exit_code": 0
+  }
+}

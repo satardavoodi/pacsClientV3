@@ -439,6 +439,10 @@ class SliceMeta:
     # Resolved cine playback rate (fps) for a multi-frame file, else None. Derived
     # from RecommendedDisplayFrameRate / CineRate / FrameTime during the header scan.
     frame_rate: Optional[float] = None
+    # True only when SamplesPerPixel/colour facts came from this instance's
+    # own header/metadata. A series-level photometric fallback must not make an
+    # incomplete DB row eligible for the metadata-driven subprocess decoder.
+    pixel_facts_authoritative: bool = True
 
 
 @dataclass(frozen=True)
@@ -2679,6 +2683,17 @@ class Lightweight2DPipeline(QObject):
         lookup_ms = (time.perf_counter() - t_lookup) * 1000.0
         self._mark_foreground_probe(cache_lookup_ms=lookup_ms, disk_wait_ms=lookup_ms)
         if cached is not None:
+            if (
+                cached.ndim == 3
+                and cached.shape[:2] == (sm.rows, sm.cols)
+                and cached.shape[-1] in (3, 4)
+            ):
+                sm.samples_per_pixel = int(cached.shape[-1])
+                sm.is_rgb = True
+                sm.pixel_facts_authoritative = True
+            elif cached.ndim == 2:
+                sm.samples_per_pixel = 1
+                sm.pixel_facts_authoritative = True
             self._mark_foreground_probe(source="disk_cache", cache_hit=True, disk_cache_hit=True)
             return cached
 
@@ -2746,10 +2761,30 @@ class Lightweight2DPipeline(QObject):
         _fi = getattr(sm, "frame_index", None)
         _frame = int(_fi) if (_FAST_MULTIFRAME and _fi is not None) else 0
 
-        if arr.ndim == 3 and sm.samples_per_pixel < 3:
+        # The local DB/socket metadata projection can omit SamplesPerPixel and
+        # is_rgb even when this individual object is colour.  The decoded
+        # dataset is authoritative.  Without this refresh an HxWx3 colour image
+        # is mistaken for a grayscale multi-frame stack and sliced to Wx3,
+        # producing the black/narrow frames observed in mixed ultrasound series.
+        try:
+            actual_samples_per_pixel = max(
+                1, int(getattr(ds, "SamplesPerPixel", sm.samples_per_pixel) or 1)
+            )
+        except (TypeError, ValueError):
+            actual_samples_per_pixel = max(1, int(sm.samples_per_pixel or 1))
+        actual_photometric = str(
+            getattr(ds, "PhotometricInterpretation", sm.photometric or "") or ""
+        ).strip().upper()
+        sm.samples_per_pixel = actual_samples_per_pixel
+        sm.is_rgb = actual_samples_per_pixel >= 3
+        sm.pixel_facts_authoritative = True
+        if actual_photometric:
+            sm.photometric = actual_photometric
+
+        if arr.ndim == 3 and actual_samples_per_pixel < 3:
             arr = arr[_frame] if 0 <= _frame < arr.shape[0] else arr[0]  # multi-frame: this frame
 
-        if sm.samples_per_pixel >= 3:
+        if actual_samples_per_pixel >= 3:
             if arr.ndim == 4:
                 arr = arr[_frame] if 0 <= _frame < arr.shape[0] else arr[0]
             if arr.dtype != np.uint8:
@@ -3690,8 +3725,24 @@ class Lightweight2DPipeline(QObject):
             if (
                 use_subprocess_prefetch
                 and sm is not None
+                and not bool(getattr(sm, 'pixel_facts_authoritative', True))
+            ):
+                # A series-level photometric fallback can label every DB row
+                # MONOCHROME2 even when individual US objects are RGB/YBR. The
+                # subprocess trusts the projected SamplesPerPixel and would
+                # collapse HxWx3 to Wx3. Decode in-process once so this file's
+                # own header establishes the pixel facts.
+                use_subprocess_prefetch = False
+            if (
+                use_subprocess_prefetch
+                and sm is not None
                 and int(getattr(sm, 'samples_per_pixel', 1) or 1) < 3
-                and not str(getattr(sm, 'photometric', '') or '').strip()
+                and (
+                    not str(getattr(sm, 'photometric', '') or '').strip()
+                    or 'YBR' in str(getattr(sm, 'photometric', '') or '').upper()
+                    or str(getattr(sm, 'photometric', '') or '').upper().startswith('RGB')
+                    or 'PALETTE' in str(getattr(sm, 'photometric', '') or '').upper()
+                )
             ):
                 # Metadata scan may intentionally leave grayscale photometric empty
                 # (e.g., MG placeholder handling). The subprocess path receives only
@@ -3922,7 +3973,22 @@ class Lightweight2DPipeline(QObject):
                 except Exception:
                     _ps_meta = None
             ps = _as_float_tuple(_ps_meta, 2, (1, 1))
-            is_rgb = bool(inst.get("is_rgb", False))
+            pixel_facts_authoritative = any(
+                key in inst and inst.get(key) not in (None, "")
+                for key in ("samples_per_pixel", "SamplesPerPixel")
+            ) or inst.get("is_rgb") is True
+            try:
+                samples_per_pixel = max(
+                    1,
+                    int(
+                        inst.get("samples_per_pixel")
+                        or inst.get("SamplesPerPixel")
+                        or (3 if inst.get("is_rgb", False) else 1)
+                    ),
+                )
+            except (TypeError, ValueError):
+                samples_per_pixel = 3 if inst.get("is_rgb", False) else 1
+            is_rgb = bool(inst.get("is_rgb", False) or samples_per_pixel >= 3)
             photometric = str(
                 inst.get("photometric_interpretation")
                 or inst.get("PhotometricInterpretation")
@@ -3932,6 +3998,22 @@ class Lightweight2DPipeline(QObject):
                 # missing metadata as explicit MONOCHROME2.
                 or ("RGB" if is_rgb else "")
             ).upper()
+            if "YBR" in photometric or photometric.startswith("RGB"):
+                is_rgb = True
+                samples_per_pixel = max(3, samples_per_pixel)
+                pixel_facts_authoritative = True
+            try:
+                num_frames = max(
+                    1,
+                    int(
+                        inst.get("number_of_frames")
+                        or inst.get("num_frames")
+                        or inst.get("NumberOfFrames")
+                        or 1
+                    ),
+                )
+            except (TypeError, ValueError):
+                num_frames = 1
             out.append(SliceMeta(
                 path=path, rows=rows, cols=cols,
                 pixel_spacing=(float(ps[0]), float(ps[1])),
@@ -3942,7 +4024,7 @@ class Lightweight2DPipeline(QObject):
                 photometric=photometric,
                 bits_allocated=int(inst.get("bits_allocated", 16) or 16),
                 pixel_representation=int(inst.get("pixel_representation", 1) or 1),
-                samples_per_pixel=3 if is_rgb else 1,
+                samples_per_pixel=samples_per_pixel,
                 window_width=_safe_float(inst.get("window_width")),
                 window_center=_safe_float(inst.get("window_center")),
                 voi_lut_function=(
@@ -3956,6 +4038,14 @@ class Lightweight2DPipeline(QObject):
                 intercept=_safe_float(inst.get("rescale_intercept"), 0.0) or 0.0,
                 instance_number=int(inst["instance_number"]) if inst.get("instance_number") is not None else None,
                 is_rgb=is_rgb,
+                num_frames=num_frames,
+                frame_rate=_cine_playback_fps(
+                    num_frames,
+                    recommended_display_frame_rate=inst.get("recommended_display_frame_rate"),
+                    cine_rate=inst.get("cine_rate"),
+                    frame_time_ms=inst.get("frame_time_ms"),
+                ),
+                pixel_facts_authoritative=pixel_facts_authoritative,
             ))
         # Fill missing rows/cols from headers
         for i, sm in enumerate(out):
@@ -4081,18 +4171,28 @@ class Lightweight2DPipeline(QObject):
         Byte-identical for ordinary single-frame series: a SliceMeta with
         num_frames <= 1 passes through unchanged (frame_index stays None). The flag
         `AIPACS_FAST_MULTIFRAME=0` disables expansion entirely (legacy behaviour).
-        `num_frames` is captured for free during the header scan; on the metadata
-        path (num_frames unknown) a single-file series is probed once."""
+        `num_frames` is captured for free during the header scan. On a legacy
+        metadata path where it is absent, the first object is probed; if that
+        object is multi-frame, the remaining objects are probed too. Thus a
+        multi-object cine expands fully while ordinary multi-file CT/MR pays
+        only one small header read."""
         if not _FAST_MULTIFRAME or not slices:
             return slices
-        # Metadata path may not know NumberOfFrames. Probe ONLY the classic
-        # single-file case — a many-file series is single-frame per file, so it
-        # never needs (and never pays for) a probe.
-        if len(slices) == 1 and int(getattr(slices[0], "num_frames", 1) or 1) <= 1 \
-                and getattr(slices[0], "frame_index", None) is None:
-            _n0 = self._probe_number_of_frames(slices[0].path)
-            if _n0 > 1:
-                slices[0].num_frames = _n0
+        # Legacy DB metadata may omit NumberOfFrames. Probe the first object. A
+        # multi-frame first object identifies this as a multi-object cine, so
+        # probe the rest and retain each object's own frame count. Ordinary
+        # multi-file CT/MR returns 1 immediately and does not become an O(N)
+        # header scan on the viewer-open path.
+        if all(
+            int(getattr(sm, "num_frames", 1) or 1) <= 1
+            and getattr(sm, "frame_index", None) is None
+            for sm in slices
+        ):
+            first_count = self._probe_number_of_frames(slices[0].path)
+            if first_count > 1:
+                slices[0].num_frames = first_count
+                for sm in slices[1:]:
+                    sm.num_frames = self._probe_number_of_frames(sm.path)
         if not any(int(getattr(sm, "num_frames", 1) or 1) > 1 for sm in slices):
             return slices  # nothing multi-frame → unchanged
         out: List[SliceMeta] = []

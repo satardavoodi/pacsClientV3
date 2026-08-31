@@ -180,7 +180,7 @@ def get_study_info_with_series(study_uid: str) -> dict:
             cur.execute("""
                 SELECT series_uid, series_number, series_description, modality,
                        image_count, protocol_name, body_part_examined, manufacturer,
-                       institution_name, thumbnail_path
+                       institution_name, thumbnail_path, series_path
                 FROM series WHERE study_fk = ? ORDER BY series_number
             """, (study_pk,))
             
@@ -190,7 +190,8 @@ def get_study_info_with_series(study_uid: str) -> dict:
                     'series_description': sr[2] or '', 'modality': sr[3] or '',
                     'image_count': sr[4] or 0, 'protocol_name': sr[5],
                     'body_part_examined': sr[6], 'manufacturer': sr[7],
-                    'institution_name': sr[8], 'thumbnail_path': sr[9]
+                    'institution_name': sr[8], 'thumbnail_path': sr[9],
+                    'series_path': sr[10]
                 }
                 for sr in cur.fetchall()
             ]
@@ -302,12 +303,19 @@ def update_series_thumbnail_path(series_pk: int, thumbnail_path: str) -> bool:
         return cur.rowcount > 0
 
 
-def update_series_image_count_by_uid(study_uid: str, series_number: str, image_count: int) -> bool:
-    """Set image_count for a series identified by study UID + series number.
+def update_series_image_count_by_uid(
+    study_uid: str,
+    series_number: str,
+    image_count: int,
+    *,
+    series_uid: str = None,
+) -> bool:
+    """Set image_count for one series, preferring its immutable series UID.
 
     Unlike ``update_series_missing_fields`` this always overwrites existing
-    values (including 0).  Used when a reliable count arrives from the gRPC
-    thumbnail response so the DB stays accurate across restarts.
+    values (including 0).  ``SeriesNumber`` is only a compatibility fallback:
+    distinct series in one study may share it, so an available
+    ``SeriesInstanceUID`` must target exactly one row.
     """
     if not study_uid or not series_number or image_count is None:
         return False
@@ -317,10 +325,16 @@ def update_series_image_count_by_uid(study_uid: str, series_number: str, image_c
             return False
         with database.get_db_connection() as conn:
             cur = conn.cursor()
-            cur.execute(
-                "UPDATE series SET image_count = ? WHERE study_fk = ? AND series_number = ?",
-                (int(image_count), study_pk, str(series_number)),
-            )
+            if series_uid:
+                cur.execute(
+                    "UPDATE series SET image_count = ? WHERE study_fk = ? AND series_uid = ?",
+                    (int(image_count), study_pk, str(series_uid)),
+                )
+            else:
+                cur.execute(
+                    "UPDATE series SET image_count = ? WHERE study_fk = ? AND series_number = ?",
+                    (int(image_count), study_pk, str(series_number)),
+                )
             conn.commit()
             return cur.rowcount > 0
     except Exception:

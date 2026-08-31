@@ -76,17 +76,32 @@ class _PWThumbnailsMixin:
 
     def _build_local_thumbnail_entries(self, study_uid: str) -> list[dict]:
         """Read local series metadata and existing thumbnail paths without network."""
+        from PacsClient.utils.patient_study_set import allocate_series_display_keys
+
         entries = []
         try:
             from database.manager import get_study_info_with_series
             from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
+            from PacsClient.utils.dicom_displayability import inspect_series_pixel_inventory
+            from PacsClient.utils.patient_study_set import (
+                persisted_series_folder_key,
+            )
 
             info = get_study_info_with_series(str(study_uid or '')) or {}
             for index, series in enumerate(info.get('series') or [], start=1):
                 if not isinstance(series, dict):
                     continue
                 series_number = str(series.get('series_number') or index)
-                canonical = Path(canonical_thumbnail_path(study_uid, series_number))
+                series_path = str(series.get('series_path') or '').strip()
+                folder_key = persisted_series_folder_key(series_number, series_path)
+                pixel_inventory = inspect_series_pixel_inventory(series_path)
+                if not pixel_inventory.has_pixel_data:
+                    self.logger.info(
+                        "[LOCAL_SERIES_SKIPPED] reason=no_pixel_data series_key=%s",
+                        folder_key,
+                    )
+                    continue
+                canonical = Path(canonical_thumbnail_path(study_uid, folder_key))
                 hinted_raw = str(series.get('thumbnail_path') or '').strip()
                 hinted = Path(hinted_raw) if hinted_raw else None
                 file_path = ''
@@ -94,20 +109,31 @@ class _PWThumbnailsMixin:
                     file_path = str(canonical)
                 elif hinted is not None and hinted.is_file():
                     file_path = str(hinted)
+                else:
+                    from PacsClient.pacs.patient_tab.utils.utils import (
+                        repair_local_series_thumbnail,
+                    )
+                    file_path = repair_local_series_thumbnail(
+                        str(study_uid or ''), info, series, folder_key, series_path
+                    )
                 entries.append({
                     'file_path': file_path,
                     'study_uid': str(study_uid or ''),
                     'series_uid': series.get('series_uid') or '',
                     'series_number': series_number,
+                    '_display_series_number': series_number,
+                    'folder_key': folder_key,
+                    'series_path': series_path,
                     'series_description': series.get('series_description') or f'Series {series_number}',
                     'modality': series.get('modality') or 'Unknown',
-                    'image_count': int(series.get('image_count') or 0),
+                    'image_count': pixel_inventory.pixel_instance_count,
+                    'display_image_count': pixel_inventory.display_image_count,
                     'protocol_name': series.get('protocol_name') or '',
                     'body_part_examined': series.get('body_part_examined') or '',
                 })
         except Exception:
             self.logger.debug("Local thumbnail metadata load failed", exc_info=True)
-        return entries
+        return allocate_series_display_keys(entries)
 
     def _log_open_thumbnail_trace(self, phase: str, level: str = 'info', **fields) -> None:
         study_uid = getattr(self, 'study_uid', None)
@@ -181,6 +207,49 @@ class _PWThumbnailsMixin:
         Args:
             series_list: List of series info dicts from server
         """
+        from PacsClient.utils.patient_study_set import (
+            allocate_series_display_keys,
+            resolve_series_folder_key,
+        )
+
+        incoming_series = [item for item in (series_list or []) if isinstance(item, dict)]
+        groups_by_study = {}
+        all_series_group = []
+        for item in incoming_series:
+            fact = (
+                _get_series_number(item),
+                _get_series_uid(item),
+                item.get('image_count') or 0,
+            )
+            all_series_group.append(fact)
+            groups_by_study.setdefault(str(item.get('study_uid') or ''), []).append(fact)
+
+        prepared_series = []
+        for incoming in incoming_series:
+            if not isinstance(incoming, dict):
+                continue
+            series = dict(incoming)
+            series_number = _get_series_number(series)
+            if not series_number:
+                continue
+            series_uid = _get_series_uid(series)
+            study_uid = str(series.get('study_uid') or '')
+            group = groups_by_study.get(study_uid, []) if study_uid else all_series_group
+            folder_key = str(
+                series.get('folder_key')
+                or resolve_series_folder_key(series_number, series_uid, group)
+                or series_number
+            )
+            series['folder_key'] = folder_key
+            if study_uid and not series.get('series_path'):
+                try:
+                    from PacsClient.utils.config import SOURCE_PATH
+                    series['series_path'] = str(Path(SOURCE_PATH) / study_uid / folder_key)
+                except Exception:
+                    pass
+            prepared_series.append(series)
+        series_list = allocate_series_display_keys(prepared_series)
+
         existing = getattr(self, '_server_series_info', None)
         is_first_call = not existing  # True when called for the first time
 
@@ -195,39 +264,11 @@ class _PWThumbnailsMixin:
             if not series_number:
                 continue
             series_uid = _get_series_uid(series)
-            # Series-number collision disambiguation (2026-06-19, data completeness).
-            # Two distinct SeriesInstanceUIDs can legitimately share one series_number
-            # within a study (verified: study …86503 series 203 = a 24-image + a
-            # 156-image series). Keying _server_series_info by the bare series_number
-            # dropped the second one (the "series that isn't connected"). For a real
-            # collision, the non-largest series is kept under a disambiguated key
-            # ("<num>__<uid8>") — the SAME name the downloader writes on disk, so the
-            # viewer load (study_path/<key>) reads each series' own folder. The common
-            # (unique-number) case keeps the ORIGINAL key object unchanged → byte-identical.
-            # The collision-aware key comes from the shared authority
-            # (PatientStudySet.resolve_series_folder_key → SeriesDescriptor.folder_key
-            # rule), so the downloader and this viewer sink agree on one identity.
-            entry_key = series_number
-            try:
-                from PacsClient.utils.patient_study_set import (
-                    resolve_series_folder_key,
-                )
-                _su_cur = str((series or {}).get('study_uid') or '')
-                _grp = [
-                    (_get_series_number(s), _get_series_uid(s),
-                     (s or {}).get('image_count') or 0)
-                    for s in series_list
-                    if (not _su_cur) or str((s or {}).get('study_uid') or '') == _su_cur
-                ]
-                _resolved = resolve_series_folder_key(series_number, series_uid, _grp)
-                if str(_resolved) != str(series_number):
-                    entry_key = _resolved  # collision loser → disambiguated string key
-                    if _su_cur and not series.get('series_path'):
-                        from PacsClient.utils.config import SOURCE_PATH as _SRC
-                        from pathlib import Path as _P
-                        series['series_path'] = str(_P(_SRC) / _su_cur / str(_resolved))
-            except Exception:
-                entry_key = series_number
+            # Storage and UI identities are deliberately separate. ``folder_key``
+            # can be collision-suffixed; ``display_key`` is always digit-only so
+            # both Fast and VTK drag/drop paths can route it. Exact disk loading
+            # remains anchored by series_path + SeriesInstanceUID.
+            entry_key = str(series.get('display_key') or series_number)
             if is_first_call or entry_key not in self._server_series_info:
                 # Add the series unconditionally on first call; add only missing
                 # series on subsequent calls so gRPC-fetched image counts are
@@ -343,6 +384,39 @@ class _PWThumbnailsMixin:
 
             self._log_open_thumbnail_trace('PatientViewerThumbnailRequested', study_uid=self.study_uid)
             thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
+
+            # Local/Import is database + disk authoritative even when the PNG
+            # cache is only partially populated.  Accepting the first cached PNG
+            # used to return early and hide every other DB series (notably a cine
+            # series sharing the same raw SeriesNumber).  Reconcile the complete
+            # local series list first; entries with no PNG receive the existing
+            # Local-safe placeholder and remain clickable/loadable from their
+            # exact persisted series_path.  This branch never imports a socket.
+            if self._local_thumbnail_workflow():
+                series_entries = await asyncio.to_thread(
+                    self._build_local_thumbnail_entries, self.study_uid
+                )
+                if thumbnails:
+                    self._log_open_thumbnail_trace(
+                        'ThumbnailCacheHit', thumbnail_count=len(thumbnails)
+                    )
+                    self._log_open_thumbnail_trace(
+                        'ThumbnailReusedFromUnifiedPipeline',
+                        thumbnail_count=len(thumbnails),
+                    )
+                else:
+                    self._log_open_thumbnail_trace(
+                        'patient_tab_thumb_cache_miss_local_mode',
+                        thumbnail_count=len(series_entries),
+                    )
+                if series_entries:
+                    self._reset_thumbnail_retry_state()
+                    self._pending_thumbnails_entries = series_entries
+                    QMetaObject.invokeMethod(
+                        self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection
+                    )
+                return
+
             if thumbnails:
                 self._reset_thumbnail_retry_state()
                 # Cache hit: the unified disk cache (THUMBNAIL_PATH/<study_uid>/...)
@@ -363,21 +437,6 @@ class _PWThumbnailsMixin:
             # secondary study the home page did not pre-warm). Will defer behind an
             # active download or fetch from the server.
             self._log_open_thumbnail_trace('ThumbnailCacheMiss', study_uid=self.study_uid)
-
-            if self._local_thumbnail_workflow():
-                series_entries = await asyncio.to_thread(
-                    self._build_local_thumbnail_entries, self.study_uid
-                )
-                self._log_open_thumbnail_trace(
-                    'patient_tab_thumb_cache_miss_local_mode',
-                    thumbnail_count=len(series_entries),
-                )
-                if series_entries:
-                    self._pending_thumbnails_entries = series_entries
-                    QMetaObject.invokeMethod(
-                        self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection
-                    )
-                return
 
             try:
                 from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
@@ -654,19 +713,21 @@ class _PWThumbnailsMixin:
             group: list = []
             # Render each study's series in ascending numeric order.
             for series in sorted(studies_index.get(su, []) or [], key=_series_order_key):
-                orig = _get_series_number(series)
+                orig = series.get('_orig_series_number') or _get_series_number(series)
                 try:
-                    orig_int = int(str(orig).strip())
+                    local_display_int = int(str(series.get('display_key') or orig).strip())
                 except (TypeError, ValueError):
                     continue
-                key = str(orig_int + offset)
+                key = str(local_display_int + offset)
                 entry = dict(series)
                 entry['series_number'] = key
-                entry['_orig_series_number'] = str(orig_int)
+                entry['display_key'] = key
+                entry['_orig_series_number'] = str(orig)
                 entry['_study_slot'] = slot
                 entry['study_uid'] = su
-                if source_root is not None:
-                    entry['series_path'] = str(source_root / su / str(orig_int))
+                if source_root is not None and not entry.get('series_path'):
+                    folder_key = str(entry.get('folder_key') or orig)
+                    entry['series_path'] = str(source_root / su / folder_key)
                 new_info[key] = entry
                 s_uid = _get_series_uid(series)
                 if s_uid:
@@ -1073,6 +1134,7 @@ class _PWThumbnailsMixin:
                 series_number = str(series.get('series_number', ''))
                 if not series_number:
                     continue
+                entry_key = str(series.get('display_key') or series_number)
 
                 # ── Sync _server_series_info with gRPC image_count ──────────
                 # The gRPC response carries the authoritative image count.
@@ -1082,24 +1144,26 @@ class _PWThumbnailsMixin:
                 img_count = int(series.get('image_count', 0) or 0)
                 if img_count > 0:
                     ssi = getattr(self, '_server_series_info', {})
-                    if series_number in ssi:
-                        ssi[series_number]['image_count'] = img_count
+                    if entry_key in ssi:
+                        ssi[entry_key]['image_count'] = img_count
                     else:
-                        ssi[series_number] = dict(series)
-                    db_update_entries.append((series_number, img_count))
+                        ssi[entry_key] = dict(series)
+                    db_update_entries.append(
+                        (series_number, series.get('series_uid') or '', img_count)
+                    )
 
                 thumb_index = self.add_thumbnail_to_thumbnail_layout(
                     thumb_index=thumb_index,
                     file_path_thumbnail=file_path,
-                    key_thumbnail=series_number,
+                    key_thumbnail=entry_key,
                     series_info=series
                 )
                 # ✅ Default pending style unless series data is already downloaded
                 if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                    if self._is_series_downloaded(series_number, study_path=_sp_downloaded):
-                        self.thumbnail_manager.set_series_ready(series_number)
+                    if self._is_series_downloaded(entry_key, study_path=_sp_downloaded):
+                        self.thumbnail_manager.set_series_ready(entry_key)
                     else:
-                        self.thumbnail_manager.set_series_pending(series_number)
+                        self.thumbnail_manager.set_series_pending(entry_key)
 
             # ── Persist image_count to DB in background ─────────────────────
             # This ensures future sessions (thumbnails loaded from disk cache)
@@ -1110,8 +1174,13 @@ class _PWThumbnailsMixin:
                 def _persist_counts():
                     try:
                         from database.manager import update_series_image_count_by_uid
-                        for sn, cnt in db_update_entries:
-                            update_series_image_count_by_uid(study_uid, sn, cnt)
+                        for sn, series_uid, cnt in db_update_entries:
+                            update_series_image_count_by_uid(
+                                study_uid,
+                                sn,
+                                cnt,
+                                series_uid=series_uid,
+                            )
                     except Exception:
                         pass
 

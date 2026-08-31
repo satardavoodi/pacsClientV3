@@ -15,7 +15,9 @@ standardized evidence sheet per source frame:
 The feature is an explicit A/B switch. ``layout`` is the safe default and does
 no image I/O. ``focused-v1`` is accepted only when every source frame carries
 measured viewport bounds; legacy sessions fail clearly instead of guessing by
-splitting a screenshot into thirds.
+splitting a screenshot into thirds. ``focused-v2`` is deferred until screening
+and context finish, then a separate service composes verification-only evidence
+directly from immutable DICOM volumes.
 """
 
 from __future__ import annotations
@@ -34,7 +36,18 @@ logger = logging.getLogger(__name__)
 ENV_EVIDENCE_MODE = "AIPACS_EAGLE_EYE_EVIDENCE_MODE"
 MODE_LAYOUT = "layout"
 MODE_FOCUSED_V1 = "focused-v1"
-SUPPORTED_MODES = frozenset((MODE_LAYOUT, MODE_FOCUSED_V1))
+MODE_FOCUSED_V2 = "focused-v2"
+# V3 is V2's geometry with the pixel budget spent on the lesion instead of the
+# whole field of view: every tile is cropped to a physical box around the spine
+# before it is scaled, and focus tiles are larger. See focus_evidence.
+MODE_FOCUSED_V3 = "focused-v3"
+MODE_FOCUSED_V3_PARASAGITTAL = "focused-v3-parasagittal"
+VERIFICATION_ONLY_MODES = frozenset(
+    (MODE_FOCUSED_V2, MODE_FOCUSED_V3, MODE_FOCUSED_V3_PARASAGITTAL)
+)
+SUPPORTED_MODES = frozenset(
+    (MODE_LAYOUT, MODE_FOCUSED_V1, *VERIFICATION_ONLY_MODES)
+)
 
 MAX_CANVAS_WIDTH = 2048
 MAX_CANVAS_HEIGHT = 1280
@@ -93,7 +106,10 @@ def prepare_package(package: AnalysisPackage, mode: str = "") -> AnalysisPackage
     selected = (mode or resolve_mode()).strip().lower()
     if selected not in SUPPORTED_MODES:
         raise EvidenceBundleError(f"unsupported evidence mode '{selected}'")
-    if selected == MODE_LAYOUT:
+    if selected == MODE_LAYOUT or selected in VERIFICATION_ONLY_MODES:
+        # V2 and V3 are candidate-directed. Screening and context must finish
+        # before their verification-only package can be composed by
+        # focus_evidence.
         return package
 
     output_root = package.session_dir / ".evidence" / MODE_FOCUSED_V1
@@ -150,6 +166,7 @@ def prepare_package(package: AnalysisPackage, mode: str = "") -> AnalysisPackage
         header=header,
         images=prepared,
         study_instance_uid=package.study_instance_uid,
+        source_series=package.source_series,
     )
 
 

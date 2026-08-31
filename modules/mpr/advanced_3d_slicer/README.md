@@ -1,5 +1,12 @@
 # Advanced Analysis Module – AI-PACS Advanced Viewer
 
+> **Current automation documentation (verified 2026-08-31):**
+> [Slicer control runbook](../../../docs/modules/ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md)
+> covers Python control, loading, thresholds, measurements, saving/reloading, and the proposed MCP boundary.
+> [Extension installation and control guide](../../../docs/modules/SLICER_EXTENSIONS_INSTALL_AND_CONTROL_GUIDE.md)
+> covers downloaded extensions, exact APIs, model/dependency installation, the successful temporary extension computation,
+> and the separately observed extension GUI compatibility failure. The historical module notes below are not an automation readiness claim.
+
 > **Stable version:** v2.2.2 (2026-02-19)
 > **Module path:** `PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/`
 

@@ -197,6 +197,7 @@ class EagleEyeCaptureController(QObject):
 
         self.session.set_study_context(**self.study_context)
         self.session.set_selection(self.selection.as_dict())
+        self.session.set_series_sources(self._local_series_sources())
         layout = tuple(getattr(self.protocol, "layout", (1, len(self.roles))) or (1, len(self.roles)))
         self.session.set_layout(layout[0], layout[1], self.roles)
         for slot in self.selection.uncertain_slots:
@@ -210,6 +211,31 @@ class EagleEyeCaptureController(QObject):
         self._emit(f"Loading {len(self.roles)} series", 0, 0)
         QTimer.singleShot(0, self._assign_series)
         return True
+
+    def _local_series_sources(self) -> Dict[str, Dict[str, Any]]:
+        """Bounded local provenance used only by worker-side DICOM composition."""
+        fields = (
+            "index",
+            "series_uid",
+            "series_number",
+            "series_description",
+            "protocol_name",
+            "modality",
+            "plane",
+            "slice_count",
+            "echo_time",
+            "repetition_time",
+            "series_path",
+        )
+        sources: Dict[str, Dict[str, Any]] = {}
+        for role in self.roles:
+            candidate = self.selection.candidate_for(role)
+            if candidate is None:
+                continue
+            source = {field: getattr(candidate, field, None) for field in fields}
+            source["series_path"] = str(source.get("series_path") or "")
+            sources[str(role)] = source
+        return sources
 
     def abort(self, reason: str = "cancelled") -> None:
         """Stop after the current tick; whatever was captured is still written."""
