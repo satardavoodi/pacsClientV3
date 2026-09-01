@@ -1,7 +1,7 @@
 {
   "app_name": "AIPacs",
   "app_version": "",
-  "generated_at_utc": "2026-07-12T15:21:37.121821+00:00",
+  "generated_at_utc": "2026-09-01T11:24:52.646608+00:00",
   "installer": {
     "current_version": "",
     "detected_existing_version": "",
@@ -22,7 +22,8 @@
     "run_cd": false,
     "web_browser": false,
     "echomind": false,
-    "consultation": false
+    "consultation": false,
+    "aipacs_chat": false
   },
   "module_packages": {
     "viewer": {
@@ -220,6 +221,20 @@
       "archive_name": "",
       "requires_restart": true,
       "warning": ""
+    },
+    "aipacs_chat": {
+      "module_id": "aipacs_chat",
+      "title": "AiPacs Chat",
+      "tier": "optional",
+      "package_kind": "bundled_unlock",
+      "status": "not_installed",
+      "installed_version": "",
+      "installed_from": "",
+      "installed_at_utc": "",
+      "runtime_path": "",
+      "archive_name": "",
+      "requires_restart": true,
+      "warning": ""
     }
   },
   "graphics": {
@@ -228,7 +243,7 @@
     "last_detected_gpu": false,
     "last_probe_backend": "",
     "last_probe_device": "",
-    "last_probe_utc": "2026-07-12T15:21:37.119391Z",
+    "last_probe_utc": "2026-09-01T11:24:52.646608Z",
     "last_execution_mode": "cpu_software_opengl",
     "last_software_rendering_status": "ready",
     "last_software_rendering_warning": ""

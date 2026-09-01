@@ -1,5 +1,5 @@
 {
-  "socket_host": "192.168.2.222",
+  "socket_host": "81.16.117.196",
   "socket_port": 50052,
   "connection_timeout": 30,
   "max_retries": 3,
