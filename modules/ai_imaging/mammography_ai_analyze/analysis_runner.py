@@ -52,9 +52,13 @@ class MammographyAnalysisRunner(QObject):
     finished = Signal(str)  # the pathological findings text
     failed = Signal(str)
 
-    def __init__(self, package: package_builder.MammographyPackage, parent=None):
+    def __init__(self, study_uid: str = "", csv_path: str = "",
+                 package: package_builder.MammographyPackage = None,
+                 parent=None):
         super().__init__(parent)
-        self._package = package
+        self._study_uid = study_uid
+        self._csv_path = csv_path
+        self._package = package  # optional: pre-built package
         self._worker = None
         self._detached = False
 
@@ -75,7 +79,8 @@ class MammographyAnalysisRunner(QObject):
             )
             return False
 
-        package = self._package
+        study_uid = self._study_uid
+        csv_path = self._csv_path
 
         # Resolve backend and model (same path as Eagle Eye Lumbar)
         try:
@@ -96,15 +101,25 @@ class MammographyAnalysisRunner(QObject):
             model = "gpt-5.6-sol"
 
         logger.info(
-            "[AI_ANALYZE] Preparing GAPGPT request: model=%s, backend=%s, "
-            "images=%d, csv=%s",
-            model,
-            backend,
-            package.image_count,
-            "yes" if package.has_csv else "no",
+            "[AI_ANALYZE] Starting async work: model=%s, backend=%s, "
+            "study=%s, csv=%s",
+            model, backend, study_uid, csv_path or "none",
         )
 
         def work() -> Dict[str, Any]:
+            # Heavy I/O runs HERE in the worker thread, NOT on GUI thread
+            try:
+                package = package_builder.build_package(
+                    study_uid=study_uid,
+                    csv_path=csv_path,
+                )
+                logger.info(
+                    "[AI_ANALYZE] Package built: %d images, %d annotations",
+                    package.image_count, package.total_annotations,
+                )
+            except Exception as exc:
+                logger.error("[AI_ANALYZE][ERROR] Package build failed: %s", exc)
+                return {"error": f"Failed to prepare images: {exc}"}
             return _send_request(package, backend, model)
 
         worker = ApiWorker(work, parent=self)
@@ -171,6 +186,23 @@ class MammographyAnalysisRunner(QObject):
         _LIVE_RUNS.discard(self)
 
 
+def _company_entitlement_error() -> str:
+    """Check company entitlement. Returns '' when OK, else the denial reason.
+
+    Mirrors ``eagle_eye_lumbar.llm_backend.company_entitlement_error``:
+    calls the ONE authority (``company_entitled``) which self-heals a session
+    where the key is saved in settings but not yet validated in memory.
+    """
+    try:
+        from modules.EchoMind.entitlement import ENTITLEMENT_DENIED, company_entitled
+    except Exception as exc:
+        return f"the EchoMind entitlement check is unavailable: {exc}"
+    try:
+        return "" if company_entitled() else ENTITLEMENT_DENIED
+    except Exception as exc:
+        return f"the EchoMind entitlement check failed: {exc}"
+
+
 def _send_request(
     package: package_builder.MammographyPackage,
     backend: str,
@@ -184,6 +216,16 @@ def _send_request(
     logger.info("[AI_ANALYZE] Request started")
 
     try:
+        # ── Entitlement BEFORE the first request (same as llm_backend.run_analysis) ──
+        # company_entitled() calls the ONE authority that checks the in-memory
+        # manager AND falls back to re-validating the saved key from settings.
+        # This self-heals a session where the user has not opened EchoMind yet.
+        if backend == "company":
+            denied = _company_entitlement_error()
+            if denied:
+                logger.warning("[AI_ANALYZE] refused before sending: %s", denied)
+                return {"error": denied}
+
         # Build the user content: [header, caption, image, caption, image, ...]
         user_content = _build_user_content(package)
         logger.info("[AI_ANALYZE] User content built: %d parts", len(user_content))

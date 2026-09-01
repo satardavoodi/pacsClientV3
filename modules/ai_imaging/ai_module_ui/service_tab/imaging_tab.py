@@ -1862,46 +1862,17 @@ class ImagingToolsTab(AbstractTab):
 
         self._ai_analyze_set_state('analyzing')
 
-        # Collect data on GUI thread (validation + I/O)
-        try:
-            csv_path = self._find_detection_csv_path()
-            print(f"[AI_ANALYZE] CSV detected: {'yes' if csv_path else 'no'}")
+        # Minimal validation on GUI thread (fast)
+        csv_path = self._find_detection_csv_path()
+        print(f"[AI_ANALYZE] CSV detected: {'yes' if csv_path else 'no'}")
 
-            package = mg_ai_package.build_package(
-                study_uid=self.study_uid or '',
-                patient_widget=pw,
-                csv_path=csv_path,
-            )
-
-            print(f"[AI_ANALYZE] Number of images: {package.image_count}")
-            views = set()
-            for img in package.images:
-                v = f"{img.laterality or '?'}-{img.view_position or '?'}"
-                views.add(v)
-            print(f"[AI_ANALYZE] Image views: {', '.join(sorted(views))}")
-            print(f"[AI_ANALYZE] Number of annotations: {package.total_annotations}")
-            if package.has_csv:
-                print(f"[AI_ANALYZE] CSV size: {package.csv_data.row_count} rows")
-
-        except mg_ai_package.PackageError as exc:
-            self._ai_analyze_set_state('error')
-            show_message(
-                f"Unable to perform Intelligent AI Analysis.\n\n"
-                f"{exc}\n\n"
-                f"Please verify that the image analysis has completed successfully."
-            )
-            return
-        except Exception as exc:
-            self._ai_analyze_set_state('error')
-            import traceback
-            traceback.print_exc()
-            print(f"[AI_ANALYZE][ERROR] Package build failed: {exc}")
-            show_message(f"Failed to prepare AI analysis: {exc}")
-            return
-
-        # Start async analysis
-        print("[AI_ANALYZE] Preparing GAPGPT request")
-        runner = mg_ai_runner.MammographyAnalysisRunner(package, parent=self)
+        # Start async — heavy I/O (package build + API call) runs in worker thread
+        print("[AI_ANALYZE] Starting async analysis")
+        runner = mg_ai_runner.MammographyAnalysisRunner(
+            study_uid=self.study_uid or '',
+            csv_path=csv_path,
+            parent=self,
+        )
         runner.progress.connect(self._on_ai_analyze_progress)
         runner.finished.connect(self._on_ai_analyze_finished)
         runner.failed.connect(self._on_ai_analyze_failed)
@@ -1938,9 +1909,9 @@ class ImagingToolsTab(AbstractTab):
             import traceback
             traceback.print_exc()
             print(f"[AI_ANALYZE][ERROR] EchoMind transfer failed: {exc}")
-            # Still show findings in result panel even if EchoMind transfer fails
+            # Still show findings in result dialog as fallback
             self._show_ai_analyze_result(findings_text)
-            self.set_processing_status("AI analysis complete (EchoMind transfer failed)", active=False)
+            self.set_processing_status("AI analysis complete (EchoMind transfer pending)", active=False)
 
     def _on_ai_analyze_failed(self, reason: str):
         """Handle failed AI analysis."""
@@ -1969,70 +1940,129 @@ class ImagingToolsTab(AbstractTab):
     def _transfer_findings_to_echomind(self, findings_text: str):
         """Open EchoMind and transfer the pathological findings.
 
-        Follows the same pattern as Eagle Eye Lumbar's result presentation:
-        switches the right panel to the AI Chat view, then inserts the
-        findings into the report text box.
+        EchoMind is a top-level window (AIChatViewer) created by
+        ``ai_chat_layout_ui()``.  It starts on a ModePickerPage; the
+        composer (text box) only exists AFTER the user selects a mode.
+        
+        Strategy:
+        1. Open the AI Chat window (creates it if needed).
+        2. Retry with increasing delays until a composer/text box is found
+           (the user may need to click a mode, or the page may still be
+           initializing).
+        3. Fall back to a standalone result dialog if insertion fails.
         """
         pw = getattr(self, 'patient_widget', None)
         if pw is None:
             raise RuntimeError("Patient widget not available")
 
-        # Switch to EchoMind (AI Chat panel)
+        # Open the AI Chat window (creates it or brings it to front)
         try:
             pw.switch_right_panel('ai_chat', force=True)
         except Exception as exc:
-            raise RuntimeError(f"Could not open EchoMind panel: {exc}") from exc
+            raise RuntimeError(f"Could not open EchoMind: {exc}") from exc
 
-        # Small delay to let the panel render, then insert text
+        # Retry with increasing delays — the window may still be initializing
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(300, lambda: self._do_insert_findings(findings_text))
+        self._ai_analyze_findings_pending = findings_text
+        self._ai_analyze_retry_count = 0
+        self._ai_analyze_retry_insert()
 
-    def _do_insert_findings(self, findings_text: str):
-        """Insert findings text into the EchoMind report text box."""
+    def _ai_analyze_retry_insert(self):
+        """Try to insert findings into EchoMind, retrying if the composer is not ready."""
+        findings_text = getattr(self, '_ai_analyze_findings_pending', '')
+        if not findings_text:
+            return
+
+        retry = getattr(self, '_ai_analyze_retry_count', 0)
+        max_retries = 5
+        delays_ms = [500, 1000, 2000, 3000, 5000]
+
         pw = getattr(self, 'patient_widget', None)
         if pw is None:
             return
 
-        # Navigate through the panel hierarchy to find the composer/editor
-        try:
-            # The AI Chat panel is typically at index 3 or accessible via the right panel
-            right_panel = getattr(pw, 'right_panel', None)
-            if right_panel is None:
-                return
-
-            # Find the AI Chat page
-            ai_chat_page = None
-            for i in range(right_panel.count()):
-                widget = right_panel.widget(i)
-                if widget is None:
-                    continue
-                # Look for the composer/report box by object name or attribute
-                composer = getattr(widget, 'composer', None)
-                if composer is not None:
-                    ai_chat_page = widget
-                    break
-                # Also check for direct box attribute
-                box = getattr(widget, 'box', None)
-                if box is not None and hasattr(box, 'setPlainText'):
-                    ai_chat_page = widget
-                    break
-
-            if ai_chat_page is None:
-                print("[AI_ANALYZE] EchoMind page not found; findings saved but not inserted")
-                return
-
-            composer = getattr(ai_chat_page, 'composer', None)
-            if composer is not None and hasattr(composer, 'append_text'):
-                composer.append_text(findings_text)
-                print(f"[AI_ANALYZE] Findings inserted into EchoMind composer ({len(findings_text)} chars)")
-            elif hasattr(ai_chat_page, 'box') and hasattr(ai_chat_page.box, 'setPlainText'):
-                ai_chat_page.box.setPlainText(findings_text)
-                print(f"[AI_ANALYZE] Findings inserted into EchoMind text box ({len(findings_text)} chars)")
+        # Get the AI Chat window
+        chat_window = getattr(pw, 'ai_chat_window', None)
+        if chat_window is None or not hasattr(chat_window, 'isVisible') or not chat_window.isVisible():
+            if retry < max_retries:
+                self._ai_analyze_retry_count = retry + 1
+                from PySide6.QtCore import QTimer
+                delay = delays_ms[min(retry, len(delays_ms) - 1)]
+                QTimer.singleShot(delay, self._ai_analyze_retry_insert)
             else:
-                print("[AI_ANALYZE] Could not find EchoMind text input; findings not inserted")
+                print("[AI_ANALYZE] EchoMind window not available after retries")
+                self._ai_analyze_show_fallback(findings_text)
+            return
 
-        except Exception as exc:
-            print(f"[AI_ANALYZE][ERROR] EchoMind insertion failed: {exc}")
+        # Search for the composer (UnifiedComposer) or text box recursively
+        inserted = self._try_insert_into_widget(chat_window, findings_text)
+        if inserted:
+            print(f"[AI_ANALYZE] Findings inserted into EchoMind ({len(findings_text)} chars)")
+            self._ai_analyze_findings_pending = ''
+            return
+
+        # Not found yet — retry
+        if retry < max_retries:
+            self._ai_analyze_retry_count = retry + 1
+            from PySide6.QtCore import QTimer
+            delay = delays_ms[min(retry, len(delays_ms) - 1)]
+            print(f"[AI_ANALYZE] EchoMind text box not ready (retry {retry + 1}/{max_retries}, {delay}ms)")
+            QTimer.singleShot(delay, self._ai_analyze_retry_insert)
+        else:
+            print("[AI_ANALYZE] Could not find EchoMind text box after retries")
+            self._ai_analyze_show_fallback(findings_text)
+
+    def _try_insert_into_widget(self, widget, findings_text: str) -> bool:
+        """Try to insert findings text into a widget or its children.
+        
+        Searches for:
+        1. A composer with append_text() method
+        2. A QTextEdit/QPlainTextEdit with setPlainText()
+        """
+        # Direct composer check
+        composer = getattr(widget, 'composer', None)
+        if composer is not None and hasattr(composer, 'append_text'):
+            composer.append_text(findings_text)
+            return True
+
+        # Direct box check
+        box = getattr(widget, 'box', None)
+        if box is not None and hasattr(box, 'setPlainText'):
+            box.setPlainText(findings_text)
+            return True
+
+        # Recursive search through children
+        try:
+            from PySide6.QtWidgets import QTextEdit, QPlainTextEdit
+            for child in widget.findChildren((QTextEdit, QPlainTextEdit)):
+                if hasattr(child, 'setPlainText') and child.isReadOnly():
+                    continue  # skip read-only displays
+                if hasattr(child, 'setPlainText'):
+                    child.setPlainText(findings_text)
+                    return True
+                if hasattr(child, 'setText'):
+                    child.setText(findings_text)
+                    return True
+        except Exception:
+            pass
+
+        # Try QStackedWidget children
+        try:
+            from PySide6.QtWidgets import QStackedWidget
+            for stack in widget.findChildren(QStackedWidget):
+                current = stack.currentWidget()
+                if current is not None:
+                    if self._try_insert_into_widget(current, findings_text):
+                        return True
+        except Exception:
+            pass
+
+        return False
+
+    def _ai_analyze_show_fallback(self, findings_text: str):
+        """Show findings in a standalone dialog when EchoMind insertion fails."""
+        self._ai_analyze_findings_pending = ''
+        self._show_ai_analyze_result(findings_text)
 
     def _show_ai_analyze_result(self, findings_text: str):
         """Show findings in a result dialog when EchoMind transfer fails."""

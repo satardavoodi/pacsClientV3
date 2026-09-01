@@ -9014,37 +9014,44 @@ class ToolbarManager:
             return False
 
     def _on_ai_analysis_clicked(self):
-        from modules.ai_imaging.eagle_eye_function_catalog import (
-            FUNCTION_LEGION_CONSULT,
-            FUNCTION_NATIVE_ANALYSIS,
-        )
         from modules.ai_imaging.eagle_eye_function_dialog import (
             active_viewer_context,
-            choose_eagle_eye_function,
         )
 
         context = active_viewer_context(self.patient_widget)
-        choice = choose_eagle_eye_function(
-            context.get("modality", ""),
-            parent=self.patient_widget,
-        )
-        if choice is None:
-            return
+        modality = context.get("modality", "")
 
-        if choice == FUNCTION_LEGION_CONSULT:
-            from modules.ai_imaging.legion_consult.workflow import LegionConsultCoordinator
+        # Legion Consult is MRI-only — show the function dialog only for MR.
+        if modality == "MR":
+            from modules.ai_imaging.eagle_eye_function_catalog import (
+                FUNCTION_LEGION_CONSULT,
+                FUNCTION_NATIVE_ANALYSIS,
+            )
+            from modules.ai_imaging.eagle_eye_function_dialog import (
+                choose_eagle_eye_function,
+            )
 
-            coordinator = getattr(self.patient_widget, "_legion_consult_coordinator", None)
-            if coordinator is None:
-                coordinator = LegionConsultCoordinator(self.patient_widget)
-                self.patient_widget._legion_consult_coordinator = coordinator
-            coordinator.start()
-            return
+            choice = choose_eagle_eye_function(modality, parent=self.patient_widget)
+            if choice is None:
+                return
 
-        if choice != FUNCTION_NATIVE_ANALYSIS:
-            logger.warning("Unknown Eagle Eye function selection")
-            return
+            if choice == FUNCTION_LEGION_CONSULT:
+                from modules.ai_imaging.legion_consult.workflow import LegionConsultCoordinator
 
+                coordinator = getattr(self.patient_widget, "_legion_consult_coordinator", None)
+                if coordinator is None:
+                    coordinator = LegionConsultCoordinator(self.patient_widget)
+                    self.patient_widget._legion_consult_coordinator = coordinator
+                coordinator.start()
+                return
+
+            if choice != FUNCTION_NATIVE_ANALYSIS:
+                logger.warning("Unknown Eagle Eye function selection")
+                return
+
+        # For MG / DX / all non-MR: go straight to the analysis pipeline.
+        # The pipeline itself handles threshold selection, existing-result check,
+        # and re-run prompts — no extra function-picker dialog needed.
         pipeline_started = self._trigger_eagle_eye_analysis_pipeline()
 
         if not pipeline_started:
