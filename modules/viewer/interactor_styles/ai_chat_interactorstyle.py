@@ -922,14 +922,37 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             self.start_mg_process(study_uid)
             return
 
-        # ---- DX (بدون تغییر)
+        # ---- DX: Bone Age analysis
         elif modality_raw == "DX":
             bone_json = ATTACHMENT_PATH / study_uid / "bone_age.json"
+
             if bone_json.exists():
-                show_message("Bone age analysis already exists.")
-                self.open_ai_module()
+                msg_box = QMessageBox(self._live_dialog_parent())
+                msg_box.setIcon(QMessageBox.Question)
+                msg_box.setWindowTitle("Bone Age Analysis")
+                msg_box.setText("Bone age analysis already exists for this study.")
+                msg_box.setInformativeText(
+                    "Existing bone age results were found.\nWhat would you like to do?"
+                )
+
+                btn_rerun = msg_box.addButton("Re-run", QMessageBox.AcceptRole)
+                btn_open = msg_box.addButton("Open Results", QMessageBox.ActionRole)
+                btn_cancel = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+
+                msg_box.exec()
+                clicked = msg_box.clickedButton()
+
+                if clicked == btn_rerun:
+                    self.start_dx_process(study_uid)
+                    return
+
+                elif clicked == btn_open:
+                    self.open_ai_module()
+                    return
+
                 return
 
+            # First-time analysis
             self.start_dx_process(study_uid)
 
     def _open_lumbar_eagle_eye(self, patient_widget) -> bool:

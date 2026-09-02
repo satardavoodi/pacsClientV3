@@ -8,6 +8,8 @@
   "openai_text_model": "gpt-5-mini",
   "openai_report_model": "gpt-5.4",
   "openai_vision_model": "gpt-5.4",
+  "openai_eagle_eye_model": "gpt-5.6-sol",
+  "openai_eagle_eye_screening_model": "gemini-3.1-pro-preview",
   "openai_transcription_model": "gpt-4o-transcribe",
   "openai_secretary_model": "gpt-5-mini",
   "openai_reasoning_effort": "",
@@ -29,5 +31,6 @@
   "stt_timeout_seconds": 360,
   "stt_auth_token": "",
   "connection_type": "direct",
-  "proxy_port": 2082
+  "proxy_port": 2082,
+  "suppress_usage_welcome": true
 }

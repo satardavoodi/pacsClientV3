@@ -26,6 +26,9 @@ from modules.ai_imaging.ai_module_ui.csv_table import read_csv_table
 from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv, load_feedback_row, upsert_bone_age_feedback_csv
 from modules.ai_imaging.ai_module_ui.mg_csv_schema import infer_mg_csv_contract, normalize_mg_action
 from modules.ai_imaging.eagle_eye_lumbar.workflow_coordinator import EagleEyeWorkflowCoordinator
+from modules.ai_imaging.mammography_ai_analyze import analysis_runner as mg_ai_runner
+from modules.ai_imaging.mammography_ai_analyze import package_builder as mg_ai_package
+from modules.ai_imaging.dx_wrist_ai_analyze import analysis_runner as dx_wrist_ai_runner
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -598,6 +601,12 @@ def normalize_eagle_eye_mode(mode):
 class ImagingToolsTab(AbstractTab):
     # Signal emitted when tab is fully loaded and rendered
     fully_loaded = Signal()
+    _AI_ANALYZE_WAIT_MESSAGES = (
+        "Waiting...",
+        "Preparing...",
+        "Still working on it...",
+        "Please be patient...",
+    )
     
     def __init__(self, study_uid: Optional[str] = None, eagle_eye_mode: Optional[str] = None):
         super().__init__()
@@ -609,6 +618,10 @@ class ImagingToolsTab(AbstractTab):
         self.current_sidebar = None
         self._eagle_eye_workflow = EagleEyeWorkflowCoordinator(self)
         self.mg_runs_loaded = False  # ÙÙ„Ú¯ Ø¬Ø¯ÛŒØ¯ Ø¨Ø±Ø§ÛŒ Ù…Ø¯ÛŒØ±ÛŒØª Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ MG runs
+        self._ai_analyze_wait_index = 0
+        self._ai_analyze_wait_timer = QTimer(self)
+        self._ai_analyze_wait_timer.setInterval(3000)
+        self._ai_analyze_wait_timer.timeout.connect(self._show_next_ai_analyze_wait_message)
 
         # ---- init MG widgets FIRST (important)
         self._init_mg_widgets()
@@ -616,6 +629,17 @@ class ImagingToolsTab(AbstractTab):
         # ---- base layouts
         self.add_section('Home', self.home_layout())
         self.add_section('Segment', self.segment_layout())
+
+        # ---- compact the section GroupBoxes so action buttons sit close to the
+        # top navigation tabs instead of being pushed far down by the stacked
+        # layout's default Expanding size policy.
+        stacked = self.get_stacked_layout()
+        for i in range(stacked.count()):
+            w = stacked.widget(i)
+            if w is not None:
+                pol = w.sizePolicy()
+                pol.setVerticalPolicy(QSizePolicy.Maximum)
+                w.setSizePolicy(pol)
 
         self.vertical_layout: QVBoxLayout = self.get_center_layout_vertical()
         self.left_sidebar_root_layout: QVBoxLayout = self.get_sidebar_layout()
@@ -786,6 +810,18 @@ class ImagingToolsTab(AbstractTab):
         """
         try:
             self._eagle_eye_workflow.teardown()
+        except Exception:
+            pass
+        try:
+            self._ai_analyze_wait_timer.stop()
+        except Exception:
+            pass
+        # Detach in-flight Intelligent AI Analyze runner
+        try:
+            runner = getattr(self, '_ai_analyze_runner', None)
+            if runner is not None:
+                runner.detach()
+                self._ai_analyze_runner = None
         except Exception:
             pass
         try:
@@ -1562,6 +1598,13 @@ class ImagingToolsTab(AbstractTab):
             'Enable distance measurement ruler on the selected mammography viewer',
             self._on_mg_ruler_clicked
         )
+        self._ai_analyze_btn = _add_btn(
+            'Intelligent AI Analyze', 'fa5s.brain',
+            'Send mammography images, bounding boxes and CSV to AI for pathological findings',
+            self._on_intelligent_ai_analyze_clicked
+        )
+        self._ai_analyze_runner = None  # current in-flight MammographyAnalysisRunner
+        self._ai_analyze_state = 'idle'  # idle | analyzing | opening_echomind | ready | error
 
         # --- 3D Cursor findings selector (multiple corresponding lesions) ------
         # Lives in the TOOLBAR next to Ruler — NOT inside the VTK viewport, which
@@ -1806,6 +1849,595 @@ class ImagingToolsTab(AbstractTab):
         except Exception as e:
             print(f"[ImagingToolsTab] Failed to toggle ruler: {e}")
             show_message("Failed to toggle ruler tool.")
+
+    # ---------- Intelligent AI Analyze (Mammography) ----------
+
+    def _on_intelligent_ai_analyze_clicked(self):
+        """Start Intelligent AI Analyze for MG or a DX wrist study.
+
+        Collects all mammography images, bounding boxes, CSV detection results,
+        and sends them to ChatGPT 5.6 via the existing GAPGPT infrastructure.
+        The result is transferred to EchoMind for the user to review/edit.
+        """
+        modality = self.detect_modality()
+        if modality not in {"MG", "DX"}:
+            show_message("Intelligent AI Analyze is only available for MG and DX wrist studies.")
+            return
+
+        # Prevent duplicate requests
+        if self._ai_analyze_state == 'analyzing':
+            show_message("AI analysis is already in progress.")
+            return
+
+        # Detach any previous runner
+        if self._ai_analyze_runner is not None:
+            try:
+                self._ai_analyze_runner.detach()
+            except Exception:
+                pass
+            self._ai_analyze_runner = None
+
+        print("[AI_ANALYZE] Started")
+        print(f"[AI_ANALYZE] Study ID: {self.study_uid}")
+
+        # Pre-flight validation
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            self._ai_analyze_set_state('error')
+            show_message("Viewer is not ready.")
+            return
+
+        self._ai_analyze_set_state('analyzing')
+
+        if modality == "DX":
+            self._start_dx_wrist_ai_analysis()
+            return
+
+        # Minimal validation on GUI thread (fast)
+        csv_path = self._find_detection_csv_path()
+        print(f"[AI_ANALYZE] CSV detected: {'yes' if csv_path else 'no'}")
+
+        # Start async — heavy I/O (package build + API call) runs in worker thread
+        print("[AI_ANALYZE] Starting async analysis")
+        runner = mg_ai_runner.MammographyAnalysisRunner(
+            study_uid=self.study_uid or '',
+            csv_path=csv_path,
+            parent=self,
+        )
+        runner.progress.connect(self._on_ai_analyze_progress)
+        runner.finished.connect(self._on_ai_analyze_finished)
+        runner.failed.connect(self._on_ai_analyze_failed)
+        self._ai_analyze_runner = runner
+
+        if not runner.start():
+            self._ai_analyze_runner = None
+            self._ai_analyze_set_state('error')
+            show_message("Could not start AI analysis.")
+
+    def _start_dx_wrist_ai_analysis(self):
+        """Start the isolated DX wrist PNG-to-model API workflow."""
+        try:
+            selected = getattr(self.patient_widget, "selected_widget", None)
+            vtk_widget = getattr(selected, "vtk_widget", selected)
+            image_viewer = getattr(vtk_widget, "image_viewer", None)
+            metadata = getattr(image_viewer, "metadata", None)
+            series = metadata.get("series", {}) if isinstance(metadata, dict) else {}
+            source_dir = series.get("series_path") or getattr(
+                self.patient_widget, "import_folder_path", ""
+            )
+            if not source_dir:
+                from PacsClient.pacs.patient_tab.utils.utils import get_study_source_path
+
+                source_dir, _ = get_study_source_path(str(self.study_uid or ""))
+            source_dir = str(source_dir or "")
+            if not source_dir:
+                raise RuntimeError("The DX wrist DICOM folder could not be resolved.")
+
+            output_dir = ATTACHMENT_PATH / str(self.study_uid or "unknown") / "dx_wrist_ai_analyze"
+            runner = dx_wrist_ai_runner.DXWristAnalysisRunner(
+                study_uid=str(self.study_uid or ""),
+                source_dir=source_dir,
+                output_dir=str(output_dir),
+                parent=self,
+            )
+            runner.progress.connect(self._on_ai_analyze_progress)
+            runner.finished.connect(self._on_ai_analyze_finished)
+            runner.failed.connect(self._on_ai_analyze_failed)
+            self._ai_analyze_runner = runner
+            if not runner.start():
+                self._ai_analyze_runner = None
+                self._ai_analyze_set_state("error")
+                show_message("Could not start DX wrist AI analysis.")
+        except Exception as exc:
+            self._ai_analyze_runner = None
+            self._ai_analyze_set_state("error")
+            logger.error("[DX_WRIST_AI][ERROR] Could not start: %s", exc, exc_info=True)
+            show_message(f"DX wrist AI analysis failed:\n{exc}")
+
+    def _on_ai_analyze_progress(self, stage: str, message: str):
+        """Handle progress updates from the analysis runner."""
+        self._start_ai_analyze_wait_messages()
+
+    def _start_ai_analyze_wait_messages(self):
+        """Show only friendly progress text while Intelligent AI Analyze runs."""
+        if not self._ai_analyze_wait_timer.isActive():
+            self._ai_analyze_wait_index = 0
+            self.set_processing_status(self._AI_ANALYZE_WAIT_MESSAGES[0], active=True)
+            self._ai_analyze_wait_timer.start()
+
+    def _show_next_ai_analyze_wait_message(self):
+        self._ai_analyze_wait_index = (
+            self._ai_analyze_wait_index + 1
+        ) % len(self._AI_ANALYZE_WAIT_MESSAGES)
+        self.set_processing_status(
+            self._AI_ANALYZE_WAIT_MESSAGES[self._ai_analyze_wait_index],
+            active=True,
+        )
+
+    def _stop_ai_analyze_wait_messages(self, text: str, *, active: bool = False):
+        self._ai_analyze_wait_timer.stop()
+        self.set_processing_status(text, active=active)
+
+    def _on_ai_analyze_finished(self, findings_text: str):
+        """Handle successful AI analysis completion.
+
+        Shows an editable dialog with the pathological findings.  The user can
+        review, edit and confirm — only then the text is transferred to EchoMind
+        in **report** mode so the report can be generated immediately.
+        """
+        self._ai_analyze_runner = None
+        print(f"[AI_ANALYZE] Findings extracted: {len(findings_text)} chars")
+
+        # Show the editable findings dialog (blocks until the user confirms/cancels)
+        edited = self._show_editable_findings_dialog(findings_text)
+        if edited is None:
+            # User cancelled
+            self._ai_analyze_set_state('idle')
+            self._stop_ai_analyze_wait_messages("Analysis complete - user cancelled")
+            print("[AI_ANALYZE] User cancelled findings dialog")
+            return
+
+        print("[AI_ANALYZE] Opening EchoMind in report mode")
+        self._ai_analyze_set_state('opening_echomind')
+        self._stop_ai_analyze_wait_messages("Still working on it...", active=True)
+
+        # Transfer findings to EchoMind (report mode)
+        try:
+            self._transfer_findings_to_echomind(edited, mode='report')
+            print("[AI_ANALYZE] EchoMind ready (report mode)")
+            self._ai_analyze_set_state('ready')
+            self._stop_ai_analyze_wait_messages("Intelligent AI Analyze complete")
+            print("[AI_ANALYZE] Completed")
+        except Exception as exc:
+            self._ai_analyze_set_state('error')
+            import traceback
+            traceback.print_exc()
+            print(f"[AI_ANALYZE][ERROR] EchoMind transfer failed: {exc}")
+            # Still show findings in result dialog as fallback
+            self._show_ai_analyze_result(edited)
+            self._stop_ai_analyze_wait_messages(
+                "AI analysis complete (EchoMind transfer pending)"
+            )
+
+    def _on_ai_analyze_failed(self, reason: str):
+        """Handle failed AI analysis."""
+        self._ai_analyze_runner = None
+        self._ai_analyze_set_state('error')
+        print(f"[AI_ANALYZE][ERROR] Analysis failed: {reason}")
+        self._stop_ai_analyze_wait_messages("AI analysis failed")
+        show_message(f"Intelligent AI Analyze failed:\n{reason}")
+
+    def _ai_analyze_set_state(self, state: str):
+        """Update button state and enable/disable accordingly."""
+        self._ai_analyze_state = state
+        busy = state in ('analyzing', 'opening_echomind')
+        if state == 'analyzing':
+            self._start_ai_analyze_wait_messages()
+        elif not busy and hasattr(self, '_ai_analyze_wait_timer'):
+            self._ai_analyze_wait_timer.stop()
+        try:
+            self._ai_analyze_btn.setEnabled(not busy)
+            if busy:
+                self._ai_analyze_btn.setStyleSheet(
+                    "QPushButton { background:#1a202c; color:#fbbf24; border:1px solid #92400e;"
+                    " border-radius:4px; padding:4px 10px; font-size:12px; }"
+                )
+            else:
+                self._ai_analyze_btn.setStyleSheet("")  # reset to default
+        except Exception:
+            pass
+
+    def _show_editable_findings_dialog(self, findings_text: str):
+        """Show an editable dialog with the pathological findings.
+
+        Returns the (possibly edited) text if the user clicks *OK*,
+        or ``None`` if the user cancels.
+        """
+        try:
+            from PySide6.QtWidgets import (
+                QDialog, QVBoxLayout, QLabel, QPlainTextEdit,
+                QPushButton, QHBoxLayout, QCheckBox,
+            )
+            from PySide6.QtGui import QFont
+            from PySide6.QtCore import Qt
+
+            dialog = QDialog(self)
+            title_prefix = "DX Wrist AI" if self.detect_modality() == "DX" else "Mammography AI"
+            dialog.setWindowTitle(f"{title_prefix} — Findings Review & Confirm")
+            dialog.setMinimumSize(660, 520)
+            dialog.resize(800, 640)
+            dialog.setStyleSheet(
+                "QDialog { background: #0f172a; }"
+                "QLabel   { color: #e2e8f0; }"
+            )
+
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(18, 18, 18, 14)
+            layout.setSpacing(10)
+
+            # Title
+            title = QLabel(
+                "DX Wrist AI — Bone Age Reasoning & Pathological Findings"
+                if self.detect_modality() == "DX"
+                else "Mammography AI — Pathological Findings"
+            )
+            title.setStyleSheet(
+                "color: #34d399; font-size: 15px; font-weight: 700;"
+            )
+            layout.addWidget(title)
+
+            hint = QLabel(
+                "Review and edit the findings below, then click **Confirm** "
+                "to open them in EchoMind Report."
+            )
+            hint.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 4px;")
+            layout.addWidget(hint)
+
+            # Editable text area
+            body = QPlainTextEdit()
+            body.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            font = QFont("Consolas")
+            font.setStyleHint(QFont.StyleHint.Monospace)
+            font.setPointSize(10)
+            body.setFont(font)
+            body.setPlainText(findings_text)
+            body.setStyleSheet(
+                "QPlainTextEdit { background: #111827; color: #e2e8f0;"
+                " border: 1px solid #374151; border-radius: 8px;"
+                " padding: 12px; selection-background-color: #2563eb; }"
+            )
+            layout.addWidget(body, 1)
+
+            # Buttons
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+
+            btn_cancel = QPushButton("Cancel")
+            btn_cancel.setFixedHeight(34)
+            btn_cancel.setStyleSheet(
+                "QPushButton { background: #374151; color: #d1d5db;"
+                " border: 1px solid #4b5563; border-radius: 6px;"
+                " padding: 6px 18px; font-size: 13px; }"
+                "QPushButton:hover { background: #4b5563; }"
+            )
+            btn_cancel.clicked.connect(dialog.reject)
+            btn_row.addWidget(btn_cancel)
+
+            btn_confirm = QPushButton("✔  Confirm & Open Report")
+            btn_confirm.setFixedHeight(34)
+            btn_confirm.setStyleSheet(
+                "QPushButton { background: #059669; color: #ffffff;"
+                " border: 1px solid #047857; border-radius: 6px;"
+                " padding: 6px 18px; font-size: 13px; font-weight: 600; }"
+                "QPushButton:hover { background: #047857; }"
+            )
+            btn_confirm.clicked.connect(dialog.accept)
+            btn_row.addWidget(btn_confirm)
+
+            layout.addLayout(btn_row)
+
+            result = dialog.exec()
+            if result == QDialog.DialogCode.Accepted:
+                return body.toPlainText()
+            return None
+        except Exception as exc:
+            print(f"[AI_ANALYZE][ERROR] Findings dialog failed: {exc}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: return original text without editing
+            return findings_text
+
+    def _transfer_findings_to_echomind(self, findings_text: str, *, mode: str = 'chat'):
+        """Open EchoMind and transfer the pathological findings.
+
+        EchoMind is a top-level window (AIChatViewer) created by
+        ``ai_chat_layout_ui()``.  It starts on a ModePickerPage; the
+        composer (text box) only exists AFTER the user selects a mode.
+
+        When *mode* is ``'report'``, the viewer is opened directly on the
+        Report (or ChatGPT → Report) page so the user can generate the
+        report without extra clicks.
+
+        Strategy:
+        1. Open the AI Chat window (creates it if needed).
+        2. If mode is 'report', programmatically select the Report mode.
+        3. Retry with increasing delays until a composer/text box is found
+           (the page may still be initializing).
+        4. Fall back to a standalone result dialog if insertion fails.
+        """
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            raise RuntimeError("Patient widget not available")
+
+        # Open the AI Chat window (creates it or brings it to front)
+        try:
+            pw.switch_right_panel('ai_chat', force=True)
+        except Exception as exc:
+            raise RuntimeError(f"Could not open EchoMind: {exc}") from exc
+
+        # --- Auto-select the requested mode on the ModePickerPage ---
+        if mode == 'report':
+            self._auto_select_echomind_report_mode(pw)
+
+        # Retry with increasing delays — the window may still be initializing
+        from PySide6.QtCore import QTimer
+        self._ai_analyze_findings_pending = findings_text
+        self._ai_analyze_retry_count = 0
+        self._ai_analyze_retry_insert()
+
+    def _ai_analyze_retry_insert(self):
+        """Try to insert findings into EchoMind, retrying if the composer is not ready."""
+        findings_text = getattr(self, '_ai_analyze_findings_pending', '')
+        if not findings_text:
+            return
+
+        retry = getattr(self, '_ai_analyze_retry_count', 0)
+        max_retries = 5
+        delays_ms = [500, 1000, 2000, 3000, 5000]
+
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            return
+
+        # Get the AI Chat window
+        chat_window = getattr(pw, 'ai_chat_window', None)
+        if chat_window is None or not hasattr(chat_window, 'isVisible') or not chat_window.isVisible():
+            if retry < max_retries:
+                self._ai_analyze_retry_count = retry + 1
+                from PySide6.QtCore import QTimer
+                delay = delays_ms[min(retry, len(delays_ms) - 1)]
+                QTimer.singleShot(delay, self._ai_analyze_retry_insert)
+            else:
+                print("[AI_ANALYZE] EchoMind window not available after retries")
+                self._ai_analyze_show_fallback(findings_text)
+            return
+
+        # Search for the composer (UnifiedComposer) or text box recursively
+        inserted = self._try_insert_into_widget(chat_window, findings_text)
+        if inserted:
+            print(f"[AI_ANALYZE] Findings inserted into EchoMind ({len(findings_text)} chars)")
+            self._ai_analyze_findings_pending = ''
+            return
+
+        # Not found yet — retry
+        if retry < max_retries:
+            self._ai_analyze_retry_count = retry + 1
+            from PySide6.QtCore import QTimer
+            delay = delays_ms[min(retry, len(delays_ms) - 1)]
+            print(f"[AI_ANALYZE] EchoMind text box not ready (retry {retry + 1}/{max_retries}, {delay}ms)")
+            QTimer.singleShot(delay, self._ai_analyze_retry_insert)
+        else:
+            print("[AI_ANALYZE] Could not find EchoMind text box after retries")
+            self._ai_analyze_show_fallback(findings_text)
+
+    def _try_insert_into_widget(self, widget, findings_text: str) -> bool:
+        """Try to insert findings text into a widget or its children.
+        
+        Searches for:
+        1. A composer with append_text() method
+        2. A QTextEdit/QPlainTextEdit with setPlainText()
+        """
+        # Direct composer check
+        composer = getattr(widget, 'composer', None)
+        if composer is not None and hasattr(composer, 'append_text'):
+            composer.append_text(findings_text)
+            return True
+
+        # Direct box check
+        box = getattr(widget, 'box', None)
+        if box is not None and hasattr(box, 'setPlainText'):
+            box.setPlainText(findings_text)
+            return True
+
+        # Recursive search through children
+        try:
+            from PySide6.QtWidgets import QTextEdit, QPlainTextEdit
+            for child in widget.findChildren((QTextEdit, QPlainTextEdit)):
+                if hasattr(child, 'setPlainText') and child.isReadOnly():
+                    continue  # skip read-only displays
+                if hasattr(child, 'setPlainText'):
+                    child.setPlainText(findings_text)
+                    return True
+                if hasattr(child, 'setText'):
+                    child.setText(findings_text)
+                    return True
+        except Exception:
+            pass
+
+        # Try QStackedWidget children
+        try:
+            from PySide6.QtWidgets import QStackedWidget
+            for stack in widget.findChildren(QStackedWidget):
+                current = stack.currentWidget()
+                if current is not None:
+                    if self._try_insert_into_widget(current, findings_text):
+                        return True
+        except Exception:
+            pass
+
+        return False
+
+    def _auto_select_echomind_report_mode(self, pw):
+        """Programmatically select Report mode on the EchoMind ModePickerPage.
+
+        After ``switch_right_panel('ai_chat')`` opens the AIChatViewer, it shows
+        the ``ModePickerPage`` by default.  This method waits briefly for the
+        picker to appear and then simulates a click on the 'Report' button so
+        the user lands directly on the Report page (no manual mode selection).
+        """
+        from PySide6.QtCore import QTimer
+
+        def _click_report():
+            chat_win = getattr(pw, 'ai_chat_window', None)
+            if chat_win is None:
+                return
+            picker = getattr(chat_win, 'picker', None)
+            if picker is None:
+                return
+            # ModePickerPage exposes a ``chosen`` signal; we call the internal
+            # handler directly so the page is created in report mode.
+            try:
+                # First try to find and click the Report button on the picker
+                report_btn = getattr(picker, 'btn_report', None)
+                if report_btn is not None and hasattr(report_btn, 'click'):
+                    report_btn.click()
+                    print("[AI_ANALYZE] EchoMind picker: Report mode selected")
+                    return
+                # Fallback: emit the chosen signal directly
+                picker.chosen.emit('Report')
+                print("[AI_ANALYZE] EchoMind picker: Report mode emitted")
+            except Exception as exc:
+                print(f"[AI_ANALYZE] Could not auto-select Report mode: {exc}")
+
+        # Give the picker time to initialize
+        QTimer.singleShot(300, _click_report)
+
+    def _ai_analyze_show_fallback(self, findings_text: str):
+        """Show findings in a standalone dialog when EchoMind insertion fails."""
+        self._ai_analyze_findings_pending = ''
+        self._show_ai_analyze_result(findings_text)
+
+    def _show_ai_analyze_result(self, findings_text: str):
+        """Show findings in an editable dialog when EchoMind transfer fails.
+
+        The user can review, edit, copy, and save the pathological findings.
+        """
+        try:
+            from PySide6.QtWidgets import (
+                QDialog, QVBoxLayout, QLabel, QPlainTextEdit,
+                QPushButton, QHBoxLayout, QFileDialog,
+            )
+            from PySide6.QtGui import QFont
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Intelligent AI Analyze — Pathological Findings")
+            dialog.setMinimumSize(660, 520)
+            dialog.resize(800, 640)
+            dialog.setStyleSheet(
+                "QDialog { background: #0f172a; }"
+                "QLabel   { color: #e2e8f0; }"
+            )
+
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(18, 18, 18, 14)
+            layout.setSpacing(10)
+
+            # Title
+            title = QLabel("🔍 Mammography AI — Pathological Findings")
+            title.setStyleSheet(
+                "color: #34d399; font-size: 15px; font-weight: 700;"
+            )
+            layout.addWidget(title)
+
+            hint = QLabel(
+                "Review and edit the findings below, then Copy or Save."
+            )
+            hint.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 4px;")
+            layout.addWidget(hint)
+
+            # Editable text area
+            body = QPlainTextEdit()
+            body.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            font = QFont("Consolas")
+            font.setStyleHint(QFont.StyleHint.Monospace)
+            font.setPointSize(10)
+            body.setFont(font)
+            body.setPlainText(findings_text)
+            body.setStyleSheet(
+                "QPlainTextEdit { background: #111827; color: #e2e8f0;"
+                " border: 1px solid #374151; border-radius: 8px;"
+                " padding: 12px; selection-background-color: #2563eb; }"
+            )
+            layout.addWidget(body, 1)
+
+            # Button row
+            btn_layout = QHBoxLayout()
+
+            btn_copy = QPushButton("📋  Copy")
+            btn_copy.setFixedHeight(34)
+            btn_copy.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #e2e8f0;"
+                " border: 1px solid #334155; border-radius: 6px;"
+                " padding: 6px 14px; font-size: 13px; }"
+                "QPushButton:hover { background: #334155; }"
+            )
+            btn_copy.clicked.connect(
+                lambda: self._copy_findings_to_clipboard(body.toPlainText())
+            )
+            btn_layout.addWidget(btn_copy)
+
+            btn_layout.addStretch()
+
+            btn_save = QPushButton("💾  Save to File")
+            btn_save.setFixedHeight(34)
+            btn_save.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #e2e8f0;"
+                " border: 1px solid #334155; border-radius: 6px;"
+                " padding: 6px 14px; font-size: 13px; }"
+                "QPushButton:hover { background: #334155; }"
+            )
+
+            def _save_to_file():
+                path, _ = QFileDialog.getSaveFileName(
+                    dialog, "Save Findings", "pathological_findings.txt",
+                    "Text Files (*.txt);;All Files (*)"
+                )
+                if path:
+                    try:
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(body.toPlainText())
+                        self.set_processing_status(f"Findings saved to {path}", active=False)
+                    except Exception as exc:
+                        print(f"[AI_ANALYZE][ERROR] Save failed: {exc}")
+
+            btn_save.clicked.connect(_save_to_file)
+            btn_layout.addWidget(btn_save)
+
+            btn_close = QPushButton("Close")
+            btn_close.setFixedHeight(34)
+            btn_close.setStyleSheet(
+                "QPushButton { background: #059669; color: #ffffff;"
+                " border: 1px solid #047857; border-radius: 6px;"
+                " padding: 6px 18px; font-size: 13px; font-weight: 600; }"
+                "QPushButton:hover { background: #047857; }"
+            )
+            btn_close.clicked.connect(dialog.accept)
+            btn_layout.addWidget(btn_close)
+
+            layout.addLayout(btn_layout)
+
+            dialog.exec()
+        except Exception as exc:
+            print(f"[AI_ANALYZE][ERROR] Result dialog failed: {exc}")
+
+    def _copy_findings_to_clipboard(self, text: str):
+        """Copy findings text to clipboard."""
+        try:
+            from PySide6.QtGui import QGuiApplication
+            QGuiApplication.clipboard().setText(text)
+            self.set_processing_status("Findings copied to clipboard", active=False)
+        except Exception as exc:
+            print(f"[AI_ANALYZE][ERROR] Clipboard copy failed: {exc}")
 
     def _on_dual_view_clicked(self):
         """Dual View feature removed."""

@@ -1485,7 +1485,7 @@ class UnifiedComposer(QWidget):
     recordingStarted = Signal()
     cancelClicked = Signal()
     standardizeClicked = Signal(str)
-    modalitySelected = Signal(str) 
+    modalitySelected = Signal(str)
     
     def __init__(self, placeholder: str = "Write/paste report text"):
         super().__init__()
@@ -2072,7 +2072,10 @@ class UnifiedComposer(QWidget):
         self.btn_all_modality_hq.setFixedHeight(40)
         self.btn_all_modality_hq.setFixedWidth(140)
         self.btn_all_modality_hq.setVisible(False)
-        
+
+        # 📊 Show Usage — always visible: the welcome popup/bubble is permanently
+        # disabled, so this is the sole way back to the Total-tokens / per-model
+        # / last-used summary.
         # ⏸️ دکمه پوز (styled circle)
         self.btn_pause = QToolButton(controls)
         self.btn_pause.setToolButtonStyle(Qt.ToolButtonIconOnly)
