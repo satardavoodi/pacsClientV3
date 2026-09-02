@@ -79,6 +79,8 @@ def _defaults() -> Dict[str, Any]:
         "stt_auth_token": "",           # optional; falls back to the GapGPT key
         "connection_type": "direct",  # direct | socks5
         "proxy_port": 2080,
+        # When True, the EchoMind welcome/usage bubble is suppressed on open.
+        "suppress_usage_welcome": False,
     }
 
 
@@ -451,3 +453,18 @@ def save_proxy_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
         "connection_type": conn_type,
         "proxy_port": port,
     })
+
+
+def is_usage_welcome_suppressed() -> bool:
+    """Return True if the user chose 'Do not show this again' for the welcome bubble."""
+    return bool(load_settings().get("suppress_usage_welcome"))
+
+
+def suppress_usage_welcome() -> Dict[str, Any]:
+    """Persist the user's choice to hide the welcome/usage bubble."""
+    return save_settings({"suppress_usage_welcome": True})
+
+
+def unsuppress_usage_welcome() -> Dict[str, Any]:
+    """Re-enable the welcome/usage bubble (e.g. from Settings)."""
+    return save_settings({"suppress_usage_welcome": False})

@@ -754,6 +754,97 @@ class _PatientSeriesImagePickerDialog(QDialog):
         self.accept()
 
 
+def _resolve_echomind_usage_api_key() -> str:
+    """Resolve the API key to look up token/transcript usage for."""
+    try:
+        from .api_manager import Manage
+        m = Manage.instance()
+        key = (m.get_irannobat_key() or m.get_last_api_key() or "").strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    try:
+        from modules.EchoMind.settings_store import get_echomind_api_key
+        return (get_echomind_api_key() or "").strip()
+    except Exception:
+        return ""
+
+
+def _show_echomind_usage_dialog(parent, api_key: t.Optional[str] = None) -> None:
+    """Shared 'Show Usage' popup — Total tokens, per-model usage, last-used time.
+
+    Used from the welcome-popup center (ModePickerPage), the composer's
+    'Show Usage' button (OneChatPage/ChatGPTPage), and the ChatGPT page's own
+    token icon — one dialog, one place to fix.
+    """
+    try:
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QMessageBox
+
+        key = (api_key or "").strip() or _resolve_echomind_usage_api_key()
+        if not key:
+            mb = QMessageBox(parent)
+            mb.setIcon(QMessageBox.Information)
+            mb.setWindowTitle("Usage")
+            mb.setText("No API key available. Please configure your API key in Settings.")
+            mb.exec()
+            return
+
+        from PacsClient.utils.database import (
+            load_api_token_usage_for_key,
+            load_api_transcript_usage_for_key,
+            get_api_usage_summary_html,
+        )
+
+        models = load_api_token_usage_for_key(key)
+        total_tokens = sum(int(v or 0) for v in models.values())
+        tr_models = load_api_transcript_usage_for_key(key)
+        total_tr = sum(float(v or 0.0) for v in tr_models.values())
+        summary_html = get_api_usage_summary_html(key)
+
+        dlg = QDialog(parent)
+        dlg.setWindowTitle("Token & Transcript Usage")
+        dlg.setMinimumSize(420, 340)
+        dlg.setStyleSheet(
+            "QDialog { background: #1e293b; }"
+            "QLabel  { color: #e2e8f0; }"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 16, 16, 12)
+
+        lbl = QLabel(
+            f"<b>Total tokens:</b> {total_tokens:,}<br>"
+            f"<b>Total transcript:</b> {total_tr:.1f} min"
+        )
+        lbl.setStyleSheet("font-size: 13px; color: #e2e8f0; margin-bottom: 8px;")
+        lay.addWidget(lbl)
+
+        detail = QTextEdit()
+        detail.setReadOnly(True)
+        detail.setHtml(summary_html)
+        detail.setStyleSheet(
+            "QTextEdit { background: #0f172a; color: #cbd5e1;"
+            " border: 1px solid #334155; border-radius: 6px;"
+            " padding: 8px; font-size: 12px; }"
+        )
+        lay.addWidget(detail, 1)
+
+        close_btn = QPushButton("Close")
+        close_btn.setFixedHeight(30)
+        close_btn.setStyleSheet(
+            "QPushButton { background: #334155; color: #d1d5db;"
+            " border: 1px solid #475569; border-radius: 6px;"
+            " padding: 4px 16px; }"
+            "QPushButton:hover { background: #475569; }"
+        )
+        close_btn.clicked.connect(dlg.accept)
+        lay.addWidget(close_btn, 0, Qt.AlignRight)
+
+        dlg.exec()
+    except Exception as exc:
+        print(f"[EchoMind] Usage popup failed: {exc}")
+
+
 class ModePickerPage(QWidget):
     chosen = Signal(str)  # "Chat" | "Report" | "Assist" | "ChatGPT"
 
@@ -836,6 +927,30 @@ class ModePickerPage(QWidget):
         self.left.addWidget(self.btn_assist)
         self.left.addWidget(self.gap_3)
         self.left.addWidget(self.btn_chatgpt)
+
+        # --- "Show Usage" button (visible only when welcome popup is suppressed) ---
+        self.btn_show_usage = QPushButton("📊 Show Usage", self.left_wrap)
+        self.btn_show_usage.setObjectName("modeBtn")
+        self.btn_show_usage.setCursor(Qt.PointingHandCursor)
+        self.btn_show_usage.setMinimumHeight(36)
+        self.btn_show_usage.setStyleSheet(
+            "QPushButton#modeBtn { color: #94a3b8; border: 1px solid #334155;"
+            " border-radius: 10px; padding: 8px 14px; font-size: 13px;"
+            " font-weight: 500; background-color: rgba(255,255,255,0.04); }"
+            "QPushButton#modeBtn:hover { border-color: #60a5fa;"
+            " background-color: rgba(255,255,255,0.08); color: #e2e8f0; }"
+        )
+        self.btn_show_usage.clicked.connect(self._show_usage_popup)
+
+        # Only show when the welcome popup has been suppressed
+        try:
+            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
+            _show_it = is_usage_welcome_suppressed()
+        except Exception:
+            _show_it = False
+        self.btn_show_usage.setVisible(bool(_show_it))
+
+        self.left.addWidget(self.btn_show_usage)
         self.left.addStretch(1)
 
         # راست: پیام قفل/راهنما
@@ -901,6 +1016,13 @@ class ModePickerPage(QWidget):
         # هر بار نمایش: وضعیت دسترسی را سینک کن
         self._apply_access_state()
         self._refresh_usage_panel()
+
+        # Refresh Show Usage button visibility based on current suppression setting
+        try:
+            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
+            self.btn_show_usage.setVisible(is_usage_welcome_suppressed())
+        except Exception:
+            pass
 
         if not self._api_checked:
             self._api_checked = True
@@ -1072,6 +1194,10 @@ class ModePickerPage(QWidget):
         self._usage_lbl.setVisible(True)
 
 
+    def _show_usage_popup(self):
+        """Show a small popup with token + transcript usage details."""
+        _show_echomind_usage_dialog(self)
+
     def _apply_access_state(self) -> None:
         """
         Sync the UI state based on whether the API key is validated.
@@ -1196,7 +1322,19 @@ class ModePickerPage(QWidget):
             self._api_prompt_inflight = False
 
     def _show_welcome(self, center: str, api_key: t.Optional[str] = None):
-        from PySide6.QtWidgets import QMessageBox
+        # --- Check if user previously chose "Do not show this again" ---
+        try:
+            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
+            if is_usage_welcome_suppressed():
+                return
+        except Exception:
+            pass
+
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
+            QPushButton, QScrollArea, QWidget, QFrame,
+        )
+        from PySide6.QtCore import Qt as _Qt
 
         usage_html = "<i>No usage data available.</i>"
         real_api_key = None
@@ -1223,38 +1361,122 @@ class ModePickerPage(QWidget):
         else:
             usage_html = "<i>API key is not available for usage lookup.</i>"
 
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle("✅ API Key Validated - AIPacs")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("✅ API Key Validated - AIPacs")
+        dlg.setMinimumWidth(440)
+        dlg.setStyleSheet(
+            "QDialog { background: #10131a; }"
+            "QLabel { color: #e2e8f0; }"
+        )
 
-        msg.setText(
-            f"<div style='font-size:12px;line-height:1.25'>"
-            f"<div style='font-size:14px;font-weight:700;margin:0 0 4px 0'>"
-            f"Welcome to {center} Center"
-            f"</div>"
-            f"<div style='color:#bbb;margin:0 0 8px 0'>API key validated. AI features are enabled.</div>"
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(22, 20, 22, 16)
+        root.setSpacing(4)
 
-            f"<div style='font-weight:700;margin:0 0 4px 0'>Usage Summary</div>"
-            f"{usage_html}"
+        title = QLabel(f"Welcome to {center} Center")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
+        root.addWidget(title)
 
-            f"<div style='color:#aaa;margin-top:6px'>"
+        subtitle = QLabel("API key validated. AI features are enabled.")
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 6px;")
+        root.addWidget(subtitle)
 
-            f"<hr>"
-            f"<div><b>Enabled features:</b></div>"
-            f"<ul style='margin:6px 0 0 18px'>"
-            f"<li>💬 Chat</li>"
-            f"<li>📄 Report Generation</li>"
-            f"<li>🤖 Assistant</li>"
-            f"<li>🔍 Search</li>"
-            f"<li>🌟 ChatGPT</li>"
-            f"</ul>"
-            )
+        # Scrollable body so a long usage summary never pushes the checkbox/OK
+        # button off-screen — the previous QMessageBox had no such limit.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(320)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: #0f172a; width: 10px; border-radius: 5px; }"
+            "QScrollBar::handle:vertical { background: #334155; border-radius: 5px; min-height: 24px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+        body_holder = QWidget()
+        body_holder.setStyleSheet("background: transparent;")
+        body_layout = QVBoxLayout(body_holder)
+        body_layout.setContentsMargins(0, 4, 4, 4)
+        body_layout.setSpacing(10)
 
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec()
+        card = QFrame()
+        card.setStyleSheet(
+            "QFrame { background: #0f172a; border: 1px solid #1e293b;"
+            " border-radius: 10px; }"
+        )
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+
+        usage_title = QLabel("Usage Summary")
+        usage_title.setStyleSheet("font-weight: 700; font-size: 13px; color: #e2e8f0;")
+        card_layout.addWidget(usage_title)
+
+        usage_body = QLabel(usage_html)
+        usage_body.setTextFormat(_Qt.RichText)
+        usage_body.setWordWrap(True)
+        usage_body.setStyleSheet("color: #cbd5e1; font-size: 12px;")
+        card_layout.addWidget(usage_body)
+
+        body_layout.addWidget(card)
+
+        features = QLabel(
+            "<div style='font-weight:700; color:#e2e8f0; margin-bottom:4px'>"
+            "Enabled features:</div>"
+            "<ul style='margin:0 0 0 18px; color:#cbd5e1'>"
+            "<li>💬 Chat</li>"
+            "<li>📄 Report Generation</li>"
+            "<li>🤖 Assistant</li>"
+            "<li>🔍 Search</li>"
+            "<li>🌟 ChatGPT</li>"
+            "</ul>"
+        )
+        features.setStyleSheet("font-size: 12px;")
+        body_layout.addWidget(features)
+        body_layout.addStretch(1)
+
+        scroll.setWidget(body_holder)
+        root.addWidget(scroll, 1)
+
+        # --- "Do not show this again" checkbox — themed, own row above OK ---
+        cb = QCheckBox("Do not show this again")
+        cb.setCursor(_Qt.PointingHandCursor)
+        cb.setStyleSheet(
+            "QCheckBox { color: #94a3b8; font-size: 12px; padding: 10px 0 2px 0; }"
+            "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
+            " border: 1px solid #475569; background: #0f172a; }"
+            "QCheckBox::indicator:hover { border-color: #60a5fa; }"
+            "QCheckBox::indicator:checked { background: #2563eb; border-color: #2563eb; }"
+        )
+        root.addWidget(cb)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_ok = QPushButton("OK")
+        btn_ok.setFixedSize(96, 34)
+        btn_ok.setCursor(_Qt.PointingHandCursor)
+        btn_ok.setStyleSheet(
+            "QPushButton { background: #2563eb; color: #ffffff; border: none;"
+            " border-radius: 8px; font-size: 13px; font-weight: 600; }"
+            "QPushButton:hover { background: #1d4ed8; }"
+            "QPushButton:pressed { background: #1e40af; }"
+        )
+        btn_ok.setDefault(True)
+        btn_ok.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_ok)
+        root.addLayout(btn_row)
+
+        dlg.exec()
+
+        # Persist suppression if checkbox was checked
+        if cb.isChecked():
+            try:
+                from modules.EchoMind.settings_store import suppress_usage_welcome
+                suppress_usage_welcome()
+                print("[EchoMind] Welcome popup suppressed for future sessions")
+            except Exception as exc:
+                print(f"[EchoMind] Failed to suppress welcome: {exc}")
 
 
-    def resizeEvent(self, e):
         super().resizeEvent(e)
         lw_h = max(1, self.left_wrap.height())
 
@@ -1382,6 +1604,7 @@ class OneChatPage(QWidget):
         self.composer.transcribeRequested.connect(self._transcribe_now)
         self.composer.recordingStarted.connect(self._prefetch_reception)
         self.composer.standardizeClicked.connect(self._standardize_now)
+        self.composer.showUsageRequested.connect(self._show_usage_popup)
         self.composer.apply_side_padding(16, 16)
 
         # Route attach button to source-selection flow (system/current patient/other patient).
@@ -3990,6 +4213,15 @@ class OneChatPage(QWidget):
         self._sync_metadata_card(local_sid)
 
         return local_sid
+
+    def _show_usage_popup(self):
+        """Show the Total tokens / per-model usage / last-used popup on demand.
+
+        Only reachable via the composer's 'Show Usage' button, which itself is
+        only visible once the welcome bubble's usage summary has been
+        suppressed (see ``modules.EchoMind.settings_store.suppress_usage_welcome``).
+        """
+        _show_echomind_usage_dialog(self)
 
     def _standardize_now(self, text: str):
         """
@@ -8002,7 +8234,12 @@ class ChatGPTPage(OneChatPage):
 
         right_layout.insertWidget(right_layout.count() - 1, self.model_selector_container)
 
-        # TOKEN LABEL
+        # TOKEN LABEL + USAGE BUTTON (small)
+        self._token_row = QWidget(self)
+        token_row_layout = QHBoxLayout(self._token_row)
+        token_row_layout.setContentsMargins(0, 0, 0, 0)
+        token_row_layout.setSpacing(4)
+
         self.lbl_tokens = QLabel("Tokens: –")
         self.lbl_tokens.setStyleSheet("""
             QLabel {
@@ -8011,8 +8248,29 @@ class ChatGPTPage(OneChatPage):
                 padding: 4px 8px;
             }
         """)
-        self.lbl_tokens.setAlignment(Qt.AlignRight)
-        right_layout.insertWidget(right_layout.count() - 1, self.lbl_tokens)
+        self.lbl_tokens.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        token_row_layout.addWidget(self.lbl_tokens, 1)
+
+        self._btn_usage = QToolButton(self._token_row)
+        self._btn_usage.setText("📊")
+        self._btn_usage.setToolTip("View full token & transcript usage")
+        self._btn_usage.setCursor(Qt.PointingHandCursor)
+        self._btn_usage.setAutoRaise(True)
+        self._btn_usage.setFixedSize(24, 24)
+        self._btn_usage.setStyleSheet("""
+            QToolButton {
+                color: #888; font-size: 13px;
+                border: 1px solid transparent; border-radius: 4px;
+                padding: 1px;
+            }
+            QToolButton:hover {
+                border-color: #555; background: rgba(255,255,255,0.06);
+            }
+        """)
+        self._btn_usage.clicked.connect(self._show_usage_popup)
+        token_row_layout.addWidget(self._btn_usage, 0, Qt.AlignVCenter)
+
+        right_layout.insertWidget(right_layout.count() - 1, self._token_row)
 
         self._token_usage = load_token_usage()
         self._update_token_display()
@@ -8150,6 +8408,14 @@ class ChatGPTPage(OneChatPage):
 
 
     def _show_welcome_message(self):
+        # Check if the user chose to suppress the welcome/usage bubble
+        try:
+            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
+            if is_usage_welcome_suppressed():
+                return
+        except Exception:
+            pass
+
         center = getattr(self, "_global_center", None) or "Unknown"
         api_key = getattr(self, "_global_key", None) or ""
         api_key = (api_key or "").strip()
@@ -8168,7 +8434,7 @@ class ChatGPTPage(OneChatPage):
                 models = load_api_token_usage_for_key(api_key)
                 total_tokens = sum(int(v or 0) for v in models.values())
 
-                tr_models = load_api_transcript_usage_for_key(api_key)  # ✅ minutes
+                tr_models = load_api_transcript_usage_for_key(api_key)
                 total_transcript_minutes = sum(float(v or 0.0) for v in tr_models.values())
 
                 usage_html = get_api_usage_summary_html(api_key)
@@ -8187,7 +8453,65 @@ class ChatGPTPage(OneChatPage):
         msg += f"{usage_html}"
 
         self.history.clear()
-        self.history.add_bubble("AI ChatBot", msg)
+        bubble = self.history.add_bubble("AI ChatBot", msg)
+
+        # Add a "Do not show this again" button below the welcome bubble
+        self._add_welcome_suppress_button()
+
+    def _add_welcome_suppress_button(self):
+        """Add a 'Do not show this again' button below the welcome bubble."""
+        try:
+            from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton
+            from PySide6.QtCore import Qt
+
+            container = getattr(self.history, 'container', None)
+            vbox = getattr(self.history, 'vbox', None)
+            if container is None or vbox is None:
+                return
+
+            wrap = QWidget(container)
+            row = QHBoxLayout(wrap)
+            row.setContentsMargins(14, 2, 14, 4)
+            row.setSpacing(8)
+
+            row.addStretch()
+
+            btn = QPushButton("👁  Do not show this again")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip("Hide the usage/welcome bubble on future sessions")
+            btn.setFixedHeight(28)
+            btn.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #94a3b8;"
+                " border: 1px solid #334155; border-radius: 6px;"
+                " padding: 4px 12px; font-size: 11px; }"
+                "QPushButton:hover { background: #334155; color: #e2e8f0; }"
+            )
+
+            def _suppress():
+                try:
+                    from modules.EchoMind.settings_store import suppress_usage_welcome
+                    suppress_usage_welcome()
+                    print("[EchoMind] Welcome/usage bubble suppressed")
+                except Exception as exc:
+                    print(f"[EchoMind] Failed to suppress welcome: {exc}")
+                # Hide the button after clicking
+                wrap.setVisible(False)
+
+            btn.clicked.connect(_suppress)
+            row.addWidget(btn)
+
+            # Insert before the tail spacer so it sits right after the welcome bubble
+            tail_spacer = getattr(self.history, '_tail_spacer', None)
+            if tail_spacer is not None:
+                idx = vbox.indexOf(tail_spacer)
+                if idx >= 0:
+                    vbox.insertWidget(idx, wrap)
+                else:
+                    vbox.addWidget(wrap)
+            else:
+                vbox.addWidget(wrap)
+        except Exception as exc:
+            print(f"[EchoMind] Could not add suppress button: {exc}")
 
     def _update_token_display(self):
         # ✅ robust center name resolver (no get_detected_center_display)
@@ -8208,6 +8532,10 @@ class ChatGPTPage(OneChatPage):
         tokens = self._token_usage.get(center, {}).get(model, 0)
         self.lbl_tokens.setText(f"📊 {model}: {tokens:,} tokens")
 
+
+    def _show_usage_popup(self):
+        """Show a small popup with full token + transcript usage details."""
+        _show_echomind_usage_dialog(self, api_key=getattr(self, '_global_key', None))
 
     def _show_model_menu(self):
         print("[ChatGPT] open model menu")

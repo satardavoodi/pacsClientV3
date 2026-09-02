@@ -1485,7 +1485,10 @@ class UnifiedComposer(QWidget):
     recordingStarted = Signal()
     cancelClicked = Signal()
     standardizeClicked = Signal(str)
-    modalitySelected = Signal(str) 
+    modalitySelected = Signal(str)
+    #: The composer's "Show Usage" button was clicked (only visible once the
+    #: welcome popup's usage summary has been suppressed).
+    showUsageRequested = Signal()
     
     def __init__(self, placeholder: str = "Write/paste report text"):
         super().__init__()
@@ -2072,6 +2075,23 @@ class UnifiedComposer(QWidget):
         self.btn_all_modality_hq.setFixedHeight(40)
         self.btn_all_modality_hq.setFixedWidth(140)
         self.btn_all_modality_hq.setVisible(False)
+
+        # 📊 Show Usage — hidden by default; visible only once the user checked
+        # "Do not show this again" on the welcome popup, giving them a way back
+        # to the same Total-tokens / per-model / last-used summary.
+        self.btn_show_usage = QToolButton(controls)
+        self.btn_show_usage.setProperty("role", "tool")
+        self.btn_show_usage.setText("📊 Show Usage")
+        self.btn_show_usage.setCursor(Qt.PointingHandCursor)
+        self.btn_show_usage.setProperty("kind", "text")
+        self.btn_show_usage.setFixedHeight(40)
+        self.btn_show_usage.setFixedWidth(140)
+        self.btn_show_usage.clicked.connect(self.showUsageRequested.emit)
+        try:
+            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
+            self.btn_show_usage.setVisible(is_usage_welcome_suppressed())
+        except Exception:
+            self.btn_show_usage.setVisible(False)
         
         # ⏸️ دکمه پوز (styled circle)
         self.btn_pause = QToolButton(controls)
@@ -2210,6 +2230,7 @@ class UnifiedComposer(QWidget):
         self.btn_transcribe_quality.setVisible(False)
         ctl.addWidget(self.btn_modality, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_all_modality_hq, 0, Qt.AlignVCenter)
+        ctl.addWidget(self.btn_show_usage, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_assist_send, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_search_send, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_send, 0, Qt.AlignVCenter)

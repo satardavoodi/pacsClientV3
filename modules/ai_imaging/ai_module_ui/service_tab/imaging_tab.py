@@ -619,6 +619,17 @@ class ImagingToolsTab(AbstractTab):
         self.add_section('Home', self.home_layout())
         self.add_section('Segment', self.segment_layout())
 
+        # ---- compact the section GroupBoxes so action buttons sit close to the
+        # top navigation tabs instead of being pushed far down by the stacked
+        # layout's default Expanding size policy.
+        stacked = self.get_stacked_layout()
+        for i in range(stacked.count()):
+            w = stacked.widget(i)
+            if w is not None:
+                pol = w.sizePolicy()
+                pol.setVerticalPolicy(QSizePolicy.Maximum)
+                w.setSizePolicy(pol)
+
         self.vertical_layout: QVBoxLayout = self.get_center_layout_vertical()
         self.left_sidebar_root_layout: QVBoxLayout = self.get_sidebar_layout()
 
@@ -1888,19 +1899,32 @@ class ImagingToolsTab(AbstractTab):
         self.set_processing_status(f"Intelligent AI Analyze: {message}", active=True)
 
     def _on_ai_analyze_finished(self, findings_text: str):
-        """Handle successful AI analysis completion."""
+        """Handle successful AI analysis completion.
+
+        Shows an editable dialog with the pathological findings.  The user can
+        review, edit and confirm — only then the text is transferred to EchoMind
+        in **report** mode so the report can be generated immediately.
+        """
         self._ai_analyze_runner = None
         print(f"[AI_ANALYZE] Findings extracted: {len(findings_text)} chars")
-        print("[AI_ANALYZE] Opening EchoMind")
 
+        # Show the editable findings dialog (blocks until the user confirms/cancels)
+        edited = self._show_editable_findings_dialog(findings_text)
+        if edited is None:
+            # User cancelled
+            self._ai_analyze_set_state('idle')
+            self.set_processing_status("Analysis complete — user cancelled", active=False)
+            print("[AI_ANALYZE] User cancelled findings dialog")
+            return
+
+        print("[AI_ANALYZE] Opening EchoMind in report mode")
         self._ai_analyze_set_state('opening_echomind')
         self.set_processing_status("Opening EchoMind with findings...", active=True)
 
-        # Transfer findings to EchoMind
+        # Transfer findings to EchoMind (report mode)
         try:
-            self._transfer_findings_to_echomind(findings_text)
-            print("[AI_ANALYZE] EchoMind ready")
-            print("[AI_ANALYZE] Transferring findings")
+            self._transfer_findings_to_echomind(edited, mode='report')
+            print("[AI_ANALYZE] EchoMind ready (report mode)")
             self._ai_analyze_set_state('ready')
             self.set_processing_status("Intelligent AI Analyze complete", active=False)
             print("[AI_ANALYZE] Completed")
@@ -1910,7 +1934,7 @@ class ImagingToolsTab(AbstractTab):
             traceback.print_exc()
             print(f"[AI_ANALYZE][ERROR] EchoMind transfer failed: {exc}")
             # Still show findings in result dialog as fallback
-            self._show_ai_analyze_result(findings_text)
+            self._show_ai_analyze_result(edited)
             self.set_processing_status("AI analysis complete (EchoMind transfer pending)", active=False)
 
     def _on_ai_analyze_failed(self, reason: str):
@@ -1937,19 +1961,118 @@ class ImagingToolsTab(AbstractTab):
         except Exception:
             pass
 
-    def _transfer_findings_to_echomind(self, findings_text: str):
+    def _show_editable_findings_dialog(self, findings_text: str):
+        """Show an editable dialog with the pathological findings.
+
+        Returns the (possibly edited) text if the user clicks *OK*,
+        or ``None`` if the user cancels.
+        """
+        try:
+            from PySide6.QtWidgets import (
+                QDialog, QVBoxLayout, QLabel, QPlainTextEdit,
+                QPushButton, QHBoxLayout, QCheckBox,
+            )
+            from PySide6.QtGui import QFont
+            from PySide6.QtCore import Qt
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Pathological Findings — Review & Confirm")
+            dialog.setMinimumSize(660, 520)
+            dialog.resize(800, 640)
+            dialog.setStyleSheet(
+                "QDialog { background: #0f172a; }"
+                "QLabel   { color: #e2e8f0; }"
+            )
+
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(18, 18, 18, 14)
+            layout.setSpacing(10)
+
+            # Title
+            title = QLabel("🔍 Mammography AI — Pathological Findings")
+            title.setStyleSheet(
+                "color: #34d399; font-size: 15px; font-weight: 700;"
+            )
+            layout.addWidget(title)
+
+            hint = QLabel(
+                "Review and edit the findings below, then click **Confirm** "
+                "to open them in EchoMind Report."
+            )
+            hint.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 4px;")
+            layout.addWidget(hint)
+
+            # Editable text area
+            body = QPlainTextEdit()
+            body.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            font = QFont("Consolas")
+            font.setStyleHint(QFont.StyleHint.Monospace)
+            font.setPointSize(10)
+            body.setFont(font)
+            body.setPlainText(findings_text)
+            body.setStyleSheet(
+                "QPlainTextEdit { background: #111827; color: #e2e8f0;"
+                " border: 1px solid #374151; border-radius: 8px;"
+                " padding: 12px; selection-background-color: #2563eb; }"
+            )
+            layout.addWidget(body, 1)
+
+            # Buttons
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+
+            btn_cancel = QPushButton("Cancel")
+            btn_cancel.setFixedHeight(34)
+            btn_cancel.setStyleSheet(
+                "QPushButton { background: #374151; color: #d1d5db;"
+                " border: 1px solid #4b5563; border-radius: 6px;"
+                " padding: 6px 18px; font-size: 13px; }"
+                "QPushButton:hover { background: #4b5563; }"
+            )
+            btn_cancel.clicked.connect(dialog.reject)
+            btn_row.addWidget(btn_cancel)
+
+            btn_confirm = QPushButton("✔  Confirm & Open Report")
+            btn_confirm.setFixedHeight(34)
+            btn_confirm.setStyleSheet(
+                "QPushButton { background: #059669; color: #ffffff;"
+                " border: 1px solid #047857; border-radius: 6px;"
+                " padding: 6px 18px; font-size: 13px; font-weight: 600; }"
+                "QPushButton:hover { background: #047857; }"
+            )
+            btn_confirm.clicked.connect(dialog.accept)
+            btn_row.addWidget(btn_confirm)
+
+            layout.addLayout(btn_row)
+
+            result = dialog.exec()
+            if result == QDialog.DialogCode.Accepted:
+                return body.toPlainText()
+            return None
+        except Exception as exc:
+            print(f"[AI_ANALYZE][ERROR] Findings dialog failed: {exc}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: return original text without editing
+            return findings_text
+
+    def _transfer_findings_to_echomind(self, findings_text: str, *, mode: str = 'chat'):
         """Open EchoMind and transfer the pathological findings.
 
         EchoMind is a top-level window (AIChatViewer) created by
         ``ai_chat_layout_ui()``.  It starts on a ModePickerPage; the
         composer (text box) only exists AFTER the user selects a mode.
-        
+
+        When *mode* is ``'report'``, the viewer is opened directly on the
+        Report (or ChatGPT → Report) page so the user can generate the
+        report without extra clicks.
+
         Strategy:
         1. Open the AI Chat window (creates it if needed).
-        2. Retry with increasing delays until a composer/text box is found
-           (the user may need to click a mode, or the page may still be
-           initializing).
-        3. Fall back to a standalone result dialog if insertion fails.
+        2. If mode is 'report', programmatically select the Report mode.
+        3. Retry with increasing delays until a composer/text box is found
+           (the page may still be initializing).
+        4. Fall back to a standalone result dialog if insertion fails.
         """
         pw = getattr(self, 'patient_widget', None)
         if pw is None:
@@ -1960,6 +2083,10 @@ class ImagingToolsTab(AbstractTab):
             pw.switch_right_panel('ai_chat', force=True)
         except Exception as exc:
             raise RuntimeError(f"Could not open EchoMind: {exc}") from exc
+
+        # --- Auto-select the requested mode on the ModePickerPage ---
+        if mode == 'report':
+            self._auto_select_echomind_report_mode(pw)
 
         # Retry with increasing delays — the window may still be initializing
         from PySide6.QtCore import QTimer
@@ -2059,32 +2186,86 @@ class ImagingToolsTab(AbstractTab):
 
         return False
 
+    def _auto_select_echomind_report_mode(self, pw):
+        """Programmatically select Report mode on the EchoMind ModePickerPage.
+
+        After ``switch_right_panel('ai_chat')`` opens the AIChatViewer, it shows
+        the ``ModePickerPage`` by default.  This method waits briefly for the
+        picker to appear and then simulates a click on the 'Report' button so
+        the user lands directly on the Report page (no manual mode selection).
+        """
+        from PySide6.QtCore import QTimer
+
+        def _click_report():
+            chat_win = getattr(pw, 'ai_chat_window', None)
+            if chat_win is None:
+                return
+            picker = getattr(chat_win, 'picker', None)
+            if picker is None:
+                return
+            # ModePickerPage exposes a ``chosen`` signal; we call the internal
+            # handler directly so the page is created in report mode.
+            try:
+                # First try to find and click the Report button on the picker
+                report_btn = getattr(picker, 'btn_report', None)
+                if report_btn is not None and hasattr(report_btn, 'click'):
+                    report_btn.click()
+                    print("[AI_ANALYZE] EchoMind picker: Report mode selected")
+                    return
+                # Fallback: emit the chosen signal directly
+                picker.chosen.emit('Report')
+                print("[AI_ANALYZE] EchoMind picker: Report mode emitted")
+            except Exception as exc:
+                print(f"[AI_ANALYZE] Could not auto-select Report mode: {exc}")
+
+        # Give the picker time to initialize
+        QTimer.singleShot(300, _click_report)
+
     def _ai_analyze_show_fallback(self, findings_text: str):
         """Show findings in a standalone dialog when EchoMind insertion fails."""
         self._ai_analyze_findings_pending = ''
         self._show_ai_analyze_result(findings_text)
 
     def _show_ai_analyze_result(self, findings_text: str):
-        """Show findings in a result dialog when EchoMind transfer fails."""
+        """Show findings in an editable dialog when EchoMind transfer fails.
+
+        The user can review, edit, copy, and save the pathological findings.
+        """
         try:
-            from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPlainTextEdit, QPushButton, QHBoxLayout
+            from PySide6.QtWidgets import (
+                QDialog, QVBoxLayout, QLabel, QPlainTextEdit,
+                QPushButton, QHBoxLayout, QFileDialog,
+            )
             from PySide6.QtGui import QFont
 
             dialog = QDialog(self)
-            dialog.setWindowTitle("Intelligent AI Analyze - Pathological Findings")
-            dialog.setMinimumSize(620, 480)
-            dialog.resize(760, 620)
-            dialog.setStyleSheet("QDialog { background: #0f172a; }")
+            dialog.setWindowTitle("Intelligent AI Analyze — Pathological Findings")
+            dialog.setMinimumSize(660, 520)
+            dialog.resize(800, 640)
+            dialog.setStyleSheet(
+                "QDialog { background: #0f172a; }"
+                "QLabel   { color: #e2e8f0; }"
+            )
 
             layout = QVBoxLayout(dialog)
-            layout.setContentsMargins(14, 14, 14, 12)
+            layout.setContentsMargins(18, 18, 18, 14)
+            layout.setSpacing(10)
 
-            title = QLabel("Mammography AI Analysis - Pathological Findings")
-            title.setStyleSheet("color: #34d399; font-size: 15px; font-weight: 700;")
+            # Title
+            title = QLabel("🔍 Mammography AI — Pathological Findings")
+            title.setStyleSheet(
+                "color: #34d399; font-size: 15px; font-weight: 700;"
+            )
             layout.addWidget(title)
 
+            hint = QLabel(
+                "Review and edit the findings below, then Copy or Save."
+            )
+            hint.setStyleSheet("color: #94a3b8; font-size: 12px; margin-bottom: 4px;")
+            layout.addWidget(hint)
+
+            # Editable text area
             body = QPlainTextEdit()
-            body.setReadOnly(True)
             body.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
             font = QFont("Consolas")
             font.setStyleHint(QFont.StyleHint.Monospace)
@@ -2093,20 +2274,68 @@ class ImagingToolsTab(AbstractTab):
             body.setPlainText(findings_text)
             body.setStyleSheet(
                 "QPlainTextEdit { background: #111827; color: #e2e8f0;"
-                " border: 1px solid #1f2937; border-radius: 8px; padding: 10px; }")
+                " border: 1px solid #374151; border-radius: 8px;"
+                " padding: 12px; selection-background-color: #2563eb; }"
+            )
             layout.addWidget(body, 1)
 
+            # Button row
             btn_layout = QHBoxLayout()
-            btn_copy = QPushButton("Copy")
-            btn_copy.clicked.connect(lambda: self._copy_findings_to_clipboard(findings_text))
+
+            btn_copy = QPushButton("📋  Copy")
+            btn_copy.setFixedHeight(34)
+            btn_copy.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #e2e8f0;"
+                " border: 1px solid #334155; border-radius: 6px;"
+                " padding: 6px 14px; font-size: 13px; }"
+                "QPushButton:hover { background: #334155; }"
+            )
+            btn_copy.clicked.connect(
+                lambda: self._copy_findings_to_clipboard(body.toPlainText())
+            )
             btn_layout.addWidget(btn_copy)
+
             btn_layout.addStretch()
+
+            btn_save = QPushButton("💾  Save to File")
+            btn_save.setFixedHeight(34)
+            btn_save.setStyleSheet(
+                "QPushButton { background: #1e293b; color: #e2e8f0;"
+                " border: 1px solid #334155; border-radius: 6px;"
+                " padding: 6px 14px; font-size: 13px; }"
+                "QPushButton:hover { background: #334155; }"
+            )
+
+            def _save_to_file():
+                path, _ = QFileDialog.getSaveFileName(
+                    dialog, "Save Findings", "pathological_findings.txt",
+                    "Text Files (*.txt);;All Files (*)"
+                )
+                if path:
+                    try:
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(body.toPlainText())
+                        self.set_processing_status(f"Findings saved to {path}", active=False)
+                    except Exception as exc:
+                        print(f"[AI_ANALYZE][ERROR] Save failed: {exc}")
+
+            btn_save.clicked.connect(_save_to_file)
+            btn_layout.addWidget(btn_save)
+
             btn_close = QPushButton("Close")
+            btn_close.setFixedHeight(34)
+            btn_close.setStyleSheet(
+                "QPushButton { background: #059669; color: #ffffff;"
+                " border: 1px solid #047857; border-radius: 6px;"
+                " padding: 6px 18px; font-size: 13px; font-weight: 600; }"
+                "QPushButton:hover { background: #047857; }"
+            )
             btn_close.clicked.connect(dialog.accept)
             btn_layout.addWidget(btn_close)
+
             layout.addLayout(btn_layout)
 
-            dialog.show()
+            dialog.exec()
         except Exception as exc:
             print(f"[AI_ANALYZE][ERROR] Result dialog failed: {exc}")
 

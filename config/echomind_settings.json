@@ -31,5 +31,6 @@
   "stt_timeout_seconds": 360,
   "stt_auth_token": "",
   "connection_type": "direct",
-  "proxy_port": 2082
+  "proxy_port": 2082,
+  "suppress_usage_welcome": true
 }
