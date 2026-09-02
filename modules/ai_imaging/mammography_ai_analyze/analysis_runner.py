@@ -28,6 +28,7 @@ from PySide6.QtCore import QObject, Signal
 from . import package_builder
 
 logger = logging.getLogger(__name__)
+ANALYSIS_MODEL = "gpt-5.6-luna"
 
 # Every in-flight run. Module level, so a closing tab cannot collect one.
 _LIVE_RUNS: Set["MammographyAnalysisRunner"] = set()
@@ -90,7 +91,8 @@ class MammographyAnalysisRunner(QObject):
             )
 
             backend = resolve_backend()
-            model = resolve_model(backend)
+            resolve_model(backend)
+            model = ANALYSIS_MODEL
         except Exception as exc:
             logger.warning(
                 "[AI_ANALYZE] backend/model resolution failed (%s); "
@@ -98,7 +100,7 @@ class MammographyAnalysisRunner(QObject):
                 exc,
             )
             backend = "company"
-            model = "gpt-5.6-sol"
+            model = ANALYSIS_MODEL
 
         logger.info(
             "[AI_ANALYZE] Starting async work: model=%s, backend=%s, "
@@ -198,9 +200,17 @@ def _company_entitlement_error() -> str:
     except Exception as exc:
         return f"the EchoMind entitlement check is unavailable: {exc}"
     try:
-        return "" if company_entitled() else ENTITLEMENT_DENIED
+        if not company_entitled():
+            return ENTITLEMENT_DENIED
+        # Keep the credential consumed by EagleEyeImageAnalysis in sync with
+        # the entitlement check when another EchoMind surface initialized the
+        # manager during startup.
+        from modules.EchoMind.api_manager import Manage
+
+        Manage.instance().ensure_detected()
+        return ""
     except Exception as exc:
-        return f"the EchoMind entitlement check failed: {exc}"
+        return f"the EchoMind company credential is unavailable: {exc}"
 
 
 def _send_request(

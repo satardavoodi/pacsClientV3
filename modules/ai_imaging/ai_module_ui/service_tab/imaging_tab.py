@@ -28,6 +28,7 @@ from modules.ai_imaging.ai_module_ui.mg_csv_schema import infer_mg_csv_contract,
 from modules.ai_imaging.eagle_eye_lumbar.workflow_coordinator import EagleEyeWorkflowCoordinator
 from modules.ai_imaging.mammography_ai_analyze import analysis_runner as mg_ai_runner
 from modules.ai_imaging.mammography_ai_analyze import package_builder as mg_ai_package
+from modules.ai_imaging.dx_wrist_ai_analyze import analysis_runner as dx_wrist_ai_runner
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -600,6 +601,12 @@ def normalize_eagle_eye_mode(mode):
 class ImagingToolsTab(AbstractTab):
     # Signal emitted when tab is fully loaded and rendered
     fully_loaded = Signal()
+    _AI_ANALYZE_WAIT_MESSAGES = (
+        "Waiting...",
+        "Preparing...",
+        "Still working on it...",
+        "Please be patient...",
+    )
     
     def __init__(self, study_uid: Optional[str] = None, eagle_eye_mode: Optional[str] = None):
         super().__init__()
@@ -611,6 +618,10 @@ class ImagingToolsTab(AbstractTab):
         self.current_sidebar = None
         self._eagle_eye_workflow = EagleEyeWorkflowCoordinator(self)
         self.mg_runs_loaded = False  # ÙÙ„Ú¯ Ø¬Ø¯ÛŒØ¯ Ø¨Ø±Ø§ÛŒ Ù…Ø¯ÛŒØ±ÛŒØª Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ MG runs
+        self._ai_analyze_wait_index = 0
+        self._ai_analyze_wait_timer = QTimer(self)
+        self._ai_analyze_wait_timer.setInterval(3000)
+        self._ai_analyze_wait_timer.timeout.connect(self._show_next_ai_analyze_wait_message)
 
         # ---- init MG widgets FIRST (important)
         self._init_mg_widgets()
@@ -799,6 +810,10 @@ class ImagingToolsTab(AbstractTab):
         """
         try:
             self._eagle_eye_workflow.teardown()
+        except Exception:
+            pass
+        try:
+            self._ai_analyze_wait_timer.stop()
         except Exception:
             pass
         # Detach in-flight Intelligent AI Analyze runner
@@ -1838,14 +1853,15 @@ class ImagingToolsTab(AbstractTab):
     # ---------- Intelligent AI Analyze (Mammography) ----------
 
     def _on_intelligent_ai_analyze_clicked(self):
-        """Start Intelligent AI Analyze for mammography.
+        """Start Intelligent AI Analyze for MG or a DX wrist study.
 
         Collects all mammography images, bounding boxes, CSV detection results,
         and sends them to ChatGPT 5.6 via the existing GAPGPT infrastructure.
         The result is transferred to EchoMind for the user to review/edit.
         """
-        if self.detect_modality() != "MG":
-            show_message("Intelligent AI Analyze is only available for Mammography (MG) modality.")
+        modality = self.detect_modality()
+        if modality not in {"MG", "DX"}:
+            show_message("Intelligent AI Analyze is only available for MG and DX wrist studies.")
             return
 
         # Prevent duplicate requests
@@ -1873,6 +1889,10 @@ class ImagingToolsTab(AbstractTab):
 
         self._ai_analyze_set_state('analyzing')
 
+        if modality == "DX":
+            self._start_dx_wrist_ai_analysis()
+            return
+
         # Minimal validation on GUI thread (fast)
         csv_path = self._find_detection_csv_path()
         print(f"[AI_ANALYZE] CSV detected: {'yes' if csv_path else 'no'}")
@@ -1894,9 +1914,69 @@ class ImagingToolsTab(AbstractTab):
             self._ai_analyze_set_state('error')
             show_message("Could not start AI analysis.")
 
+    def _start_dx_wrist_ai_analysis(self):
+        """Start the isolated DX wrist PNG-to-model API workflow."""
+        try:
+            selected = getattr(self.patient_widget, "selected_widget", None)
+            vtk_widget = getattr(selected, "vtk_widget", selected)
+            image_viewer = getattr(vtk_widget, "image_viewer", None)
+            metadata = getattr(image_viewer, "metadata", None)
+            series = metadata.get("series", {}) if isinstance(metadata, dict) else {}
+            source_dir = series.get("series_path") or getattr(
+                self.patient_widget, "import_folder_path", ""
+            )
+            if not source_dir:
+                from PacsClient.pacs.patient_tab.utils.utils import get_study_source_path
+
+                source_dir, _ = get_study_source_path(str(self.study_uid or ""))
+            source_dir = str(source_dir or "")
+            if not source_dir:
+                raise RuntimeError("The DX wrist DICOM folder could not be resolved.")
+
+            output_dir = ATTACHMENT_PATH / str(self.study_uid or "unknown") / "dx_wrist_ai_analyze"
+            runner = dx_wrist_ai_runner.DXWristAnalysisRunner(
+                study_uid=str(self.study_uid or ""),
+                source_dir=source_dir,
+                output_dir=str(output_dir),
+                parent=self,
+            )
+            runner.progress.connect(self._on_ai_analyze_progress)
+            runner.finished.connect(self._on_ai_analyze_finished)
+            runner.failed.connect(self._on_ai_analyze_failed)
+            self._ai_analyze_runner = runner
+            if not runner.start():
+                self._ai_analyze_runner = None
+                self._ai_analyze_set_state("error")
+                show_message("Could not start DX wrist AI analysis.")
+        except Exception as exc:
+            self._ai_analyze_runner = None
+            self._ai_analyze_set_state("error")
+            logger.error("[DX_WRIST_AI][ERROR] Could not start: %s", exc, exc_info=True)
+            show_message(f"DX wrist AI analysis failed:\n{exc}")
+
     def _on_ai_analyze_progress(self, stage: str, message: str):
         """Handle progress updates from the analysis runner."""
-        self.set_processing_status(f"Intelligent AI Analyze: {message}", active=True)
+        self._start_ai_analyze_wait_messages()
+
+    def _start_ai_analyze_wait_messages(self):
+        """Show only friendly progress text while Intelligent AI Analyze runs."""
+        if not self._ai_analyze_wait_timer.isActive():
+            self._ai_analyze_wait_index = 0
+            self.set_processing_status(self._AI_ANALYZE_WAIT_MESSAGES[0], active=True)
+            self._ai_analyze_wait_timer.start()
+
+    def _show_next_ai_analyze_wait_message(self):
+        self._ai_analyze_wait_index = (
+            self._ai_analyze_wait_index + 1
+        ) % len(self._AI_ANALYZE_WAIT_MESSAGES)
+        self.set_processing_status(
+            self._AI_ANALYZE_WAIT_MESSAGES[self._ai_analyze_wait_index],
+            active=True,
+        )
+
+    def _stop_ai_analyze_wait_messages(self, text: str, *, active: bool = False):
+        self._ai_analyze_wait_timer.stop()
+        self.set_processing_status(text, active=active)
 
     def _on_ai_analyze_finished(self, findings_text: str):
         """Handle successful AI analysis completion.
@@ -1913,20 +1993,20 @@ class ImagingToolsTab(AbstractTab):
         if edited is None:
             # User cancelled
             self._ai_analyze_set_state('idle')
-            self.set_processing_status("Analysis complete — user cancelled", active=False)
+            self._stop_ai_analyze_wait_messages("Analysis complete - user cancelled")
             print("[AI_ANALYZE] User cancelled findings dialog")
             return
 
         print("[AI_ANALYZE] Opening EchoMind in report mode")
         self._ai_analyze_set_state('opening_echomind')
-        self.set_processing_status("Opening EchoMind with findings...", active=True)
+        self._stop_ai_analyze_wait_messages("Still working on it...", active=True)
 
         # Transfer findings to EchoMind (report mode)
         try:
             self._transfer_findings_to_echomind(edited, mode='report')
             print("[AI_ANALYZE] EchoMind ready (report mode)")
             self._ai_analyze_set_state('ready')
-            self.set_processing_status("Intelligent AI Analyze complete", active=False)
+            self._stop_ai_analyze_wait_messages("Intelligent AI Analyze complete")
             print("[AI_ANALYZE] Completed")
         except Exception as exc:
             self._ai_analyze_set_state('error')
@@ -1935,20 +2015,26 @@ class ImagingToolsTab(AbstractTab):
             print(f"[AI_ANALYZE][ERROR] EchoMind transfer failed: {exc}")
             # Still show findings in result dialog as fallback
             self._show_ai_analyze_result(edited)
-            self.set_processing_status("AI analysis complete (EchoMind transfer pending)", active=False)
+            self._stop_ai_analyze_wait_messages(
+                "AI analysis complete (EchoMind transfer pending)"
+            )
 
     def _on_ai_analyze_failed(self, reason: str):
         """Handle failed AI analysis."""
         self._ai_analyze_runner = None
         self._ai_analyze_set_state('error')
         print(f"[AI_ANALYZE][ERROR] Analysis failed: {reason}")
-        self.set_processing_status(f"AI analysis failed: {reason}", active=False)
+        self._stop_ai_analyze_wait_messages("AI analysis failed")
         show_message(f"Intelligent AI Analyze failed:\n{reason}")
 
     def _ai_analyze_set_state(self, state: str):
         """Update button state and enable/disable accordingly."""
         self._ai_analyze_state = state
         busy = state in ('analyzing', 'opening_echomind')
+        if state == 'analyzing':
+            self._start_ai_analyze_wait_messages()
+        elif not busy and hasattr(self, '_ai_analyze_wait_timer'):
+            self._ai_analyze_wait_timer.stop()
         try:
             self._ai_analyze_btn.setEnabled(not busy)
             if busy:
@@ -1976,7 +2062,8 @@ class ImagingToolsTab(AbstractTab):
             from PySide6.QtCore import Qt
 
             dialog = QDialog(self)
-            dialog.setWindowTitle("Pathological Findings — Review & Confirm")
+            title_prefix = "DX Wrist AI" if self.detect_modality() == "DX" else "Mammography AI"
+            dialog.setWindowTitle(f"{title_prefix} — Findings Review & Confirm")
             dialog.setMinimumSize(660, 520)
             dialog.resize(800, 640)
             dialog.setStyleSheet(
@@ -1989,7 +2076,11 @@ class ImagingToolsTab(AbstractTab):
             layout.setSpacing(10)
 
             # Title
-            title = QLabel("🔍 Mammography AI — Pathological Findings")
+            title = QLabel(
+                "DX Wrist AI — Bone Age Reasoning & Pathological Findings"
+                if self.detect_modality() == "DX"
+                else "Mammography AI — Pathological Findings"
+            )
             title.setStyleSheet(
                 "color: #34d399; font-size: 15px; font-weight: 700;"
             )

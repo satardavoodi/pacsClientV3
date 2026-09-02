@@ -942,13 +942,9 @@ class ModePickerPage(QWidget):
         )
         self.btn_show_usage.clicked.connect(self._show_usage_popup)
 
-        # Only show when the welcome popup has been suppressed
-        try:
-            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
-            _show_it = is_usage_welcome_suppressed()
-        except Exception:
-            _show_it = False
-        self.btn_show_usage.setVisible(bool(_show_it))
+        # Always visible — the welcome popup is permanently disabled, this
+        # button is the sole way to reach the usage summary now.
+        self.btn_show_usage.setVisible(True)
 
         self.left.addWidget(self.btn_show_usage)
         self.left.addStretch(1)
@@ -1019,8 +1015,7 @@ class ModePickerPage(QWidget):
 
         # Refresh Show Usage button visibility based on current suppression setting
         try:
-            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
-            self.btn_show_usage.setVisible(is_usage_welcome_suppressed())
+            self.btn_show_usage.setVisible(True)
         except Exception:
             pass
 
@@ -1322,6 +1317,10 @@ class ModePickerPage(QWidget):
             self._api_prompt_inflight = False
 
     def _show_welcome(self, center: str, api_key: t.Optional[str] = None):
+        # Disabled by product decision: the welcome/usage popup never shows —
+        # 'Show Usage' (always visible in the mode picker and composer) is the
+        # sole way to reach the same usage summary now.
+        return
         # --- Check if user previously chose "Do not show this again" ---
         try:
             from modules.EchoMind.settings_store import is_usage_welcome_suppressed
@@ -1604,7 +1603,6 @@ class OneChatPage(QWidget):
         self.composer.transcribeRequested.connect(self._transcribe_now)
         self.composer.recordingStarted.connect(self._prefetch_reception)
         self.composer.standardizeClicked.connect(self._standardize_now)
-        self.composer.showUsageRequested.connect(self._show_usage_popup)
         self.composer.apply_side_padding(16, 16)
 
         # Route attach button to source-selection flow (system/current patient/other patient).
@@ -4217,9 +4215,8 @@ class OneChatPage(QWidget):
     def _show_usage_popup(self):
         """Show the Total tokens / per-model usage / last-used popup on demand.
 
-        Only reachable via the composer's 'Show Usage' button, which itself is
-        only visible once the welcome bubble's usage summary has been
-        suppressed (see ``modules.EchoMind.settings_store.suppress_usage_welcome``).
+        Reachable via the composer's always-visible 'Show Usage' button — the
+        welcome popup/bubble is permanently disabled, so this is the only path.
         """
         _show_echomind_usage_dialog(self)
 
@@ -8234,7 +8231,7 @@ class ChatGPTPage(OneChatPage):
 
         right_layout.insertWidget(right_layout.count() - 1, self.model_selector_container)
 
-        # TOKEN LABEL + USAGE BUTTON (small)
+        # TOKEN LABEL
         self._token_row = QWidget(self)
         token_row_layout = QHBoxLayout(self._token_row)
         token_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -8250,25 +8247,6 @@ class ChatGPTPage(OneChatPage):
         """)
         self.lbl_tokens.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         token_row_layout.addWidget(self.lbl_tokens, 1)
-
-        self._btn_usage = QToolButton(self._token_row)
-        self._btn_usage.setText("📊")
-        self._btn_usage.setToolTip("View full token & transcript usage")
-        self._btn_usage.setCursor(Qt.PointingHandCursor)
-        self._btn_usage.setAutoRaise(True)
-        self._btn_usage.setFixedSize(24, 24)
-        self._btn_usage.setStyleSheet("""
-            QToolButton {
-                color: #888; font-size: 13px;
-                border: 1px solid transparent; border-radius: 4px;
-                padding: 1px;
-            }
-            QToolButton:hover {
-                border-color: #555; background: rgba(255,255,255,0.06);
-            }
-        """)
-        self._btn_usage.clicked.connect(self._show_usage_popup)
-        token_row_layout.addWidget(self._btn_usage, 0, Qt.AlignVCenter)
 
         right_layout.insertWidget(right_layout.count() - 1, self._token_row)
 
@@ -8408,55 +8386,10 @@ class ChatGPTPage(OneChatPage):
 
 
     def _show_welcome_message(self):
-        # Check if the user chose to suppress the welcome/usage bubble
-        try:
-            from modules.EchoMind.settings_store import is_usage_welcome_suppressed
-            if is_usage_welcome_suppressed():
-                return
-        except Exception:
-            pass
-
-        center = getattr(self, "_global_center", None) or "Unknown"
-        api_key = getattr(self, "_global_key", None) or ""
-        api_key = (api_key or "").strip()
-
-        total_tokens = 0
-        total_transcript_minutes = 0.0
-        usage_html = "<i>No usage data.</i>"
-
-        try:
-            from PacsClient.utils.database import (
-                get_api_usage_summary_html,
-                load_api_token_usage_for_key,
-                load_api_transcript_usage_for_key,
-            )
-            if api_key:
-                models = load_api_token_usage_for_key(api_key)
-                total_tokens = sum(int(v or 0) for v in models.values())
-
-                tr_models = load_api_transcript_usage_for_key(api_key)
-                total_transcript_minutes = sum(float(v or 0.0) for v in tr_models.values())
-
-                usage_html = get_api_usage_summary_html(api_key)
-        except Exception:
-            pass
-
-        current_model = getattr(self, "_current_model_name", None) or getattr(self, "current_model", None) or "<unknown>"
-
-        msg = (
-            f"🎉 <b>Welcome to {center} Center ChatGPT</b><br>"
-            f"<b>Current model:</b> {current_model}<br>"
-            f"<b>Total tokens (this API):</b> {total_tokens:,}<br><br>"
-        )
-        if total_transcript_minutes > 0:
-            msg += f"<b>Total transcript (this API):</b> {total_transcript_minutes:.1f} min<br><br>"
-        msg += f"{usage_html}"
-
-        self.history.clear()
-        bubble = self.history.add_bubble("AI ChatBot", msg)
-
-        # Add a "Do not show this again" button below the welcome bubble
-        self._add_welcome_suppress_button()
+        # Disabled by product decision: the welcome/usage bubble never shows —
+        # 'Show Usage' (always visible in the composer) is the sole way to
+        # reach the same usage summary now.
+        return
 
     def _add_welcome_suppress_button(self):
         """Add a 'Do not show this again' button below the welcome bubble."""
