@@ -453,3 +453,22 @@ hippocampal evidence. Combined Brain selection: 65 passed.
 | Boundary | Defect and correction | Guard |
 |---|---|---|
 | Printing geometry and borders | First row/column inherited scout dimensions. Independent scout and uniform diagnostic rectangles now share per-box borders in preview/export. | test_scout_size.py::test_enlarged_scout_fits_without_overlap; equal-size assertions failed on three layouts before correction |
+
+## Fixed 2x2 scout (2026-09-09)
+
+| Boundary | Correction | Guard |
+|---|---|---|
+| Printing grid/pagination | Replace fractional scout gaps with merged 2x2 regular slots; repaginate on scout changes and ignore legacy percentages. | test_scout_size.py; test_two_by_two_scout_repages_without_losing_images and legacy-setting guard in test_printing_workflow.py |
+
+## Diagnostic capacity and reference label spacing (2026-09-09)
+
+| Boundary | Correction | Guard |
+|---|---|---|
+| Layout capacity | Requested count excludes Scout; add four slots and retain all diagnostic images. | test_scout_size.py; pagination/deletion guards in test_printing_workflow.py |
+| Scout labels | Shared adaptive first/middle/last selection, preserved source numbering, page offset and Qt child text ownership. | test_reference_labels_keep_endpoints_midpoint_and_source_numbers; test_reference_labels_match_preview_export_and_page_image_numbers |
+
+## Background-independent grid (2026-09-09)
+
+| Boundary | Correction | Guard |
+|---|---|---|
+| Preview/export grid | White/transparent modes preserve black borders; dark retains white. Transparent page interiors remain unpainted. | test_grid_stays_visible_in_preview_and_export_for_all_backgrounds (two fail-before cases) |

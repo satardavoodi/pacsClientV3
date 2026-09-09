@@ -15,6 +15,7 @@ from modules.printing.render.dicom_renderer import (
     load_dicom_as_pixmap,
     get_dicom_window_level,
     compute_scout_reference_lines,
+    labeled_reference_lines,
     viewport_crop_bounds,
 )
 from modules.printing.render.film_renderer import render_film, HEADER_HEIGHT_RATIO, HEADER_PADDING_IN, page_background
@@ -50,6 +51,7 @@ class TileItem(QGraphicsPixmapItem):
 
 class FilmPreviewWidget(QGraphicsView):
     contentChanged = Signal()
+    scoutChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -112,9 +114,7 @@ class FilmPreviewWidget(QGraphicsView):
             self.set_tiles(self._film_size, self._layout, self._paths, self._overlay_info)
 
     def _should_reserve_scout_slot(self, total_cells: int) -> bool:
-        # Keep historical scout/placeholder behavior for multi-cell layouts,
-        # but do not reserve the only cell in 1x1 unless an actual scout exists.
-        return total_cells > 1
+        return bool(self._scout_path)
 
     def set_tiles(self, film_size: FilmSize, layout: FilmLayout, paths: List[str], overlay_info: Dict[str, str] | None = None):
         self._remember_viewports()
@@ -126,7 +126,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._tiles = []
         self._ref_line_items = []  # scene.clear() already removed them
         self._film_size = film_size
-        layout = replace(layout, scout_scale=float((overlay_info or {}).get("scout_scale", 1.5)) if self._scout_path else 1.0)
+        layout = replace(layout, scout_scale=2.0 if self._scout_path else 1.0)
         self._layout = layout
         self._overlay_info = overlay_info
         self._background_mode = (overlay_info or {}).get("background_mode", "dark")
@@ -253,6 +253,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scout_path = scout_path
         if self._film_size and self._layout:
             self.set_tiles(self._film_size, self._layout, self._paths, self._overlay_info)
+        self.scoutChanged.emit()
 
     def get_scout_path(self) -> str | None:
         return self._scout_path
@@ -342,13 +343,11 @@ class FilmPreviewWidget(QGraphicsView):
         dpi: int,
         y_offset_in: float = 0.0,
     ) -> None:
-        if self._background_mode != "dark":
-            return
         grid = GridLayoutEngine()
         for edge in grid.border_rectangles(film_area, layout):
             self._scene.addRect(int(edge.x * dpi), int((edge.y + y_offset_in) * dpi),
                                 max(1, int(edge.width * dpi)), max(1, int(edge.height * dpi)),
-                                QPen(Qt.NoPen), QBrush(QColor("white")))
+                                QPen(Qt.NoPen), QBrush(QColor("white") if self._background_mode == "dark" else QColor("black")))
 
     def _draw_scout_cell(self, cell: GridCell, dpi: int, header_height_in: float) -> None:
         if not self._scout_path:
@@ -426,6 +425,7 @@ class FilmPreviewWidget(QGraphicsView):
         clip_rect.setAcceptedMouseButtons(Qt.NoButton)
         self._scene.addItem(clip_rect)
         self._ref_line_items.append(clip_rect)
+        clip_rect.label_items = []  # Retain Python ownership of child text wrappers.
 
         # Get the scout tile's current viewport (zoom/pan) state
         scout_viewport = None
@@ -443,16 +443,10 @@ class FilmPreviewWidget(QGraphicsView):
 
         label_margin = 4  # pixels from edge
 
-        # Reference line rules:
         # - Lines are positioned by true physical slice position
-        # - Displayed numbers = visible slot index (1-based sequential)
-        # - Only odd-numbered visible slots are rendered (1, 3, 5, 7, ...)
         # - All items are children of clip_rect so coordinates are relative to (0,0) = cell top-left
-        for idx, (x0, y0, x1, y1) in enumerate(lines):
-            visible_slot = idx + 1  # 1-based visible slot number
-            if visible_slot % 2 == 0:
-                continue  # Skip even-numbered slots
-
+        sequence_start = int((self._overlay_info or {}).get("sequence_start", 1))
+        for visible_slot, (x0, y0, x1, y1) in labeled_reference_lines(lines, sequence_start):
             # Transform from original DICOM pixel coords to local cell coords
             local_x0 = (x0 - crop_x0) * scale_x
             local_y0 = (y0 - crop_y0) * scale_y
@@ -467,6 +461,7 @@ class FilmPreviewWidget(QGraphicsView):
             # Create label as child of clip_rect (auto-clipped)
             label = str(visible_slot)
             text = QGraphicsTextItem(label, clip_rect)
+            clip_rect.label_items.append(text)
             font = QFont()
             font.setPointSize(12)
             font.setBold(True)

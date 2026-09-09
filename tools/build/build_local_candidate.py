@@ -223,7 +223,7 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, type=Path)
-    parser.add_argument("--version", default="3.6.5")
+    parser.add_argument("--version", default="3.6.6")
     parser.add_argument("--asset-root", required=True, type=Path)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--run-prepared", action="store_true")

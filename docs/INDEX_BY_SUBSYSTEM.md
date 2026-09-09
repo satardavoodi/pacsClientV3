@@ -37,7 +37,8 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 - **[Release and build documentation hub](release-and-build/README.md)** — route to Git publication, the six-installer coordinator, backend details, output ownership, and release evidence.
 - **[Canonical build and installer runbook](../BUILD.md)** — single human/AI entry point, safe fast lanes, official six-file isolated command, exact output folders, expected sizes, content checks, recovery constraints, and release blockers.
-- **[3.6.5 local build matrix](releases/VERSION_3.6.5_BUILD.md)** — isolated current-source Python/Nuitka candidates, Standard/Eagle Eye/ARM-emulated editions, artifact identity and remaining installation gates.
+- **[3.6.6 build record](releases/VERSION_3.6.6_BUILD.md)** — current synchronized-source Python/Nuitka candidate, Standard/Eagle Eye/ARM-emulated editions, artifact identity and remaining installation gates.
+- **[3.6.5 local build matrix](releases/VERSION_3.6.5_BUILD.md)** — previous measured Python/Nuitka baseline and historical recovery evidence.
 - **[Pre-development system map (2026-08-27)](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** — verified startup, subsystem connections, data/network boundaries, packaging flow, skills, MCPs, and the pre-code gate
 - **[Codex repository readiness (2026-08-27)](reports/CODEX_REPOSITORY_READINESS_2026-08-27.md)** — verified environment, test baseline, security blockers, and development order
 - **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** — every stage report linked
@@ -606,7 +607,9 @@ mandatory weights, measured size baseline and remaining release gates.
 
 - [Canonical versioned Git release workflow](../RELEASE.md)
 - [Canonical six-installer build workflow](../BUILD.md)
-- [Version 3.6.5 release gate and current blockers](releases/VERSION_3.6.5_RELEASE.md)
+- [Version 3.6.6 release gate and current blockers](releases/VERSION_3.6.6_RELEASE.md)
+- [Version 3.6.6 build evidence](releases/VERSION_3.6.6_BUILD.md)
+- [Version 3.6.5 release record](releases/VERSION_3.6.5_RELEASE.md)
 - [Version 3.6.5 build evidence](releases/VERSION_3.6.5_BUILD.md)
 - [Release notes](releases/VERSION_3.6.4_RELEASE.md)
 - [2026-08-31 source follow-up, verification, and exclusions](releases/VERSION_3.6.4_FOLLOWUP_2026-08-31.md)

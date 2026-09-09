@@ -15,6 +15,7 @@
       }
     }
   ],
+  "scout_scale": 2.0,
   "default_film_sizes": [
     {
       "name": "14x17",
@@ -56,5 +57,5 @@
       "cols": 4
     }
   ],
-  "background_mode": "dark"
+  "background_mode": "white"
 }

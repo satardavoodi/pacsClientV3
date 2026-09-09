@@ -1,11 +1,34 @@
 # AIPacs Release Notes (Consolidated)
 
-**Next build target:** v3.6.5 (2026-09-09), source release ready; installers pending.
+**Next build target:** v3.6.6 (2026-09-09), synchronized-source installers pending.
 
 **Current Stable Version:** v3.6.4 (2026-08-29)
 **Previous Stable:** v3.6.3 (2026-08-23)
 **Release Date:** 2026-08-29
 **Branch:** beta-version
+
+---
+
+## v3.6.6 (candidate preparation 2026-09-09) - Printing and Scout layout reliability
+
+Version 3.6.6 includes every reviewed source change published after the immutable
+v3.6.5 tag. Printing now treats the selected rows x columns as diagnostic-image
+capacity and places Scout in four additional regular grid slots. Preview and export
+share the resolved geometry, adaptive reference labels preserve original image
+numbers, and visible borders remain independent of the selected page background.
+
+The candidate also includes the earlier printing transport, study/page ownership,
+selection, window/level, color, export, and physical-page corrections, together
+with all 3.6.5 imaging, Eagle Eye, viewer, packaging, legal, licensing, and cardiac
+Flow VM-normalization work. Both PyInstaller and Nuitka must produce Eagle Eye,
+Standard, and x64-on-ARM64-emulation installers from one synchronized commit.
+
+This is a release-candidate build request, not production approval. Clean install,
+upgrade, uninstall, rollback, representative de-identified Flow re-import, physical
+printing, real ARM64-host testing, code signing, legal confirmation, historical
+credential remediation, and clinical acceptance remain separate gates.
+
+Preparation and evidence: [VERSION_3.6.6_BUILD.md](VERSION_3.6.6_BUILD.md).
 
 ---
 

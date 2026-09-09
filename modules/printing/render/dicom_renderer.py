@@ -148,12 +148,12 @@ def find_scout_and_slices(paths: List[str]) -> Tuple[Optional[str], List[str]]:
 def compute_scout_reference_lines(
     scout_path: str,
     slice_paths: List[str],
-) -> Tuple[int, int, List[Tuple[float, float, float, float]]]:
+) -> Tuple[int, int, List[Optional[Tuple[float, float, float, float]]]]:
     """
     Compute reference lines for slice planes on the scout image.
     Returns (rows, cols, lines) where lines are (x0, y0, x1, y1) in scout pixel coords.
     """
-    lines: List[Tuple[float, float, float, float]] = []
+    lines: List[Optional[Tuple[float, float, float, float]]] = []
     try:
         scout_ds = _safe_dcmread_header(scout_path)
         iop_s = getattr(scout_ds, "ImageOrientationPatient", None)
@@ -173,6 +173,7 @@ def compute_scout_reference_lines(
         quad = reference_line.rl_quad_corners_lps(rows_s, cols_s, pos_s, row_s, col_s, sy, sx)
 
         for path in slice_paths:
+            lines.append(None)  # Keep source numbering even for missing intersections.
             try:
                 ds = _safe_dcmread_header(path)
                 iop = getattr(ds, "ImageOrientationPatient", None)
@@ -193,13 +194,25 @@ def compute_scout_reference_lines(
 
                 I0 = reference_line.rl_lps_to_target_index(P0_lps, pos_s, col_s, row_s, sx, sy, 0)
                 I1 = reference_line.rl_lps_to_target_index(P1_lps, pos_s, col_s, row_s, sx, sy, 0)
-                lines.append((float(I0[0]), float(I0[1]), float(I1[0]), float(I1[1])))
+                lines[-1] = (float(I0[0]), float(I0[1]), float(I1[0]), float(I1[1]))
             except Exception:
                 continue
 
         return rows_s, cols_s, lines
     except Exception:
         return 0, 0, []
+
+
+def labeled_reference_lines(lines, sequence_start=1):
+    """Select spaced labels plus first/middle/last without renumbering skipped slices."""
+    valid = [i for i, line in enumerate(lines) if line is not None]
+    if not valid:
+        return []
+    count = len(lines)
+    step = 2 if count < 20 else (5 if count <= 50 else 10)
+    middle = min(valid, key=lambda i: abs(i - (count - 1) // 2))
+    selected = {valid[0], middle, valid[-1]} | set(range(step - 1, count, step))
+    return [(sequence_start + i, lines[i]) for i in valid if i in selected]
 
 
 def _apply_window_level(pixel_array: np.ndarray, window_width: float, window_level: float) -> np.ndarray:

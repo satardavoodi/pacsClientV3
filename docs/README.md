@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current project version:** v3.6.5. Production acceptance is recorded separately
+> **Current project version:** v3.6.6. Production acceptance is recorded separately
 > from the project version and must not be inferred from this heading.
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.

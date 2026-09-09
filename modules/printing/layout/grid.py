@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import List, Tuple
 
 from modules.printing.core.models import FilmLayout, FilmSize
@@ -33,37 +34,30 @@ class GridLayoutEngine:
         - Grid lines are between cells (thickness = GRID_LINE_WIDTH_IN)
         - Cell sizes calculated: (available_space - grid_lines) / num_cells
         """
-        # Grid lines separate cells: (cols-1) vertical lines + (rows-1) horizontal lines
-        total_gutter_w = self.GRID_LINE_WIDTH_IN * (layout.cols - 1)
-        total_gutter_h = self.GRID_LINE_WIDTH_IN * (layout.rows - 1)
-
-        # Available space: entire film minus grid lines
-        available_width = film_size.width_in - total_gutter_w
-        available_height = film_size.height_in - total_gutter_h
-
-        # Each cell size
-        cell_width = available_width / layout.cols
-        cell_height = available_height / layout.rows
-
-        scale = max(1.0, min(1.5, layout.scout_scale))
-        scout_width = cell_width * scale if layout.cols > 1 else cell_width
-        scout_height = cell_height * scale if layout.rows > 1 else cell_height
-        diagnostic_width = ((available_width - scout_width) / (layout.cols - 1)
-                            if layout.cols > 1 else cell_width)
-        diagnostic_height = ((available_height - scout_height) / (layout.rows - 1)
-                             if layout.rows > 1 else cell_height)
+        rows, cols = layout.rows, layout.cols
+        count = rows * cols
+        merged = layout.scout_scale > 1
+        if merged:
+            # The requested count is diagnostic images; the scout consumes four extra slots.
+            candidates = []
+            for candidate_cols in range(2, count + 5):
+                candidate_rows = max(2, math.ceil((count + 4) / candidate_cols))
+                excess = candidate_rows * candidate_cols - (count + 4)
+                aspect = (film_size.width_in / candidate_cols) / (film_size.height_in / candidate_rows)
+                candidates.append(((excess, abs(math.log(aspect))), candidate_rows, candidate_cols))
+            _, rows, cols = min(candidates)
         gap = self.GRID_LINE_WIDTH_IN
-        cells = [GridCell(0, 0, scout_width, scout_height)]
-        # Independent diagnostic boxes: the scout never expands a shared row/column.
-        for col in range(layout.cols - 1):
-            cells.append(GridCell(scout_width + gap + col * (diagnostic_width + gap),
-                                  0, diagnostic_width, diagnostic_height))
-        for row in range(layout.rows - 1):
-            for col in range(layout.cols):
-                cells.append(GridCell(col * (diagnostic_width + gap),
-                                      scout_height + gap + row * (diagnostic_height + gap),
-                                      diagnostic_width, diagnostic_height))
-        return cells
+        width = (film_size.width_in - gap * (cols - 1)) / cols
+        height = (film_size.height_in - gap * (rows - 1)) / rows
+        cells = []
+        if merged:
+            cells.append(GridCell(0, 0, 2 * width + gap, 2 * height + gap))
+        for row in range(rows):
+            for col in range(cols):
+                if merged and row < 2 and col < 2:
+                    continue
+                cells.append(GridCell(col * (width + gap), row * (height + gap), width, height))
+        return cells[:count + 1] if merged else cells
 
     def border_rectangles(self, film_size: FilmSize, layout: FilmLayout) -> List[GridCell]:
         """Return borders for actual boxes, never full-sheet row/column lines."""

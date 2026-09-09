@@ -1451,3 +1451,9 @@ Printing fidelity and transport: `tests/code/printing/test_print_fidelity.py` co
 Printing enlarged scout: `tests/code/printing/test_scout_size.py` covers shared geometry; scout default, persistence/reopen, export and separator guards live in `test_printing_workflow.py`.
 
 Scout uniformity: `test_scout_size.py::test_enlarged_scout_fits_without_overlap` also requires identical non-scout dimensions, protecting against enlargement leaking into the first row/column.
+
+Fixed 2x2 scout: geometry tests verify exact unmerged grid positions; `test_two_by_two_scout_repages_without_losing_images` verifies capacity, navigation, deletion and clearing.
+
+Diagnostic count excludes Scout: `test_scout_size.py` verifies exact capacity and adaptive landmarks. `test_reference_labels_match_preview_export_and_page_image_numbers` checks visible label lifetime and export/page numbering parity.
+
+Printing grid/background: `test_grid_stays_visible_in_preview_and_export_for_all_backgrounds` covers opaque contrasting borders and independent transparent page fill.

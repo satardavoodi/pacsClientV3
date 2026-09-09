@@ -93,10 +93,7 @@ class PrintingWidget(QWidget):
         self._print_worker = None
         self._selection_dirty = True
         self._preview_study_uid = None
-        try:
-            self._scout_scale = max(1.0, min(1.5, float(load_printing_config().get("scout_scale", 1.5))))
-        except (TypeError, ValueError):
-            self._scout_scale = 1.5
+        self._scout_scale = 2.0  # Fixed 2x2 scout; replaces legacy fractional settings.
         self._background_mode = load_printing_config().get("background_mode", "dark")
         if self._background_mode not in ("white", "dark", "none"):
             self._background_mode = "dark"
@@ -276,6 +273,7 @@ class PrintingWidget(QWidget):
 
         self.preview_widget = FilmPreviewWidget()
         self.preview_widget.contentChanged.connect(self._invalidate_export)
+        self.preview_widget.scoutChanged.connect(self._on_scout_changed)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -505,13 +503,8 @@ class PrintingWidget(QWidget):
         main_layout = QVBoxLayout(dialog)
         main_layout.setSpacing(12)
 
-        scout_size = QComboBox()
-        for percent in (100, 125, 150):
-            scout_size.addItem(f"Scout: {percent}% width and height", percent / 100)
-        scout_size.setCurrentIndex(scout_size.findData(self._scout_scale))
-        scout_size.setToolTip("Enlarge the scout box while preserving image aspect. Other cells become smaller; single-row or single-column layouts are limited by the sheet.")
-        scout_size.currentIndexChanged.connect(lambda _: self._set_scout_scale(scout_size.currentData()))
-        main_layout.addWidget(scout_size)
+        main_layout.addWidget(QLabel("Scout: 2 x 2 extra cells (automatic)"))
+        main_layout.addWidget(QLabel("The selected rows x columns specify diagnostic image count; Scout is additional."))
 
         # Preset quick picks (common PACS print layouts)
         presets_row = QHBoxLayout()
@@ -621,7 +614,7 @@ class PrintingWidget(QWidget):
             return
         self._current_layout = layout
         if hasattr(self, "layout_label"):
-            self.layout_label.setText(f"Layout: {layout.rows} x {layout.cols}")
+            self.layout_label.setText(f"Layout: {layout.rows} x {layout.cols} ({layout.rows * layout.cols} images + Scout)")
         if getattr(self, "_selected_paths", None):
             self._update_page_display()
 
@@ -1313,20 +1306,12 @@ class PrintingWidget(QWidget):
             return  # No preview yet — nothing to refresh
         self._update_page_display()
 
-    def _invalidate_export(self):
-        self._film_pixmap = None
-
-    def _set_scout_scale(self, scale):
-        self._scout_scale = max(1.0, min(1.5, float(scale)))
-        self._invalidate_export()
-        try:
-            cfg = load_printing_config()
-            cfg["scout_scale"] = self._scout_scale
-            save_printing_config(cfg)
-        except Exception:
-            QMessageBox.warning(self, "Scout Size", "Setting applies for this session but could not be saved.")
+    def _on_scout_changed(self):
         if self._selected_paths:
             self._update_page_display()
+
+    def _invalidate_export(self):
+        self._film_pixmap = None
 
     def _on_background_changed(self, index):
         self._background_mode = self.background_combo.currentData()
@@ -1381,12 +1366,8 @@ class PrintingWidget(QWidget):
             return
 
         # Match the pagination logic from _generate_preview
-        total_cells = layout.rows * layout.cols
-        scout_path = self.preview_widget.get_scout_path() if self.preview_widget else None
-        scout_reserved = total_cells > 1
-        available_cells_for_images = total_cells - (1 if scout_reserved else 0)
-        images_per_page = max(1, available_cells_for_images)
-        
+        images_per_page = max(1, layout.rows * layout.cols)
+
         self._total_pages = max(1, (len(self._selected_paths) + images_per_page - 1) // images_per_page)
         self._current_page = min(self._current_page, self._total_pages - 1)
         start_idx = self._current_page * images_per_page

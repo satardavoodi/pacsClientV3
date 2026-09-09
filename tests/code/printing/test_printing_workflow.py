@@ -72,7 +72,7 @@ def test_delete_keeps_other_pages(ui, monkeypatch):
     paths = generate(ui, monkeypatch)
     ui.widget._delete_selected_tiles()
     assert ui.widget._selected_paths == paths[1:]
-    assert ui.widget._total_pages == 3
+    assert ui.widget._total_pages == 2
 
 
 def test_scout_defaults_to_larger_preview_and_export_geometry(ui, monkeypatch):
@@ -80,27 +80,65 @@ def test_scout_defaults_to_larger_preview_and_export_geometry(ui, monkeypatch):
     generate(ui, monkeypatch)
     preview = ui.widget.preview_widget
     preview.set_scout_path("synthetic-scout")
-    assert preview._layout.scout_scale == 1.5
+    assert preview._layout.scout_scale == 2.0
     captured = {}
     monkeypatch.setattr(ui.preview, "render_film", lambda *args, **kw: captured.update(layout=args[2]) or QPixmap(2,2))
     preview.export_film_pixmap()
-    assert captured["layout"].scout_scale == 1.5
+    assert captured["layout"].scout_scale == 2.0
     preview.set_scout_path(None)
     assert preview._layout.scout_scale == 1.0
 
 
-def test_scout_size_setting_is_saved(ui, monkeypatch):
-    saved = []
-    monkeypatch.setattr(ui.mod, "save_printing_config", saved.append)
-    ui.widget._set_scout_scale(1.25)
-    assert saved[-1]["scout_scale"] == 1.25
-    monkeypatch.setattr(ui.mod, "load_printing_config", lambda: saved[-1])
+def test_legacy_scout_size_is_replaced_by_two_by_two(ui, monkeypatch):
+    monkeypatch.setattr(ui.mod, "load_printing_config", lambda: {"scout_scale": 1.25})
     reopened = ui.mod.PrintingWidget()
     try:
-        assert reopened._scout_scale == 1.25
+        assert reopened._scout_scale == 2.0
     finally:
         reopened.close()
         reopened.deleteLater()
+
+
+def test_two_by_two_scout_repages_without_losing_images(ui, monkeypatch):
+    from modules.printing.core.models import FilmLayout
+    paths = generate(ui, monkeypatch, 40)
+    widget = ui.widget
+    widget._set_current_layout(FilmLayout(4,5))
+    widget.preview_widget.set_scout_path("synthetic-scout")
+    assert len(widget.preview_widget._paths) == 20
+    seen = []
+    for page in range(widget._total_pages):
+        widget._current_page = page
+        widget._update_page_display()
+        seen.extend(widget.preview_widget._paths)
+    assert seen == paths
+    widget._current_page = 0
+    widget._update_page_display()
+    widget.delete_page_btn.click()
+    assert widget._selected_paths == paths[20:]
+    widget.preview_widget.set_scout_path(None)
+    assert len(widget.preview_widget._paths) == 20
+
+
+def test_reference_labels_match_preview_export_and_page_image_numbers(ui, monkeypatch):
+    from modules.printing.core.models import FilmLayout
+    from modules.printing.render import film_renderer
+    from PySide6.QtWidgets import QGraphicsTextItem
+    generate(ui, monkeypatch, 40)
+    lines = [(0, float(i % 16), 15, float(i % 16)) for i in range(20)]
+    monkeypatch.setattr(ui.preview, "compute_scout_reference_lines", lambda *a: (16,16,lines))
+    monkeypatch.setattr(film_renderer, "compute_scout_reference_lines", lambda *a: (16,16,lines))
+    ui.widget._set_current_layout(FilmLayout(4,5))
+    ui.widget.preview_widget.set_scout_path("synthetic-scout")
+    ui.widget._next_page()
+    preview = ui.widget.preview_widget
+    labels = {item.toPlainText() for item in preview._scene.items()
+              if isinstance(item,QGraphicsTextItem) and item.parentItem() is not None}
+    assert labels == {"21","25","30","35","40"}
+    printed = []
+    monkeypatch.setattr(film_renderer, "_draw_scout_line_label", lambda painter,x,y,label,dpi: printed.append(label))
+    assert preview.export_film_pixmap(dpi=30) is not None
+    assert set(printed) == labels
 
 
 def test_enlarged_scout_has_no_old_grid_line_through_it(ui, monkeypatch):
@@ -111,7 +149,7 @@ def test_enlarged_scout_has_no_old_grid_line_through_it(ui, monkeypatch):
     pix.fill(QColor("red"))
     rendered = ui.render.RenderedImage(pix,100,100,1)
     film = render_film([rendered], FilmSize("synthetic",4,4/0.9),
-                       FilmLayout(4,4,scout_scale=1.5), dpi=100,
+                       FilmLayout(4,4,scout_scale=2.0), dpi=100,
                        overlay_info={"background_mode":"dark"})
     # The old first-column separator at about x=100 is inside the new scout.
     assert film.toImage().pixelColor(100,120).red() > 240
@@ -120,17 +158,17 @@ def test_enlarged_scout_has_no_old_grid_line_through_it(ui, monkeypatch):
 
 @pytest.mark.parametrize("page", [0, 1, 2])
 def test_delete_current_page_removes_only_that_sheet(ui, monkeypatch, page):
-    paths = generate(ui, monkeypatch)
+    paths = generate(ui, monkeypatch, 10)
     widget = ui.widget
     widget._current_page = page
     widget._update_page_display()
     widget.preview_widget._scene.clearSelection()
     widget.delete_page_btn.click()
-    expected = paths[:page * 3] + paths[(page + 1) * 3:]
+    expected = paths[:page * 4] + paths[(page + 1) * 4:]
     assert widget._selected_paths == expected
     assert widget._total_pages == 2
     assert widget._current_page == min(page, 1)
-    assert widget.preview_widget._paths == expected[widget._current_page * 3:][:3]
+    assert widget.preview_widget._paths == expected[widget._current_page * 4:][:4]
     assert widget._film_pixmap is None
 
 
@@ -295,7 +333,7 @@ def test_one_cell_with_scout_does_not_hide_selected_image(ui, monkeypatch):
     generate(ui, monkeypatch)
     ui.widget.preview_widget.set_scout_path("synthetic-scout")
     ui.widget._set_current_layout(FilmLayout(1, 1))
-    assert [tile.path for tile in ui.widget.preview_widget._tiles] == ["synthetic-0"]
+    assert [tile.path for tile in ui.widget.preview_widget._tiles if not tile.is_scout] == ["synthetic-0"]
 
 
 def test_series_selection_is_current_before_debounce_expires(ui):
@@ -354,7 +392,7 @@ def test_page_background_does_not_change_image_pixels(ui, monkeypatch, mode, col
     assert result.pixelColor(300, 300).alpha() == alpha
     assert result.pixelColor(100, 130).name() == "#456789"
     if mode == "none":
-        assert result.pixelColor(199, 300).alpha() == 0  # no painted grid in the gap
+        assert result.pixelColor(199, 300).alpha() == 0  # The unpainted gutter remains transparent between opaque box edges.
 
 
 def test_background_control_persists_and_updates_existing_page(ui, monkeypatch):
@@ -521,3 +559,25 @@ def test_shift_keeps_original_range_anchor(ui, monkeypatch):
         mouse_event(ui, QEvent.MouseButtonPress, index, Qt.LeftButton, modifier)
         mouse_event(ui, QEvent.MouseButtonRelease, index, Qt.LeftButton, modifier)
         assert {item.tile_index for item in preview._scene.selectedItems()} == expected
+
+
+@pytest.mark.parametrize("mode,expected", [("white","#000000"),("none","#000000"),("dark","#ffffff")])
+def test_grid_stays_visible_in_preview_and_export_for_all_backgrounds(ui, monkeypatch, mode, expected):
+    from modules.printing.render import film_renderer as film
+    from modules.printing.core.models import FilmSize, FilmLayout
+    from PySide6.QtWidgets import QGraphicsRectItem
+    monkeypatch.setattr(film, "_draw_header", lambda *args, **kw: None)
+    result = film.render_film([], FilmSize("Synthetic",4,4), FilmLayout(2,2), dpi=100,
+                              overlay_info={"background_mode":mode}).toImage()
+    border = result.pixelColor(197,300)
+    assert border.alpha() == 255
+    assert border.name() == expected
+    assert result.pixelColor(300,300).alpha() == (0 if mode=="none" else 255)
+    preview = ui.widget.preview_widget
+    preview._scene.clear()
+    preview._background_mode = mode
+    preview._page_background, preview._page_ink = film.page_background(mode)
+    preview._draw_preview_grid(FilmSize("Synthetic",4,3.6), FilmLayout(2,2),100,0.4)
+    rectangles = [item for item in preview._scene.items() if isinstance(item,QGraphicsRectItem)]
+    assert len(rectangles) == 16
+    assert all(item.brush().color().name() == expected for item in rectangles)

@@ -362,7 +362,8 @@ Record accepted optimization work under the existing OPT-53 item in
 
 ## 10. Supporting references
 
-- `docs/releases/VERSION_3.6.5_BUILD.md` — current measured artifact evidence.
+- `docs/releases/VERSION_3.6.6_BUILD.md` — current candidate preparation and artifact evidence.
+- `docs/releases/VERSION_3.6.5_BUILD.md` — previous measured artifact baseline.
 - `builder/docs/DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md` — edition payloads.
 - `builder/docs/INSTALLER_QA_CHECKLIST.md` — clean-machine installer QA.
 - `builder/docs/AI_AGENT_BUILD_RUNBOOK.md` — historical PyInstaller details.

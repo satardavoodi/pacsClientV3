@@ -65,3 +65,7 @@ Synthetic offscreen guards cover first/middle/last page removal and both emptyin
 actions, including navigation, implicit print/save regeneration, and explicit
 regeneration. These five cases failed before implementation (missing controls).
 Live source-app interaction and physical printing have not been exercised.
+
+## Grid visibility independent of background
+
+White and transparent page modes retain opaque black image-box borders; dark mode retains white borders. Only unpainted page fill changes with background selection. Preview and export share the existing resolved box geometry. Three new synthetic cases cover border color/opacity in preview and export plus transparent interior preservation; two failed before correction. Focused verification: 104 passed, 2 candidate-only deselected, 6 existing SWIG warnings, exit 0; 462 mirrors match. Physical printing and live UI remain unverified. This supersedes the earlier no-grid behavior for transparent/white pages.

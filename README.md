@@ -1,6 +1,6 @@
 # AIPacs
 
-Current project version: `v3.6.5`. Production acceptance is tracked separately
+Current project version: `v3.6.6`. Production acceptance is tracked separately
 in the current release and deployment records.
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.

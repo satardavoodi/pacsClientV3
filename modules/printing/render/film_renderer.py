@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
 from modules.printing.core.models import FilmLayout, FilmSize, ViewportState
 from modules.printing.layout.grid import GridLayoutEngine
-from modules.printing.render.dicom_renderer import RenderedImage, compute_scout_reference_lines, viewport_crop_bounds
+from modules.printing.render.dicom_renderer import RenderedImage, compute_scout_reference_lines, viewport_crop_bounds, labeled_reference_lines
 
 
 HEADER_HEIGHT_RATIO = 0.10
@@ -129,15 +129,8 @@ def render_film(
                 pen.setColor(QColor(255, 217, 51))
                 pen.setWidth(max(1, int(1 * dpi / 150)))
                 painter.setPen(pen)
-                # Reference line rules:
                 # - Lines positioned by true physical slice position
-                # - Displayed numbers = visible slot index (1-based sequential)
-                # - Only odd-numbered visible slots are rendered (1, 3, 5, 7, ...)
-                for idx, (x0, y0, x1, y1) in enumerate(lines):
-                    visible_slot = idx + 1  # 1-based visible slot number
-                    if visible_slot % 2 == 0:
-                        continue  # Skip even-numbered slots
-
+                for visible_slot, (x0, y0, x1, y1) in labeled_reference_lines(lines, sequence_start):
                     sx0 = x_offset_px + int((x0 - crop_x) * scale_x * dpi)
                     sy0 = y_offset_px + int((y0 - crop_y) * scale_y * dpi)
                     sx1 = x_offset_px + int((x1 - crop_x) * scale_x * dpi)
@@ -149,9 +142,8 @@ def render_film(
                     _draw_scout_line_label(painter, lx, ly, str(visible_slot), dpi)
                 painter.restore()
 
-    # Draw white grid lines between cells
-    if mode == "dark":
-        _draw_grid_lines(painter, film_area, layout, dpi, y_offset_in=header_height_in)
+    # Grid visibility is independent of page fill.
+    _draw_grid_lines(painter, film_area, layout, dpi, y_offset_in=header_height_in, color=QColor("white") if mode == "dark" else QColor("black"))
 
     _draw_header(
         painter,
@@ -178,13 +170,14 @@ def _draw_grid_lines(
     layout: FilmLayout,
     dpi: int,
     y_offset_in: float = 0.0,
+    color: QColor | None = None,
 ) -> None:
     """Draw each resolved box's borders without extending scout boundaries."""
     grid = GridLayoutEngine()
     for edge in grid.border_rectangles(film_size, layout):
         painter.fillRect(int(edge.x * dpi), int((edge.y + y_offset_in) * dpi),
                          max(1, int(edge.width * dpi)), max(1, int(edge.height * dpi)),
-                         QColor("white"))
+                         color if color is not None else QColor("white"))
 
 
 def _draw_header(

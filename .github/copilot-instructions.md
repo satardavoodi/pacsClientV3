@@ -1,6 +1,6 @@
 # AIPacs Copilot Instructions
 
-> **Current source version:** v3.6.5. Before any versioned Git publication or
+> **Current source version:** v3.6.6. Before any versioned Git publication or
 > packaging task, start at
 > [`docs/release-and-build/README.md`](../docs/release-and-build/README.md), then
 > follow root [`RELEASE.md`](../RELEASE.md) and [`BUILD.md`](../BUILD.md). The

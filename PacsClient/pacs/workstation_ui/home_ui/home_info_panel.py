@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.6.5",
-    "build_date": "2026-09-05",
-    "release_date": "2026-09-05",
+    "version": "3.6.6",
+    "build_date": "2026-09-09",
+    "release_date": "2026-09-09",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Eagle Eye AI: lumbar spine MRI analysis with a clinical-context pass",
-        "Legion Consult: draw a region of interest and ask for a focused reading",
-        "Fixed a crash when switching series while the loading overlay was shown",
-        "Fixed a crash when opening Local Server",
-        "Local mode now works fully offline, with richer advanced search",
+        "Printing layouts now keep diagnostic capacity independent of the Scout image",
+        "Scout reference labels remain readable and preserve source image numbering",
+        "Preview and exported films share visible grid geometry in every background mode",
+        "Printing transport reports real submission status without blocking the interface",
+        "Includes all imaging, DICOM Flow export, Eagle Eye, and viewer work from 3.6.5",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }

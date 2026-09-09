@@ -325,3 +325,53 @@ match. A synthetic 4x5 export was visually reviewed for independent scout bounds
 and uniform diagnostic boxes; missing offscreen font glyphs remain outside this
 geometry validation. No clinical screenshot was copied into repository artifacts.
 Live source UI and physical printing remain unverified.
+
+## Fixed 2x2 scout supersedes fractional layouts
+
+The scout now merges the top-left four regular grid slots, including their
+internal gutters. All remaining diagnostic cells retain the original grid size
+and row-major positions; there is no fractional-placement gap. Legacy percentage
+settings are ignored in favor of the fixed 2x2 default. Layout displays that policy
+instead of offering a percentage selector. A 4x5 sheet has 16 diagnostic images
+plus scout; 4x4 has 12 plus scout. Controller capacity comes from the same geometry
+used for preview/export. Setting/clearing a scout signals controller repagination.
+Compact multi-cell layouts with fewer than three rows/columns expand to at least
+3x3 when a scout is present, explained in the layout dialog; 1x1 remains diagnostic
+only. No-scout behavior is unchanged.
+
+Five revised geometry cases failed before implementation. Guards additionally
+assert exact remaining grid positions and all-image preservation across page
+navigation, page deletion and scout clearing. The focused suite passes 99 tests,
+with two candidate-only deselections and six existing SWIG warnings. All 462
+mirror pairs match. A synthetic 4x5 raster was visually inspected for continuous
+regular grid occupancy, one 2x2 scout and equal diagnostic cells; offscreen font
+rendering remains unverified. No source app or physical printer was exercised.
+
+## Diagnostic count and adaptive reference labels
+
+Rows x columns now specifies diagnostic capacity independently of Scout. With a
+scout, geometry reserves four additional regular slots and picks a paper-aware
+row/column arrangement, preferring no unused slots then near-square cells. The
+requested diagnostic count stays exact (20 images plus scout = 24 regular slots).
+Some counts have no rectangular factorization with a 2x2 scout; such layouts may
+leave spare space instead of dropping images. Without a scout all requested
+slots are diagnostic; there is no hidden reserved placeholder. One requested
+image can coexist with the additional scout. These rules supersede prior capacity
+and compact-grid exceptions above.
+
+One shared reference-label selector is used by preview and export. For fewer
+than 20 source images the interval is 2, from 20 through 50 it is 5, and above
+50 it is 10. First, middle (lower middle for even counts) and last valid source
+positions are included. Missing intersections retain their source index rather
+than renumbering later lines. Page offsets match the numbers printed on images.
+A missing geometric intersection cannot yield a fabricated line; nearest valid
+landmarks are used. Child text wrappers are retained by the reference container
+so labels survive Qt/Python ownership cleanup. Selected lines and their labels
+are sampled together to reduce clutter.
+
+Seven requirement guards failed before the change; an integration guard also
+exposed disappearing preview labels and passed after ownership correction.
+Updated pagination tests reflect the explicitly changed count contract. The
+focused suite passes 101 tests with two candidate-only deselections and six
+existing SWIG warnings; all 462 mirror pairs match. No live printing validation
+or clinical images were used.
