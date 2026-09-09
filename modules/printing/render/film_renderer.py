@@ -179,50 +179,12 @@ def _draw_grid_lines(
     dpi: int,
     y_offset_in: float = 0.0,
 ) -> None:
-    """
-    Draw white grid lines between all cells.
-    
-    Grid lines are drawn:
-    - (rows + 1) horizontal lines (top/bottom + between rows)
-    - (cols + 1) vertical lines (left/right + between cols)
-    """
+    """Draw each resolved box's borders without extending scout boundaries."""
     grid = GridLayoutEngine()
-    cells = grid.compute_cells(film_size, layout)
-
-    grid_line_px = int(grid.GRID_LINE_WIDTH_IN * dpi)
-    if grid_line_px < 1:
-        grid_line_px = 1
-
-    painter.setPen(QColor(255, 255, 255))
-    painter.setBrush(QColor(255, 255, 255))
-
-    width_px = int(film_size.width_in * dpi)
-    height_px = int(film_size.height_in * dpi)
-    y_offset_px = int(y_offset_in * dpi)
-
-    cell_w = cells[0].width if cells else film_size.width_in
-    cell_h = cells[0].height if cells else film_size.height_in
-    line_in = grid.GRID_LINE_WIDTH_IN
-
-    # Vertical grid lines (including left/right borders)
-    x_positions_in = [0.0]
-    for col in range(1, layout.cols):
-        x_positions_in.append(cells[col].x - line_in)
-    x_positions_in.append(max(0.0, film_size.width_in - line_in))
-
-    for x_in in x_positions_in:
-        x_px = int(x_in * dpi)
-        painter.fillRect(x_px, y_offset_px, grid_line_px, height_px, QColor(255, 255, 255))
-
-    # Horizontal grid lines (including top/bottom borders)
-    y_positions_in = [0.0]
-    for row in range(1, layout.rows):
-        y_positions_in.append(cells[row * layout.cols].y - line_in)
-    y_positions_in.append(max(0.0, film_size.height_in - line_in))
-
-    for y_in in y_positions_in:
-        y_px = int(y_in * dpi)
-        painter.fillRect(0, y_offset_px + y_px, width_px, grid_line_px, QColor(255, 255, 255))
+    for edge in grid.border_rectangles(film_size, layout):
+        painter.fillRect(int(edge.x * dpi), int((edge.y + y_offset_in) * dpi),
+                         max(1, int(edge.width * dpi)), max(1, int(edge.height * dpi)),
+                         QColor("white"))
 
 
 def _draw_header(

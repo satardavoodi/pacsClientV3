@@ -286,12 +286,13 @@ when an actual scout is present. Layout offers 100%, 125% and 150%; selection
 persists in printing configuration and saved-page metadata. The config default
 also provides 150% on first use. A reopened-widget guard verifies persistence.
 
-This first stage uses a larger first column and first row, redistributing the
-remaining widths/heights across the other cells. Diagnostic capacity/order stay
-unchanged; other cells get smaller (especially in 2x2). It is not the future
-free-rectangle packing/preset engine. No-scout layouts remain regular. A single
-row or column cannot enlarge along the already full-sheet dimension; 1x1 retains
-the existing diagnostic-only behavior. All image fitting preserves aspect ratio.
+This first stage uses independent non-overlapping rectangles: one enlarged scout
+at the top-left and equal-size diagnostic tiles in the remaining regions. Diagnostic
+capacity/order stay unchanged; the diagnostic tiles get smaller (especially in
+2x2), and unused page space is not filled by unequal tiles. It is not the future
+free-rectangle packing/preset engine. No-scout layouts remain regular. A single row
+or column cannot enlarge along the already full-sheet dimension; 1x1 retains the
+existing diagnostic-only behavior. All image fitting preserves aspect ratio.
 
 Preview, export, reference clipping and separator positions use the same cells.
 Nine new cases cover enlarged geometry across six shapes, persistence/reopen,
@@ -304,3 +305,23 @@ The full printing suite passed 82 tests; the combined printing and plugin-packag
 parity selection passed 86 tests with 4 release-candidate cases deselected
 (6 pre-existing SWIG warnings). All 462 mirror pairs matched. No physical
 print or live source UI run occurred. Presets remain a separate next stage.
+
+## Corrected diagnostic box uniformity
+
+The initial weighted-row/column implementation expanded unrelated boxes in the
+first row and column. The reported screenshot exposed this defect. Geometry now
+returns one independent enlarged scout rectangle and equally sized diagnostic
+rectangles to its right and below it. Preview and export draw each actual box's
+borders rather than extending first-row/column separators across the sheet.
+The configured scout size and diagnostic count/order remain unchanged. Residual
+space beside the scout and at the right edge is permitted; this correction does
+not claim optimal packing. No anatomy is stretched or implicitly cropped.
+
+The existing geometry guard was strengthened to require equal width and height
+for every non-scout box. Three multi-row/multi-column cases failed before the
+correction. All focused printing and builder checks now pass: 98 tests, two
+candidate-only deselections and six existing SWIG warnings. All 462 mirror pairs
+match. A synthetic 4x5 export was visually reviewed for independent scout bounds
+and uniform diagnostic boxes; missing offscreen font glyphs remain outside this
+geometry validation. No clinical screenshot was copied into repository artifacts.
+Live source UI and physical printing remain unverified.

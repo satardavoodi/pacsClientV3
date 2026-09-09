@@ -447,3 +447,9 @@ hippocampal evidence. Combined Brain selection: 65 passed.
 | Boundary | Requirement | Guard |
 |---|---|---|
 | Printing geometry/config | 150% scout box in both available dimensions, no overlap, correct separators, preview/export equality and persistent size | tests/code/printing/test_scout_size.py; scout size/default/separator cases in test_printing_workflow.py (eight fail-before cases) |
+
+## Scout-only enlargement correction (2026-09-09)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Printing geometry and borders | First row/column inherited scout dimensions. Independent scout and uniform diagnostic rectangles now share per-box borders in preview/export. | test_scout_size.py::test_enlarged_scout_fits_without_overlap; equal-size assertions failed on three layouts before correction |

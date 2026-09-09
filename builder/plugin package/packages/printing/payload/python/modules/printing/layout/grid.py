@@ -46,23 +46,35 @@ class GridLayoutEngine:
         cell_height = available_height / layout.rows
 
         scale = max(1.0, min(1.5, layout.scout_scale))
-        widths = [cell_width] * layout.cols
-        heights = [cell_height] * layout.rows
-        if layout.cols > 1:
-            widths[0] = cell_width * scale
-            widths[1:] = [(available_width - widths[0]) / (layout.cols - 1)] * (layout.cols - 1)
-        if layout.rows > 1:
-            heights[0] = cell_height * scale
-            heights[1:] = [(available_height - heights[0]) / (layout.rows - 1)] * (layout.rows - 1)
-        cells: List[GridCell] = []
-        y = 0.0
-        for height in heights:
-            x = 0.0
-            for width in widths:
-                cells.append(GridCell(x=x, y=y, width=width, height=height))
-                x += width + self.GRID_LINE_WIDTH_IN
-            y += height + self.GRID_LINE_WIDTH_IN
+        scout_width = cell_width * scale if layout.cols > 1 else cell_width
+        scout_height = cell_height * scale if layout.rows > 1 else cell_height
+        diagnostic_width = ((available_width - scout_width) / (layout.cols - 1)
+                            if layout.cols > 1 else cell_width)
+        diagnostic_height = ((available_height - scout_height) / (layout.rows - 1)
+                             if layout.rows > 1 else cell_height)
+        gap = self.GRID_LINE_WIDTH_IN
+        cells = [GridCell(0, 0, scout_width, scout_height)]
+        # Independent diagnostic boxes: the scout never expands a shared row/column.
+        for col in range(layout.cols - 1):
+            cells.append(GridCell(scout_width + gap + col * (diagnostic_width + gap),
+                                  0, diagnostic_width, diagnostic_height))
+        for row in range(layout.rows - 1):
+            for col in range(layout.cols):
+                cells.append(GridCell(col * (diagnostic_width + gap),
+                                      scout_height + gap + row * (diagnostic_height + gap),
+                                      diagnostic_width, diagnostic_height))
         return cells
+
+    def border_rectangles(self, film_size: FilmSize, layout: FilmLayout) -> List[GridCell]:
+        """Return borders for actual boxes, never full-sheet row/column lines."""
+        edges = []
+        for cell in self.compute_cells(film_size, layout):
+            t = min(self.GRID_LINE_WIDTH_IN, cell.width / 2, cell.height / 2)
+            edges.extend((GridCell(cell.x, cell.y, cell.width, t),
+                          GridCell(cell.x, cell.y + cell.height - t, cell.width, t),
+                          GridCell(cell.x, cell.y, t, cell.height),
+                          GridCell(cell.x + cell.width - t, cell.y, t, cell.height)))
+        return edges
 
     def map_image_to_cell(
         self,

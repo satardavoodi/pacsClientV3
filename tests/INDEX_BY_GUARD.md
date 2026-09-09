@@ -1449,3 +1449,5 @@ Printing Ctrl/Shift extension (2026-09-09): `test_printing_workflow.py` verifies
 Printing fidelity and transport: `tests/code/printing/test_print_fidelity.py` covers absolute gray, uniform values, crop, YBR color and width-one threshold. `test_printer_transport.py` covers default transfer syntax, warning detail, invalid settings/payload and Windows end/error/abort results.
 
 Printing enlarged scout: `tests/code/printing/test_scout_size.py` covers shared geometry; scout default, persistence/reopen, export and separator guards live in `test_printing_workflow.py`.
+
+Scout uniformity: `test_scout_size.py::test_enlarged_scout_fits_without_overlap` also requires identical non-scout dimensions, protecting against enlargement leaking into the first row/column.

@@ -11,6 +11,10 @@ def test_enlarged_scout_fits_without_overlap(rows, cols):
     base = grid.compute_cells(film, FilmLayout(rows,cols))
     cells = grid.compute_cells(film, FilmLayout(rows,cols,scout_scale=1.5))
     assert len(cells) == len(base)
+    if len(cells) > 1:
+        for cell in cells[1:]:
+            assert cell.width == pytest.approx(cells[1].width)
+            assert cell.height == pytest.approx(cells[1].height)
     assert cells[0].width == pytest.approx(base[0].width * (1.5 if cols > 1 else 1))
     assert cells[0].height == pytest.approx(base[0].height * (1.5 if rows > 1 else 1))
     for i,a in enumerate(cells):

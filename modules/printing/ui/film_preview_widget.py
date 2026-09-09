@@ -345,41 +345,10 @@ class FilmPreviewWidget(QGraphicsView):
         if self._background_mode != "dark":
             return
         grid = GridLayoutEngine()
-        cells = grid.compute_cells(film_area, layout)
-        grid_line_px = int(grid.GRID_LINE_WIDTH_IN * dpi)
-        if grid_line_px < 1:
-            grid_line_px = 1
-
-        width_px = int(film_area.width_in * dpi)
-        height_px = int(film_area.height_in * dpi)
-        y_offset_px = int(y_offset_in * dpi)
-
-        cell_w = cells[0].width if cells else film_area.width_in
-        cell_h = cells[0].height if cells else film_area.height_in
-        line_in = grid.GRID_LINE_WIDTH_IN
-
-        brush = QBrush(QColor("white"))
-        no_pen = QPen(Qt.NoPen)
-
-        # Vertical lines (including left/right borders)
-        x_positions_in = [0.0]
-        for col in range(1, layout.cols):
-            x_positions_in.append(cells[col].x - line_in)
-        x_positions_in.append(max(0.0, film_area.width_in - line_in))
-
-        for x_in in x_positions_in:
-            x_px = int(x_in * dpi)
-            self._scene.addRect(x_px, y_offset_px, grid_line_px, height_px, no_pen, brush)
-
-        # Horizontal lines (including top/bottom borders)
-        y_positions_in = [0.0]
-        for row in range(1, layout.rows):
-            y_positions_in.append(cells[row * layout.cols].y - line_in)
-        y_positions_in.append(max(0.0, film_area.height_in - line_in))
-
-        for y_in in y_positions_in:
-            y_px = int(y_in * dpi)
-            self._scene.addRect(0, y_offset_px + y_px, width_px, grid_line_px, no_pen, brush)
+        for edge in grid.border_rectangles(film_area, layout):
+            self._scene.addRect(int(edge.x * dpi), int((edge.y + y_offset_in) * dpi),
+                                max(1, int(edge.width * dpi)), max(1, int(edge.height * dpi)),
+                                QPen(Qt.NoPen), QBrush(QColor("white")))
 
     def _draw_scout_cell(self, cell: GridCell, dpi: int, header_height_in: float) -> None:
         if not self._scout_path:
