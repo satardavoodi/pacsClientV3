@@ -36,9 +36,9 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.6.4",
-    "build_date": "2026-08-29",
-    "release_date": "2026-08-29",
+    "version": "3.6.5",
+    "build_date": "2026-09-05",
+    "release_date": "2026-09-05",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
         "Eagle Eye AI: lumbar spine MRI analysis with a clinical-context pass",
@@ -80,7 +80,6 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.6.4",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +88,6 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۶.۴",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "
@@ -224,8 +222,12 @@ class HomeInfoPanel(QWidget):
         immediately that this is the localized edition. Uses the same flat
         section styling (no frames/borders) as every other block.
         """
-        self.add_section(PERSIAN_EDITION["title"], PERSIAN_EDITION["en"])
-        self.add_lines(PERSIAN_EDITION["fa"], rtl=True)
+        version_line = f"AI-PACS Version {self.running_version()}"
+        self.add_section(
+            PERSIAN_EDITION["title"],
+            [version_line, *PERSIAN_EDITION["en"]],
+        )
+        self.add_lines([version_line, *PERSIAN_EDITION["fa"]], rtl=True)
 
     # ── extensible section API ────────────────────────────────────────────
     def add_section(self, title: str, lines: Iterable[str],

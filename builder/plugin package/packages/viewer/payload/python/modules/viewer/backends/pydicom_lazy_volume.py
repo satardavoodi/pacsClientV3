@@ -891,7 +891,7 @@ class PyDicomLazyVolume(QObject):
                     self._decode_failed_emitted = True
                     self.decode_failed.emit(
                         f"Slice {idx} decode failed: {e}. "
-                        "Install pydicom + pylibjpeg-libjpeg/openjpeg/rle (or python-gdcm)."
+                        "Install pydicom + python-gdcm/pyjpegls and pylibjpeg-openjpeg/rle."
                     )
             finally:
                 with self._pending_lock:

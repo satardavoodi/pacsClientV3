@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -13,10 +14,17 @@ from PIL import Image
 
 MIN_PROJECTED_ROI_SIZE = 12
 MAX_DICOM_EVIDENCE_SLICES = 1024
+_DICOM_UID = re.compile(r"[0-9]+(?:\.[0-9]+)*\Z")
 
 
 class EvidenceError(RuntimeError):
     """Selected DICOM evidence cannot be prepared safely."""
+
+
+def _safe_reference_uid(value: Any) -> str:
+    """Return a bounded DICOM UID for equality only, never for display."""
+    token = str(value or "").strip()
+    return token if len(token) <= 64 and _DICOM_UID.fullmatch(token) else ""
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,9 @@ class SeriesVolume:
     direction: tuple[float, ...]
     plane: str = "unknown"
     inverted: bool = False
+    # Local comparison only; never include the UID in model-facing manifests.
+    frame_of_reference_uid: str = field(default="", repr=False)
+    source_geometry_verified: bool = False
 
     def __post_init__(self) -> None:
         pixels = np.asarray(self.pixels)
@@ -94,6 +105,7 @@ class DicomSlice:
     pixel_spacing: tuple[float, float]
     source_ordinal: int
     inverted: bool = False
+    frame_of_reference_uid: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         pixels = np.asarray(self.pixels)
@@ -315,6 +327,7 @@ def _read_slice_header(filename: str) -> tuple[
     tuple[float, float, float, float, float, float],
     tuple[float, float],
     bool,
+    str,
 ]:
     try:
         import pydicom
@@ -328,6 +341,7 @@ def _read_slice_header(filename: str) -> tuple[
                 "ImagePositionPatient",
                 "PhotometricInterpretation",
                 "PixelSpacing",
+                "FrameOfReferenceUID",
             ],
         )
         if str(getattr(dataset, "BurnedInAnnotation", "") or "").strip().upper() == "YES":
@@ -347,7 +361,8 @@ def _read_slice_header(filename: str) -> tuple[
         raise EvidenceError("A selected MRI slice has incomplete DICOM geometry.") from exc
     if len(position) != 3 or len(orientation) != 6 or len(spacing) != 2:
         raise EvidenceError("A selected MRI slice has incomplete DICOM geometry.")
-    return position, orientation, spacing, inverted
+    reference = _safe_reference_uid(getattr(dataset, "FrameOfReferenceUID", ""))
+    return position, orientation, spacing, inverted, reference
 
 
 def _decode_single_slice(filename: str) -> np.ndarray:
@@ -372,7 +387,7 @@ def load_dicom_slice_stack(candidate: Any) -> DicomSliceStack:
         raise EvidenceError("The selected MRI series exceeds the evidence slice limit.")
     slices = []
     for ordinal, filename in enumerate(filenames, start=1):
-        position, orientation, spacing, inverted = _read_slice_header(filename)
+        position, orientation, spacing, inverted, reference = _read_slice_header(filename)
         try:
             slices.append(
                 DicomSlice(
@@ -382,6 +397,7 @@ def load_dicom_slice_stack(candidate: Any) -> DicomSliceStack:
                     pixel_spacing=spacing,
                     source_ordinal=ordinal,
                     inverted=inverted,
+                    frame_of_reference_uid=reference,
                 )
             )
         except ValueError as exc:
@@ -401,9 +417,18 @@ def load_series_volume(candidate: Any) -> SeriesVolume:
 
         reader = sitk.ImageSeriesReader()
         reader.SetFileNames(filenames)
+        reader.MetaDataDictionaryArrayUpdateOn()
         image = reader.Execute()
         if int(image.GetDimension()) != 3:
             raise EvidenceError("A selected MRI series is not a 3D image stack.")
+        references = {
+            _safe_reference_uid(reader.GetMetaData(index, "0020|0052"))
+            if reader.HasMetaDataKey(index, "0020|0052") else ""
+            for index in range(len(filenames))
+        }
+        # Missing or mixed reference identities cannot support cross-series locators.
+        reference = next(iter(references)) if len(references) == 1 else ""
+        source_geometry_verified = _volume_matches_source_planes(reader, image, len(filenames))
         return SeriesVolume(
             pixels=np.asarray(sitk.GetArrayFromImage(image)),
             origin=tuple(float(value) for value in image.GetOrigin()),
@@ -411,11 +436,43 @@ def load_series_volume(candidate: Any) -> SeriesVolume:
             direction=tuple(float(value) for value in image.GetDirection()),
             plane=str(getattr(candidate, "plane", "") or "unknown"),
             inverted=inverted,
+            frame_of_reference_uid=reference,
+            source_geometry_verified=source_geometry_verified,
         )
     except EvidenceError:
         raise
     except Exception as exc:
         raise EvidenceError("A selected MRI series could not be decoded.") from exc
+
+
+def _volume_matches_source_planes(reader: Any, image: Any, count: int) -> bool:
+    """Do not turn a nonuniform source stack into an authoritative locator affine.
+
+    This flag only gates new locators. Legacy evidence decoding is unchanged;
+    missing/inconsistent metadata remains an explicit unavailable link.
+    """
+    if int(image.GetSize()[2]) != count:
+        return False
+    direction = np.asarray(image.GetDirection()).reshape(3, 3)
+    expected_orientation = np.r_[direction[:, 0], direction[:, 1]]
+    expected_spacing = np.asarray(image.GetSpacing())[[1, 0]]
+    for index in range(count):
+        try:
+            raw_values = [reader.GetMetaData(index, key)
+                          for key in ("0020|0032", "0020|0037", "0028|0030")]
+            if any(len(raw) > 256 for raw in raw_values):
+                return False
+            values = [np.asarray([float(v) for v in raw.split("\\")])
+                      for raw in raw_values]
+        except (RuntimeError, ValueError):
+            return False
+        expected = [image.TransformIndexToPhysicalPoint((0, 0, index)),
+                    expected_orientation, expected_spacing]
+        for value, target, tolerance in zip(values, expected, (0.1, 1e-4, 1e-4)):
+            if value.shape != np.asarray(target).shape or not np.allclose(
+                    value, target, rtol=0, atol=tolerance):
+                return False
+    return True
 
 
 def intensity_window(volume: SeriesVolume) -> tuple[float, float]:

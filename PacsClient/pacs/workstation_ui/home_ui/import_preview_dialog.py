@@ -174,14 +174,11 @@ def _module_available_any(*module_names: str) -> bool:
 
 
 def _detect_decoder_capabilities() -> dict:
-    # NOTE (bug fixed 2026-06-06): the pylibjpeg plugin PACKAGES are named
-    # pylibjpeg-libjpeg / -openjpeg / -rle, but the MODULES they install are
-    # ``libjpeg`` / ``openjpeg`` / ``rle``. Probing only the package-style
-    # names reported every compressed syntax as unsupported even with all
-    # codecs installed. Probe both spellings.
+    # pylibjpeg OpenJPEG/RLE use entry-point modules. JPEG baseline/lossless
+    # and JPEG-LS use GDCM/pyjpegls so the proprietary installer does not ship
+    # the GPL-3.0 pylibjpeg-libjpeg decoder.
     return {
         "pylibjpeg": _module_available("pylibjpeg"),
-        "pylibjpeg_libjpeg": _module_available_any("libjpeg", "pylibjpeg_libjpeg"),
         "pylibjpeg_openjpeg": _module_available_any("openjpeg", "pylibjpeg_openjpeg"),
         "pylibjpeg_rle": _module_available_any("rle", "pylibjpeg_rle"),
         "gdcm": _module_available("gdcm"),
@@ -205,15 +202,15 @@ def _is_transfer_syntax_supported(tsuid: str, caps: dict) -> tuple[bool, str]:
 
     # Compression families
     if uid in {"1.2.840.10008.1.2.4.50", "1.2.840.10008.1.2.4.51"}:  # JPEG Baseline/Extended
-        ok = bool(caps.get("pylibjpeg_libjpeg") or caps.get("PIL") or caps.get("gdcm"))
-        return ok, "Requires pylibjpeg-libjpeg or Pillow or GDCM."
+        ok = bool(caps.get("PIL") or caps.get("gdcm"))
+        return ok, "Requires Pillow or GDCM."
 
     if uid in {
         "1.2.840.10008.1.2.4.57",  # JPEG Lossless, Non-hierarchical (Process 14)
         "1.2.840.10008.1.2.4.70",  # JPEG Lossless, Non-hierarchical, First-Order Prediction
     }:
-        ok = bool(caps.get("pylibjpeg_libjpeg") or caps.get("gdcm"))
-        return ok, "Requires pylibjpeg-libjpeg or GDCM."
+        ok = bool(caps.get("gdcm"))
+        return ok, "Requires GDCM."
 
     if uid in {"1.2.840.10008.1.2.4.80", "1.2.840.10008.1.2.4.81"}:  # JPEG-LS
         ok = bool(caps.get("pyjpegls") or caps.get("gdcm"))
@@ -297,7 +294,6 @@ def _build_compatibility_report(studies: list[dict]) -> dict:
         name
         for name, enabled in (
             ("pylibjpeg", caps.get("pylibjpeg")),
-            ("pylibjpeg-libjpeg", caps.get("pylibjpeg_libjpeg")),
             ("pylibjpeg-openjpeg", caps.get("pylibjpeg_openjpeg")),
             ("pylibjpeg-rle", caps.get("pylibjpeg_rle")),
             ("Pillow", caps.get("PIL")),

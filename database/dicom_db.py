@@ -101,6 +101,7 @@ def init_database():
                 study_path      TEXT DEFAULT NULL,
                 attachments_uploaded TEXT DEFAULT NULL,
                 imported_at      TEXT DEFAULT NULL,
+                visit_status     TEXT DEFAULT NULL,
                 FOREIGN KEY(patient_fk) REFERENCES patients(patient_pk) ON DELETE CASCADE
             )
             """
@@ -134,6 +135,16 @@ def init_database():
         except sqlite3.OperationalError:
             cur.execute("ALTER TABLE studies ADD COLUMN reporting_physician TEXT DEFAULT NULL")
             logger.info("[DB-MIGRATION] studies.reporting_physician added")
+
+        # Visit-state persistence is a schema concern and must be completed
+        # during the single startup migration. Patient-open code runs on the Qt
+        # thread and must never attempt an ALTER TABLE (or open a nested
+        # connection) while a download subprocess owns the WAL write lock.
+        try:
+            cur.execute("SELECT visit_status FROM studies LIMIT 1")
+        except sqlite3.OperationalError:
+            cur.execute("ALTER TABLE studies ADD COLUMN visit_status TEXT DEFAULT NULL")
+            logger.info("[DB-MIGRATION] studies.visit_status added")
 
         cur.execute(
             """

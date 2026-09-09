@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Decode concurrency gate  (H12 fix — was diagnostic toggle T2)
 # ────────────────────────────────────────────────────────────────────────
 # Default = 1 (serialised).  Prevents the fatal GIL crash caused by
-# concurrent C-extension pixel decoders (pylibjpeg-libjpeg / openjpeg).
+# concurrent C-extension pixel decoders (GDCM / pyjpegls / OpenJPEG).
 # Set AIPACS_MAX_DECODE_THREADS=N to allow N concurrent decodes.
 # Legacy: AIPACS_SERIALIZE_DECODE=1 is equivalent to N=1 (now the default).
 _MAX_CONCURRENT_DECODE = int(os.environ.get("AIPACS_MAX_DECODE_THREADS", "1"))

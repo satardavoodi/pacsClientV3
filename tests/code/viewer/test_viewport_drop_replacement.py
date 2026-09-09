@@ -212,6 +212,36 @@ def test_source_both_drop_handlers_force_reload():
     assert "force_reload=True" in qfc
 
 
+def test_retired_fast_viewer_child_never_becomes_a_top_level_window(qapp):
+    """Replacing a FAST preview/full-series widget must keep the retired child
+    parented until deferred deletion. Detaching a visible child with
+    ``setParent(None)`` creates a transient native top-level window on Windows.
+    """
+    from PySide6.QtWidgets import QWidget
+    from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import (
+        _retire_embedded_viewer_widget,
+    )
+
+    owner = QWidget()
+    retired = QWidget(owner)
+    owner.show()
+    retired.show()
+    qapp.processEvents()
+
+    _retire_embedded_viewer_widget(retired)
+
+    assert retired.parentWidget() is owner
+    assert not retired.isWindow()
+    assert not retired.isVisible()
+
+
+def test_fast_viewer_replacement_never_detaches_layout_children():
+    """Both bridge-install paths must use the ownership-safe retirement helper."""
+    qfc = (VTK_WIDGET_DIR / "qt_fast_container.py").read_text(encoding="utf-8")
+    assert "_old_w.setParent(None)" not in qfc
+    assert qfc.count("_retire_embedded_viewer_widget(_old_w)") == 2
+
+
 def test_source_force_reload_threaded_through_switch_paths():
     """force_reload must be an accepted (default-False) parameter on the
     dispatcher and both switch_series implementations, and must gate each

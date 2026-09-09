@@ -194,12 +194,24 @@ disk read — never to a blank thumbnail.
     and its exact storage path together. Drop parsers must validate decimal
     digits before `int()`; Python otherwise accepts numeric separators and would
     reinterpret `1_2` as Series 12.
+11. **Style the thumbnail card root before constructing its native subtree.**
+    `ThumbnailManager.create_thumbnail_widget` must use the scoped
+    `QWidget#seriesThumbnailCard` selector before adding layouts, children,
+    graphics effects, or the strip event filter. A late unscoped `QWidget`
+    stylesheet recursively repolishes the complete subtree and was the exact
+    main-thread site of the 2026-09-01 Windows `0xc0000374` termination during a
+    multi-study grouped render. Guard:
+    `test_thumbnail_card_root_style_is_scoped_and_applied_before_child_tree`.
 
 **Live result (2026-08-30):** The source-build Local/Fast workflow was confirmed
 by the human operator: the original 25-image still series retained its correct
 card count and displayed normally while the duplicate-number cine series also
 rendered. The broader re-import, explicit cable-disconnect, packaged-runtime,
 and multi-study comparison gates remain independent.
+
+**Native-stability follow-up (2026-09-01):** The PHI-safe crash analysis and
+source-spawn correction are recorded in
+`docs/reports/THUMBNAIL_HEAP_CRASH_AND_WINDOWS_SPAWN_FLASH_2026-09-01.md`.
 
 ## 7. Known non-blocking follow-ups
 

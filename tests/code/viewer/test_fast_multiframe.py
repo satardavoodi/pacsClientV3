@@ -75,6 +75,30 @@ def _make_multiframe_dicom(path: Path, n_frames: int = 8, rows: int = 16, cols: 
     ds.save_as(str(path), write_like_original=False)
 
 
+def _make_same_series_raw_data(path: Path, image_path: Path):
+    """Create a metadata-only Raw Data object beside an image object."""
+    pydicom = pytest.importorskip("pydicom")
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
+    image = pydicom.dcmread(str(image_path), stop_before_pixels=True, force=True)
+    raw_storage = "1.2.840.10008.5.1.4.1.1.66"
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.file_meta.MediaStorageSOPClassUID = raw_storage
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.SOPClassUID = raw_storage
+    ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+    ds.StudyInstanceUID = image.StudyInstanceUID
+    ds.SeriesInstanceUID = image.SeriesInstanceUID
+    ds.Modality = "MR"
+    ds.InstanceNumber = 0
+    ds.is_little_endian = True
+    ds.is_implicit_VR = False
+    ds.save_as(str(path), write_like_original=False)
+
+
 def test_header_scan_captures_number_of_frames(tmp_path):
     pytest.importorskip("pydicom")
     import importlib.util
@@ -145,6 +169,70 @@ def test_metadata_path_expands_multiple_cine_objects_when_db_omits_frame_count(t
         pipeline.close_series()
 
 
+@pytest.mark.parametrize("raw_first", [True, False])
+def test_metadata_path_ignores_same_series_raw_data_and_expands_enhanced_frames(
+    tmp_path, raw_first
+):
+    """A non-pixel Raw Data object must not hide or become an image frame.
+
+    Enhanced MR exports may place one metadata-only Raw Data Storage object in
+    the same Series UID as the multi-frame image object. The DB projection can
+    omit NumberOfFrames and can return either object first.
+    """
+    pytest.importorskip("pydicom")
+    pytest.importorskip("PySide6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    from modules.viewer.fast import lightweight_2d_pipeline as lw
+
+    series_dir = tmp_path / "enhanced"
+    series_dir.mkdir()
+    image = series_dir / "image.dcm"
+    raw = series_dir / "raw.dcm"
+    _make_multiframe_dicom(
+        image,
+        n_frames=3,
+        rows=8,
+        cols=6,
+        per_frame_ipp=lambda k: (0.0, 0.0, float(k)),
+        enhanced_sop=True,
+    )
+    _make_same_series_raw_data(raw, image)
+
+    image_meta = {
+        "instance_path": str(image),
+        "rows": 8,
+        "columns": 6,
+        "instance_number": 1,
+    }
+    raw_meta = {
+        "instance_path": str(raw),
+        "rows": 0,
+        "columns": 0,
+        "instance_number": 0,
+    }
+    instances = [raw_meta, image_meta] if raw_first else [image_meta, raw_meta]
+
+    pipeline = lw.Lightweight2DPipeline(
+        config=lw.PipelineConfig(prefetch_radius=0, prefetch_workers=1)
+    )
+    try:
+        pipeline.open_series(
+            str(series_dir),
+            metadata={"series": {"series_number": "1", "modality": "MR"}, "instances": instances},
+        )
+        assert len(pipeline._slices) == 3
+        assert {slice_meta.path for slice_meta in pipeline._slices} == {str(image)}
+        assert [slice_meta.frame_index for slice_meta in pipeline._slices] == [0, 1, 2]
+        assert int(pipeline._decode_slice(2).flat[0]) == 2
+    finally:
+        pipeline.close_series()
+
+
 def test_pixel_array_frame_indexing_assumption(tmp_path):
     pydicom = pytest.importorskip("pydicom")
     p = tmp_path / "mf.dcm"
@@ -196,8 +284,8 @@ def test_expansion_logic_pins():
     assert "geoms = self._read_multiframe_geometry(sm.path, n)" in body
     assert "g is not None and g.has_spatial_geometry" in body
     assert "_dc_replace(sm, frame_index=k, num_frames=n)" in body  # fallback path
-    assert "first_count = self._probe_number_of_frames(slices[0].path)" in body
-    assert "for sm in slices[1:]" in body
+    assert "slices = self._hydrate_multiframe_candidates(slices)" in body
+    assert "dicom_file_pixel_facts(path)" in src
 
 
 def test_decode_selects_own_frame_and_frame_aware_cache_key():

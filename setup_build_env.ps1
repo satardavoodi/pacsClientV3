@@ -3,7 +3,7 @@
     Creates and populates the .venv_build virtual environment required for AIPacs release builds.
 
 .DESCRIPTION
-    This script sets up the isolated build environment used by build.py / build.bat.
+    This script sets up the isolated build environment used by the canonical BUILD.md workflow.
     It is safe to run on any Windows PC after a fresh git clone.
 
     Steps performed:
@@ -14,9 +14,10 @@
        (PyInstaller needs them on the import path to resolve hidden imports and datas).
     5. Install Nuitka toolchain requirements from requirements-nuitka.txt.
 
-    After this script completes, run:
-        python build.py           # uses .venv_build automatically via build.bat
-        .\build.bat               # same, via the .bat wrapper
+    After this script completes, open docs/release-and-build/README.md, follow
+    RELEASE.md to synchronize the exact release commit, then follow BUILD.md and
+    use its isolated tools/build/build_local_candidate.py workflow with the
+    generated receipt.
 
 .PARAMETER Force
     Remove and recreate .venv_build from scratch even if it already exists.
@@ -191,15 +192,13 @@ Write-Host ""
 Write-Host "  Build venv : $venvDir"
 Write-Host "  Python     : $venvPython"
 Write-Host ""
-Write-Host "  To build the release:" -ForegroundColor Cyan
-Write-Host "      python build.py"
-Write-Host "  or:"
-Write-Host "      .\build.bat"
-Write-Host ""
-Write-Host "  To build Nuitka release pipeline:" -ForegroundColor Cyan
-Write-Host "      .\build_nuitka_release.bat"
-Write-Host "  or:"
-Write-Host "      .\.venv_build\Scripts\python.exe `"builder nuitka/build_nuitka_release.py`" --resume"
+Write-Host "  Canonical documentation route:" -ForegroundColor Cyan
+Write-Host "      docs\release-and-build\README.md"
+Write-Host "      RELEASE.md"
+Write-Host "      BUILD.md"
+Write-Host "  Final candidates use the isolated coordinator:" -ForegroundColor Cyan
+Write-Host "      .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py ..."
+Write-Host "  Do not use backend-specific wrappers as an alternate final-release route."
 Write-Host ""
 Write-Host "  The build scripts automatically use .venv_build\Scripts\python.exe." -ForegroundColor Cyan
 Write-Host "  Run this script again with -Force to recreate the build venv from scratch." -ForegroundColor Cyan

@@ -1,5 +1,22 @@
 # Advanced Analysis Module – AI-PACS Advanced Viewer
 
+> **User-confirmed source workflow (2026-08-31):** Advanced Analysis now opens
+> and responds after the deleted-button launch and invisible-modal promotion
+> repairs. Manual Advanced MPR opens the UI; AI computation uses a separate
+> headless role. Use **Segmentation > AI-PACS Offline Lumbar** for the local
+> vertebral model. This is functional confirmation, not clinical validation or
+> an implemented Eagle Eye MCP integration; see the linked guides below.
+
+> **Resident startup implementation (2026-08-31, OPT-56):**
+> [Hidden warmup and headless computation](../../../docs/modules/ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md)
+> covers concurrent workstation startup, same-process opening, separate AI jobs,
+> actual readiness, safe ownership, controls, verification and acceptance limits.
+
+> **Offline model implementation (2026-08-31):**
+> [Offline lumbar MR segmentation](../../../docs/modules/ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md)
+> covers the TotalSegmentator CPU bundle, dedicated Slicer controls, combined installer
+> staging, verification, and the clinical/offline acceptance work still required.
+
 > **Current automation documentation (verified 2026-08-31):**
 > [Slicer control runbook](../../../docs/modules/ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md)
 > covers Python control, loading, thresholds, measurements, saving/reloading, and the proposed MCP boundary.
@@ -7,8 +24,8 @@
 > covers downloaded extensions, exact APIs, model/dependency installation, the successful temporary extension computation,
 > and the separately observed extension GUI compatibility failure. The historical module notes below are not an automation readiness claim.
 
-> **Stable version:** v2.2.2 (2026-02-19)
-> **Module path:** `PacsClient/pacs/patient_tab/advance_mpr_3d_slicer/`
+> **Historical stable version:** v2.2.2 (2026-02-19)
+> **Current module path:** `modules/mpr/advanced_3d_slicer/`
 
 ## What This Module Is
 

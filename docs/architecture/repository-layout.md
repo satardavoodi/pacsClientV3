@@ -16,15 +16,20 @@
 ### Documentation
 
 - `docs/`: canonical project documentation
+- `docs/release-and-build/README.md`: navigation authority for Git publication,
+  build runbooks, backend details, outputs, and release evidence
 - `docs/archive/`: superseded release notes, guides, and delivery snapshots
 - `builder/docs/`: builder-specific operational documentation
 
 ### Build and Packaging
 
 - `builder/`
+- `builder nuitka/`
+- `tools/build/`: canonical coordinator and build verification helpers
+- `tools/git/`: release publication policy and verification tooling
 - `hooks/`
 - `AIPacs.spec`
-- build scripts in the repository root
+- `RELEASE.md` and `BUILD.md`: authoritative operational procedures
 
 ### Tests
 

@@ -1,5 +1,20 @@
 # AI Agent Build Runbook — AI‑PACS Installer
 
+> Documentation map: [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md).
+>
+> **Current precedence (2026-09-06):** [`../../BUILD.md`](../../BUILD.md) is the
+> single build entry point for humans and AI agents. This page retains detailed
+> PyInstaller history and troubleshooting, including obsolete single-installer
+> examples. Do not use those examples to create the current six-file release matrix.
+> Before a full release build, [`../../RELEASE.md`](../../RELEASE.md) must publish
+> and verify the exact clean source commit and produce the required receipt. The
+> historical single-upstream freshness checks below cannot replace that gate.
+
+> **2026-08-31 update:** default PyInstaller builds now produce three local edition
+> outputs. Follow [the distribution guide](DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md)
+> for current names, offline inputs and size gates. The legacy single-installer
+> names/publishing flow below require explicit `--edition legacy`.
+
 **Audience:** an AI coding agent (or engineer) that builds the AI‑PACS Windows
 installer on the build PC.
 **Goal:** produce `builder/output/installer/ai-pacs installer v<version>.exe`

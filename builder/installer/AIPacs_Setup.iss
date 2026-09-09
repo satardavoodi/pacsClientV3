@@ -11,8 +11,30 @@
 #ifndef InstallerBaseName
   #define InstallerBaseName "ai-pacs installer"
 #endif
+#ifndef DistributionEdition
+  #define DistributionEdition "legacy"
+#endif
+#ifndef IncludeAdvancedMpr
+  #define IncludeAdvancedMpr "1"
+#endif
+#ifndef IncludeOfflineLumbar
+  ; Preserve the legacy single-installer behavior. Three-edition builds always
+  ; pass this define explicitly for their model policy.
+  #define IncludeOfflineLumbar "1"
+#endif
 #define AdvancedMprPayloadExe StageDir + "\plugin_packages\advanced_mpr\payload\AIPacsAdvancedViewer.exe"
-#define AdvancedMprAvailable FileExists(AdvancedMprPayloadExe)
+#define AdvancedMprOfflineManifest StageDir + "\plugin_packages\advanced_mpr\payload\offline_lumbar\manifest.json"
+#define AdvancedMprOfflinePython StageDir + "\plugin_packages\advanced_mpr\payload\offline_lumbar\python\python.exe"
+#define AdvancedMprRuntimeAvailable (IncludeAdvancedMpr != "0" && FileExists(AdvancedMprPayloadExe))
+#define OfflineLumbarAvailable (IncludeOfflineLumbar != "0" && FileExists(AdvancedMprOfflineManifest) && FileExists(AdvancedMprOfflinePython))
+#define EagleEyeBrainRoot StageDir + "\plugin_packages\advanced_mpr\payload\eagle_eye\brain"
+#define EagleEyeBrainAvailable (FileExists(EagleEyeBrainRoot + "\model\manifest.json") && FileExists(EagleEyeBrainRoot + "\model\python\python.exe") && FileExists(EagleEyeBrainRoot + "\distribution-approval.json"))
+#if DistributionEdition == "eagle-eye" && !EagleEyeBrainAvailable
+  #error Eagle Eye requires the complete portable Brain payload and distribution evidence.
+#endif
+#if DistributionEdition == "eagle-eye" && (!AdvancedMprRuntimeAvailable || !OfflineLumbarAvailable)
+  #error Eagle Eye requires Slicer, the offline Python environment and model manifest.
+#endif
 ; ── ARM64 plan §4 (2026-07-07): single-source arch variants ─────────────────
 ; The arm64-native installer is AIPacs_Setup_arm64.iss — a thin wrapper that
 ; sets ARM64_BUILD=1 and #includes this file. Everything arch-specific in here
@@ -89,9 +111,13 @@ Name: "custom"; Description: "Custom — choose optional modules for this workst
 
 [Components]
 Name: "core"; Description: "Core platform (always required)"; Types: core custom; Flags: fixed
-Name: "optional"; Description: "Optional modules — copied now, activated on first launch"; Types: custom
-#if AdvancedMprAvailable
-Name: "optional\advanced_mpr"; Description: "Advanced MPR — 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
+Name: "optional"; Description: "Image AI and optional modules"; Types: core custom
+#if AdvancedMprRuntimeAvailable
+#if DistributionEdition == "eagle-eye"
+Name: "optional\advanced_mpr"; Description: "Eagle Eye Brain and Lumbar (offline models, references and Slicer)"; Types: core custom; Flags: fixed
+#else
+Name: "optional\advanced_mpr"; Description: "Advanced MPR (standard Slicer runtime included)"; Types: core custom; Flags: fixed
+#endif
 #endif
 ; data_analysis added 2026-06-04: it is tier=optional in the runtime module
 ; catalog / plugin registry but was staged under Components: core — the only
@@ -126,10 +152,19 @@ Name: "{commonappdata}\AIPacs\module_packages"; Permissions: users-modify
 
 [Files]
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "EULA.txt"; DestDir: "{app}\Legal"; DestName: "AI-PACS-EULA.txt"; Components: core; Flags: ignoreversion
+Source: "THIRD_PARTY_NOTICES.txt"; DestDir: "{app}\Legal"; Components: core; Flags: ignoreversion
 Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: optional\data_analysis; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-#if AdvancedMprAvailable
-Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Excludes: "*.pyc,*.pyo,*.pyd.orig,*\__pycache__\*,*\.pytest_cache\*,*\.mypy_cache\*,*\tests\*,*\docs\*,*\examples\*"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+#if AdvancedMprRuntimeAvailable
+Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Excludes: "*.pyc,*.pyo,*.pyd.orig,*\__pycache__\*,*\.pytest_cache\*,*\.mypy_cache\*,payload\offline_lumbar\*,payload\eagle_eye\*"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
+#if OfflineLumbarAvailable
+; Copy the model environment without pruning package resources needed at runtime.
+Source: "{#StageDir}\plugin_packages\advanced_mpr\payload\offline_lumbar\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\offline_lumbar"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
+#if DistributionEdition == "eagle-eye" && EagleEyeBrainAvailable
+Source: "{#EagleEyeBrainRoot}\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\eagle_eye\brain"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPacs\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
@@ -146,6 +181,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktop
 Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Messages]
+SetupWindowTitle={#MyAppName} {#MyAppVersion} Setup
 ; Clarify that Advanced MPR is a large Slicer runtime that activates on first use
 ; (cannot add component-specific messages in standard ISS, handled via Code section)
 
@@ -183,7 +219,7 @@ end;
 
 function OptionalModuleSelected(const ModuleId: String): Boolean;
 begin
-#if !AdvancedMprAvailable
+#if !AdvancedMprRuntimeAvailable
   if ModuleId = 'advanced_mpr' then
   begin
     Result := False;
@@ -643,6 +679,7 @@ begin
     '{' + #13#10 +
     '  "app_name": "AIPacs",' + #13#10 +
     '  "app_version": "{#MyAppVersion}",' + #13#10 +
+    '  "distribution_edition": "{#DistributionEdition}",' + #13#10 +
     '  "generated_at_utc": "",' + #13#10 +
     // ARM64 emulation strategy (2026-07-07): the installed PACKAGE TYPE is
     // stamped so the app can log it ([WOA-PROFILE]) and apply the emulation

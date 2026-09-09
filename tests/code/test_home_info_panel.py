@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,19 @@ def test_version_follows_running_app(qapp, monkeypatch):
     assert mod.HomeInfoPanel.running_version() == RELEASE_INFO["version"]
 
 
+def test_information_versions_follow_the_running_app_and_project(qapp):
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project_version = project["project"]["version"]
+    assert RELEASE_INFO["version"] == project_version
+    main_source = (_REPO_ROOT / "main.py").read_text(encoding="utf-8")
+    assert f'app.setApplicationVersion("{project_version}")' in main_source
+    qapp.setApplicationVersion("9.9.9-test")
+    panel = HomeInfoPanel()
+    labels = _labels(panel)
+    assert labels.count("AI-PACS Version 9.9.9-test") == 2
+    assert not any("3.6.4" in label for label in labels)
+
+
 def test_release_data_complete():
     assert RELEASE_INFO["app_name"] == "AI-PACS Viewer"
     assert RELEASE_INFO["status"] in ("Stable", "Beta", "Internal Testing")
@@ -110,16 +124,16 @@ def test_add_section_extends_without_redesign(qapp):
 
 # ── Persian customized edition notice ───────────────────────────────────────
 def test_persian_edition_data_complete():
-    # English (full) notice carries the partner + version + collaboration line
+    # Static edition copy carries the partner and collaboration text. The
+    # running version is inserted at render time and must never be hardcoded here.
     en = " ".join(PERSIAN_EDITION["en"])
-    assert "AI-PACS Version 3.2.8" in en
+    assert "AI-PACS Version" not in en
     assert "Iran Nobat" in en
     assert "customized" in en.lower() and "localized" in en.lower()
     assert "collaboration with Iran Nobat" in en
-    # Farsi rendering of the same notice (partner name + brand present)
+    # Farsi copy retains partner text; its version header is also injected at render time.
     fa = " ".join(PERSIAN_EDITION["fa"])
     assert "ایران نوبت" in fa
-    assert "AI-PACS" in fa
     assert len(PERSIAN_EDITION["fa"]) == len(PERSIAN_EDITION["en"])
 
 
@@ -136,10 +150,10 @@ def test_panel_renders_persian_edition(qapp):
 def test_persian_lines_render_right_to_left(qapp):
     from PySide6.QtCore import Qt
     panel = HomeInfoPanel()
-    fa_first = PERSIAN_EDITION["fa"][0]
-    matches = [l for l in panel.findChildren(QLabel) if l.text() == fa_first]
+    matches = [l for l in panel.findChildren(QLabel)
+               if l.text() == f"AI-PACS Version {panel.running_version()}"]
     assert matches, "Farsi line not found in panel"
-    assert matches[0].layoutDirection() == Qt.RightToLeft
+    assert any(label.layoutDirection() == Qt.RightToLeft for label in matches)
 
 
 def test_persian_edition_adds_no_extra_border():

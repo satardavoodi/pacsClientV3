@@ -3,7 +3,8 @@
 Context: docs/reports/DICOM_EXPORT_VM_COLLAPSE_LIMBUS_RT_BLACK_IMAGES_2026-07-14.md
 
 The AI-PACS server serialises multi-valued STRING elements as a Python list repr, so
-they arrive with VM collapsed to 1 and (for VR CS) characters that are ILLEGAL per PS3.5:
+they arrive with VM collapsed to 1 and (for VR CS) characters that are ILLEGAL per PS3.5.
+Only standard text elements whose dictionary VM permits multiple values are repaired:
 
     (0008,0008) Image Type  ->  "['ORIGINAL', 'PRIMARY', 'AXIAL', 'CT_SOM5 SPI']"   (VM 1)
     correct                 ->   ORIGINAL\\PRIMARY\\AXIAL\\CT_SOM5 SPI              (VM 4)
@@ -26,11 +27,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import ast
 import os
-import re
 import shutil
 import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 try:
     import pydicom
@@ -38,31 +42,19 @@ except ImportError:  # pragma: no cover
     print("pydicom is required: pip install pydicom")
     raise SystemExit(2)
 
-LIST_REPR = re.compile(r"^\[.*\]$")
+from pydicom.datadict import dictionary_description
 
-# VRs whose values are text. A list-repr can only be a corruption for these.
-_STRING_VRS = {"AE", "AS", "CS", "DA", "DT", "LO", "LT", "PN", "SH", "ST", "TM", "UC", "UI", "UR", "UT"}
+from PacsClient.utils.dicom_vm_normalization import (
+    normalize_collapsed_multivalue_dataset,
+)
 
 
 def repair_dataset(ds) -> list[str]:
     """Return the list of element names repaired (mutates ``ds``)."""
-    fixed: list[str] = []
-
-    for elem in ds:
-        if elem.tag == (0x7FE0, 0x0010):  # never look at pixel data
-            continue
-        if elem.VR not in _STRING_VRS:
-            continue
-        value = elem.value
-        if not isinstance(value, str) or not LIST_REPR.match(value.strip()):
-            continue
-        try:
-            parsed = ast.literal_eval(value)
-        except (ValueError, SyntaxError):
-            continue
-        if isinstance(parsed, list) and parsed and all(isinstance(x, str) for x in parsed):
-            elem.value = parsed  # pydicom re-encodes as backslash-separated, correct VM
-            fixed.append(f"{elem.tag} {elem.name}")
+    fixed = [
+        f"{tag} {dictionary_description(tag)}"
+        for tag in normalize_collapsed_multivalue_dataset(ds)
+    ]
 
     # Accession Number is Type 2: the export fabricates "0" when the source is empty.
     if "AccessionNumber" in ds and str(ds.AccessionNumber).strip() == "0":

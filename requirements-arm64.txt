@@ -42,9 +42,10 @@ psutil
 # compressed transfer syntaxes; if pip fails here, build from source or use
 # https://github.com/cgohlke/win_arm64-wheels and re-verify decode tests.
 #OPTIONAL pylibjpeg>=2.0.0
-#OPTIONAL pylibjpeg-libjpeg>=2.3.0
 #OPTIONAL pylibjpeg-openjpeg>=2.4.0
 #OPTIONAL pylibjpeg-rle>=2.2.0
+#OPTIONAL python-gdcm>=3.2.6
+#OPTIONAL pyjpegls>=1.5.1
 # Case-media video encode + pooyan filter (feature degrades gracefully):
 #OPTIONAL opencv-python-headless
 # Voice recording / playback stack (voice features disabled when absent):

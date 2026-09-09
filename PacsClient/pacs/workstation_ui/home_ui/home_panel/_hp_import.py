@@ -110,6 +110,24 @@ class _HPImportMixin:
         if loop.is_running():
             loop.create_task(self.search_patients_from_local_async())
 
+    def _register_imported_studies(self, imported_studies):
+        """Register copied studies without touching Qt state.
+
+        This method is executed by ``_run_background_job_with_progress``.
+        Studies stay sequential so their SQLite writes preserve the legacy
+        order and do not create avoidable writer contention.
+        """
+        failed_studies = []
+        for study in imported_studies:
+            saved = self.save_complete_study_info(
+                study_uid=study.get("study_uid", ""),
+                patient_id=study.get("patient_id"),
+                study_info=study,
+            )
+            if not saved:
+                failed_studies.append(study.get("study_uid", "Unknown Study"))
+        return failed_studies
+
     def _prepare_imported_study_for_fast_open(self, study_info: dict) -> int:
         study_uid = str(study_info.get("study_uid") or "").strip()
         patient_id = str(study_info.get("patient_id") or "").strip()
@@ -348,15 +366,21 @@ class _HPImportMixin:
             )
             return
 
-        failed_studies = []
-        for study in imported_studies:
-            saved = self.save_complete_study_info(
-                study_uid=study.get("study_uid", ""),
-                patient_id=study.get("patient_id"),
-                study_info=study,
+        try:
+            failed_studies = self._run_background_job_with_progress(
+                "Register Imported Studies",
+                "Indexing imported DICOM files in the local database...",
+                self._register_imported_studies,
+                imported_studies,
             )
-            if not saved:
-                failed_studies.append(study.get("study_uid", "Unknown Study"))
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Import Registration Failed",
+                "The DICOM files were copied, but AI-PACS could not register "
+                f"them in the local database.\n\n{exc}",
+            )
+            return
 
         primary_study = import_result.get("primary_study")
         # Prepare EVERY successfully-saved study for the fast viewer (primary first),

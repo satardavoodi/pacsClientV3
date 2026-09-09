@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import queue
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,12 +27,45 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+def _write_wav_atomic(
+    file_path: Path,
+    data: np.ndarray,
+    sample_rate: int,
+    cancel: threading.Event,
+) -> bool:
+    """Flush a WAV to a sibling temporary file and publish it atomically."""
+    temp_path = file_path.with_name(file_path.name + ".part.wav")
+    try:
+        sf.write(str(temp_path), data, sample_rate, format="WAV")
+        if cancel.is_set():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+            return False
+        os.replace(temp_path, file_path)
+        if cancel.is_set():
+            try:
+                file_path.unlink()
+            except OSError:
+                pass
+            return False
+        return True
+    except Exception:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
 class VoiceWidget(QWidget):
     """
     ویجت ضبط صدا که دقیقا زیر دکمه میکروفون در تولبار نمایش داده می‌شود.
     - هیچ آپلودی به سرور انجام نمی‌دهد
     - فایل را به صورت WAV در فولدر ATTACHMENT_PATH / study_uid ذخیره می‌کند
     """
+    _wav_write_finished = Signal(object)
 
     def __init__(self, patient_widget: QWidget, method_update_audio_counter, 
                  method_check_status_mic_btn, method_sync=None):
@@ -83,6 +117,10 @@ class VoiceWidget(QWidget):
         self._dtype = "int16"
 
         self._file_path: Path | None = None
+        self._save_in_progress = False
+        self._pending_wav_cancel: threading.Event | None = None
+        self._sync_after_save = False
+        self._wav_write_finished.connect(self._on_wav_write_finished)
 
         # UI
         self._build_ui()
@@ -339,7 +377,7 @@ class VoiceWidget(QWidget):
 
     def start_recording_inline(self, selected_widget) -> bool:
         self._inline_mode = True
-        if self._is_recording:
+        if self._is_recording or self._save_in_progress:
             return False
         return self._start_new_recording(selected_widget, show_ui=False)
 
@@ -403,6 +441,9 @@ class VoiceWidget(QWidget):
         if self._is_recording:
             # وقتی از روی آیکون میکروفون کلیک می‌کنی و در حال ضبط هستی → pause/resume
             self._set_paused(not self._is_paused)
+            return
+
+        if self._save_in_progress:
             return
 
         self._inline_mode = False
@@ -645,23 +686,7 @@ class VoiceWidget(QWidget):
         # ذخیره WAV
         if self._audio_frames and self._file_path is not None:
             data = np.concatenate(self._audio_frames, axis=0)
-            try:
-                sf.write(str(self._file_path), data, self._sample_rate)
-                self.method_update_audio_counter()
-                logger.info(
-                    "[VOICE] saved recording path=%s frames=%d drained_on_stop=%d "
-                    "samples=%d duration_s=%.2f sr=%d",
-                    self._file_path, len(self._audio_frames), drained,
-                    int(data.shape[0]),
-                    float(data.shape[0]) / float(max(1, self._sample_rate)),
-                    self._sample_rate,
-                )
-            except Exception as e:
-                logger.exception(
-                    "[VOICE] failed to write recording to %s", self._file_path
-                )
-                QMessageBox.warning(self, "Save Error", f"Cannot save audio file:\n{e}")
-                self._file_path = None
+            self._dispatch_wav_write(data, drained)
         else:
             # No audio captured even after draining the queue — surface it in the
             # log (the path was previously a SILENT no-op, leaving no trace of why
@@ -676,6 +701,81 @@ class VoiceWidget(QWidget):
         self._is_paused = False
         self._player_offset_ms = 0
         self._update_record_pause_label()
+        self._refresh_buttons()
+
+    def _dispatch_wav_write(self, data: np.ndarray, drained: int) -> None:
+        """Write the captured take on a daemon worker; completion returns by Qt signal."""
+        if self._file_path is None or self._save_in_progress:
+            return
+        file_path = Path(self._file_path)
+        cancel = threading.Event()
+        self._pending_wav_cancel = cancel
+        self._save_in_progress = True
+        frame_count = len(self._audio_frames)
+        sample_count = int(data.shape[0])
+        sample_rate = int(self._sample_rate)
+
+        def _worker() -> None:
+            ok = False
+            error = ""
+            try:
+                ok = _write_wav_atomic(file_path, data, sample_rate, cancel)
+            except Exception as exc:
+                error = str(exc)
+                logger.exception("[VOICE] background WAV write failed")
+            try:
+                self._wav_write_finished.emit({
+                    "path": file_path,
+                    "cancel": cancel,
+                    "ok": ok,
+                    "error": error,
+                    "frames": frame_count,
+                    "drained": drained,
+                    "samples": sample_count,
+                    "sample_rate": sample_rate,
+                })
+            except RuntimeError:
+                pass
+
+        threading.Thread(
+            target=_worker,
+            name="voice-wav-write",
+            daemon=True,
+        ).start()
+
+    def _on_wav_write_finished(self, result: object) -> None:
+        if not isinstance(result, dict):
+            return
+        if result.get("cancel") is not self._pending_wav_cancel:
+            return
+        self._pending_wav_cancel = None
+        self._save_in_progress = False
+        if result.get("ok"):
+            try:
+                self.method_update_audio_counter()
+            except Exception:
+                pass
+            logger.info(
+                "[VOICE] saved recording frames=%d drained_on_stop=%d samples=%d "
+                "duration_s=%.2f sr=%d",
+                int(result.get("frames", 0)),
+                int(result.get("drained", 0)),
+                int(result.get("samples", 0)),
+                float(result.get("samples", 0))
+                / float(max(1, int(result.get("sample_rate", 1)))),
+                int(result.get("sample_rate", 0)),
+            )
+            if self._sync_after_save and self.method_sync is not None:
+                self._sync_after_save = False
+                QTimer.singleShot(100, self.method_sync)
+        elif not result.get("cancel").is_set():
+            if self._file_path == result.get("path"):
+                self._file_path = None
+            QMessageBox.warning(
+                self,
+                "Save Error",
+                "Cannot save the audio file. Please try again.",
+            )
         self._refresh_buttons()
 
     def _on_stop_clicked(self):
@@ -703,6 +803,10 @@ class VoiceWidget(QWidget):
         legacy delete-on-close behaviour.
         """
         inline_mode = self._inline_mode if inline_override is None else inline_override
+
+        if user_initiated and self._pending_wav_cancel is not None:
+            self._pending_wav_cancel.set()
+            self._sync_after_save = False
 
         # 1) اگر در حال ضبط یا pause هستیم → فقط استریم و تایمر را متوقف کن
         if self._is_recording or self._stream:
@@ -790,6 +894,12 @@ class VoiceWidget(QWidget):
         # 1) ذخیره فایل (اگر در حال ضبط هستیم)
         if self._is_recording or self._stream:
             self._on_stop_internal()
+
+        if self._save_in_progress:
+            self._sync_after_save = True
+            self.hide()
+            self.method_check_status_mic_btn(False)
+            return
         
         # 2) بررسی وجود فایل
         if not self._file_path or not self._file_path.exists():

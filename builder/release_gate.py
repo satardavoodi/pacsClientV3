@@ -674,6 +674,12 @@ def check_stage_plugin_packages(stage_dir: Path | None = None) -> GateCheck:
             continue
         if not manifest.exists():
             problems.append(f"{module_id}: {runtime.MODULE_PACKAGE_MANIFEST_FILENAME} missing in {package_dir}")
+        if module_id == "advanced_mpr":
+            from modules.ai_imaging.offline_lumbar.bundle import validate_bundle, BundleError
+            try:
+                validate_bundle(package_dir / "payload/offline_lumbar")
+            except (BundleError, OSError) as exc:
+                problems.append(f"advanced_mpr: offline lumbar bundle verification failed: {exc}")
     if problems:
         return _failed(name, *problems)
     if warnings:
@@ -810,10 +816,18 @@ def check_stage_binary_architecture(
 # import name -> distribution name (mirrors builder/spec/spec_utils.py)
 CODEC_DISTRIBUTIONS = {
     "pylibjpeg": "pylibjpeg",
-    "libjpeg": "pylibjpeg-libjpeg",
     "openjpeg": "pylibjpeg-openjpeg",
     "rle": "pylibjpeg-rle",
+    "jpeg_ls": "pyjpegls",
+    "_gdcm": "python-gdcm",
 }
+
+PYLIBJPEG_ENTRYPOINT_DISTRIBUTIONS = {"pylibjpeg-openjpeg", "pylibjpeg-rle"}
+NATIVE_CODEC_FILES = {
+    "python-gdcm": ("_gdcmswig*.pyd",),
+    "pyjpegls": ("_CharLS*.pyd",),
+}
+FORBIDDEN_CODEC_FILES = ("_libjpeg*.pyd", "pylibjpeg_libjpeg-*.dist-info")
 
 # The transfer syntaxes the shipped app must be able to decode.
 REQUIRED_DECODER_UIDS = {
@@ -846,16 +860,29 @@ def check_codec_plugins_available() -> GateCheck:
         except Exception:
             missing_dists.append(f"{dist} (imports as '{import_name}')")
 
+    decoders: set[str] = set()
     try:
         from pylibjpeg.utils import get_pixel_data_decoders
 
-        decoders = set(get_pixel_data_decoders() or {})
+        decoders.update(get_pixel_data_decoders() or {})
     except Exception as exc:
         return _failed(
             name,
             f"pylibjpeg decoder table unavailable in the build environment: {exc}",
-            "install: pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle",
+            "install: pip install pylibjpeg pylibjpeg-openjpeg pylibjpeg-rle python-gdcm pyjpegls",
         )
+
+    try:
+        from pydicom import config as pydicom_config
+
+        for handler in pydicom_config.pixel_data_handlers:
+            if not handler.is_available():
+                continue
+            for uid in REQUIRED_DECODER_UIDS:
+                if handler.supports_transfer_syntax(uid):
+                    decoders.add(uid)
+    except Exception as exc:
+        return _failed(name, f"pydicom codec handlers unavailable: {exc}")
 
     missing_uids = [
         f"{uid} ({label})"
@@ -872,7 +899,7 @@ def check_codec_plugins_available() -> GateCheck:
             detail.append("transfer syntaxes with NO decoder registered:")
             detail.extend(f"  - {u}" for u in missing_uids)
         detail.append(
-            "install: pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle"
+            "install: pip install pylibjpeg pylibjpeg-openjpeg pylibjpeg-rle python-gdcm pyjpegls"
         )
         return _failed(name, *detail)
 
@@ -897,6 +924,18 @@ def check_stage_codec_metadata(stage_core: Path | None = None) -> GateCheck:
 
     missing: list[str] = []
     found: list[str] = []
+    forbidden = [
+        path
+        for pattern in FORBIDDEN_CODEC_FILES
+        for path in core.rglob(pattern)
+    ]
+    if forbidden:
+        return _failed(
+            name,
+            "forbidden GPL codec payload is staged:",
+            *(f"  - {path.relative_to(core)}" for path in forbidden),
+            "remove pylibjpeg-libjpeg from the build environment and rebuild the stage",
+        )
     for import_name, dist in sorted(CODEC_DISTRIBUTIONS.items()):
         # PyInstaller lays dist-info out under the app root (and sometimes
         # under _internal/), so search the whole staged core tree.
@@ -911,24 +950,25 @@ def check_stage_codec_metadata(stage_core: Path | None = None) -> GateCheck:
         if not hits:
             missing.append(f"{dist} (imports as '{import_name}')")
             continue
-        # Metadata present is necessary but not sufficient: pylibjpeg reads
-        # entry_points.txt, so an empty/absent one is the same failure.
-        if dist == "pylibjpeg":
-            found.append(dist)
-            continue
+        # Only pylibjpeg plugins use pixel-decoder entry points. GDCM and
+        # pyjpegls are loaded through pydicom handlers instead.
         has_eps = any((h / "entry_points.txt").exists() for h in hits)
-        if not has_eps:
+        if dist in PYLIBJPEG_ENTRYPOINT_DISTRIBUTIONS and not has_eps:
             missing.append(f"{dist} — dist-info present but entry_points.txt MISSING")
         else:
             found.append(dist)
 
+    for dist, patterns in NATIVE_CODEC_FILES.items():
+        if not any(any(core.rglob(pattern)) for pattern in patterns):
+            missing.append(f"{dist} — native decoder binary MISSING")
+
     if missing:
         return _failed(
             name,
-            "compressed-DICOM codecs would register ZERO decoders in this build:",
+            "compressed-DICOM codec payload is incomplete:",
             *(f"  - {m}" for m in missing),
-            "JPEG 2000 / JPEG-lossless / JPEG-LS images would fail to decode with no",
-            "operator-visible error. Fix: builder/spec/appA_workstation.spec must call",
+            "One or more JPEG/JPEG 2000/JPEG-LS/RLE images could fail to decode. Fix:",
+            "builder/spec/appA_workstation.spec must include codec binaries and call",
             "codec_metadata_datas(copy_metadata) (see builder/spec/spec_utils.py).",
         )
 

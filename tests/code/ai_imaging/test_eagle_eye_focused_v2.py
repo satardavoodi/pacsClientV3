@@ -518,7 +518,7 @@ def test_local_series_paths_are_private_provenance_not_request_content(tmp_path)
 
 
 def test_pipeline_sends_layout_to_screening_and_focused_v2_only_to_verification(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, configured_direct_eagle_models
 ):
     package = _package(tmp_path)
     _patch_volumes(monkeypatch)
@@ -526,6 +526,7 @@ def test_pipeline_sends_layout_to_screening_and_focused_v2_only_to_verification(
         evidence_bundle.ENV_EVIDENCE_MODE,
         evidence_bundle.MODE_FOCUSED_V2,
     )
+    monkeypatch.setenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, "1")
     context_package = clinical_context.empty_context_package(
         package.study_instance_uid,
         package.session_dir,
@@ -563,13 +564,14 @@ def test_pipeline_sends_layout_to_screening_and_focused_v2_only_to_verification(
     assert result["verification_image_count"] == 3
 
 
-def test_focused_v2_failure_falls_back_to_immutable_layout(tmp_path, monkeypatch):
+def test_focused_v2_failure_falls_back_to_immutable_layout(tmp_path, monkeypatch, configured_direct_eagle_models):
     package = _package(tmp_path)
     package.source_series.clear()
     monkeypatch.setenv(
         evidence_bundle.ENV_EVIDENCE_MODE,
         evidence_bundle.MODE_FOCUSED_V2,
     )
+    monkeypatch.setenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, "1")
     context_package = clinical_context.empty_context_package(
         package.study_instance_uid,
         package.session_dir,

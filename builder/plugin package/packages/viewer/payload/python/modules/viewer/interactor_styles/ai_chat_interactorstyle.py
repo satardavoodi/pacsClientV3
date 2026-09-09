@@ -863,6 +863,22 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         # model. Eagle Eye opens its own 3x1 layout and captures the study; the
         # MG/DX server pipeline below is not involved.
         if modality_raw == "MR":
+            from modules.ai_imaging.eagle_eye_modes import resolve_eagle_eye_mode
+            fixed = self.image_viewer.metadata_fixed or {}
+            series = (getattr(self.image_viewer, 'metadata', {}) or {}).get('series', {}) or {}
+            mode = resolve_eagle_eye_mode('MR', [
+                fixed.get('study_description'), fixed.get('body_part'),
+                series.get('series_description'), series.get('protocol_name'),
+                series.get('body_part_examined')])
+            if mode == 'brain_mri':
+                study_uid = fixed.get('study_uid')
+                if not study_uid:
+                    show_message('Open a brain MRI study before starting Eagle Eye Brain.')
+                    return
+                patient_widget._preferred_eagle_eye_mode = mode
+                patient_widget._preferred_eagle_eye_study_uid = study_uid
+                patient_widget.switch_right_panel('ai_module')
+                return
             if self._open_lumbar_eagle_eye(patient_widget):
                 return
             # Only reached when the lumbar path itself could not run (module

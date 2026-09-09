@@ -316,7 +316,8 @@ class _HPModulesMixin:
                     try:
                         imaging_tab = getattr(existing_tab, 'imaging_tab', None)
                         existing_pw = getattr(imaging_tab, 'patient_widget', None)
-                        existing_study_uid = getattr(existing_pw, 'study_uid', None)
+                        existing_study_uid = (getattr(existing_pw, 'study_uid', None)
+                                              or getattr(existing_tab, '_study_uid', None))
                     except Exception:
                         existing_study_uid = None
 

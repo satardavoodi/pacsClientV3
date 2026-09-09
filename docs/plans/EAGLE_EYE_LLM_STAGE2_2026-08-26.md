@@ -1,12 +1,20 @@
 # Eagle Eye — Stage 2: sending a capture session to the LLM
 
-**Date:** 2026-08-26 · **Current status (2026-08-30):** pipeline 4.6.1,
-parallel Gemini screening/multi-source-context branches plus GPT verification,
-with deterministic near-midline paired sagittal T2/T1 context evidence,
-bounded global and level-specific attention foci, pathology-focus differential
-adjudication, marker-derived patient laterality, same-lesion multiplanar disc
-morphology fusion, shared hydration contracts, and provider-neutral result
-metadata. Pipeline 4.6.1 requires live clinical validation.
+> **HISTORICAL IMPLEMENTATION LOG.** This long document preserves the sequence
+> of experiments and implementation decisions. For current behavior and
+> conclusions, start with `docs/pipelines/eagle-eye-mri.md`. The 2026-09-02
+> current-state and atomic-pipeline documents are also historical snapshots.
+
+**Date:** 2026-08-26 · **Current status (2026-09-02):** pipeline 7.0.2,
+three focused Gemini screening request groups, each retaining the established
+6000-token safety ceiling, in parallel with the clinical-
+context branch, followed by independent one-card GPT-5.6 Sol diagnostic requests
+through GapGPT. The canonical evidence mode remains `focused-v5-level-cards`,
+but positive attention is now grouped by level and anatomical structure. Each
+model-facing card contains only the sequences and planes required for that
+decision and carries one exact card-local JSON payload. Retired evidence
+profiles, including V4, are engineering-only rollback paths, not normal runtime
+configuration. Clinical benchmark validation remains open.
 **Scope:** captured session → ordered image package → EchoMind OpenAI path → pathology-only
 result, stored with the session and reopenable.
 **Consumes** the session produced by stage 1 (`EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md`)
@@ -21,11 +29,11 @@ Eagle Eye capture finishes  (capture stage, unchanged)
         ↓  session.json + 2 manifests + N screenshots on disk
 llm_package.build_package()      ordered images + captions + PID-0 request doc
         ↓
-llm_backend.run_analysis()       ┬─ Gemini MRI screening → candidate list
+llm_backend.run_analysis()       ┬─ Gemini MRI screening → attention map
         │                        └─ Gemini paired sagittal T2/T1 + multi-source
         │                           context → global prior + attention foci
         ↓                          (the two branches run concurrently)
-GPT-5.6 Sol verification         candidates + prior + MRI → final report
+GPT-5.6 Sol verification         attention + prior + level cards → final report
         ↓                        (llm_runner puts this on an ApiWorker thread)
 analysis_store                   per-stage artifacts + llm_result.txt + the state
         ↓
@@ -1152,16 +1160,18 @@ widgets at capture time. It is never reconstructed later by splitting a screen
 into thirds, because the sidebar, group-box chrome, display scaling and panel
 width are variable.
 
-The default remains:
+At this historical V1 phase, the default was:
 
 ```text
 AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout
 ```
 
 This path returns the original package object and performs no additional image
-I/O. The opt-in experiment is:
+I/O. Reproducing the opt-in experiment in the current runtime additionally
+requires the engineering rollback gate:
 
 ```text
+AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE=1
 AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v1
 ```
 
@@ -1324,8 +1334,8 @@ non-attributable. The next evidence revision must:
    de-identified source session before any accuracy conclusion or default-mode
    change.
 
-Until those conditions pass, `AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout` remains
-the only live-approved setting.
+At that phase, `AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout` was the only
+live-approved setting. Section 38 supersedes this historical policy.
 
 ---
 
@@ -2115,10 +2125,11 @@ inter-run stability regression.
 
 ## 27. Focused V2 implementation result (2026-08-30)
 
-Phases 0-2 of Section 26 are now implemented behind the strict
-`AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v2` A/B switch. `layout` remains the
-default and the automatic fallback. No UI controller, model credential, API
-endpoint, or GapGPT transport was added or changed.
+At this historical V2 phase, Phases 0-2 of Section 26 were implemented behind
+the strict `AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v2` A/B switch and `layout`
+was the default and automatic fallback. Section 38 supersedes that selection
+policy. No UI controller, model credential, API endpoint, or GapGPT transport
+was added or changed.
 
 ### 27a. Implemented execution path
 
@@ -2306,7 +2317,8 @@ claim that the clinical interpretation has improved.
 See the [V3 research plan, section 16](EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md#16-phased-implementation-plan)
 for the experiment record and pending Phase 0/E1/E2 work; reliability tracking
 is **OPT-55**. Live source-build/radiologist verification remains pending.
-The existing `AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout` path remains the bypass.
+The historical layout bypass remains reproducible only through the engineering
+rollback gate described in Section 38.
 
 ## 30. V3 bilateral sagittal experiment and scoped root scoring (2026-08-31)
 
@@ -2328,6 +2340,7 @@ which tile drove its answer.
 
 ### Opt-in additive coverage
 
+With the Section 38 engineering rollback gate enabled,
 `AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v3-parasagittal` builds the complete,
 unchanged V3 package first, then appends one bounded sagittal T2 sheet per
 resolved focus while the existing image/pixel/byte limits permit. Screening
@@ -2406,11 +2419,1241 @@ passed without producing a build.
 For a source trial, close the existing instance first and launch once from CMD:
 
 ```cmd
+set AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE=1
 set AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v3-parasagittal
 .\.venv\Scripts\python.exe main.py
 ```
 
 Set the same variable to `focused-v3` to compare the unchanged base renderer,
-or `layout` to bypass focused composition. Setting a terminal variable does
-not alter installed/build defaults. The next research gates remain full
+or `layout` to bypass focused composition while the gate remains enabled. These
+commands are for historical engineering reproduction, not routine app launch.
+Setting terminal variables does not alter installed/build defaults. The next research gates remain full
 Phase 0 repair and controlled E1/E2 comparisons with frozen evidence.
+
+## 31. Level-assignment integrity, padding headroom, and scorer 1.2.0 (2026-08-31)
+
+This follow-up addresses a completed run whose two readers assigned different
+anatomical names to the same acquisition slabs. Both maps were monotonic and
+had the same slab count; the names nevertheless differed by one level. A
+monotonicity check alone cannot detect that error. The observed diagnosis change
+is not an evidence-only causal experiment: screening and clinical-context
+outputs also differed between runs, and the later screening already contained
+the changed morphology and neural-compromise candidates. Preserve that
+confound when interpreting model rationales or comparing scores.
+
+### Report integrity, not automatic anatomical correction
+
+`evidence_request.audit_level_maps` compares explicit stage-one/stage-three
+capture-frame assignments, including lower-thoracic rows. It checks malformed,
+missing, duplicate, reversed, overlapping, incomplete, and non-monotonic
+assignments; disagreements in names/ranges; and agreement with available
+geometry-derived slab boundaries from `llm_package`. Bounded-input truncation
+and unparsed additional assignment rows cannot produce a clean result.
+
+- Stable identifiers such as `axial:5-6` identify a capture range within the
+  current session. They are not globally unique or verified vertebral labels.
+- The audit records `consistent`, `conflict`, or `unavailable`, the two names
+  per slab, issue codes, and an optional uniform ordinal level offset. Equal
+  maps are only consistent: `anatomical_numbering_verified` remains false.
+  Acquisition geometry can establish boundaries, not vertebral numbering.
+- The lumbar three-stage worker persists `level_assignment_audit`,
+  `integrity_guard_version=1.0.0`, `verification_evidence_audit`, warnings,
+  `review_required`, and `report_status`. Missing/conflicting assignments or
+  evidence-coverage warnings prefix the displayed/copied report with
+  `REVIEW REQUIRED - NOT A VERIFIED FINAL REPORT`. The result-panel heading is
+  amber and the session label says review is required.
+- Execution can still be `complete`: all calls returned. That does not mean
+  the report is clinically verified. The raw stage-three response remains
+  untouched; the guarded report retains its original prose under the warning.
+  No diagnosis, root, side, or level is silently relabeled, and screening is
+  not promoted to ground truth. Existing saved sessions are not rewritten.
+
+The guard is active in the existing lumbar three-stage path without a new
+feature flag. It detects these conflicts; it does not solve anatomical
+numbering, lesion recognition, or laterality. Human source-image confirmation
+is still required when an assignment is disputed.
+
+### Padding-only headroom and explicit coverage
+
+The opt-in `focused-v3-parasagittal` manifest is now **1.5.0**, with render policy
+`compact-vertical-padding-v1`. Seven samples, source identities, LPS offsets,
+crop boxes, windowing, and effective sampling are unchanged. Only surplus
+vertical letterboxing is reduced when the original fitted anatomy permits it;
+the width stays 384 pixels, and cell height stays large enough to preserve
+the old sampling with caption margin. Large crops retain the old cell height.
+Ordinary V3 image bytes and captions remain the baseline (manifest 1.3.0).
+
+The existing 8-image, 4-focus, 12,000,000-pixel and 12,582,912-byte caps remain.
+Baseline images are composed first and cannot be evicted by supplements.
+Supplement failures/exclusions remain visible in the manifest and now also
+reach the verification header, persisted result metadata, and review-required
+report. Missing evidence must not be interpreted as normal anatomy. Base
+composition failure retains the existing layout fallback and its warning.
+Capacity advisories (`image_capacity_reached`, pixel/byte headroom below ten
+percent) are recorded separately; they are not themselves evidence omissions.
+
+This reduces pixel pressure, not the image-count ceiling. A fourth focus can
+still mean fewer supplements fit. No claim is made that all future packages
+fit, and no whole-supplement coverage is traded for an unannounced lower
+resolution. Further packing or cap changes require a separate controlled test.
+
+### Scoped benchmark corrections
+
+Scorer **1.2.0** recognizes root-effect participles including `contacting`,
+`abutting`, `compressing`, and `deviating`, retaining per-effect negation.
+Consequence severity and grade are extracted from a structure-local clause,
+not the first grade elsewhere in the level. A subarticular disc-location
+phrase alone is not a recess consequence and cannot mask a later explicit
+recess grade. Lower-thoracic map entries are retained.
+
+Per-run scores now include a separate `level_assignment_audit` against saved
+screening output. A uniform shift is diagnostic metadata, not permission to
+move findings to other levels or award corrected-level credit. Strict named-
+level claim outcomes remain unchanged by this audit. This is still not full
+Phase 0: morphology-as-severity, generic herniation, coexisting components,
+independent root identity/effect scoring, failed-run denominators, and
+reference-negative adjudication remain open. Inspect extraction before using
+an aggregate; neither an old score nor this patch proves clinical improvement.
+
+### Verification record
+
+- Initial changed-boundary guards: **22 failed, 43 passed** before the fix.
+  Self-review additionally reproduced five malformed/truncated-map failures;
+  private replay reproduced the subarticular-location masking problem, then
+  two synthetic guards failed before its correction.
+- Final focused files: **19 level-integrity, 26 parasagittal, 35 scorer tests**.
+  Full AI Imaging plus default-build inclusion: **732 passed, 8 existing
+  xfailed**, exit 0 (729 AI Imaging and 3 inclusion tests). No new quarantine.
+  **462 plugin mirror pairs** matched; `git diff --check` passed for this scope.
+- Network-disabled replay used saved outputs and local DICOM in a fresh private
+  output folder. All **60 original files** retained their hashes. All **5 base
+  images** were byte-identical and all **21 supplemental anatomical tile
+  contents** were pixel-identical. Slice-selection and sampling records matched.
+  The supplemented package rendered in **3.735 s** in one observation, not a
+  speed benchmark. Visual inspection confirmed readable labels and retained
+  anatomy; varied-aspect-ratio synthetic guards also verify exact pixel retention.
+- Evidence remained **8 images**. Pixels changed from **11,990,784 to
+  11,253,504**, leaving **746,496 pixels (6.22%)** of headroom. Each supplement
+  changed from 1536 x 856 to 1536 x 696; cell height changed from 384 to 304.
+  Encoded bytes changed only slightly: **5,890,397 to 5,881,762**. Empty PNG
+  padding compresses well, so pixel savings must not be called upload savings.
+  Image capacity remains full and both capacity advisories were recorded.
+- The saved conflicting maps produced `conflict`, offset **-1**, and
+  `review_required=true` without altering report prose. The scorer retained all
+  six map rows and the separately stated severe recess grade/root compression.
+
+All code remains in the headless lumbar services/scorer, with presentation only
+in the small result panel. No GUI-thread decode/network work, viewer scrolling,
+new request, Slicer integration, runtime module, dependency, or config family
+was added. These existing core AI Imaging files have no plugin payload mirror;
+core inclusion and repository mirror parity were checked without a build.
+GapGPT routing, model choices, system prompts, reference data, and default
+evidence mode are unchanged. No model call, app launch, build, deployment, or
+clinical validation was performed. OPT-55 remains partial pending clinical
+acceptance. Complete Phase 0 and frozen-stage E1/E2 before promotion.
+
+## 32. Grading correction and fixed-input preparation (2026-08-31)
+
+### Corrected contract, not demonstrated diagnostic improvement
+
+Review of the current catalog and saved image-reader prompts confirmed a named
+grading defect: catalog 1.0.0 called root deviation without compression
+`bartynski_lateral_recess` grade 2. The original description instead includes
+compressive root deformation with residual recess CSF; grade 3 includes severe
+compression with recess CSF obliteration. Deviation alone is not the grade-2
+criterion. See [Bartynski and Lin, 2003, Table 1 and Figure 2](https://pmc.ncbi.nlm.nih.gov/articles/PMC7973614/).
+
+The separate normal/contact/deviation/compression observations refer to
+[Pfirrmann et al., 2004, nerve-root compromise](https://pubmed.ncbi.nlm.nih.gov/14699183/),
+not Pfirrmann disc degeneration. Root identity, side and effect remain distinct
+observations. Do not convert these effects directly into recess grades or derive
+either laterality or a clinical grade from a bright-CSF area split. The original
+Bartynski surgical cohort excluded disc-protrusion root impingement; correcting
+terminology is not validation of this AI pipeline on disc extrusions.
+
+Implemented in the framework-free `grading.py` catalog, rendered into both
+image-reading prompts:
+
+| Contract | Previous | Current |
+|---|---|---|
+| Stenosis catalog | 1.0.0 | 2.0.0 |
+| Separate root-observation contract | absent | 1.0.0 |
+| Screening stage | 1.7.0 | 1.8.0 |
+| Verification stage | 3.0.1 | 3.1.0 |
+| Context stage | 2.1.0 | 2.1.0, unchanged |
+| Pipeline | 4.6.1 | 4.7.0 |
+
+Stenosis-only `grade_system`/`grade` fields and existing system IDs are retained;
+root effects use the existing finding/reason text, not a second scale in the same
+fields. Lee canal and foraminal definitions are unchanged. Stored stage prompt
+text, fingerprints and versions distinguish old and new definitions. No historical
+record or clinician reference is rewritten, and historical grades must not be
+reinterpreted as catalog 2.0.0. This does not finish the independent root-attribute
+benchmark schema repair.
+
+### Fixed-input preparation that works offline
+
+The benchmark CLI now provides `freeze` and `check-frozen`, implemented in
+`tools/eagle_eye_bench/frozen_input.py`. They copy and hash exactly the saved
+stage-three prompt/settings, sent context/header/captions, ordered image entries
+and image bytes into a new local snapshot. No model backend is imported or called.
+There is no reference-answer input and no copy of a final report. Safe path,
+count, size, order, digest and incomplete-write guards prevent silently accepting
+a changed package. The [benchmark README](../../tools/eagle_eye_bench/README.md)
+contains CMD usage, limits and privacy constraints.
+
+This is **snapshot preparation**, not verification-only model replay. The existing
+`run` command still reruns screening, context, evidence construction and verification.
+Freezing an old request intentionally keeps the old prompt: it must not silently
+replace it with 4.7.0. A future comparison runner must record an explicit prompt
+override while keeping the frozen upstream context, images and model settings
+fixed. Provider preprocessing or behavior behind an alias is not frozen by local
+hashes. Official [OpenAI evaluation guidance](https://developers.openai.com/api/docs/guides/evaluation-best-practices)
+supports task-specific evaluation and expert review; its generic model guidance
+does not establish clinical accuracy or GapGPT transport equivalence.
+
+### Clinician landmark gate: specified, not automatically implemented
+
+Patient orientation from DICOM and anatomical midline are different facts.
+[DICOM Image Plane geometry](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.2.html)
+provides patient-coordinate mapping, not a validated anatomical centerline.
+Conversely, absence of a numeric centerline does not prove that a visual model
+used the acquisition center or cannot see anatomical landmarks. The proposed CSF
+area comparison has not been independently reproduced from saved masks/thresholds
+and is not a ground-truth replacement.
+
+Before another laterality experiment, collect clinician review in a **separate
+private annotation artifact** bound to the frozen snapshot ID:
+
+1. Select the decisive axial image and its adjacent slices; preserve source-volume
+   index versus capture-frame identity, tile/crop transform and displayed R/L.
+2. Mark two distinct, clinician-confirmed points defining the local anatomical
+   axis on each assessable slice, for example a posterior vertebral-body midpoint
+   and an appropriate posterior midline landmark. One point alone does not define
+   a line. Rotation, scoliosis or postoperative anatomy may require abstention.
+3. Mark the lesion and the traversing root separately; retain root identity,
+   patient side and effect as separately adjudicated observations. An axis is not
+   itself a lesion/root label or proof of compression.
+4. Record image hash, exact coordinate convention, both points, reviewer, review
+   time and assessability. Derive LPS coordinates only using a verified source
+   transform, never from a screenshot's guessed scale or a filename-sorted slice
+   table. Reject stale hashes, wrong image bindings or unavailable transforms.
+5. Resolve disagreements clinically without silently relabeling the reference.
+   Keep unannotated originals. Do not use a patient-specific expected answer in
+   a general prompt. Automatic midline estimation requires its own validation.
+
+There is **no new landmark-entry UI, annotation validator or auto-relabeler** in
+this patch. These clinical decisions cannot be fabricated by software. The
+identity-bound snapshot is the implemented prerequisite for the next slice.
+
+### Next controlled sequence
+
+- Complete remaining Phase 0 scoring repairs and clinician adjudication of
+  reference negatives; the existing negation/level-audit fixes remain intact.
+- Add and validate the clinician annotation entry/check path and a GapGPT-only
+  verification replay adapter consuming the frozen input. An annotated-evidence
+  arm must remain distinct from an unannotated diagnostic-performance arm.
+- Compare corrected grading and label-free handoff as explicitly separate
+  conditions; keep model, settings, frozen upstream input and rendering fixed.
+  Report detection, morphology, side, root identity/effect and recess grade
+  separately, including failed runs. Do not promote on this single case.
+- Then evaluate targeted sagittal T1 foraminal coverage and the unflagged-level
+  safety review. Existing overview images and screening/context focus union must
+  be preserved; do not claim they are currently absent. Equal T1/T2 offsets do
+  not by themselves prove foraminal coverage. Recheck all three upload budgets.
+
+### Verification and scope
+
+- Six grading/version guards failed before correction; the affected prompt and
+  grading files then passed **97 tests**.
+- The initial **15 snapshot guards** failed before the feature existed. Self-review
+  reproduced a canonical-JSON size expansion defect, fixed before output creation;
+  final snapshot suite has **18 passing tests**, including link rejection and
+  incomplete writes. Synthetic tests deny socket connections.
+- Direct AI Imaging plus default-build inclusion gate: **753 passed, 8 existing
+  xfailed**, exit 0; three existing SWIG deprecation warnings. **462 mirror pairs
+  match**. No new quarantine or lint/full-repository pass is claimed.
+- Offline freezing of the reviewed saved input produced six byte-preserved images
+  with an independently rechecked snapshot digest. All **59 original artifacts**
+  retained their hashes. Snapshot content and identity stay in ignored local data,
+  not in this document. No new clinical result was generated.
+
+The bug-fix/DICOM/Titan workflows drove fail-before guards, identity separation
+and the clinical gate; OpenAI Docs informed keeping model/configuration changes
+out of this correction. Runtime changes are two existing core AI Imaging files;
+the new helper is benchmark tooling, not an installable module or feature flag.
+No catalog/installer/config-family addition or plugin mirror sync is needed for
+this scope. Build inclusion and mirror parity were verified without a build.
+No UI-thread I/O, viewer/Slicer change, database access, image selection/crop,
+default evidence-mode change, new dependency, key change, model call, app launch,
+build or deployment was performed. GapGPT routing remains unchanged. OPT-55
+remains partial: source correctness is tested, clinical benefit is not established.
+
+## 33. Localization-only screening and independent diagnosis (2026-08-31)
+
+### Requirement and implemented boundary
+
+Gemini screening now answers **whether a visible anatomical focus is plausibly
+abnormal and where it is**, not which disease, disc subtype or severity it has.
+The parallel Gemini context branch remains unchanged. The diagnostic reader
+receives the neutral attention map, independent clinical prior and MRI evidence;
+it must decide normal/artifact versus pathology and classify supported pathology
+from signal and morphology, including correlated planes and neighboring slices.
+
+The previous boundary contradicted that division of labor in three places:
+screening inherited the shared diagnostic morphology/hydration criteria and the
+grading rubric, its output example required a diagnostic candidate and grade,
+and the backend forwarded the entire parsed candidate (or raw prose after a
+parse failure). The focus planner also accepted explicitly normal rows.
+
+The implemented versions are pipeline **5.0.0**, screening **2.0.0**, diagnostic
+verification **4.0.0**, and unchanged clinical context **2.1.0**. Diagnostic
+grading catalog **2.0.0** and root observations **1.0.0** are unchanged and are
+now supplied only to the diagnostic reader. Existing result artifacts are not
+rewritten or relabeled.
+
+### Screening contract
+
+`screening_attention.py` defines a bounded, pure-Python normalization boundary:
+
+- Anatomical structures include disc, endplate, bone marrow, vertebral body,
+  posterior elements, facet joint, ligamentum flavum, canal, recess, foramen,
+  root, conus/cauda equina, epidural/paraspinal tissue and alignment.
+- Each row contains `assessment`, `structure`, tentative `level`, optional
+  `vertebra`, patient `laterality`, detection `confidence` and `locations`.
+- Each location names `session`, original capture `frame`, `pane` and optional
+  `box_2d`. Separate T2/T1/axial locations in one row propose a same-focus
+  association. The first listed frame is most informative; neighbors follow.
+- The normalizer supplies a deterministic `attention_id` and trusted local
+  `source_file`, validates frame/pane membership against the actual package,
+  derives the existing planner's `key_frames`, and drops unrecognized fields.
+  No first-stage diagnosis, grade, differential or diagnostic free text is
+  forwarded. Legacy candidate labels can recover anatomy only, with a warning;
+  their original text remains exclusively in the raw stage audit.
+- Explicit normal rows are excluded from candidates and focus planning. A
+  `normal_count` is audit metadata, not proof of a globally normal examination.
+  Material `not_assessable` rows remain separate and require diagnostic review.
+  Invalid or missing JSON becomes `unavailable`, never raw-label fallback or
+  an implicitly normal examination. Invalid locations do not erase the focus.
+- Limits are 64 rows and 15 locations per row. Invalid/truncated information is
+  surfaced through bounded warning codes in the analysis result. The same
+  normalized object is used for focus planning and the diagnostic request and
+  is stored as `screening_attention` in the local result for comparison.
+
+The diagnostic audit references `attention_id`; `screening_diagnosis` stays null
+and `change_direction` is `none`. Presence, independent classification,
+localization and severity are separate decisions. A supported abnormal focus
+must not be discarded solely because its subtype is uncertain. Multiple
+coexisting components may be retained. Every context focus and screening
+assessment gap also requires resolution; the broad overview safety sweep stays.
+
+### Coordinate and evidence limits
+
+The box convention is `[ymin, xmin, ymax, xmax]`, normalized to 0..1000 over the
+entire original screenshot, including the pane's offset. This is consistent
+with the documented [Gemini image-localization format](https://ai.google.dev/gemini-api/docs/image-understanding),
+not evidence that Gemini's medical localization is accurate. Boxes must be finite,
+ordered and in range; parked reference panes and unknown frames are rejected.
+The older focused-v1 repacked images have no inverse box transform in this
+boundary: proposed boxes are discarded with a warning, while valid frame
+attention is retained.
+
+These are **model-proposed correspondences**, not geometry-verified anatomy,
+midline landmarks, segmentation or measurements. Box bounds and frame membership
+do not validate level, laterality, correct pane placement or lesion identity.
+Coordinates are never applied directly to a later composite or crop. This patch
+does not add box-to-LPS conversion, source-image annotations, automatic landmark
+entry or coordinate-driven sagittal selection. The existing DICOM crop geometry,
+axial anchor handling, overview coverage, bilateral supplements, capacity checks
+and level-map conflict guard remain in place. New detection outputs can change
+which foci/anchors are selected, so subsequent runs are not frozen-input trials.
+
+The [OpenAI prompting guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6)
+supports clear roles and representative evaluation; it does not establish
+clinical sensitivity, specificity, PPV, or GapGPT provider equivalence. This
+change removes contradictory role instructions without changing transport,
+model selection, sampling, token ceilings or adding another model call.
+
+### Verification, scope and next live gate
+
+- Seven initial guards failed before implementation: diagnostic instructions,
+  label leakage, raw-text fallback, normal-focus selection and the absent
+  source-bound localization contract. Final localization suite: **18 passing**
+  synthetic guards, plus an injected parallel-pipeline integration guard proving
+  identical crop/diagnostic attention and preservation of the raw response.
+- Direct AI Imaging plus default-build inclusion: **772 passed, 8 existing
+  xfailed**, exit 0; three existing SWIG deprecation warnings. The adjacent
+  Legion sequential handoff is explicitly preserved. No new quarantine.
+- **462 plugin mirror pairs match**, with no sync drift. These files belong to
+  the already included core AI Imaging package, not a new installable module,
+  feature flag or plugin payload. No catalog/installer/config-family changes
+  are required. No build, lint pass or repository-wide test pass is claimed.
+- No app launch, model request, live database access, viewer change, image
+  rewrite, deployment, credential change or migration away from GapGPT occurred.
+
+For the next human-launched source run, verify the stored screening prompt is
+2.0.0 and the pipeline is 5.0.0. Inspect raw screening adherence separately from
+the sanitized map; check coordinates on their actual original images and review
+warning codes. Confirm every retained attention ID has a diagnostic disposition,
+normal rows are absent from focus selection, and unassessable is not normal.
+Compare detection, level, side, morphology, root effect and grading separately
+against clinician-adjudicated references, including misses and failed runs.
+Do not promote clinical accuracy from unit tests or a single favorable case.
+
+Rollback is a coordinated reversal of this versioned prompt/handoff change,
+not a broad worktree reset or a silent edit of historical results. The existing
+layout evidence bypass changes rendering only; it does not restore old prompts.
+Remaining Phase 0 scorer repair, clinician landmarks and controlled frozen-input
+experiments remain tracked under OPT-55 and section 32.
+
+## 34. Anatomy-first diagnostic alignment (2026-08-31)
+
+The user clarified that location means an **anatomical compartment** such as
+disc, endplate or facet joint, plus level/vertebra and image references, not
+pixel coordinates alone. Section 33 already transported those fields. A
+synthetic check confirms three distinct same-level compartments retain separate
+attention IDs and their own cross-plane location lists.
+
+This follow-up changes the prompt contract, not the geometry engine:
+
+- Screening **2.0.1** explicitly requires anatomical location in addition to
+  image coordinates. Unknown anatomy remains other/unclear; it is not invented
+  from a pixel position. The normalized attention schema stays **2.0.0**.
+- Diagnostic verification **4.1.0** explicitly receives per-focus attention
+  records plus original/focused MRI evidence and the independent clinical prior.
+  It resolves anatomical location, then same-focus correspondence, then abnormal
+  presence, diagnostic family/differential, characterization and consequences.
+  Shared level or a shared composite sheet does not merge distinct lesions.
+- The diagnostic JSON example and field contract now distinguish
+  `screening_structure` from the reviewed `structure`, with explicit `level`
+  and `vertebra`. A corrected compartment retains the original `attention_id`
+  in `candidate`; correction is explained in `reason`. These are requested
+  model-output fields, not a new automated clinical-adjudication validator.
+  `screening_diagnosis` remains null. Normal/artifact and indeterminate outcomes
+  remain valid; a structure-specific differential must not default to disc
+  morphology for every endplate or facet focus.
+- Pipeline **5.1.0** records the change. Context **2.1.0**, grading, models,
+  GapGPT transport, temperatures, token ceilings and evidence budgets are intact.
+
+Three new prompt/example guards failed before this refinement. The anatomical
+identity guard passed before and after, demonstrating the already implemented
+handoff rather than implying a previously missing data field. The existing
+injected parallel integration guard now exercises disc, endplate and facet
+joint inputs and proves the same anatomy reaches planning, the saved result
+and the diagnostic request without leaking a diagnostic label.
+
+Verification: **122** focused tests pass; full AI Imaging/default-build gate
+**778 passed, 8 existing xfailed**, exit 0, with three existing SWIG warnings.
+**462 mirror pairs match**, no sync drift. Regression catalog, test/subsystem
+indexes and OPT-55 are updated. Runtime edits are confined to the existing core
+prompt module; no new module, dependency, configuration, UI, viewer or package
+payload is introduced. The bug-fix/Titan workflows drove the fail-before
+contract checks and separate claims for transport correctness and clinical use.
+
+**Still not implemented:** automatic DICOM validation of proposed same-lesion
+correspondence and direct sagittal selection from the proposed T1/T2 locations.
+No source pixels, capture-to-crop transform, clinical reference or saved result
+was rewritten. No live app/model call or build was performed. This is not a
+claim of improved clinical accuracy or of complete geometric correspondence.
+For a human-launched source test, verify pipeline 5.1.0 and review each attention
+ID's supplied versus reviewed anatomy and final disposition. A rollback of this
+refinement must restore its versioned prompt contract together; keep prior
+results and the earlier localization-only handoff unchanged.
+
+## 35. Explicit axial-plane locators without replacing clean evidence (2026-09-01)
+
+### Evidence boundary and decision
+
+Local review found an objectively ambiguous presentation boundary: a focused
+sagittal crop can contain several neighboring discs while its sheet title names
+one attention level. The geometry selected the crop, but the model could not see
+where the paired axial planes intersected it. This is a presentation defect;
+it is **not proof that it alone caused the clinical classification disagreement**.
+No reference diagnosis, patient identifier, patient image or report is stored in
+this document or in committed test fixtures.
+
+The correction deliberately preserves the localization-only screening and the
+anatomy-first diagnostic contract. It adds no model stage or external call and
+does not force a diagnosis, side, severity or level. The diagnostic context now
+explicitly explains that a crop title does not label every visible disc.
+
+### Implementation
+
+- `eagle_eye_lumbar/axial_locator.py` computes finite axial/sagittal plane
+  intersections from DICOM geometry. It uses row/column spacing in their proper
+  order, source pixel-center coordinates, and clips to both image fields of view.
+  It never consumes screening boxes or derives anatomy from a filename.
+- `evidence_core/volume.py` retains Frame of Reference identity locally, with UID
+  fields excluded from object representations. New locators require a nonempty
+  matching reference. The sagittal volume affine is checked against **every**
+  source plane's position (0.1 mm tolerance), orientation and pixel spacing
+  (1e-4 tolerance). Missing metadata, a nonuniform stack or a conflicting
+  reference disables the locator, not legacy decoding. No registration is invented.
+- `focus_evidence.py` uses the existing spare eighth cell in a seven-sample
+  `focused-v3-parasagittal` sheet for a duplicate of the clean REF image. Only
+  this **LOCATOR ONLY** cell receives colored axial-plane lines and original AX
+  capture-frame labels. Cyan identifies the anchor frame. The seven clean
+  diagnostic samples, ordinary V3 base images, crop extents, sampling and
+  physical resolution remain unchanged. If there is no spare cell, the locator
+  is unavailable rather than growing the sheet or replacing a diagnostic tile.
+- The lines show acquisition planes, **not lesion outlines, anatomical disc
+  labels, slab thickness or verified same-lesion correspondence**. Shared DICOM
+  reference also does not establish a true anatomical midline or exclude motion.
+- Manifest **1.6.0** adds `axial_locator` with policy, status, source slice,
+  source-pixel and rendered-cell line endpoints, actual AX capture frames,
+  missing-plane reasons and explicit false anatomical/lesion-verification flags.
+  No raw reference UID is serialized. Unavailable/partial locators generate
+  bounded warning codes and retain clean evidence. Existing budget/fallback
+  handling remains authoritative.
+
+Pipeline **5.1.0**, all three stage prompt versions, provider routing through
+GapGPT, models, token budgets and the 180-second HTTP read timeout are unchanged.
+The changed evidence header/captions are saved with the actual diagnostic request;
+the new manifest schema distinguishes this evidence revision. No new selectable
+plugin, dependency, configuration family, viewer/UI work or GUI-thread work is
+introduced. The helper is inside the existing core AI Imaging package and is
+covered by the existing whole-package build inclusion.
+
+### Verification and remaining live gate
+
+The first behavioral guard failed before implementation on the absence of an
+explicit locator availability record (pytest exit 1). The resulting synthetic
+suite covers oblique planes, anisotropic spacing, reversed source order, finite
+FOV clipping, missing/conflicting references, invalid/parallel/nonintersecting
+geometry, metadata propagation through real synthetic DICOM decoding,
+nonuniform/missing source geometry, partial links and clean-pixel retention.
+
+An offline reconstruction of the selected saved input completed in about **4.2 s**,
+without any model request or app interaction. All three locators were included.
+The package retained **8 images and 11,253,504 pixels**; bytes changed from
+**5,880,276 to 6,055,847** (about 3%). Byte/pixel comparisons confirmed unchanged
+base images and unchanged pixels outside each formerly empty locator cell.
+Every sagittal source plane passed the additional affine check and shared a
+reference with every selected axial source slice. The derived preview was saved
+only in a separate ignored local diagnostic directory; previous evidence,
+requests, captures and reports were not overwritten. Visual inspection confirmed
+legible AX labels and an unobstructed clean counterpart.
+
+Automated verification: **32 new guards pass**; direct full AI Imaging plus
+default-build inclusion suite: **810 passed, 8 existing xfailed**, exit 0 (three
+existing SWIG warnings). **462 mirror pairs match**, sync dry-run reports no
+drift. No source changed here has a plugin mirror. No installer build, live
+model request, clinical improvement claim or benchmark-score claim was made.
+
+For historical reproduction of this human-launched source test, enable the
+Section 38 engineering gate, select
+`AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v3-parasagittal`, restart the one source
+instance and re-analyze. Check manifest 1.6.0, `axial_locator.status`, identical
+clean coverage and each diagnostic decision's actual source level. Clinical
+benefit requires radiologist adjudication and repeated/frozen-input comparisons;
+the existing scorer limitations still apply. Ordinary `focused-v3` bypasses
+both supplements and locators; `layout` remains the original evidence bypass.
+
+This change follows the bug-fix, DICOM-compatibility and Titan workflows. Geometry
+conventions follow [DICOM PS3.3 C.7.6.2](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.2.html)
+and the [Frame of Reference module](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.4.html).
+Full validated anatomical landmarks, deformable registration, automatic
+same-lesion clinical verification and complete benchmark repair remain open.
+
+## 36. Source-grounded correlated screening and focused V4 (2026-09-01)
+
+The implemented first reader now has exactly three responsibilities: detect a
+plausibly abnormal anatomical focus, localize it, and propose which sagittal T2,
+sagittal T1, and axial T2 observations represent the same focus. It does not
+classify disease, morphology, grade, severity, or consequence.
+
+`focused-v4-correlated` replaces UI-screen coordinates with a bounded atlas
+rendered from immutable DICOM sources in the analysis worker. Every tile carries
+a session-local identity; a model box is defined against the grayscale content
+of that tile. The orchestrator resolves each accepted box to patient LPS and
+checks Frame of Reference plus cross-plane separation. Geometry can verify only
+spatial compatibility. It cannot verify anatomy, level, side, normality, or
+diagnosis, all of which the GPT diagnostic reader must re-derive.
+
+The verified focus medoid is retained in the local attention plan and used to
+centre the V4 sagittal and axial evidence. Raw coordinates are removed before
+the diagnostic context is serialized. The existing wide overview, tight focus,
+parasagittal supplement, locator, capacity limits, measured slab identity, and
+report-level conflict guard remain active. Atlas construction and focused
+verification have separate layout fallbacks, and no viewer Sync/Scroll/Crop
+command is issued after capture.
+
+At pipeline 5.2.0, the source and packaged-build default became
+`focused-v4-correlated`. Section 41 supersedes that evidence default with V5.
+Explicit
+layout, V1, V2, V3, and V3-parasagittal paths are retained only for engineering
+rollback and controlled comparison. Synthetic tests validate identity rejection, LPS correlation, and
+lesion-centred cropping. They do not validate model localization or clinical
+diagnostic accuracy. An initial human-controlled source run has completed; the
+locked multi-case benchmark with failures retained in the denominator remains
+required.
+
+## 37. Canonical screening-to-diagnosis handoff (2026-09-01)
+
+Pipeline 5.3.0 adds a deterministic contract between the sensitivity reader and
+the diagnostic reader. Gemini still returns its immutable raw response for audit,
+but raw rows and prose never become diagnostic memory. The local orchestrator
+now emits one canonical attention row per supported anatomical focus.
+
+Repeated observations of the same structure and anatomical site are merged;
+their valid source-bound locations and axial/sagittal frame lists are unioned.
+When patient-space anchors show observations more than 25 mm apart, they remain
+separate attention foci instead of being collapsed by a shared level label.
+Correlated sagittal and axial observations can therefore become one verified
+multiplanar focus while spatially distinct abnormalities remain A and B.
+
+Contradictory normal and abnormal assessments are resolved locally in favor of
+abnormal presence, matching the screening sensitivity objective, and confidence
+is reduced by one step. `not_assessable` never becomes normal. Left plus right
+for the same structure/site becomes bilateral; any other unresolved categorical
+side disagreement becomes indeterminate. These rules remove contradictory claims
+without converting uncertainty into a negative examination.
+
+The GPT handoff excludes `normal_count`, raw parser warnings, diagnoses, grades,
+free text and exact LPS. It contains only canonical findings, material assessment
+gaps, source/tile evidence, geometry status and a bounded `handoff_quality`
+record. Internal parsing and provenance remain in the saved stage audit. Screening
+prompt 2.2.0 requests the same behavior at source; local normalization remains
+authoritative when the model violates it. Verification prompt 4.3.0 treats every
+canonical `attention_id` as one independent diagnostic task.
+
+Three guards failed before normalization: duplicate same-focus rows survived,
+normal/abnormal disagreement retained high confidence, and competing left/right
+rows reached diagnosis separately. Two additional guards failed before the
+compact public handoff and prompt contract, and the geometry guard failed until
+distant same-anatomy anchors were split. Adversarial self-review then caught and
+guarded an intermediate error that promoted a focus with no valid geometry from
+`unavailable` to `verified_single_plane`. Final verification is 35 focused
+screening/correlation/version guards, 134 orchestration/focused-evidence guards,
+817 AI Imaging tests passed with 8 existing xfails, three default-build inclusion
+tests passed, and 462 plugin mirror pairs matched. No app launch, model call,
+clinical accuracy claim, installer build or deployment occurred. A human source
+run and locked clinical benchmark remain required.
+
+## 38. Historical V4 runtime and legacy retirement (2026-09-01)
+
+The canonical policy introduced with pipeline 5.3.0 was active in pipeline
+5.4.0: `focused-v4-correlated` was the only ordinary Eagle Eye lumbar evidence
+configuration. It was selected when no environment variable was
+present and when a stale runtime variable requested layout, V1, V2, V3, or
+V3-parasagittal. The app logged that the retired request was ignored and continued
+with V4. Pipeline 5.6.0 now selects V5 under the same fail-closed policy; see
+section 41. An unsupported value remains a configuration error rather than being
+silently guessed.
+
+The older composers have not been physically deleted because they remain useful
+for reproducing historical benchmarks and for a bounded incident rollback. They
+are unreachable through ordinary mode selection. An engineer must set both
+`AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE=1` and
+`AIPACS_EAGLE_EYE_EVIDENCE_MODE=<retired-mode>` in the same process. The benchmark
+CLI applies this gate only when a retired `--evidence-mode` is explicitly chosen.
+No UI setting or packaged runtime profile enables the gate.
+
+The first human-controlled source run of the canonical 5.3.0 handoff completed
+all three model stages through GapGPT without a transport failure or layout
+fallback. It preserved the correct level map and identified the principal lower
+lumbar extrusion morphology and side. It still undercalled lateral-recess and
+root-effect severity and missed quieter abnormalities, so this is initial
+runtime acceptance rather than clinical validation or promotion evidence.
+
+Four mode-policy assertions failed before the retirement gate existed. Final
+mode-focused verification passed 120 tests; the complete AI Imaging gate passed
+819 tests with 8 existing xfails and 3 dependency warnings. The three default
+build-inclusion guards passed, and all 462 plugin mirror pairs matched. No
+installer build or deployment was performed.
+
+## 39. Submillimetric sagittal screening pages and sampling audit (2026-09-01)
+
+The first canonical V4 source run correctly combined the principal disc
+morphology, side, migration and level, but did not raise a quieter upper-level
+disc focus. Read-only inspection identified a structural asymmetry in the new
+screening request. The axial atlas retained approximately `0.4065 mm/px`, while
+the full-column sagittal crop was letterboxed into a fixed square tile and
+reached only `148 x 256` diagnostic pixels, approximately
+`1.0135-1.0162 mm/px`. Verification sagittal overview and focus sampling were
+`0.5208` and `0.3906 mm/px`, respectively.
+
+Page count was not itself the cause: the renderer used a fixed `256 x 256` tile,
+so placing fewer slices on a page would only create a narrower canvas. Pipeline
+5.4.0 instead keeps axial pages unchanged and gives sagittal T2/T1 a
+`320 x 555` no-upscale tile with six slices per page. For a representative
+synthetic 11-slice, 0.390625-mm source series, each sagittal role becomes two
+pages of 6+5 slices and preserves `0.4688 mm/px`. With four synthetic axial
+slices the complete screening request contains five pages; the observed
+25-slice axial layout would contain six. The screening and verification image
+budgets are separate requests and are therefore audited separately.
+
+Screening manifest schema 1.1.0 records each tile's source spacing, fitted
+diagnostic-content size, effective millimetres per pixel and tile size. Its
+`screening_sampling` block summarizes sampling ranges and page/tile counts by
+role. A separate 8-image/12-MP/12-MiB screening budget is measured against the
+rendered files before dispatch, with capacity notes persisted. The compact
+sampling/budget summary also reaches `llm_result.json`; private mappings and
+per-tile coordinates remain only in the session-local screening manifest.
+Quality, render and budget failures use the existing layout fallback contract.
+With the current eight-image request ceiling, unusually deep sagittal series
+that require more than three pages per sagittal role can exceed capacity and
+therefore fail closed to that fallback; adaptive packing is deferred until a
+real source case demonstrates that need.
+
+The causal claim remains deliberately narrow. The lower-resolution sagittal
+screening path plausibly explains why a small focus never entered the diagnostic
+handoff, but one model run does not prove that relationship. A lower-vertebral
+bone-marrow focus did enter screening and was rejected by the diagnostic reader,
+so its final classification miss is not attributed to screening resolution.
+No disease-specific prompt, severity rule or positive-label injection was added.
+
+Eight guards failed before the changes: schema, paging, sampling, budget,
+result-audit persistence, quality fallback, render fallback and pipeline
+versioning. Final focused screening/orchestration verification passed 135 tests;
+the full AI Imaging gate passed 825 with 8 existing xfails and 3 dependency
+warnings. Three default-build inclusion guards passed and all 462 plugin mirror
+pairs matched. No live model rerun, clinical improvement claim, installer build
+or deployment occurred; a human-controlled source rerun is required.
+
+## 40. Salience-aware screening and dominant-focus retention (2026-09-01)
+
+Read-only comparison of two source runs with byte-identical six-page screening
+atlases found materially different Gemini candidate counts. The later run still
+localized the principal caudal abnormality, but the deterministic evidence
+planner selected four cranial levels first because confidence and family tied
+and anatomical level order was the final discriminator. The principal focus was
+therefore discovered by screening but did not receive dedicated diagnostic
+evidence. This is a handoff/retention defect, not proof of a model-detection
+failure.
+
+Pipeline 5.5.0 and screening contract 2.3.0 make the first reader explicitly
+atlas-aware and retain its diagnosis-free role. The prompt now orders a global
+sweep before row emission and requests three bounded routing observations:
+`visual_salience`, `within_study_priority`, and `slice_persistence`. A small
+allowlist transports directly visible signal, contour, space-effacement and
+neural-relationship observations. These fields are not a morphology, grade,
+diagnostic severity or clinical urgency, and the GPT handoff explicitly forbids
+copying them into those decisions. The prior level-specific positive example was
+replaced by a placeholder schema so it cannot anchor the reader to one disc or
+level. Uncertainty about cause preserves a directly visible focus; uncertainty
+about abnormal presence now requires direct visual support rather than automatic
+positive retention.
+
+The local normalizer canonicalizes the new fields, discards unknown keys and
+marks an incomplete 2.3.0 routing contract as degraded. Evidence-plan schema
+1.2.0 ranks marked/dominant foci before anatomical order, then uses persistence,
+validated correspondence, confidence and family as bounded tie-breakers. Level
+order is last. If more marked or dominant levels exist than the configured focus
+capacity, the plan records a specific capacity warning; the report-level evidence
+guard therefore requires review instead of silently treating omitted evidence as
+normal. The focus manifest records the routing values that produced each selected
+sheet, so a live run can be audited without reinterpreting model prose. Existing
+image budgets, DICOM atlas pixels, GapGPT transport, context
+branch, verification prompt, model identifiers and then-current focused-V4
+default were unchanged by pipeline 5.5.0. Section 41 supersedes that evidence
+default.
+
+Six behavioral guards failed before the production changes: the 2.3.0 contract
+was absent, the normalizer dropped routing fields, a marked/dominant L5-S1 focus
+lost to four high-confidence cranial levels, dominant over-capacity truncation
+was silent beyond a generic warning, and an incomplete 2.3.0 contract was not
+material to the diagnostic handoff; the focus manifest also omitted the routing
+decision. The changed boundary passed 235 tests. The
+complete AI Imaging suite passed 830 tests with 8 existing xfails and 3 existing
+third-party SWIG warnings, exit code 0.
+
+Screening temperature remains 1.0 in this slice. The identical-input variance is
+real evidence for a controlled temperature experiment, but changing the Gemini
+3 default without repeated sensitivity measurements could trade variance for a
+missed focus. The next live gate is a frozen-atlas repeated comparison at 1.0,
+0.2 and 0.0, retaining failures in the denominator and measuring dominant-focus
+detection/retention, major-focus set stability and false-focus burden. No model
+request, app launch, clinical-accuracy claim, installer build or deployment was
+performed here.
+
+## 41. Self-contained diagnostic level cards (2026-09-01)
+
+The remaining level swaps were traced to diagnostic evidence identity rather
+than to an absent lesion. Focused V4 could send a sagittal overview, an axial
+overview, one wide focus sheet per selected level, and one parasagittal
+supplement per focus. For adjacent lower-lumbar levels, the 100-mm sagittal
+crops overlapped heavily and used the same sagittal source slices. A conspicuous
+L5-S1 abnormality was therefore visible inside the image titled L4-L5. The
+diagnostic reader could also cite an axial range belonging to a different focus,
+and page-local screening numbering was not explicitly tied to the global upload
+number used by the transport. More prompt text could not make this package
+unambiguous.
+
+Pipeline 5.6.0 and verification prompt 4.4.0 make
+`focused-v5-level-cards` the canonical source and packaged-build mode. The
+existing diagnosis-free screening normalizer continues to group attention by
+anatomical level. For every selected level, the worker now produces exactly one
+self-contained diagnostic card containing:
+
+- one targeted sagittal T2 tile centred through patient geometry;
+- one geometrically matched sagittal T1 tile when the source series exists; and
+- no more than four contiguous axial T2 frames drawn only from that level's
+  measured acquisition slab.
+
+The card title, both row labels, every tile label, the model-facing caption, the
+request header and manifest all repeat the subject level. The header binds the
+global image number to its `focus_id`, canonical `attention_id` values, subject
+level and allowed axial display frames. Positive-focus V5 requests contain no
+whole-stack overview or separate parasagittal supplement, so the diagnostic
+reader receives one image for one level instead of several partially redundant
+views. If screening resolves no usable focus, the established overview fallback
+is retained and recorded; missing evidence is never interpreted as normal.
+
+The V5 sagittal card crop is 100 mm anteroposterior by 60 mm craniocaudal. This
+retains local migration context while reducing adjacent-level exposure relative
+to the prior 100 x 100 mm focus sheet. It remains a geometric crop rather than a
+segmentation. The prompt permits diagnosis only from the attention's bound card
+and explicitly forbids borrowing a neighboring card for morphology, level,
+laterality or grade. All image transports now prefix each caption with
+`IMAGE n OF N`, so Gemini and GPT see the same global identity that the request
+header and manifest record.
+
+Two further anchoring channels were closed. The clinical-context MRI overview
+may still emit bounded global burden and postoperative context, but its
+free-form broad patterns are not forwarded as diagnostic claims. A focus derived
+only from paired sagittal MRI is forwarded as a neutral level attention request,
+not as a named extrusion, root lesion or stenosis. Missing atlas tile identity is
+material degradation in the screening handoff rather than silently available
+evidence.
+
+Finally, integrity guard 1.1.0 parses axial frame citations in the structured
+verification audit and compares them with the card binding. A citation outside
+the allowed frame set makes the stored report review-required, identifies the
+affected attention and frames, and preserves the unmodified model report below
+the notice. The guard does not relabel a level, alter a diagnosis or claim that
+geometry establishes anatomy.
+
+The principal guards failed before their production boundaries existed: V4
+returned three images for one synthetic focus instead of one card, the shared
+GapGPT content builder exposed no global image number, MRI-overview context
+retained a level-specific extrusion/root claim, and no audit function rejected a
+cross-card axial range. Focused validation passes 173 tests. The complete AI
+Imaging gate passes 837 tests with 8 pre-existing xfails and 3 pre-existing SWIG
+warnings. Default-build inclusion plus mirror parity passes 4 tests, and all 462
+source/plugin mirror pairs match after synchronizing the EchoMind transport.
+No live app launch, model request, clinical-accuracy claim, installer build or
+deployment was performed. The next acceptance step is a human-controlled source
+rerun followed by the locked radiologist-adjudicated multi-case benchmark.
+
+## 42. Fixed anatomical reading template for each diagnostic level card (2026-09-01)
+
+The first V5 card removed cross-level image borrowing but still made the
+diagnostic reader infer a reading order from one sagittal T2 tile, one sagittal
+T1 tile and a variable-length axial ribbon. That left two avoidable sources of
+variation: the same anatomy could occupy a different visual position from one
+card to the next, and the screening reader could identify useful source slices
+without a structured way to bind them to the diagnostic package.
+
+Pipeline 5.7.0, screening contract 2.4.0, verification prompt 4.5.0,
+evidence-plan schema 1.3.0 and V5 manifest 2.1.0 retain the same canonical
+`focused-v5-level-cards` mode but make every positive-focus image the same fixed
+3 x 3 template:
+
+| Row | Column 1 | Column 2 | Column 3 |
+|---|---|---|---|
+| Sagittal T2 | patient-right foraminal sampling plane | midline sampling plane | patient-left foraminal sampling plane |
+| Sagittal T1 | patient-right foraminal sampling plane | midline sampling plane | patient-left foraminal sampling plane |
+| Axial T2 | disc-level plane | maximum-abnormality plane | caudal-extent plane |
+
+Gemini remains a localization-only reader. For each allowlisted abnormal level,
+it proposes exact correlated-atlas `image` and `tile_id` identities for the nine
+predeclared slots. It must use `null` rather than inventing a tile. The local
+normalizer accepts only an inventory-backed tile whose source role matches the
+slot. The evidence planner transports only the normalized source slice/capture
+identity, and the renderer checks axial membership against the measured subject
+slab. A rejected, missing or out-of-range proposal is replaced by a deterministic
+local geometry/same-slab fallback whose selection source is explicit in the
+manifest. The fallback is not represented as Gemini-verified anatomy.
+
+The diagnostic prompt reads the rows in a fixed sequence. It uses sagittal T2
+for signal, contour, continuity and morphology; sagittal T1 for marrow/endplate
+anatomy and foraminal fat; and axial T2 for canal, lateral recess, root and focal
+disc relationships. Slot names are sampling positions, not findings, diagnoses,
+severity labels or proof of a lesion's side. The prompt also separates the
+standard axial zones `central`, `subarticular`, `foraminal` and `extraforaminal`
+from the craniocaudal `discal`, `suprapedicular`, `pedicular` and
+`infrapedicular` levels described by the combined NASS/ASSR/ASNR nomenclature.
+Those axes are not interchangeable. See Fardon et al., 2014:
+<https://pubmed.ncbi.nlm.nih.gov/24768732/>.
+
+Six principal guards failed before implementation: the normalized handoff had
+no level-card template, a sagittal slot accepted an axial tile, reversed LPS
+ordering was accepted, rejected-slot degradation was hidden from the public
+handoff, the renderer still produced the variable V5 layout, and the two prompts
+did not share the slot vocabulary. The changed boundary passes 166 tests. The
+complete AI Imaging suite passes 842 tests with 8 pre-existing xfails and 3 pre-existing SWIG
+warnings. These guards establish deterministic source identity, layout and
+scope; they do not establish anatomical-midline truth, clinical sensitivity or
+diagnostic accuracy. A human-controlled source rerun and the locked
+radiologist-adjudicated benchmark remain required.
+
+## 43. Geometry-owned card assembly and compact card-local metadata (2026-09-01)
+
+An offline reconstruction of the latest saved lower-lumbar case exposed a
+second identity defect inside the new fixed template. The screening record
+predated the nine-slot contract and supplied one axial key frame at the edge of
+the measured slab. The local fallback consequently assigned the same source
+frame to the disc-level, maximum-abnormality and caudal-extent slots. The image
+therefore looked structured while carrying only one axial observation under
+three different labels. This was a packaging defect, not a model miss.
+
+Pipeline 5.8.0, screening contract 2.5.0, verification prompt 4.6.0,
+evidence-plan schema 1.4.0, card-template schema 1.1.0 and V5 manifest 2.2.0
+retain `focused-v5-level-cards` as the ordinary default and make the local
+orchestrator the final authority for spatial assembly:
+
+- Gemini still identifies abnormal structures and proposes exact atlas tiles.
+  Each proposed slot now also carries `abnormality_conspicuity` from 0 to 3 and
+  the attention IDs visible in that tile. The score means not visible, subtle,
+  definite or marked visibility in that tile. It is explicitly not disease
+  severity, morphology, stenosis grade, clinical urgency or diagnostic truth.
+- The normalizer accepts only scores in the bounded range and attention IDs
+  already assigned to abnormal findings at that level. Unknown IDs, invalid
+  scores, wrong-sequence tiles, reversed sagittal order and repeated axial-slot
+  frames degrade the handoff instead of silently becoming trusted evidence.
+- DICOM patient coordinates determine the patient-right, central and
+  patient-left sagittal order. The selected T2 planes are projected into the T1
+  volume so both rows sample the same patient-space planes. An independent T1
+  tile proposal cannot break cross-series synchronization.
+- A complete set of three distinct Gemini axial slots is retained only when all
+  three frames belong to the measured subject slab. Otherwise the fallback
+  emits three distinct contiguous same-slab context frames whenever slab depth
+  permits; it never relabels one frame three times. Its non-Gemini selection
+  status remains explicit.
+- DICOM plane intersections are rendered as short cyan edge ticks. No full
+  reference line crosses diagnostic anatomy. The local manifest preserves the
+  intersection coordinates, while the model-facing JSON exposes only locator
+  status and the referenced axial frame.
+
+Only levels with abnormal Gemini screening attention receive named level cards.
+Clinical context can enrich a screened level but cannot create a diagnostic card
+by itself. Abnormal source-bound findings whose level is `unclear` are no longer
+dropped: at most one bounded ADDITIONAL FINDINGS card transports those locations
+without forcing a lumbar disc interval. The diagnostic reader must preserve the
+localization uncertainty unless anatomy inside that card resolves it.
+
+At pipeline 5.8.0, every card caption ended with compact
+`CARD_METADATA_JSON`. It bound the card
+and attention IDs, subject level or additional-finding scope, diagnosis-free
+structure observations, selected source slices/capture frames, per-tile score,
+selection provenance, a fixed disc/endplate/marrow/vertebral-body/facet/flavum/
+canal/recess/foramen/root checklist, and compact locator status. A checklist
+value of `not_raised_by_screening` is not a normal claim and requires independent
+diagnostic review. Full geometry remains in the
+session-local manifest and is intentionally not repeated to the model. The
+ordinary V5 budget permits up to six cards, sufficient for five abnormal disc
+intervals plus one additional-findings card while remaining under the existing
+eight-image and twelve-megapixel request ceilings.
+
+Six new behavioral boundaries were reproduced before correction: per-tile
+metadata was discarded; one axial frame occupied multiple semantic slots; an
+unresolved abnormal location was dropped and triggered an overview fallback;
+context alone could create a level card; T1 proposals could diverge from the T2
+plane; and no edge-only locator contract existed. The changed screening/card
+boundary passes 67 tests. The complete AI Imaging suite passes 848 tests with
+8 pre-existing xfails and 3 pre-existing SWIG warnings, exit code 0. Builder
+inclusion/parity passes 7 tests with 4 intentionally deselected, and all 462
+plugin mirror pairs match. The saved-source reconstruction confirms distinct
+same-slab axial frames, synchronized sagittal rows and edge-only ticks without a
+model request. A fresh human-controlled source run is still required to populate
+real per-tile Gemini scores and assess clinical behavior; no diagnostic-accuracy,
+installer-build or deployment claim is made.
+
+## 44. Same-plane sagittal pairs and sequence-separated axial reading (2026-09-01)
+
+Card template 1.1.0 synchronized sagittal T1 to the selected sagittal T2 planes
+in patient geometry, but the visual layout still placed all T2 tiles in one row
+and all T1 tiles in another. The diagnostic reader therefore had to compare a
+tile with another tile one complete row away while also retaining the correct
+patient-right, midline or patient-left identity. The geometry was correct; the
+visual correlation cost was unnecessary.
+
+Pipeline 5.9.0, verification prompt 4.7.0, card-template schema 1.2.0 and V5
+manifest 2.3.0 keep the nine source slots and the canonical
+`focused-v5-level-cards` mode, but change the diagnostic card into four explicit
+visual groups:
+
+| Group | First tile | Matched or subsequent tile | Reading direction |
+|---|---|---|---|
+| Patient-right sagittal pair | T2 right foraminal sampling plane | geometry-matched T1 plane | top to bottom |
+| Midline sagittal pair | T2 midline sampling plane | geometry-matched T1 plane | top to bottom |
+| Patient-left sagittal pair | T2 left foraminal sampling plane | geometry-matched T1 plane | top to bottom |
+| Level-bound axial sequence | disc-level plane | maximum-abnormality, then caudal-extent planes | left to right |
+
+The three sagittal pairs remain horizontal in patient-space order, but each T2
+tile now sits immediately above its matched T1 tile inside one shared column
+container. A strong neutral divider separates the sagittal comparison region
+from the axial sequence. Cyan, amber and violet borders identify sagittal T2,
+sagittal T1 and axial T2 respectively. The legend, request header, caption,
+prompt and manifest all state that border color encodes sequence identity only;
+it never encodes abnormality, laterality, severity, confidence or diagnosis.
+
+The sagittal crop is physically 100 x 60 mm. It previously occupied a square
+384 x 384 cell and spent substantial canvas area on letterboxing. The paired
+card uses a 384 x 256 sagittal cell while retaining a 384 x 384 axial cell. The
+source crop and fit policy are unchanged, so the sagittal diagnostic content is
+not downsampled; only unused padding is reduced. Total pixels per level card
+fall from 1,456,128 to 1,283,328, an 11.9 percent reduction. The resulting
+1.28-megapixel image is below the configured OpenAI `high`-detail preservation
+threshold used by the GapGPT bridge. OpenAI documents that image-detail choice
+controls preserved resolution and token use, while Google documents that higher
+media resolution improves small-detail recognition at a token/latency cost and
+recommends explicit instructions when a model is not drawing from the relevant
+part of an image. Neither vendor mandates this clinical layout; the paired-
+column design is a local engineering inference that minimizes comparison
+distance without increasing image count or shrinking the axial sequence.
+
+The card-local JSON now carries `layout_kind`, pair groups, exact pairwise visual
+reading order, role-specific tile sizes and a non-diagnostic sequence-border
+legend. Slot provenance, geometry decisions, attention bindings, per-tile
+conspicuity and structure checklist semantics are otherwise unchanged. The
+diagnostic prompt must finish each same-plane T2/T1 comparison before moving to
+the next sagittal plane, then read the axial sequence from left to right.
+
+The card-layout guard failed before implementation at 1264 pixels high, card
+template 1.1.0 and row-major slot order; prompt/pipeline version guards also
+failed at 4.6.0 and 5.8.0. After correction, the changed prompt/card boundary
+passes 172 tests. The complete AI Imaging suite passes 848 tests with 8
+pre-existing xfails and 3 pre-existing SWIG warnings. Builder package checks
+pass 4 tests with 4 intentionally deselected, and all 462 plugin mirror pairs
+match. An offline reconstruction of a saved lower-lumbar source confirms the
+three T2/T1 pairs and three distinct axial frames without a model request. A
+fresh human-controlled source run and the locked radiologist-adjudicated
+benchmark remain required; no diagnostic-accuracy, installer-build or
+deployment claim is made.
+
+Primary vendor references:
+
+- OpenAI model and image-input guidance:
+  <https://developers.openai.com/api/docs/guides/latest-model>
+- Google Gemini image understanding and media-resolution guidance:
+  <https://ai.google.dev/gemini-api/docs/image-understanding>
+- Google multimodal prompt troubleshooting:
+  <https://ai.google.dev/gemini-api/docs/files#prompt-guide>
+
+## 45. Five-plane sagittal coverage in diagnostic level cards (2026-09-01)
+
+The paired V5 card correctly matched T2 to T1, but its sagittal selector began
+with a five-slice patient-space window and then retained only the two endpoints
+and centre. The right and left paracentral planes were discarded before the
+diagnostic request. This made the card structurally unable to show the complete
+foraminal-to-foraminal morphology requested by the radiologist, even when the
+source series contained nine to eleven sagittal slices.
+
+Pipeline 6.0.0, screening contract 2.6.0, verification prompt 4.8.0,
+evidence-plan schema 1.5.0, card-template schema 1.3.0 and V5 manifest 2.4.0
+retain `focused-v5-level-cards` as the ordinary default and define one fixed
+thirteen-slot card per abnormal level:
+
+| Patient-space column | Upper tile | Lower matched tile |
+|---|---|---|
+| Right foraminal | sagittal T2 | geometry-matched sagittal T1 |
+| Right paracentral | sagittal T2 | geometry-matched sagittal T1 |
+| Midline | sagittal T2 | geometry-matched sagittal T1 |
+| Left paracentral | sagittal T2 | geometry-matched sagittal T1 |
+| Left foraminal | sagittal T2 | geometry-matched sagittal T1 |
+
+The three level-bound axial T2 slots remain disc-level, maximum-abnormality and
+caudal-extent planes below a neutral divider. The local selector requires five
+distinct sagittal source planes, orders them by DICOM patient LPS rather than
+filename or instance order, and rejects incomplete five-plane coverage instead
+of duplicating or falsely relabelling a plane. The selected T2 planes remain the
+patient-space authority; each T1 tile is projected from its matched T2 plane.
+Gemini proposes the same thirteen source-bound slots and the diagnostic prompt
+reads them in the identical right-foraminal-to-left-foraminal order.
+
+Five 384-pixel sagittal columns would exceed the existing twelve-megapixel
+request ceiling when all six permitted cards are present. The sagittal cell is
+therefore 320 x 224 while its physical source crop remains 100 x 60 mm; the
+axial cells remain 384 x 384. One card is 1600 x 1050, or 1,680,000 pixels, and
+six cards total 10,080,000 pixels, leaving 1,920,000 pixels of headroom. The
+saved-source reconstruction produced two cards totalling 3,360,000 pixels and
+1,311,545 encoded bytes. Visual review confirmed five T2/T1 columns with source
+slices ordered from patient right to patient left and three distinct axial
+frames. No model request was spent on this reconstruction.
+
+Three representative guards failed before implementation: the rendered card
+was 1152 x 1114, the fallback returned only three of five available sagittal
+planes, and normalized screening remained on schema 2.5.0. After correction,
+the changed prompt/card boundary passes 173 tests. The complete AI Imaging suite
+passes 849 tests with 8 pre-existing xfails and 3 pre-existing SWIG warnings.
+Builder package checks pass 4 tests with 4 intentionally deselected, Python
+compilation succeeds, and all 462 plugin mirror pairs match. These checks prove
+evidence coverage, identity, ordering and request boundedness. A fresh
+human-controlled source run and the locked radiologist-adjudicated benchmark
+remain required; no diagnostic-accuracy, installer-build or deployment claim
+is made.
+
+## 46. Anatomy-first midline and spaced sagittal sampling (2026-09-01)
+
+Card template 1.3.0 retained five sagittal planes but selected five consecutive
+source slices around the lateral coordinate of the screening focus. A lateral
+disc focus could therefore shift the nominal midline, while the immediately
+adjacent paracentral and foraminal columns did not sample the intended anatomy.
+The visible labels also said only `slice`, which could be mistaken for DICOM
+InstanceNumber even though the card uses source-volume indexes and those orders
+may be reversed.
+
+Pipeline 6.1.0, screening contract 2.7.0, verification prompt 4.9.0,
+evidence-plan schema 1.6.0, card-template schema 1.4.0 and V5 manifest 2.5.0
+retain the thirteen-slot default card but change its sagittal sampling policy to
+`anatomical-midline-spaced-v1`:
+
+- Gemini selects anatomical midline from vertebral-body, spinal-canal and
+  posterior-element symmetry rather than from the abnormal focus or file count.
+- A complete Gemini proposal is accepted only when its five planes remain
+  patient-right-to-left, are distinct, keep each paracentral plane two or three
+  source intervals from midline, and keep each foraminal plane farther outward.
+  The outermost step may be one interval when an asymmetric acquisition or
+  boundary makes that plane anatomically preferable.
+- An incomplete or invalid proposal uses the acquisition centre, optionally
+  refined by a bounded Gemini midline, then selects source offsets
+  `-4, -2, 0, +2, +4`. This preserves one intervening source slice between the
+  ordinary midline, paracentral and foraminal samples.
+- The lateral coordinate of a lesion remains the craniocaudal crop anchor but
+  can no longer redefine sagittal midline. T1 is still projected from each
+  selected T2 plane through patient geometry.
+- On-card `VOL n/N` labels now explicitly mean source-volume index. The request
+  header and caption state that this is not DICOM InstanceNumber and that the
+  two orders may run in opposite directions.
+
+The saved-source reconstruction produced the expected non-consecutive T2 and
+T1 sequence `10, 8, 6, 4, 2` in patient-right-to-left volume order, with three
+distinct axial frames. In that acquisition, source-volume order is reversed
+relative to DICOM instance order, so the content corresponds to the expected
+low-to-high instance progression. The validator also accepts a one-step inward
+outer foraminal proposal when Gemini identifies it as the more representative
+anatomical plane. Two reconstructed cards remain 3,360,000 pixels and 1,298,569
+encoded bytes, with unchanged request headroom. No model request was used.
+
+Six guards failed before the correction: five consecutive planes, a lateral
+lesion anchor controlling midline, unchanged card/prompt versions, absent
+spacing instructions, and ambiguous volume-index labelling. The changed
+prompt/card boundary passes 174 tests. Complete AI Imaging passes 850 tests with
+8 pre-existing xfails and 3 pre-existing SWIG warnings. Builder package checks
+pass 4 tests with 4 intentionally deselected, Python compilation succeeds, and
+all 462 plugin mirror pairs match. These checks establish sampling, identity,
+ordering and boundedness; a fresh human-controlled model run and the locked
+radiologist-adjudicated benchmark remain required before any diagnostic-
+accuracy claim.
+
+## 47. Explicit per-card JSON sidecars and model bindings (2026-09-01)
+
+Pipeline 6.2.0, verification prompt 5.0.0 and V5 manifest 2.6.0 retain the
+parallel Gemini architecture and make the diagnostic handoff explicit. The
+image-screening and clinical-context branches still execute concurrently.
+Only abnormal, source-bound screening attention can create a diagnostic card;
+clinical context is sanitized and appended as a global diagnostic prior, but
+cannot create a card. Named lumbar levels receive one level card each. A
+source-bound abnormality that cannot safely be assigned to a named level uses
+the separate additional-findings card with `subject_level: null`.
+
+Each rendered diagnostic card now has exactly one structured payload:
+
+- the PNG and its sibling `.card.json` file share the same basename;
+- the payload records its request `image_index`, PNG filename, `card_id`, card
+  kind, subject level or unresolved scope, attention IDs, structure checklist,
+  source slots, geometry/fallback provenance and non-severity conspicuity;
+- the verification manifest binds that sidecar filename and metadata to the
+  same global image number;
+- the saved stage-three request records the payload both beside its image entry
+  and in an ordered `card_payloads` collection;
+- the shared EchoMind/GapGPT content builder inserts exactly one compact
+  `CARD_METADATA_JSON` block immediately before the corresponding image.
+
+The JSON was removed from the free-form caption itself. This prevents the same
+large object from being repeated while preserving the useful human-readable
+card instructions. The diagnostic prompt now treats the explicit block, not a
+caption suffix, as the machine-readable authority. The model still receives
+the card and JSON as one adjacent text/image unit, and the stage-three request
+artifact now records the exact combined header actually passed to transport.
+
+Four principal requirements failed before implementation: `PackagedImage`
+could not hold a card payload, no `.card.json` file existed, the saved request
+had no ordered card-payload collection, and the transport could not emit a
+separate JSON block. The latest saved source session was reconstructed locally
+without a model call. It produced two cards, two JSON sidecars, two manifest
+bindings and two model-facing JSON blocks; every payload matched exactly after
+JSON decoding. The synthetic additional-findings guard verifies the same
+contract for unresolved anatomy. These checks establish transport identity and
+auditability, not diagnostic accuracy. The changed prompt/card/transport
+boundary passes 126 tests. Complete AI Imaging passes 852 tests with 8
+pre-existing xfails and 3 pre-existing SWIG warnings. Builder package checks
+pass 4 tests with 4 intentionally deselected, Python compilation succeeds, and
+all 462 plugin mirror pairs match. A fresh human-controlled Gemini/Sol run and
+the locked radiologist-adjudicated benchmark remain required.
+
+## 48. Card-first diagnostic prompt alignment (2026-09-01)
+
+Pipeline 6.3.0 and verification prompt 5.1.0 align the GPT-5.6 Sol diagnostic
+reader with the V5 transport introduced in section 47. The previous verifier
+had accumulated mutually incompatible instructions: it still described two
+whole-workstation screenshot sweeps, invited a whole-study level recount,
+allowed context-only current-MRI additions, and required a broad safety sweep
+even though the canonical request now contains selected positive-attention
+cards. Its output example also embedded a specific L4-L5 extrusion. That
+case-specific example could anchor a reader toward the wrong level and has been
+removed.
+
+The canonical verifier now uses a card-first contract:
+
+- process request images in order and bind each PNG to the immediately
+  preceding `CARD_METADATA_JSON` before interpreting it;
+- record `card_id`, request image index, card kind and card subject level in
+  every verification row;
+- issue one independent presence/classification decision for every bound
+  `attention_id`, while keeping distinct anatomical structures separate;
+- decide presence before diagnosis, then correlate the paired sagittal T2/T1
+  planes and ordered axial sequence before morphology, side, extent and
+  consequences;
+- use context only to rank the differential for an existing card; context
+  cannot create a diagnostic card or an unbound current-study diagnosis;
+- confine safety additions to anatomy demonstrated inside the current card;
+- treat the printed subject level as the card task scope. A focused reader may
+  not recount the whole lumbar study or transfer a finding to an adjacent card.
+  An incompatible image/binding is `INDETERMINATE`, not a silent relocation;
+- use a neutral structured-output template without a seeded level, disease or
+  severity.
+
+The legacy screenshot reader is retained only behind an explicit legacy
+package declaration. Its panel and slab-naming rules no longer prefix ordinary
+V5 requests. This reduces competing instructions while preserving an auditable
+engineering fallback.
+
+Four contract boundaries failed before the correction: exact card binding was
+not required in the diagnostic output, unmatched context could generate
+unbound findings, the output template seeded a level-specific diagnosis, and
+the verifier could recount or move a bound card level. The prompt-focused gate
+passes 145 tests. Complete AI Imaging passes 855 tests with 8 pre-existing
+xfails and 3 pre-existing SWIG warnings. These tests establish prompt/transport
+consistency and regression resistance; they do not establish diagnostic
+accuracy. A fresh human-controlled source run and the locked
+radiologist-adjudicated benchmark remain required.
+
+## 49. Atomic anatomy screening and structure-card diagnosis (2026-09-02)
+
+Pipeline 7.0.0 replaces the single multi-compartment Gemini screen and the
+single multi-card Sol request with bounded independent work units. Five Gemini
+requests screen disc, endplate/marrow, canal/neural, foraminal, and posterior
+element domains concurrently. Local normalization rejects cross-domain output
+and the planner now groups positive attention by both level and structure.
+
+The focused V5 renderer uses card template 2.0.0 and manifest 3.0.0. Each card
+contains only the sagittal sequences, patient-space planes, and same-slab axial
+samples required for its anatomical decision. Sol receives exactly one card,
+its `CARD_METADATA_JSON`, and the sanitized clinical prior. It does not receive
+the whole screening-attention list. Up to three card requests run concurrently.
+
+Response identity is enforced locally before merge. Card ID, subject level,
+structure group, and attention ID must match the request; conflicting or omitted
+decisions become `INDETERMINATE` and make the report review-required. Atomic
+request/response/structured artifacts are stored under `.atomic_analysis` while
+the aggregate stage artifacts remain backward-compatible. The default-on path
+can be disabled for bounded rollback with
+`AIPACS_EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE=0`.
+
+Implementation details, failure policy, evidence profiles, verification results,
+and the required frozen multi-case experiment are recorded in
+`EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE_2026-09-02.md`. No clinical-accuracy claim
+is made from the implementation tests.

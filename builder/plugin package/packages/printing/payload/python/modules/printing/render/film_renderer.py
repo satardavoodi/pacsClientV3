@@ -7,13 +7,22 @@ from typing import List, Dict, Optional, Tuple
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
-from modules.printing.core.models import FilmLayout, FilmSize
+from modules.printing.core.models import FilmLayout, FilmSize, ViewportState
 from modules.printing.layout.grid import GridLayoutEngine
-from modules.printing.render.dicom_renderer import RenderedImage, compute_scout_reference_lines
+from modules.printing.render.dicom_renderer import RenderedImage, compute_scout_reference_lines, viewport_crop_bounds
 
 
 HEADER_HEIGHT_RATIO = 0.10
 HEADER_PADDING_IN = 0.25
+
+
+def page_background(mode):
+    """Print colors are independent of the application theme."""
+    if mode == "none":
+        return QColor(0, 0, 0, 0), QColor(0, 0, 0)
+    if mode == "white":
+        return QColor(255, 255, 255), QColor(0, 0, 0)
+    return QColor(0, 0, 0), QColor(240, 240, 240)
 
 
 def film_size_to_pixels(film_size: FilmSize, dpi: int) -> tuple[int, int]:
@@ -31,6 +40,7 @@ def render_film(
     overlay_info: Optional[Dict[str, str]] = None,
     start_cell_index: int = 0,
     scout_info: Optional[Tuple[str, List[str]]] = None,
+    scout_viewport: Optional[ViewportState] = None,
 ) -> QPixmap:
     """
     Render film sheet with images in strict grid layout.
@@ -42,7 +52,11 @@ def render_film(
     """
     width_px, height_px = film_size_to_pixels(film_size, dpi)
     image = QImage(width_px, height_px, QImage.Format_ARGB32)
-    bg = background or QColor(0, 0, 0)
+    overlay_info = overlay_info or {}
+    mode = overlay_info.get("background_mode", "dark")
+    bg, ink = page_background(mode)
+    if background is not None:
+        bg = background
     image.fill(bg)
 
     painter = QPainter(image)
@@ -104,10 +118,13 @@ def render_film(
             if scout_cell is not None:
                 scout_render = images[0]
                 x_in, y_in, w_in, h_in = grid.map_image_to_cell(scout_cell, scout_render.aspect)
-                scale_x = w_in / cols_s
-                scale_y = h_in / rows_s
+                crop_x, crop_y, crop_w, crop_h = viewport_crop_bounds(cols_s, rows_s, scout_viewport)
+                scale_x = w_in / crop_w
+                scale_y = h_in / crop_h
                 x_offset_px = int(x_in * dpi)
                 y_offset_px = int((y_in + header_height_in) * dpi)
+                painter.save()
+                painter.setClipRect(x_offset_px, y_offset_px, int(w_in * dpi), int(h_in * dpi))
                 pen = painter.pen()
                 pen.setColor(QColor(255, 217, 51))
                 pen.setWidth(max(1, int(1 * dpi / 150)))
@@ -121,18 +138,20 @@ def render_film(
                     if visible_slot % 2 == 0:
                         continue  # Skip even-numbered slots
 
-                    sx0 = x_offset_px + int(x0 * scale_x * dpi)
-                    sy0 = y_offset_px + int(y0 * scale_y * dpi)
-                    sx1 = x_offset_px + int(x1 * scale_x * dpi)
-                    sy1 = y_offset_px + int(y1 * scale_y * dpi)
+                    sx0 = x_offset_px + int((x0 - crop_x) * scale_x * dpi)
+                    sy0 = y_offset_px + int((y0 - crop_y) * scale_y * dpi)
+                    sx1 = x_offset_px + int((x1 - crop_x) * scale_x * dpi)
+                    sy1 = y_offset_px + int((y1 - crop_y) * scale_y * dpi)
                     painter.drawLine(sx0, sy0, sx1, sy1)
                     # Place label at 1/3 along the line so it stays inside
                     lx = sx0 + (sx1 - sx0) // 3
                     ly = sy0 + (sy1 - sy0) // 3
                     _draw_scout_line_label(painter, lx, ly, str(visible_slot), dpi)
+                painter.restore()
 
     # Draw white grid lines between cells
-    _draw_grid_lines(painter, film_area, layout, dpi, y_offset_in=header_height_in)
+    if mode == "dark":
+        _draw_grid_lines(painter, film_area, layout, dpi, y_offset_in=header_height_in)
 
     _draw_header(
         painter,
@@ -145,6 +164,8 @@ def render_film(
         dpi=dpi,
         header_height_in=header_height_in,
         font_sizes=font_sizes,
+        text_color=ink,
+        draw_separator=mode != "none",
     )
 
     painter.end()
@@ -216,6 +237,8 @@ def _draw_header(
     dpi: int,
     header_height_in: float,
     font_sizes: dict | None = None,
+    text_color: QColor | None = None,
+    draw_separator: bool = True,
 ) -> None:
     fs = font_sizes or {}
     fs_pname = int(fs.get("font_patient_name", 24))
@@ -226,7 +249,7 @@ def _draw_header(
     # Scale user pt sizes for export DPI (user sees them at ~110 dpi preview)
     dpi_scale = dpi / 110.0
 
-    painter.setPen(QColor(240, 240, 240))
+    painter.setPen(text_color if text_color is not None else QColor(240, 240, 240))
 
     width_px = int(film_size.width_in * dpi)
     x_left = int(HEADER_PADDING_IN * dpi)
@@ -268,7 +291,8 @@ def _draw_header(
     painter.drawText(0, y_top + right_row_h + fm_r.ascent(), x_right - int(0.04 * dpi), right_row_h, Qt.AlignRight | Qt.AlignVCenter, right_line_2)
 
     separator_y = int(header_height_in * dpi)
-    painter.drawLine(0, separator_y, int(film_size.width_in * dpi), separator_y)
+    if draw_separator:
+        painter.drawLine(0, separator_y, int(film_size.width_in * dpi), separator_y)
 
 
 def _draw_image_number_badge(painter: QPainter, x_px: int, y_px: int, number: int, dpi: int) -> None:

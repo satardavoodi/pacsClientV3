@@ -309,6 +309,9 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         # Series progress tracking for signal emission
         self._last_series_number_by_study: Dict[str, str] = {}
         self._completed_series_emitted: Dict[str, set] = {}
+        # O(1) study-level progress ledgers. These are main-thread-only and
+        # contain integers/identity keys only; no I/O or worker synchronization.
+        self._overall_progress_accumulators: Dict[str, Dict] = {}
         
         # Setup UI
         self._setup_ui()

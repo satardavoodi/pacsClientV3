@@ -366,40 +366,115 @@ class _DMQueueMixin:
         study_uid: str,
         series_number: str,
         series_done: int,
-        series_total: int
+        series_total: int,
+        *,
+        series_uid: Optional[str] = None,
+        overall_total_hint: Optional[int] = None,
     ) -> tuple[int, int, float]:
         """
         Calculate overall progress across all images.
 
-        Uses completed/skipped series plus current series progress.
+        Keeps an O(1) per-series ledger so the study-level count cannot reset
+        when a terminal series signal is delayed at the subprocess boundary.
+        SeriesInstanceUID is the canonical key; SeriesNumber is only a fallback
+        for older callers and synthetic tasks without a UID.
         Returns (overall_downloaded, overall_total, overall_percent).
         """
+        accumulators = getattr(self, '_overall_progress_accumulators', None)
+        if accumulators is None:
+            accumulators = {}
+            self._overall_progress_accumulators = accumulators
+
+        accumulator = accumulators.get(study_uid)
         task = self._tasks.get(study_uid)
-        total_images = task.total_image_count if task else 0
-
-        state = self.state_store.get(study_uid)
-        completed_series = set()
-        if state:
-            completed_series.update(state.completed_series or [])
-            completed_series.update(state.skipped_series or [])
-
-        series_map = self._get_series_image_count_map(study_uid)
-        if total_images <= 0 and series_map:
-            total_images = sum(series_map.values())
+        authoritative_total = max(int(overall_total_hint or 0), 0)
+        if accumulator is not None and authoritative_total > 0:
+            # The subprocess fetches the server manifest used for the actual
+            # download.  It is a stronger denominator than a partial queue
+            # payload and may arrive after an early fallback series update.
+            accumulator['overall_total'] = authoritative_total
+        # DownloadTask.total_image_count is a property that sums series_list.
+        # Pay that O(series) cost once per generation, then stay O(1) per event.
+        total_images = (
+            int(accumulator['overall_total'])
+            if accumulator is not None
+            else (
+                authoritative_total
+                or (task.total_image_count if task else 0)
+            )
+        )
         if total_images <= 0 and series_total > 0:
             total_images = series_total
 
-        completed_images = 0
-        if series_map and completed_series:
-            completed_images = sum(
-                series_map.get(str(series_id), 0) for series_id in completed_series
-            )
+        if accumulator is None:
+            expected_by_key = {}
+            number_to_keys = {}
+            if task:
+                for series in task.series_list:
+                    uid = str(getattr(series, 'series_uid', '') or '').strip()
+                    number = str(getattr(series, 'series_number', '') or '').strip()
+                    key = f"uid:{uid}" if uid else f"number:{number}"
+                    expected_by_key[key] = max(
+                        expected_by_key.get(key, 0),
+                        int(getattr(series, 'image_count', 0) or 0),
+                    )
+                    number_to_keys.setdefault(number, []).append(key)
 
-        # Avoid double-counting if current series already completed
-        current_done = 0 if str(series_number) in completed_series else series_done
+            accumulator = {
+                'downloaded_by_key': {},
+                'expected_by_key': expected_by_key,
+                'number_to_keys': number_to_keys,
+                'overall_downloaded': 0,
+                'overall_total': max(int(total_images or 0), 0),
+            }
+            accumulators[study_uid] = accumulator
 
-        overall_downloaded = completed_images + current_done
+            # Seed a resumed task from main-process state without scanning disk.
+            state = self.state_store.get(study_uid)
+            completed_ids = []
+            if state:
+                completed_ids.extend(state.completed_series or [])
+                completed_ids.extend(state.skipped_series or [])
+            for completed_id in completed_ids:
+                completed_text = str(completed_id or '').strip()
+                key = f"uid:{completed_text}"
+                if key not in expected_by_key:
+                    candidates = number_to_keys.get(completed_text, [])
+                    key = candidates[0] if len(candidates) == 1 else ''
+                if key:
+                    expected = expected_by_key.get(key, 0)
+                    if expected > 0 and key not in accumulator['downloaded_by_key']:
+                        accumulator['downloaded_by_key'][key] = expected
+                        accumulator['overall_downloaded'] += expected
+
+        uid_text = str(series_uid or '').strip()
+        number_text = str(series_number or '').strip()
+        if uid_text:
+            series_key = f"uid:{uid_text}"
+        else:
+            candidates = accumulator['number_to_keys'].get(number_text, [])
+            series_key = candidates[0] if len(candidates) == 1 else f"number:{number_text}"
+
+        expected = max(
+            int(accumulator['expected_by_key'].get(series_key, 0) or 0),
+            int(series_total or 0),
+            0,
+        )
+        bounded_done = max(int(series_done or 0), 0)
+        if expected > 0:
+            bounded_done = min(bounded_done, expected)
+
+        previous_done = int(accumulator['downloaded_by_key'].get(series_key, 0) or 0)
+        if bounded_done > previous_done:
+            accumulator['downloaded_by_key'][series_key] = bounded_done
+            accumulator['overall_downloaded'] += bounded_done - previous_done
+
+        overall_downloaded = int(accumulator['overall_downloaded'])
         overall_total = max(total_images, 0)
+        if overall_total <= 0:
+            overall_total = max(int(accumulator['overall_total']), expected)
+        if overall_total > 0:
+            overall_downloaded = min(overall_downloaded, overall_total)
         overall_percent = (overall_downloaded / overall_total * 100) if overall_total > 0 else 0.0
         if overall_percent < 0:
             overall_percent = 0.0
@@ -643,6 +718,7 @@ class _DMQueueMixin:
         # Clean up speed label widget reference
         if study_uid in self._speed_label_widgets:
             del self._speed_label_widgets[study_uid]
+        self._overall_progress_accumulators.pop(study_uid, None)
         
         # Refresh entire table to maintain priority grouping
         self.refresh_table_order()

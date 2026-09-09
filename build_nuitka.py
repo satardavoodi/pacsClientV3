@@ -298,6 +298,15 @@ def build_command(spec: ModuleType) -> list[str]:
     for dist in dist_meta:
         cmd.append(f"--include-distribution-metadata={dist}")
 
+    try:
+        import _gdcm
+
+        gdcm_xml = Path(_gdcm.__file__).resolve().parent / "XML"
+        if gdcm_xml.is_dir():
+            cmd.append(f"--include-data-dir={gdcm_xml}=_gdcm/XML")
+    except Exception:
+        pass
+
     # Data directories
     for src, dst in data_dirs:
         p = PROJECT_ROOT / src

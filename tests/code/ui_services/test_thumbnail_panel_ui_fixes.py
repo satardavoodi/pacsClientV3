@@ -114,3 +114,29 @@ def test_active_border_uses_theme_accent_token_light_and_dark():
     sel = src[src.find("elif self._is_selected:"):]
     sel = sel[:sel.find("elif self._viewed")]
     assert "self._theme.get('accent'" in sel   # token, not a hard-coded literal
+
+
+# ── 4. native-safe card construction ───────────────────────────────────────
+
+def test_thumbnail_card_root_style_is_scoped_and_applied_before_child_tree():
+    """Do not recursively repolish a completed Qt card subtree.
+
+    The 2026-09-01 field crash was a Windows heap-corruption termination while
+    ``create_thumbnail_widget`` applied a late, unscoped ``QWidget`` stylesheet
+    after the card's graphics effects and event filter had been installed.
+    Keep the root-only style before child/effect construction so creation never
+    asks Qt to recursively repolish that live subtree.
+    """
+    src = _thumbnail_manager_src()
+    fn = src[src.find("def create_thumbnail_widget"):]
+    fn = fn[:fn.find("\n    def ", 10)]
+
+    root_create = fn.find("widget = QWidget()")
+    scoped_style = fn.find("QWidget#seriesThumbnailCard")
+    first_child = fn.find("main_layout = QVBoxLayout(widget)")
+    first_effect = fn.find("QGraphicsDropShadowEffect(")
+
+    assert -1 < root_create < scoped_style < first_child < first_effect
+    assert 'widget.setObjectName("seriesThumbnailCard")' in fn
+    assert fn.count("\n            widget.setStyleSheet(") == 1
+    assert fn.find("\n            widget.setStyleSheet(") < first_child

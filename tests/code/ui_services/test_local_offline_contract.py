@@ -114,6 +114,9 @@ def test_local_pipeline_never_renders_storage_thumbnail_stems_as_drag_handles(mo
             self.legacy_thumbnail_renders += 1
             return 2
 
+        def _load_server_thumbnails(self):
+            return None
+
         def apply_multi_viewer(self, *_args, **_kwargs):
             return None
 
@@ -129,6 +132,50 @@ def test_local_pipeline_never_renders_storage_thumbnail_stems_as_drag_handles(mo
     asyncio.run(_run())
 
     assert pipeline.legacy_thumbnail_renders == 0
+
+
+def test_local_pipeline_starts_authoritative_thumbnail_projection(monkeypatch):
+    """A single-study Import must not stop after merely counting cached PNGs."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core import _pw_pipeline
+    from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_pipeline import _PWPipelineMixin
+    from PacsClient.utils import CallerTypes
+
+    class _LocalPipeline(_PWPipelineMixin):
+        study_uid = "synthetic-study"
+        import_folder_path = "synthetic-local-root"
+        _progressive_display_enabled = True
+
+        def __init__(self):
+            self.thumbnail_projection_starts = 0
+
+        def _get_default_layout_from_config(self):
+            return (1, 1)
+
+        def _local_thumbnail_workflow(self):
+            return True
+
+        def _load_server_thumbnails(self):
+            self.thumbnail_projection_starts += 1
+
+        def apply_multi_viewer(self, *_args, **_kwargs):
+            return None
+
+        def _show_viewer_loading_all(self):
+            return None
+
+    pipeline = _LocalPipeline()
+    monkeypatch.setattr(
+        _pw_pipeline,
+        "check_and_get_thumbnails",
+        lambda *_args: ["cached-thumbnail.png"],
+    )
+
+    async def _run():
+        pipeline.pipeline_manager(CallerTypes.IMPORT)
+
+    asyncio.run(_run())
+
+    assert pipeline.thumbnail_projection_starts == 1
 
 
 def test_fast_drop_parser_rejects_collision_storage_keys_instead_of_coercing_them():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import importlib.util
 from pathlib import Path
 from typing import Iterable
 
@@ -35,18 +36,24 @@ INVENTORY_DIR = BUILDER_DIR / "inventory"
 # Keep this the single source of truth; see AIPacs.spec, AIPacs_nuitka.spec.py
 # and tools/build/build_lite_viewer.py for the other consumers.
 #
-# import name -> distribution name
+# Import/package name -> distribution name. JPEG baseline, extended, lossless
+# and JPEG-LS deliberately use Apache-2.0 GDCM plus MIT pyjpegls instead of the
+# GPL-3.0 pylibjpeg-libjpeg distribution. JPEG 2000 and RLE stay on their
+# permissively licensed pylibjpeg plugins.
 CODEC_PACKAGES: dict[str, str] = {
     "pylibjpeg": "pylibjpeg",
-    "libjpeg": "pylibjpeg-libjpeg",     # JPEG baseline/extended/lossless + JPEG-LS
     "openjpeg": "pylibjpeg-openjpeg",   # JPEG 2000 (lossless + lossy) and HTJ2K
     "rle": "pylibjpeg-rle",             # RLE Lossless
+    "jpeg_ls": "pyjpegls",              # JPEG-LS through pydicom's native handler
+    "_gdcm": "python-gdcm",             # JPEG baseline/extended/lossless
 }
+
+CODEC_EXTRA_HIDDEN_IMPORTS = ("gdcm", "_gdcm.gdcmswig")
 
 
 def codec_hiddenimports() -> list[str]:
     """Import names of the compressed-DICOM codec plugins."""
-    return list(CODEC_PACKAGES)
+    return [*CODEC_PACKAGES, *CODEC_EXTRA_HIDDEN_IMPORTS]
 
 
 def codec_metadata_datas(copy_metadata) -> list[tuple[str, str]]:
@@ -65,6 +72,19 @@ def codec_metadata_datas(copy_metadata) -> list[tuple[str, str]]:
         except Exception as exc:  # not installed in this build environment
             print(f"[spec][codecs] metadata skipped for {dist_name} ({import_name}): {exc}")
     return out
+
+
+def codec_resource_datas() -> list[tuple[str, str]]:
+    """Return runtime data required by native DICOM codec wrappers."""
+    try:
+        spec = importlib.util.find_spec("_gdcm")
+    except (ImportError, AttributeError, ValueError):
+        return []
+    locations = list(spec.submodule_search_locations or []) if spec else []
+    if not locations:
+        return []
+    xml_dir = Path(locations[0]) / "XML"
+    return [(str(xml_dir), "_gdcm/XML")] if xml_dir.is_dir() else []
 
 
 def _load_json(name: str) -> dict:
@@ -299,7 +319,10 @@ def common_app_datas() -> list[tuple[str, str]]:
 
 def app_a_datas() -> list[tuple[str, str]]:
     # App A includes common UI and Slicer-launch support resources.
-    return common_app_datas()
+    # The separate Slicer process needs an actual script, not a frozen import.
+    return dedupe_datas(common_app_datas() + collect_tree_datas(
+        "modules/ai_imaging/eagle_eye_brain/slicer_worker.py"
+    ))
 
 
 def app_b_datas() -> list[tuple[str, str]]:

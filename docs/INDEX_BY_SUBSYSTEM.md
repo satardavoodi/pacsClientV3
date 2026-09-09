@@ -1,24 +1,78 @@
 # AI-PACS Documentation — Index by Subsystem
 
+## Printing / Filming maintenance (2026-09-09)
+
+Runtime: `modules/printing`; launcher: `home_panel/_hp_modules.py::open_printing_module`.
+Contract: [`modules/PRINTING_WORKFLOW_MAINTENANCE_2026-09-09.md`](modules/PRINTING_WORKFLOW_MAINTENANCE_2026-09-09.md).
+Guards: `tests/code/printing/test_printing_workflow.py` and `test_printer_transport.py`.
+Each preview belongs to one study; both printers consume the composed current page. DICOM network work runs outside the GUI thread. Physical output and complete-document printing are separate contracts.
+
+
+## Eagle Eye spatial input pilot (2026-09-08)
+
+[Spatial packet experiment](reports/EAGLE_EYE_SPATIAL_PACKET_EXPERIMENT_2026-09-08.md):
+complete native groups, physical spacing, bidirectional plane locators and a
+matched Gemini evaluation. Independent benchmark; not a live runtime default.
+
+
+## Eagle Eye Gemini company route (2026-09-08)
+
+[Current Gemini profile](reports/EAGLE_EYE_GEMINI_COMPANY_ROUTE_2026-09-08.md):
+live GapGPT availability, synthetic capability limits, all-stage Pro defaults,
+inherited sampling, runtime overrides and validation boundaries.
+
+
 When you're about to touch a subsystem, this index tells you which docs to read first. Most subsystems have an "as-built" plan that codifies invariants; the catalog row tells you which guard test enforces them at runtime.
 
 ---
 
 ## Master indexes
 
+- **[Eagle Eye Brain UI and maintenance](modules/EAGLE_EYE_BRAIN_UI_AND_MAINTENANCE.md)** — result card, anatomical PDF, background export and client acceptance boundaries.
+
+- **[Eagle Eye development contract](modules/EAGLE_EYE_DEVELOPMENT_CONTRACT.md)** — common ownership and installer rules for Brain, Lumbar and future anatomy features.
+
+- **[Eagle Eye Brain delivery](modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md)** — Brain/Lumbar ownership, portable assets, edition packaging and customer acceptance.
+- **[Eagle Eye Brain active reference](modules/EAGLE_EYE_BRAIN_REFERENCE_SETUP.md)** — volBrain-only policy, scientific source, interval calculation and retired adapters.
+
+- **[Release and build documentation hub](release-and-build/README.md)** — route to Git publication, the six-installer coordinator, backend details, output ownership, and release evidence.
+- **[Canonical build and installer runbook](../BUILD.md)** — single human/AI entry point, safe fast lanes, official six-file isolated command, exact output folders, expected sizes, content checks, recovery constraints, and release blockers.
+- **[3.6.5 local build matrix](releases/VERSION_3.6.5_BUILD.md)** — isolated current-source Python/Nuitka candidates, Standard/Eagle Eye/ARM-emulated editions, artifact identity and remaining installation gates.
 - **[Pre-development system map (2026-08-27)](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** — verified startup, subsystem connections, data/network boundaries, packaging flow, skills, MCPs, and the pre-code gate
 - **[Codex repository readiness (2026-08-27)](reports/CODEX_REPOSITORY_READINESS_2026-08-27.md)** — verified environment, test baseline, security blockers, and development order
 - **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** — every stage report linked
 - **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** — every fix + its guard test (56 rows)
 - **[Test inventory](../tests/INDEX_BY_GUARD.md)** — every guard test and what it protects
 - **[For future agents](for-future-agents/README.md)** — onboarding for AI agents working in this repo
+- **[Cloud decision ledger](for-future-agents/CLOUD_DECISION_LEDGER.md)** — PHI-safe, reconciled Cloud/recovery rationale with current-code status and superseded-material rules
+- **[UI stall evidence and guarded fixes (2026-09-02)](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md)** — corrected log interpretation, guarded fixes, Rev 3 partial live verification, unresolved server-row scan and visit-persistence defects, download-completion evidence gate, and separate MPR workstream
 - **[Open findings (2026-08-16)](reports/OPEN_FINDINGS_2026-08-16.md)** — diagnosed but deliberately NOT fixed. §1 (pixel cache) has since been resolved; **§2, the ~4-5.5 s MPR activation stall, is still open** and is the app's largest remaining freeze. Read it before touching MPR activation.
 
 ---
 
 ## Subsystems
 
+MedGemma diagnosis input investigation (no runtime change):
+[`MEDGEMMA_GROUPED_DIAGNOSIS_DESIGN_2026-09-07.md`](reports/MEDGEMMA_GROUPED_DIAGNOSIS_DESIGN_2026-09-07.md).
+Separate-image transport, immutable parent groups versus anatomical eligibility,
+task-specific axial/sagittal packets, compact prompts and controlled evaluation.
+
+Eagle Eye side and neural-coverage contract:
+[`EAGLE_EYE_NEURAL_COVERAGE_2026-09-05.md`](reports/EAGLE_EYE_NEURAL_COVERAGE_2026-09-05.md).
+Canonical axial patient-side instructions, DICOM sagittal side correction, mandatory
+seven-compartment per-level audit, abnormal-to-diagnosis handoff, and actual-card headers.
+
 ### EchoMind (reporting prompts, region gating, chat metadata)
+
+Eagle Eye extended-coverage fix:
+[`EAGLE_EYE_EXTENDED_COVERAGE_2026-09-05.md`](reports/EAGLE_EYE_EXTENDED_COVERAGE_2026-09-05.md).
+Anatomy mapping can retain extra levels as explicit context without shifting lumbar
+labels or extending lumbar diagnostic claims; canonical MRI architecture is updated.
+
+Provider-routing incident and current contract:
+[`ECHOMIND_EXPLICIT_PROVIDER_SELECTION_2026-09-05.md`](reports/ECHOMIND_EXPLICIT_PROVIDER_SELECTION_2026-09-05.md).
+Company is the default; direct mode requires an explicit saved choice, key, endpoint,
+and explicit Eagle Eye model choices. Guard: `test_explicit_provider_selection.py`.
 
 | Doc | What's in it |
 |---|---|
@@ -64,8 +118,11 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 | [`AUDIT_STAGE_5_2026-05-28.md`](plans/architecture/AUDIT_STAGE_5_2026-05-28.md) | Read-only `ViewerAdapter` live verification. |
 | [`AUDIT_STAGE_6_2026-05-28.md`](plans/architecture/AUDIT_STAGE_6_2026-05-28.md) | Multi-study live workflow audit (239 series across 5+ studies). |
 | [`pipelines/thumbnail-pipeline.md`](pipelines/thumbnail-pipeline.md) | THUMBNAIL_PATH conventions, memory-first vs disk fallback. |
+| [`reports/THUMBNAIL_HEAP_CRASH_AND_WINDOWS_SPAWN_FLASH_2026-09-01.md`](reports/THUMBNAIL_HEAP_CRASH_AND_WINDOWS_SPAWN_FLASH_2026-09-01.md) | Thumbnail-card native crash hardening, the Windows venv spawn/WinError-5 download correction, installed-build no-override policy, and the separate FAST Preview -> Complete ownership rule: never detach a visible embedded viewer before deferred deletion. |
 | **[`reports/IMPORT_DUPLICATE_SERIES_NUMBER_IDENTITY_2026-08-30.md`](reports/IMPORT_DUPLICATE_SERIES_NUMBER_IDENTITY_2026-08-30.md)** | **Read before changing Import/Local series naming or displayability.** `SeriesInstanceUID` identity, raw `SeriesNumber`, collision-aware `folder_key`, digit-only `display_key`, exact `SeriesRef.storage_key`, pixel-object vs frame counts, mixed colour metadata recovery, multi-object cine expansion, and live validation. |
+| **[`reports/LARGE_IMPORT_QT_REENTRANCY_CRASH_2026-09-05.md`](reports/LARGE_IMPORT_QT_REENTRANCY_CRASH_2026-09-05.md)** | Large Local import native-crash evidence and guarded fix: keep per-file DICOM/SQLite registration on the managed worker boundary, keep viewport-tree construction atomic, and preserve DICOM bytes, codec/counting rules, identity, storage paths, and installed-build parity. |
 | **[`viewer/DICOM_FORMAT_COMPATIBILITY_OPERATING_GUIDE_2026-08-30.md`](viewer/DICOM_FORMAT_COMPATIBILITY_OPERATING_GUIDE_2026-08-30.md)** | **Read before diagnosing a new DICOM/IOD/codec/multiframe/waveform/ophthalmic compatibility case.** Separates preservation, classification, decoding, rendering, package parity, interoperability, and clinical verification. |
+| **[`reports/ENHANCED_MR_RAW_DATA_MULTIFRAME_2026-09-01.md`](reports/ENHANCED_MR_RAW_DATA_MULTIFRAME_2026-09-01.md)** | Enhanced MR series mixed with same-Series-UID Raw Data objects: order-independent pixel-payload classification, full frame expansion, and truthful exclusion of metadata-only objects from the Fast viewport while preserving them on disk. |
 | **[`reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md`](reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md)** | **Read before touching reference lines.** Two modes ship: single-source (default — the ACTIVE viewport is the source and stays clean) and bidirectional all-pairs (`AIPACS_REFERENCE_LINES_ALL_PAIRS=1`). Explains why the source overlay must be *cleared*, not skipped. |
 | **[`reports/TEXT_ANNOTATION_INPUT_2026-08-18.md`](reports/TEXT_ANNOTATION_INPUT_2026-08-18.md)** | **Read before touching the annotation tools.** Why `ToolController` is Qt-free and how the Qt layer injects behaviour into it (`_pixel_data_fn`, `_pixel_spacing_fn`, `_text_prompt_fn`); why a tool press returning `False` is the "place nothing, stay armed" contract; why text annotations are single-line. |
 
@@ -124,6 +181,11 @@ reads the cache and **never computes**. Storage cleanup runs on a `QThread`
 behind a busy dialog (`storage_cleanup_panel._CleanupWorker`). And
 `count_subfolders_with_dicom` uses an early-exit `os.scandir` walk instead of
 `Path.rglob('*')` — measured **682.5 ms → 1.45 ms per study** cold, same verdict.
+The 2026-09-02 live follow-up found the initial Server Search row path still
+calling that faster scanner synchronously. Its derived status fields were unused,
+so the residual call was removed; the existing generation-guarded Status worker
+remains the sole initial-row disk-state owner. Explicit Local/Import state is
+forwarded unchanged.
 Prefer the two worker patterns already in `patient_table_widget`
 (`statusFlagsReady`) and `storage_cleanup_panel` (`_FolderUsageWorker`) over a
 new mechanism. See
@@ -174,7 +236,7 @@ press handler returns `True` only when it actually placed or changed something;
 **Guard tests:**
 - `tests/code/viewer/test_ybr_color_decode.py` (23) — a mislabelled `YBR_FULL_422` frame is corrected before decode and converted to RGB after it; genuinely subsampled, compressed, 16-bit, RGB and monochrome data are all left byte-identical
 - `tests/code/ui_services/test_list_stream_backpressure.py` (17) — the list streamer waits for the path resolver instead of touching the disk, loses no rows, respects a per-batch time budget, and still makes progress if the resolver dies
-- `tests/code/ui_services/test_gui_thread_disk_paths.py` (27) — the download-badge refresh dispatches instead of walking, the DICOM scan never calls `rglob` yet returns the same verdict, and storage cleanup runs on a QThread
+- `tests/code/ui_services/test_gui_thread_disk_paths.py` (29) — initial search rows never probe disk before paint, explicit caller state survives unchanged, download-badge refresh dispatches instead of walking, the DICOM scan never calls `rglob` yet returns the same verdict, and storage cleanup runs on a QThread
 - `tests/code/viewer/test_text_annotation_input.py` (25) — the Text tool asks what to write, cancel places nothing and leaves the tool armed, a bare controller keeps the legacy placeholder, and `controller.py` stays Qt-free
 - `tests/code/viewer/test_reference_line_active_viewport.py` (17) — the active viewport stays clean, the clean one follows the selection, and the env flag restores bidirectional
 - `tests/code/viewer/test_reference_lines_all_pairs.py` — the all-pairs engine itself (still fully covered; the flag default is pinned in both directions)
@@ -242,6 +304,7 @@ press handler returns `True` only when it actually placed or changed something;
 | Doc | What's in it |
 |---|---|
 | **[`reports/FLOW_CVI42_55241_2026-08-24.md`](reports/FLOW_CVI42_55241_2026-08-24.md)** | Patient 55241 (SIEMENS Amira, syngo MR E11), flow series **45–56** — not 44–49. cvi42 will not quantify flow on our export. **Cause NOT found.** Everything measurable is correct: CSA blocks intact with `FlowVenc=150`, `ImageType` P/MAG markers, phase pixels 0–4094 rescaling to ±4092, MAG/P sharing geometry and trigger times, 1,570 files with 1,570 distinct SOP UIDs, DICOMDIR fully resolving. Includes a **retraction** of the DICOMDIR hypothesis. |
+| **[`reports/FLOW_CVI42_SAME_STUDY_VM_COLLAPSE_2026-09-01.md`](reports/FLOW_CVI42_SAME_STUDY_VM_COLLAPSE_2026-09-01.md)** | **Same-study paired proof and guarded fix.** Server-served `ImageType` was a Python-list string with VM=1 in all 1,700 instances; 360/360 flow pixels and Siemens CSA blocks were intact. A single standard-VM normalization authority now protects socket ingestion and DICOMDIR/media export while preserving source files, UIDs, pixels, private elements, and transfer syntax. cvi42 live re-import remains pending. |
 
 **Invariants and facts established:**
 - Our CD export with anonymisation OFF and format "Original" is **pure passthrough** (`DicomPreparer.needs_processing` is False) — exported files are byte-identical to stored ones. Do not look for export-stage damage in that configuration.
@@ -256,14 +319,16 @@ press handler returns `True` only when it actually placed or changed something;
 
 ### Loading overlay / viewport spinner — teardown races
 
-**The recurring lesson: `QApplication.processEvents()` is not “paint now”, it is “run arbitrary queued work now”.** Both crashes in this area came from calling it inside a series switch.
+**The recurring lesson: `QApplication.processEvents()` is not “paint now”, it is “run arbitrary queued work now”.** The crashes in this area came from calling it inside a series switch or a partially constructed viewport layout.
 
 | Doc | What's in it |
 |---|---|
 | **[`reports/OVERLAY_REENTRANCY_CRASH_2026-08-26.md`](reports/OVERLAY_REENTRANCY_CRASH_2026-08-26.md)** | pid 217556 died at 13:40:25 with a native access violation, no `[SHUTDOWN-INITIATOR]`, no OS-level event. `show_overlay`'s double `processEvents()` re-entered the event loop mid-switch and started a **second series switch on top of the first**; the nested overlay was built against a viewport the outer switch was tearing down. app.log shows three `switch_start` for series 7 in one second and one `phase_summary`. Trigger: stack-scrolling during a switch. |
+| **[`reports/LARGE_IMPORT_QT_REENTRANCY_CRASH_2026-09-05.md`](reports/LARGE_IMPORT_QT_REENTRANCY_CRASH_2026-09-05.md)** | A 2,890-object Local import blocked the GUI for 37.6 seconds during registration, then `apply_multi_viewer()` pumped queued work while its viewport tree was partial; Windows recorded a matching `Qt6Core.dll` `0xc0000005`. Registration now uses the existing worker boundary and layout construction is atomic. |
 
 **Invariants:**
 - **Never call `processEvents()` to force a paint.** `widget.repaint()` paints synchronously without running the event loop. Kill switch `AIPACS_OVERLAY_SYNC_PAINT=0` keeps the old path for comparison only.
+- **Never call `processEvents()` between viewport creations.** QWidget/VTK construction stays on the GUI thread, but the layout mutation must remain atomic; optimize expensive preparation before construction.
 - **`switch_series` must never run re-entrantly** on one container. The flag clears in a `finally` that covers the early `return False` — a stuck flag turns a crash into a permanently dead pane. `AIPACS_SWITCH_REENTRANCY_GUARD=0`.
 - The same-series no-op **cannot** be relied on to catch a duplicate switch: the first switch of the 08-26 crash carried an **empty `series_uid`**, so the identity comparison did not match.
 - **Anything that touches an anchor/overlay across a teardown must check liveness first**, and `shiboken6` being unimportable must degrade to **alive**, never to dead. Guards exist at three sites now: `hide_overlay._start_fade` (2026-06-05), `_hp_layout._hide/_show_loading_overlay` (2026-06-15), `AiPacsLoadingOverlay.__init__` (2026-08-26). **Fixing one site does not fix the race** — that is the whole history of this file.
@@ -271,6 +336,7 @@ press handler returns `True` only when it actually placed or changed something;
 
 **Guard tests:**
 - `tests/code/system/test_overlay_reentrancy_crash.py` (13) — the cause, both defence-in-depth guards, and the prior-art anchor
+- `tests/code/system/test_import_registration_layout_crash_guard.py` (4) — off-thread import registration, preserved index/bytes/identity, and atomic layout construction
 - `tests/code/test_loading_overlay_liveness_guard.py` — the 2026-06-05/06-15 fade guards
 
 ---
@@ -287,6 +353,7 @@ press handler returns `True` only when it actually placed or changed something;
 - `test_probe_uses_raw_send_request_not_helper` — GetStudyInfo 6.8 s stall guard
 - `test_probe_lock_is_module_level`, `test_probe_lock_is_used_in_get_series_info_from_server`
 - `test_prefetch_uses_threadpool_executor`, `test_prefetch_has_no_sequential_loop`, `test_parallel_prefetch_is_faster_than_sequential`
+- `tests/code/download_manager/test_overall_progress_accumulator.py` — study-level Overall Progress stays monotonic across series/IPC delay, uses SeriesInstanceUID for duplicate numbers, accepts the downloader's authoritative one-time study total when the queue payload count is unknown/stale, and accounts complete-on-disk series without GUI-thread I/O or viewer fan-out.
 
 ---
 
@@ -390,31 +457,64 @@ press handler returns `True` only when it actually placed or changed something;
 
 ### Eagle Eye / AI module
 
+Brain volumetry: [implementation and qualification status](modules/EAGLE_EYE_BRAIN_VOLUMETRY.md)
+documents the 3D T1w/FLAIR tool, local SynthSeg/Slicer adapter, separate volume
+estimators, synthetic verification and remaining model/normative/clinical gates.
+
+Build variants and cached AI assets:
+[`builder/docs/DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md`](../builder/docs/DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md)
+defines Eagle Eye, compact Standard and ARM compatibility outputs, offline wheels,
+mandatory weights, measured size baseline and remaining release gates.
+
 | Doc | What's in it |
 |---|---|
+| [`pipelines/eagle-eye-mri.md`](pipelines/eagle-eye-mri.md) | **Official primary Eagle Eye MRI architecture:** geometry → anatomical localization → task-specific normal/abnormal screening cards → diagnostic cards → pathology classification; stable cross-stage contracts, fail-closed policy, central card registry, five lumbar screening templates, five lumbar diagnosis templates, and the Gate 1/Gate 1-to-2 rule that physical spacing is the primary grouping cue, labels secondary, and color tertiary. Start here for all MRI Eagle Eye work. |
+| [`modules/ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md`](modules/ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md) | OPT-56 hidden concurrent Slicer startup, same-process viewer reuse, isolated headless threshold/offline model jobs, authenticated API, lifecycle and artifact policies, synthetic timings, deleted-button launch and invisible-modal repairs, and remaining acceptance. |
+| [`modules/ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md`](modules/ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md) | Implemented offline TotalSegmentator MR vertebral adapter, separate portable CPU environment, combined Advanced MPR installer staging, Python control surface, synthetic verification and release/clinical limitations. |
+| [`reports/OFFLINE_LUMBAR_IMPLEMENTATION_VERIFICATION_2026-08-31.md`](reports/OFFLINE_LUMBAR_IMPLEMENTATION_VERIFICATION_2026-08-31.md) | Real portable model and Slicer smoke test, empty synthetic-model output versus nonempty geometry fixture, installer guards, failed attempts, and outstanding customer/clinical acceptance. |
 | [`AUDIT_STAGE_7_2026-05-28.md`](plans/architecture/AUDIT_STAGE_7_2026-05-28.md) | Three-layer defense map (structural + canonical pywinauto + modality gate). |
 | [`plans/EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md`](plans/EAGLE_EYE_LUMBAR_STAGE1_2026-08-26.md) | Lumbar series resolution, capture protocol, geometry, and reference-line invariants. |
 | [`reports/EAGLE_EYE_SLICER_TOOL_AUGMENTATION_FEASIBILITY_2026-08-31.md`](reports/EAGLE_EYE_SLICER_TOOL_AUGMENTATION_FEASIBILITY_2026-08-31.md) | Research assessment of Slicer/MCP augmentation: current integration limits, MRI anatomy models versus lesion diagnosis, bounded tool architecture, and fixed-versus-adaptive evidence experiments. No runtime implementation or clinical validation. |
 | [`reports/SLICER_RUNTIME_CONTROL_AUDIT_2026-08-31.md`](reports/SLICER_RUNTIME_CONTROL_AUDIT_2026-08-31.md) | Executed control audit of the existing custom Slicer runtime: external loopback commands, synthetic DICOM/NRRD loading, threshold changes, segmentation/NIfTI save/reload, measurement, inventory, Mask Volume setup failure, and proposed LLM function boundary. |
 | [`modules/ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md`](modules/ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md) | Practical control reference: runtime identity, repeatable synthetic probe, load/segment/read/save APIs, geometry, safe named tools, and tested versus proposed MCP behavior. |
 | [`modules/SLICER_EXTENSIONS_INSTALL_AND_CONTROL_GUIDE.md`](modules/SLICER_EXTENSIONS_INSTALL_AND_CONTROL_GUIDE.md) | Extension download/install/control guide: pinned source audit, executed third-party measurements, separate GUI failure, TotalSegmentator/MONAI/MedSAM/Raidionics APIs, model download evidence, dependencies, and qualification sequence. |
-| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md) | As-built multi-stage LLM pipeline, parallel multi-source context, paired near-midline sagittal T2/T1 evidence, global and focal attention contracts, measured live runs, marker-derived patient laterality, same-lesion multiplanar disc morphology, pathology-focus differential adjudication, focused-v2 geometry-aligned DICOM evidence, provider-neutral result metadata, and the patient-free GapGPT capability matrix. |
+| [`plans/EAGLE_EYE_LUMBAR_CURRENT_STATE_2026-09-02.md`](plans/EAGLE_EYE_LUMBAR_CURRENT_STATE_2026-09-02.md) | **Historical 7.7.0 snapshot:** pre-registry anatomy gate, four screening cards, diagnostic-card implementation, measured conclusions, and pending experiment. Superseded for architecture by `pipelines/eagle-eye-mri.md`. |
+| [`plans/EAGLE_EYE_MAMMOGRAPHY_INTELLIGENT_ANALYSIS_MERGE_2026-09-02.md`](plans/EAGLE_EYE_MAMMOGRAPHY_INTELLIGENT_ANALYSIS_MERGE_2026-09-02.md) | Selective review and 3.6.4 port of the collaborator mammography workflow: bounded de-identified evidence, unique stale-path rebinding through an immutable viewer snapshot, worker-thread package/request execution, shared EchoMind/GapGPT authority, physician review, explicit exclusions, safety limits, and release gates. |
+| [`plans/EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE_2026-09-02.md`](plans/EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE_2026-09-02.md) | Historical pipeline 7.7.0 implementation record. Its anatomy-gate, strict identity, fail-closed, and atomic-diagnosis evidence remains valid, but its four-card screening transport is superseded by the canonical five-template registry. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md) | Historical implementation log for pipelines 1.x-7.0, retained for audit and benchmark archaeology. Do not use it as the concise current-state description. |
 | [`plans/EAGLE_EYE_LLM_PROMPT_DRAFT_2026-08-26.md`](plans/EAGLE_EYE_LLM_PROMPT_DRAFT_2026-08-26.md) | Prompt-design history and the sequence/plane evidence rules. |
-| [`plans/EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md`](plans/EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md) | Research and phased proposal: V3 limitations, localization-first screening, independent multiplanar diagnosis through GapGPT, neutral attention, and benchmark repair. Section 16 records OPT-55 axial backfill, opt-in additive bilateral sagittal coverage, scoped root-negation scorer 1.1.0, and offline verification. Full Phase 0 and model experiments remain pending. |
+| [`plans/EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md`](plans/EAGLE_EYE_FOCUSED_V3_MORPHOLOGY_RESEARCH_PLAN_2026-08-31.md) | Research and phased proposal: V3 limitations, localization-first screening, independent multiplanar diagnosis through GapGPT, neutral attention, and benchmark repair. Section 16 records OPT-55 axial backfill, bilateral sagittal coverage, level-conflict review, padding-only headroom, scorer 1.2.0, and offline verification. Full Phase 0 and controlled model experiments remain pending. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#36-source-grounded-correlated-screening-and-focused-v4-2026-09-01`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#36-source-grounded-correlated-screening-and-focused-v4-2026-09-01) | Focused V4 implementation: diagnosis-free raw-DICOM screening atlas, immutable tile identities, local LPS correlation, lesion-centred GPT evidence, independent fallbacks, and validation limits. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#38-historical-v4-runtime-and-legacy-retirement-2026-09-01`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#38-historical-v4-runtime-and-legacy-retirement-2026-09-01) | Historical pipeline 5.4 evidence policy: how V4 became canonical and how older composers were confined to an explicit engineering rollback gate. Section 41 records the current V5 default. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#39-submillimetric-sagittal-screening-pages-and-sampling-audit-2026-09-01`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#39-submillimetric-sagittal-screening-pages-and-sampling-audit-2026-09-01) | Pipeline 5.4.0 screening evidence: larger bounded sagittal tiles, role-specific paging, exact effective sampling and request-budget audit, fallback behavior, and clinical validation limits. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#40-salience-aware-screening-and-dominant-focus-retention-2026-09-01`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#40-salience-aware-screening-and-dominant-focus-retention-2026-09-01) | Pipeline 5.5.0 screening contract: atlas-specific instructions, diagnosis-free visual salience and within-study priority, deterministic marked/dominant focus retention, explicit capacity review, and the pending frozen-atlas temperature experiment. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#41-self-contained-diagnostic-level-cards-2026-09-01`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#41-self-contained-diagnostic-level-cards-2026-09-01) | Pipeline 5.6.0 / focused V5: one card per selected level with targeted sagittal T2, matched sagittal T1 and up to four same-slab axial T2 frames; global upload identity, authoritative attention/card bindings, cross-card citation review, and diagnosis-neutral MRI context. |
+| [`plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#42-fixed-anatomical-reading-template-for-each-diagnostic-level-card-2026-09-01`](plans/EAGLE_EYE_LLM_STAGE2_2026-08-26.md#42-fixed-anatomical-reading-template-for-each-diagnostic-level-card-2026-09-01) | Pipeline 5.7.0: Gemini proposes inventory-bound tiles for a fixed sagittal T2/T1 plus axial T2 3 x 3 level card; local role/slab validation, explicit fallbacks, shared diagnostic reading order, and separate axial-zone versus craniocaudal nomenclature. |
 | [`plans/LEGION_CONSULT_FOUNDATION_2026-08-28.md`](plans/LEGION_CONSULT_FOUNDATION_2026-08-28.md) | MRI-only function picker, mandatory source/T1/T2 selection, optional/all-series cost control, Fast ROI geometry, local request schema, and the capture/model boundary. |
 
 **Guard tests:**
+- `tests/code/ai_imaging/test_eagle_eye_anatomy_gate.py` (diagnosis-free anatomy mapper, seeded-ID exclusion, immutable neutral sagittal/axial groups, model-owned semantic assignments, physical-order audit without semantic relabelling, exact five-card output, task-specific physically separated Gate 1-to-2 blocks, saved manifest, and one-card screening boundary)
+- `tests/code/ai_imaging/test_eagle_eye_canal_screening.py` (central-canal caliber/CSF decision audit, same-group evidence, minor-impression and lateral-recess separation, bounded same-study MR-myelography overview context, and identity/resource rejection)
+- `tests/code/ai_imaging/test_eagle_eye_card_template_registry.py` (immutable cross-MRI template identity, five lumbar screening and five diagnosis cards, task/sequence boundaries, fail-closed lookup, and runtime registry projection)
+- `tests/code/ai_imaging/test_eagle_eye_atomic_structure_pipeline.py` (five task-specific screening requests, independent disc/canal/foramen/marrow/posterior boundaries, compact JSON, bounded 24000/12000 response allowances, truncation rejection, filtered-atlas identity, registry-derived diagnosis profiles, no retired Gemini template requirement, one-card diagnostic contract, strict response identity, and deterministic merge)
+- `tests/code/ai_imaging/test_eagle_eye_stage_audit.py` (session-contained path enforcement, anatomical-map summary, exact grouped-screening image inventory, truncation visibility, diagnostic-card identity, frame metadata, and diagnostic-request image inventory)
 - `tests/code/ai_imaging/test_eagle_eye_llm_analysis.py` (package, model routing, parallel multi-source context fusion, paired sagittal T2/T1 context selection, focal-attention normalization/forwarding, patient-laterality and same-lesion multiplanar morphology contracts, inventory-scope guards, DICOM document rendering, grading and disc-hydration contracts, stage sampling, persistence, and transport parity)
+- `tests/code/ai_imaging/test_eagle_eye_grading_contract.py` (catalog 2.0.0 Bartynski criteria, separately versioned root effects, diagnostic-only rubric in pipeline 5.1.0; stage-two document sections 32-34)
+- `tests/code/ai_imaging/test_eagle_eye_screening_attention.py` (localization-only screening, diagnosis-free canonical handoff, salience-aware dominant-focus retention, capacity-review warnings, duplicate and contradiction resolution, normal exclusion, compact public context, source-bound cross-plane frame/box validation, malformed input, legacy-anatomy adaptation, separate same-level compartment identities and anatomy-first diagnostic contract; stage-two document sections 33-34, 37 and 40)
+- `tests/code/ai_imaging/test_eagle_eye_frozen_input.py` (offline saved-input identity, byte/order/prompt preservation, path/size limits, incomplete writes and tamper detection; snapshot preparation, not model replay)
 - `tests/code/ai_imaging/test_eagle_eye_gapgpt_capability.py` (synthetic capability matrix, strict-schema evaluation, redaction, and GapGPT authority reuse)
 - `tests/code/ai_imaging/test_eagle_eye_focused_v2.py` (bounded focus planning, per-slice multi-slab geometry, capture-frame authority under reversed source order, same-slab boundary backfill without moving sagittal anchors in V2/V3, manifest coverage, quality/budget gates, private provenance, verification-only dispatch, and immutable-layout fallback)
 - `tests/code/ai_imaging/test_eagle_eye_focused_v3.py` (physical crop geometry, retained source resolution, render-profile separation, sampling provenance, unchanged slice selection between V2/V3, and deliberate opt-in mode)
 - `tests/code/ai_imaging/test_eagle_eye_parasagittal.py` (opt-in bilateral LPS supplements, exact V3 baseline retention, explicit source numbering/offsets, partial coverage, all budget caps, and verification-only dispatch/failure)
+- `tests/code/ai_imaging/test_eagle_eye_axial_locator.py` (spare-cell axial-plane locators, shared DICOM reference and source-affine validation, oblique/reversed/anisotropic geometry, finite FOV clipping, missing/partial links and exact clean-pixel retention; stage-two section 35)
+- `tests/code/ai_imaging/test_eagle_eye_level_identity.py` (stable capture-range comparison, uniform shifts despite monotonicity, measured-slab conflicts, invalid/incomplete maps, persisted review-required reports/UI, and score diagnostics without automatic relabeling)
 - `tests/code/ai_imaging/test_eagle_eye_bench_scoring.py` (prose parsing, attribute-scoped root negation, contact-versus-compression scoring, and scorer version provenance; full Phase 0 repair remains pending)
 - `tests/code/ai_imaging/test_eagle_eye_lumbar_pipeline.py` (protocol and capture behavior)
 - `tests/code/ai_imaging/test_eagle_eye_protocol_resolution.py` (series identity and readiness)
-- `tests/code/ai_imaging/test_eagle_eye_ui_boundary.py` (feature coordinator ownership, mapping handoff, provider-neutral result metadata, and teardown)
+- `tests/code/ai_imaging/test_eagle_eye_ui_boundary.py` (feature coordinator ownership, mapping handoff, provider-neutral result metadata, reusable stage-image gallery entry, and teardown)
 - `tests/code/ai_imaging/test_legion_consult_foundation.py` (pure series policy, ROI geometry, and local persistence contract)
 - `tests/code/ai_imaging/test_legion_consult_ui_contract.py` (function picker, selection dialog, source identity, and toolbar routing)
+- `tests/code/ai_imaging/test_mammography_intelligent_analysis.py` (MG/study-bound de-identified package, unique stale-path rebinding, ambiguous-identity rejection, immutable viewer snapshot, bounded CSV/images/findings, temporary cleanup, worker-thread execution, dedicated-controller boundary, and direct MG toolbar routing)
 - `tests/code/system/test_2026_05_27_regression_guards.py::test_mg_mirror_is_deferred_via_qtimer` (structural)
 - `tests/gui/pywinauto/test_eagle_eye_dragdrop.py` (canonical Win32 OLE drag-drop)
 
@@ -502,8 +602,12 @@ press handler returns `True` only when it actually placed or changed something;
 
 ---
 
-### Version 3.6.4 publication
+### Release publication and build operations
 
+- [Canonical versioned Git release workflow](../RELEASE.md)
+- [Canonical six-installer build workflow](../BUILD.md)
+- [Version 3.6.5 release gate and current blockers](releases/VERSION_3.6.5_RELEASE.md)
+- [Version 3.6.5 build evidence](releases/VERSION_3.6.5_BUILD.md)
 - [Release notes](releases/VERSION_3.6.4_RELEASE.md)
 - [2026-08-31 source follow-up, verification, and exclusions](releases/VERSION_3.6.4_FOLLOWUP_2026-08-31.md)
 - [2026-08-31 source-publication safety record](../deploy-record-workstation-2026-08-31.md)
@@ -515,3 +619,21 @@ press handler returns `True` only when it actually placed or changed something;
 | **[`plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md`](plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md)** | The full design — goals, taxonomy, test discipline, regression-catalog rules. |
 | [`tests/QUICKSTART.md`](../tests/QUICKSTART.md) | 5-minute onboarding — how to run, where to add tests, the hard rules. |
 | [`AUDIT_2026-05-28_OVERVIEW.md`](AUDIT_2026-05-28_OVERVIEW.md) | What the audit produced and the cumulative numbers. |
+
+- Brain published volBrain offline interval default and source rights: `docs/modules/EAGLE_EYE_BRAIN_REFERENCE_SETUP.md`.
+
+
+EchoMind STT quality selection (2026-09-07): see `reports/ECHOMIND_STT_SECURITY_REVIEW_2026-09-07.md` and `tests/code/echomind/test_transcribe_retry.py`.
+
+## Eagle Eye paired spatial cards (2026-09-08)
+
+The [spatial experiment report](reports/EAGLE_EYE_SPATIAL_PACKET_EXPERIMENT_2026-09-08.md)
+now includes the visual handoff correction: one-line mini-locator next to clean,
+pre-enlarged sagittal and matching axial panels, with complete native groups and
+separate layout-only validation. The earlier diagnostic trial used the old layout.
+
+Printing transport audit (2026-09-09): [DICOM and Windows print fidelity, protocol, settings, and device verification gaps](modules/PRINT_TRANSPORT_AUDIT_2026-09-09.md). Read-only runtime audit with synthetic probes; no production fixes in this pass.
+
+Printing audit correction: `docs/modules/PRINT_TRANSPORT_AUDIT_2026-09-09.md` includes the authorized fidelity/transport follow-up, 89-test validation, and remaining device/profile limitations.
+
+Printing scout/layout review: [shared merged-cell design, paper-aware geometry, MR brain/lumbar preset scope and reference-line identity gaps](modules/SCOUT_LAYOUT_REVIEW_2026-09-09.md). Investigation only; implementation is not yet applied.

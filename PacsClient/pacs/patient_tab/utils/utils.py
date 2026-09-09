@@ -946,14 +946,17 @@ def count_subfolders_with_dicom(folder_path: str | Path) -> int:
     """
     تعداد زیرپوشه‌های مستقیمِ folder_path که حداقل یک فایل DICOM (.dcm/.dicom) دارند.
 
-    2026-08-22: this is called PER ROW while the patient table is built from a
+    2026-08-22: this was called PER ROW while the patient table was built from a
     server search (``add_data2patient_list_table`` -> ``get_study_download_status``),
     on the GUI thread. MEASURED on this machine over the local study tree, cold:
     the old ``rglob('*')`` implementation cost **682.5 ms per study**; the
     scandir walk below costs **1.45 ms** — a 470x reduction, with **0 verdict
     mismatches** across every local study
     (``tools/analysis/oneoff/bench_count_subfolders_2026_08_22.py``). That per-row
-    cost is what produced the 12-14 s search stalls of 2026-08-22 15:36.
+    cost is what produced the 12-14 s search stalls of 2026-08-22 15:36. The
+    residual call was removed from initial row construction on 2026-09-02 after
+    live traces showed that even the faster scan remained blocking on slow
+    storage; this helper remains the non-UI legacy/counting implementation.
     ``AIPACS_DICOM_SCAN_FAST=0`` restores the original walk.
     """
     root = Path(folder_path)

@@ -5,7 +5,7 @@ import os
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
                             QSize, Qt)
-from PySide6.QtGui import (QFont, QIcon, QPixmap, QCursor, QColor, QPainter, QPen)
+from PySide6.QtGui import (QFont, QIcon, QPixmap, QCursor, QColor, QPainter, QPen, QPalette)
 from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QProgressBar,
                                QPushButton, QScrollArea, QSizePolicy, QSpacerItem,
@@ -56,8 +56,6 @@ class ControlPanelInterface(QMainWindow):
         self.setContentsMargins(0, 0, 0, 0)
         if self.centralWidget() is not None:
             self.centralWidget().setContentsMargins(0, 0, 0, 0)
-
-        self.setStyleSheet("QMainWindow { border: none; }")
 
         # NOTE: init_database() + migrate_fix_null_study_paths() are called
         # once in MainWindowWidget.__init__ (the owner). Removed from here
@@ -924,7 +922,15 @@ class ControlPanelWindow(object):
         except Exception:
             pass
 
-        self.MainWindow.setStyleSheet(f"QMainWindow {{ background: {t['window_bg']}; border: none; }}")
+        # A root QMainWindow stylesheet applied after the complete child tree is
+        # built forces Qt to unpolish/repolish every descendant. Three measured
+        # source sessions spent ~1.45-2.49 s here. A window palette paints the
+        # identical background without cascading a style recalculation; child
+        # widgets retain their explicit theme styles below.
+        window_palette = self.MainWindow.palette()
+        window_palette.setColor(QPalette.Window, QColor(t['window_bg']))
+        self.MainWindow.setPalette(window_palette)
+        self.MainWindow.setAutoFillBackground(True)
         self.leftMenuContainer.setStyleSheet(
             f"background-color: {t['menu_bg']}; border-radius: 10px; margin: 3px;"
         )

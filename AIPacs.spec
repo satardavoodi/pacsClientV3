@@ -13,20 +13,29 @@ block_cipher = None
 datas = []
 
 # Compressed-DICOM codec plugin discovery (2026-06-06): pylibjpeg locates its
-# decoder plugins (libjpeg/openjpeg/rle) through entry points stored in the
+# decoder plugins (openjpeg/rle) through entry points stored in the
 # packages' dist-info METADATA. hiddenimports alone bundle the modules but
 # leave pylibjpeg reporting ZERO decoders in the frozen app — copy_metadata
 # is what makes JPEG 2000 / JPEG-lossless / RLE decode work when installed.
 try:
     from PyInstaller.utils.hooks import copy_metadata
-    for _codec_pkg in ("pylibjpeg", "pylibjpeg-libjpeg",
-                       "pylibjpeg-openjpeg", "pylibjpeg-rle"):
+    for _codec_pkg in ("pylibjpeg", "pylibjpeg-openjpeg", "pylibjpeg-rle",
+                       "python-gdcm", "pyjpegls"):
         try:
             datas += copy_metadata(_codec_pkg)
         except Exception as _md_err:  # codec not installed in build env
             print(f"[spec] copy_metadata skipped for {_codec_pkg}: {_md_err}")
 except Exception as _cm_err:
     print(f"[spec] copy_metadata unavailable: {_cm_err}")
+
+try:
+    import _gdcm
+
+    _gdcm_xml = os.path.join(os.path.dirname(_gdcm.__file__), "XML")
+    if os.path.isdir(_gdcm_xml):
+        datas.append((_gdcm_xml, "_gdcm/XML"))
+except Exception as _gdcm_err:
+    print(f"[spec] GDCM XML resources unavailable: {_gdcm_err}")
 
 # Add main application directories
 app_data_dirs = [
@@ -209,12 +218,16 @@ hiddenimports = [
     'pydicom.pixel_data_handlers.pylibjpeg_handler',
     'pydicom.pixel_data_handlers.pillow_handler',
     'pydicom.pixel_data_handlers.rle_handler',
-    'pydicom.pixel_data_handlers.gdcm_handler',   # no-ops gracefully if absent
+    'pydicom.pixel_data_handlers.gdcm_handler',
+    'pydicom.pixel_data_handlers.jpeg_ls_handler',
     'pylibjpeg',
     'pylibjpeg.utils',
-    'libjpeg',      # pylibjpeg-libjpeg plugin (JPEG baseline/extended/lossless)
     'openjpeg',     # pylibjpeg-openjpeg plugin (JPEG 2000)
     'rle',          # pylibjpeg-rle plugin (RLE Lossless)
+    'gdcm',         # Apache-2.0 GDCM JPEG baseline/extended/lossless handler
+    '_gdcm',
+    '_gdcm.gdcmswig',
+    'jpeg_ls',      # MIT pyjpegls handler
     'PIL',
     'PIL.Image',
     'pydicom.fileset',  # Required for DICOMDIR creation (CD writing)
@@ -321,6 +334,7 @@ except Exception as e:
 
 # Packages to exclude
 excludes = [
+    'libjpeg',  # GPL-3.0 codec replaced by GDCM/pyjpegls
     'PyQt5',
     'PyQt6',
     'tkinter',

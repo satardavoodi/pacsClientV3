@@ -1,5 +1,6 @@
 """Headless tests for the portable Lite Viewer core (scan + render + window)."""
 
+import importlib.util
 import warnings
 from pathlib import Path
 
@@ -185,6 +186,20 @@ def test_run_selftest_returns_zero(qapp):
     from modules.cd_burner.portable_viewer import viewer_app
 
     assert viewer_app.run_selftest() == 0
+
+
+def test_run_selftest_fails_closed_when_required_codec_is_missing(qapp, monkeypatch):
+    from modules.cd_burner.portable_viewer import viewer_app
+
+    original = importlib.util.find_spec
+
+    def _missing_gdcm(name, *args, **kwargs):
+        if name == "gdcm":
+            return None
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", _missing_gdcm)
+    assert viewer_app.run_selftest() == 1
 
 
 # ---------------------------------------------------------------------------

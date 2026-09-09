@@ -129,10 +129,39 @@ def test_shipped_spec_adds_metadata_to_datas_before_dedup():
 def test_spec_utils_exposes_a_single_codec_source_of_truth():
     import spec_utils
 
-    assert set(spec_utils.CODEC_PACKAGES) == {"pylibjpeg", "libjpeg", "openjpeg", "rle"}
-    assert spec_utils.CODEC_PACKAGES["libjpeg"] == "pylibjpeg-libjpeg"
+    assert set(spec_utils.CODEC_PACKAGES) == {
+        "pylibjpeg",
+        "openjpeg",
+        "rle",
+        "jpeg_ls",
+        "_gdcm",
+    }
+    assert "pylibjpeg-libjpeg" not in spec_utils.CODEC_PACKAGES.values()
+    assert spec_utils.CODEC_PACKAGES["_gdcm"] == "python-gdcm"
+    assert spec_utils.CODEC_PACKAGES["jpeg_ls"] == "pyjpegls"
     assert spec_utils.CODEC_PACKAGES["openjpeg"] == "pylibjpeg-openjpeg"
     assert spec_utils.CODEC_PACKAGES["rle"] == "pylibjpeg-rle"
+    assert "gdcm" in spec_utils.codec_hiddenimports()
+    assert "_gdcm.gdcmswig" in spec_utils.codec_hiddenimports()
+
+
+def test_runtime_requirements_use_non_gpl_jpeg_decoders():
+    for name in ("requirements-core.txt", "requirements.txt"):
+        source = (PROJECT_ROOT / name).read_text(encoding="utf-8").lower()
+        assert "pylibjpeg-libjpeg" not in source
+        assert "python-gdcm" in source
+        assert "pyjpegls" in source
+
+
+def test_nuitka_full_core_includes_non_gpl_jpeg_decoders():
+    source = (
+        PROJECT_ROOT / "builder nuitka" / "build_nuitka_release.py"
+    ).read_text(encoding="utf-8")
+    assert '"pylibjpeg-libjpeg"' not in source
+    assert '"python-gdcm"' in source
+    assert '"pyjpegls"' in source
+    assert '"_gdcm"' in source
+    assert '"jpeg_ls"' in source
 
 
 def test_codec_metadata_datas_never_raises_on_a_missing_codec():
@@ -158,6 +187,16 @@ def test_codec_metadata_datas_collects_every_distribution():
     out = spec_utils.codec_metadata_datas(_fake)
     assert seen == list(spec_utils.CODEC_PACKAGES.values())
     assert len(out) == len(spec_utils.CODEC_PACKAGES)
+
+
+def test_gdcm_runtime_xml_is_declared_when_gdcm_is_installed():
+    import spec_utils
+
+    pytest.importorskip("_gdcm")
+    resources = spec_utils.codec_resource_datas()
+    assert resources
+    assert resources[0][1] == "_gdcm/XML"
+    assert Path(resources[0][0]).is_dir()
 
 
 def test_release_gate_codec_map_matches_spec_utils():
@@ -205,12 +244,25 @@ def test_stage_metadata_check_fails_when_dist_info_absent(tmp_path):
     core = tmp_path / "core"
     (core / "engine").mkdir(parents=True)
     # modules present, metadata absent — exactly the shipped-bug shape
-    for mod in ("libjpeg", "openjpeg", "rle", "pylibjpeg"):
+    for mod in ("_gdcm", "jpeg_ls", "openjpeg", "rle", "pylibjpeg"):
         (core / "engine" / mod).mkdir()
 
     check = check_stage_codec_metadata(core)
     assert check.status == "FAIL"
-    assert any("ZERO decoders" in d for d in check.details)
+    assert any("payload is incomplete" in d for d in check.details)
+
+
+def test_stage_metadata_check_rejects_gpl_libjpeg_payload(tmp_path):
+    from builder.release_gate import check_stage_codec_metadata
+
+    core = tmp_path / "core"
+    forbidden = core / "_internal" / "pylibjpeg_libjpeg-2.4.0.dist-info"
+    forbidden.mkdir(parents=True)
+    (core / "_internal" / "_libjpeg.cp313-win_amd64.pyd").write_bytes(b"native")
+
+    check = check_stage_codec_metadata(core)
+    assert check.status == "FAIL"
+    assert any("forbidden GPL codec payload" in detail for detail in check.details)
 
 
 def test_stage_metadata_check_passes_with_dist_info_and_entry_points(tmp_path):
@@ -226,6 +278,8 @@ def test_stage_metadata_check_passes_with_dist_info_and_entry_points(tmp_path):
             "[pylibjpeg.pixel_data_decoders]\n1.2.840.10008.1.2.4.90 = openjpeg:decode_pixel_data\n",
             encoding="utf-8",
         )
+    (core / "_gdcmswig.cp313-win_amd64.pyd").write_bytes(b"native")
+    (core / "_CharLS.cp313-win_amd64.pyd").write_bytes(b"native")
 
     check = check_stage_codec_metadata(core)
     assert check.status == "PASS", check.details

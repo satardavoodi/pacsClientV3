@@ -2,10 +2,10 @@
 
 BOTH build pipelines (PyInstaller `build_release.py` AND Nuitka
 `builder nuitka/build_nuitka_release.py`) must work on ARM64 + x64, and the
-installer must auto-detect the machine. This pins the Nuitka side matches the
-PyInstaller side: `--arch` + cross-build guard + `--with-woa-installer`, and
-the Nuitka .iss arch conditionals + runtime install_package auto-detect + WoA
-variant. Source-pin only (the actual build needs ISCC / an ARM64 box).
+installer must auto-detect the machine. Both active edition pipelines now use
+the canonical Inno script; ARM is deliberately x64 emulation. Native ARM is
+not a claimed product of the three-edition matrix. Actual install tests need
+ISCC and Windows/ARM hardware.
 """
 
 from __future__ import annotations
@@ -19,30 +19,26 @@ if str(ROOT) not in sys.path:
 
 NUITKA_DIR = ROOT / "builder nuitka"
 BUILD = NUITKA_DIR / "build_nuitka_release.py"
-ISS = NUITKA_DIR / "installer" / "AIPacs_Nuitka_Setup.iss"
+ISS = ROOT / "builder/installer/AIPacs_Setup.iss"
 ISS_ARM64 = NUITKA_DIR / "installer" / "AIPacs_Nuitka_Setup_arm64.iss"
 ISS_WOA = NUITKA_DIR / "installer" / "AIPacs_Nuitka_Setup_woa.iss"
 
 
-def test_build_script_has_arch_and_woa_flags():
+def test_build_script_uses_shared_editions_and_x64_validation():
     src = BUILD.read_text(encoding="utf-8", errors="replace")
-    assert '"--arch"' in src
-    assert '"--with-woa-installer"' in src
-    assert "def validate_nuitka_build_arch(" in src
-    assert "cannot cross-build" in src
-    assert "validate_nuitka_build_arch(getattr(args" in src
-    # stage 10 wires arch + WoA
-    assert "AIPacs_Nuitka_Setup_arm64.iss" in src
-    assert "_compile_nuitka_woa_installer(" in src
-    assert "ai-pacs-nuitka-installer arm64" in src
+    assert 'validate_build_arch("x64")' in src
+    assert '"--edition"' in src
+    assert 'INSTALLER_SCRIPT=BUILDER_ROOT / "installer/AIPacs_Setup.iss"' in src
+    assert 'INSTALLER_SCRIPT_WOA=BUILDER_ROOT / "installer/AIPacs_Setup_WoA.iss"' in src
+    assert "compile_editions(adapter, ctx.version, ctx.args.edition)" in src
 
 
-def test_woa_helper_is_best_effort():
+def test_required_arm_output_is_not_best_effort():
     src = BUILD.read_text(encoding="utf-8", errors="replace")
-    helper = src[src.index("def _compile_nuitka_woa_installer"): src.index("def stage_10_inno_setup")]
-    assert "AIPacs_Nuitka_Setup_woa.iss" in helper
-    assert "arm64-emulated" in helper
-    assert "primary x64 artifact unaffected" in helper  # never sink the main build
+    helper = src[src.index("def stage_10_inno_setup"): src.index("def smoke_test")]
+    assert "if rc != 0:" in helper and "raise StageError" in helper
+    assert "except" not in helper
+    assert 'glob("*.exe")' not in helper
 
 
 def test_nuitka_iss_arch_conditionals():

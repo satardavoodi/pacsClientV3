@@ -1,5 +1,11 @@
 # Config Paths & Build Safety Reference
 
+> **Scope and precedence:** this is the configuration-path reference, not the
+> current release procedure. Start at
+> [`../release-and-build/README.md`](../release-and-build/README.md) and follow
+> root `RELEASE.md` and `BUILD.md` before packaging. Those files override any
+> older build command or checklist below.
+
 **Last updated:** v2.4.7 (2026-04-24)
 
 This document is the canonical reference for how each settings/config file is located

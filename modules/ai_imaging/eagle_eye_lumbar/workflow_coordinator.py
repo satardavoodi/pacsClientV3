@@ -9,13 +9,16 @@ controller from accumulating protocol-specific workflow logic.
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Signal
 
 
 class EagleEyeWorkflowCoordinator(QObject):
     """Coordinate one Eagle Eye workflow for an imaging tab host."""
+
+    _series_probe_finished = Signal(int, object)
 
     _STAGE_TEXT = {
         "screening": "Eagle Eye is analyzing the lumbar MRI",
@@ -33,27 +36,68 @@ class EagleEyeWorkflowCoordinator(QObject):
         self._analysis_runner = None
         self._result_panel = None
         self._session_dir = None
+        self._series_probe_generation = 0
+        self._series_probe_running = False
+        self._series_probe_finished.connect(self._on_series_probe_finished)
 
     def start_capture(self) -> None:
         """Resolve the required series and start the configured capture passes."""
-        if self._capture_controller is not None:
+        if self._capture_controller is not None or self._series_probe_running:
             print("[LUMBAR] capture already running; ignoring re-entry")
             return
 
         try:
-            from . import session_request
-            from .series_classifier import classify_lumbar_series
-            from .series_probe import build_candidates_for_widget
+            from . import session_request  # noqa: F401
         except Exception as exc:
             self._set_status(f"Eagle Eye lumbar module unavailable: {exc}", active=False)
             return
 
-        try:
-            candidates = build_candidates_for_widget(self._host.patient_widget)
-        except Exception as exc:
-            print(f"[LUMBAR] series probe failed: {exc}")
-            self._set_status(f"Lumbar series probe failed: {exc}", active=False)
+        self._start_series_probe()
+
+    def _start_series_probe(self) -> None:
+        """Read DICOM headers on a worker and return immutable candidates by signal."""
+        from .series_probe import snapshot_widget_probe_inputs
+
+        self._series_probe_generation += 1
+        generation = self._series_probe_generation
+        self._series_probe_running = True
+        snapshot = snapshot_widget_probe_inputs(self._host.patient_widget)
+        self._set_status("Eagle Eye is reading study metadata", active=True)
+
+        def _worker() -> None:
+            payload: dict[str, Any]
+            try:
+                from .series_probe import build_candidates_from_snapshot
+                payload = {"candidates": build_candidates_from_snapshot(snapshot)}
+            except Exception as exc:
+                payload = {"error": str(exc)}
+            try:
+                self._series_probe_finished.emit(generation, payload)
+            except RuntimeError:
+                pass
+
+        threading.Thread(
+            target=_worker,
+            name="eagle-eye-series-probe",
+            daemon=True,
+        ).start()
+
+    def _on_series_probe_finished(self, generation: int, payload: object) -> None:
+        if generation != self._series_probe_generation:
             return
+        self._series_probe_running = False
+        if not isinstance(payload, dict):
+            self._set_status("Lumbar series probe returned no result", active=False)
+            return
+        if payload.get("error"):
+            print(f"[LUMBAR] series probe failed: {payload['error']}")
+            self._set_status(f"Lumbar series probe failed: {payload['error']}", active=False)
+            return
+        self._continue_start_capture(list(payload.get("candidates") or []))
+
+    def _continue_start_capture(self, candidates: list[Any]) -> None:
+        from . import session_request
+        from .series_classifier import classify_lumbar_series
 
         request = session_request.take(str(self._host.study_uid or ""))
         selection = self._apply_resolved_mapping(request, candidates) if request else None
@@ -285,6 +329,8 @@ class EagleEyeWorkflowCoordinator(QObject):
 
     def teardown(self) -> None:
         """Detach in-flight work before the host's child widgets are destroyed."""
+        self._series_probe_generation += 1
+        self._series_probe_running = False
         controller = self._capture_controller
         self._capture_controller = None
         if controller is not None:

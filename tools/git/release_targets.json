@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "source_branch": "beta-version",
+  "tag_prefix": "v",
+  "receipt_max_age_hours": 4,
+  "targets": [
+    {
+      "remote": "origin",
+      "url": "https://github.com/Vahid-INO/ai-pacs.git",
+      "branches": ["beta-version", "main"]
+    },
+    {
+      "remote": "p2",
+      "url": "https://github.com/satardavoodi/PacsClientV2.git",
+      "branches": ["beta-version", "main"]
+    },
+    {
+      "remote": "satar",
+      "url": "https://github.com/satardavoodi/pacsClientV3.git",
+      "branches": ["beta-version", "main"]
+    }
+  ]
+}

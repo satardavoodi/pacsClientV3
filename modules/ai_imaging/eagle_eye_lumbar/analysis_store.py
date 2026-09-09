@@ -98,6 +98,8 @@ class AnalysisRecord:
     def label(self) -> str:
         if self.stale:
             return "Analysis interrupted"
+        if self.state == STATE_COMPLETE and self.document.get("review_required"):
+            return "Analysis complete - review required"
         return STATE_LABELS.get(self.state, self.state)
 
     @property
@@ -261,6 +263,48 @@ def write_stage_response(session_dir, number: int, stage, text: str,
         # it entirely, so infer it from what we DO get back on every backend.
         # The margin is deliberate: a model that stops one or two tokens short
         # of its ceiling did not choose to stop there.
+        "truncated": bool(ceiling and produced and produced >= ceiling - 8),
+        "data": structured,
+    })
+    return path
+
+
+def write_atomic_stage_request(
+    session_dir, stage_number: int, artifact_key: str, document: Dict[str, Any],
+) -> Path:
+    """Persist one independently dispatched subrequest without overwriting peers."""
+    directory = Path(session_dir) / ".atomic_analysis" / f"stage{int(stage_number)}"
+    path = directory / f"{artifact_key}_request.json"
+    _write_json(path, document)
+    return path
+
+
+def write_atomic_stage_response(
+    session_dir,
+    stage_number: int,
+    artifact_key: str,
+    stage,
+    text: str,
+    structured: Optional[Dict[str, Any]] = None,
+    usage: Optional[Dict[str, Any]] = None,
+) -> Path:
+    """Persist one atomic response and its parse status for reproducible review."""
+    directory = Path(session_dir) / ".atomic_analysis" / f"stage{int(stage_number)}"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{artifact_key}_response.txt"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(str(text or ""), encoding="utf-8")
+    os.replace(str(tmp), str(path))
+    ceiling = int(getattr(stage, "max_output_tokens", 0) or 0)
+    produced = int((usage or {}).get("completion_tokens") or 0)
+    _write_json(directory / f"{artifact_key}_structured.json", {
+        "stage": getattr(stage, "name", ""),
+        "prompt_id": getattr(stage, "id", ""),
+        "prompt_version": getattr(stage, "version", ""),
+        "model": str((usage or {}).get("model") or ""),
+        "parsed": structured is not None,
+        "completion_tokens": produced,
+        "max_output_tokens": ceiling,
         "truncated": bool(ceiling and produced and produced >= ceiling - 8),
         "data": structured,
     })

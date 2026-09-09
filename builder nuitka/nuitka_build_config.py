@@ -1,5 +1,6 @@
 """Shared configuration for the staged Nuitka build pipeline."""
 
+import os
 from pathlib import Path
 
 # Project structure
@@ -11,7 +12,9 @@ OUTPUT_ROOT = NUITKA_ROOT / "output"
 DIST_DIR = OUTPUT_ROOT / "dist"
 STAGE_DIR = OUTPUT_ROOT / "stage"
 INSTALLER_DIR = NUITKA_ROOT / "installer"
-INSTALLER_OUTPUT_DIR = OUTPUT_ROOT / "installer"
+INSTALLER_OUTPUT_DIR = Path(
+    os.environ.get("AIPACS_NUITKA_INSTALLER_OUTPUT_DIR", str(OUTPUT_ROOT / "installer"))
+).resolve()
 
 # Build state and diagnostics
 STATE_FILE = OUTPUT_ROOT / "build_state.json"

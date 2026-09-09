@@ -1,5 +1,10 @@
 # PyInstaller Version Management for AIPacs Builds
 
+> **Scope and precedence:** this document explains a historical PyInstaller
+> compatibility failure. It is not a release entry point. Start at
+> [`../release-and-build/README.md`](../release-and-build/README.md), then follow
+> root `RELEASE.md` and `BUILD.md`.
+
 **Document Version**: v2.5.4  
 **Last Updated**: 2026-05-12  
 **Applies To**: PyInstaller 6.x builds (AIPacs v2.5.4+)
@@ -181,6 +186,6 @@ This reduces installer folder size and removes ambiguity about which file is the
 
 ## See Also
 
-- [Build System Architecture](./BUILD_SYSTEM.md)
+- [Build systems index](../../builder/docs/README.md)
 - [VERSION_2.5.4_RELEASE.md](../releases/VERSION_2.5.4_RELEASE.md) — v2.5.4 release notes
 - `.github/copilot-instructions.md` — project runtime instructions

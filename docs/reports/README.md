@@ -5,6 +5,10 @@ Engineering session reports moved here from the repository root on 2026-06-06
 analyses, as-built fix records, reviews, and KPI/stress evaluations — named
 `TOPIC_YYYY-MM-DD.md`.
 
+Reports are point-in-time evidence, not operational instructions. For any Git
+publication or build task, start at
+[`../release-and-build/README.md`](../release-and-build/README.md).
+
 Conventions:
 - New session reports go HERE, not in the repository root.
 - `CLAUDE.md` regression guards reference several of these by path

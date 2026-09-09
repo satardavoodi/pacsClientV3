@@ -1605,41 +1605,13 @@ class _HPSearchMixin:
         '''
             add data to patient list (patient_table_widget) for show
         '''
-        # Check download status from database
-        study_uid = kwargs.get('study_uid')
-        if study_uid:
-            try:
-                from PacsClient.pacs.patient_tab.utils.utils import get_study_download_status
-
-                try:
-                    # Check if is_downloaded is already set
-                    is_downloaded = kwargs.get('is_downloaded')
-                    if is_downloaded is not None:
-                        # Convert bool to status string for backwards compatibility
-                        kwargs['download_status'] = 'complete' if is_downloaded else 'not_downloaded'
-                    else:
-                        # Get expected series count from kwargs (from server response)
-                        expected_series = kwargs.get('series_count') or kwargs.get('count_of_series') or 0
-                        # Get detailed download status
-                        download_status = get_study_download_status(study_uid, expected_series if expected_series > 0 else None)
-                        kwargs['download_status'] = download_status
-                        kwargs['is_downloaded'] = (download_status == 'complete')
-                except Exception as ex:
-                    # Was print() — failures here silently mark every row as
-                    # not_downloaded, hiding storage-layer or DB lock issues.
-                    _logger.warning(
-                        "Error in download status check (study_uid=%r): %s",
-                        study_uid, ex, exc_info=True,
-                    )
-                    kwargs['download_status'] = 'not_downloaded'
-                    kwargs['is_downloaded'] = False
-            except Exception as e:
-                # Was print() — outer guard around download-status setup.
-                _logger.error(
-                    "Error checking download status: %s", e, exc_info=True,
-                )
-                kwargs['download_status'] = 'not_downloaded'
-                kwargs['is_downloaded'] = False
+        # Do not derive local download state while constructing a search row.
+        # This method runs on the Qt thread and the old per-row
+        # get_study_download_status() probe synchronously walked the study tree.
+        # Its synthesized is_downloaded/download_status fields were not consumed
+        # by add_patient_data: the Status cell already paints immediately and
+        # resolves disk-backed flags through statusFlagsReady on a worker. Keep
+        # any explicit caller-supplied state untouched and forward the row only.
 
         # Set default values for other status fields
         kwargs.setdefault('has_voice', False)

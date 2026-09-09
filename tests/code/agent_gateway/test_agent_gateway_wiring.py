@@ -34,7 +34,7 @@ def test_agent_settings_widget_module_exists():
 def test_home_panel_installs_and_starts_gateway():
     src = _read("PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py")
     assert "from modules.agent_gateway.service import install_service" in src
-    assert "start_if_enabled()" in src
+    assert "start_if_enabled_async()" in src
     assert "_agent_gateway_service" in src
 
 

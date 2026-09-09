@@ -1,57 +1,72 @@
-from modules.network.grpc_client import DicomGrpcClient
-from modules.network.dicom_downloader import DicomDownloader
-from modules.network.socket_service import get_socket_service, SocketService
-# NOTE: This is the *module-system* PipelineOrchestrator (multi-pipeline cache
-# mgmt).  The *viewer* PipelineOrchestrator lives in
-# modules.viewer.pipeline.orchestrator and is a separate download→warmup FSM.
-# Only archived docs reference this export; active viewer code imports directly
-# from modules.viewer.pipeline.
-from modules.module_system.pipeline_orchestrator import PipelineOrchestrator
-from modules.module_system.module_manager import ModuleManager, BaseModule, ModuleContext, ModuleResult, ModuleStatus
+"""Compatibility exports for shared UI components.
 
-# Zeta Download Manager - Primary implementation
-from modules.network.zeta_adapter import (
-    get_zeta_download_manager_widget,
-    get_zeta_executor,
-    get_zeta_worker_pool,
-    start_zeta_download,
-    pause_zeta_download,
-    resume_zeta_download,
-    cancel_zeta_download,
-    get_zeta_download_state,
-    get_all_zeta_downloads,
-    create_download_task_from_study,
-    get_download_manager
-)
+Importing a concrete submodule such as ``PacsClient.components.loading_overlay``
+must stay cheap. The former eager re-export table imported the retired gRPC
+stack, Download Manager and the module system before the login window painted;
+on Windows the native ``grpc._cython.cygrpc`` import alone blocked the GUI for
+several seconds. PEP 562 lazy attributes retain the public API without loading
+an unrelated transport during package initialization.
+"""
+from __future__ import annotations
 
-# Backward compatibility: Export Zeta components with legacy names
-from modules.download_manager.network.socket_client import SocketDicomClient as ResumableDicomSocketClient
+from importlib import import_module
 
-# Export all
-__all__ = [
-    'DicomGrpcClient',
-    'DicomDownloader',
-    'get_socket_service',
-    'SocketService',
-    # Module execution and multi-pipeline exports
-    'PipelineOrchestrator',
-    'ModuleManager',
-    'BaseModule',
-    'ModuleContext',
-    'ModuleResult',
-    'ModuleStatus',
-    # Zeta exports
-    'get_zeta_download_manager_widget',
-    'get_zeta_executor',
-    'get_zeta_worker_pool',
-    'start_zeta_download',
-    'pause_zeta_download',
-    'resume_zeta_download',
-    'cancel_zeta_download',
-    'get_zeta_download_state',
-    'get_all_zeta_downloads',
-    'create_download_task_from_study',
-    # Backward compatibility
-    'get_download_manager',
-    'ResumableDicomSocketClient',
-]
+
+_EXPORTS = {
+    "DicomGrpcClient": ("modules.network.grpc_client", "DicomGrpcClient"),
+    "DicomDownloader": ("modules.network.dicom_downloader", "DicomDownloader"),
+    "get_socket_service": ("modules.network.socket_service", "get_socket_service"),
+    "SocketService": ("modules.network.socket_service", "SocketService"),
+    "PipelineOrchestrator": (
+        "modules.module_system.pipeline_orchestrator",
+        "PipelineOrchestrator",
+    ),
+    "ModuleManager": ("modules.module_system.module_manager", "ModuleManager"),
+    "BaseModule": ("modules.module_system.module_manager", "BaseModule"),
+    "ModuleContext": ("modules.module_system.module_manager", "ModuleContext"),
+    "ModuleResult": ("modules.module_system.module_manager", "ModuleResult"),
+    "ModuleStatus": ("modules.module_system.module_manager", "ModuleStatus"),
+    "get_zeta_download_manager_widget": (
+        "modules.network.zeta_adapter",
+        "get_zeta_download_manager_widget",
+    ),
+    "get_zeta_executor": ("modules.network.zeta_adapter", "get_zeta_executor"),
+    "get_zeta_worker_pool": ("modules.network.zeta_adapter", "get_zeta_worker_pool"),
+    "start_zeta_download": ("modules.network.zeta_adapter", "start_zeta_download"),
+    "pause_zeta_download": ("modules.network.zeta_adapter", "pause_zeta_download"),
+    "resume_zeta_download": ("modules.network.zeta_adapter", "resume_zeta_download"),
+    "cancel_zeta_download": ("modules.network.zeta_adapter", "cancel_zeta_download"),
+    "get_zeta_download_state": (
+        "modules.network.zeta_adapter",
+        "get_zeta_download_state",
+    ),
+    "get_all_zeta_downloads": (
+        "modules.network.zeta_adapter",
+        "get_all_zeta_downloads",
+    ),
+    "create_download_task_from_study": (
+        "modules.network.zeta_adapter",
+        "create_download_task_from_study",
+    ),
+    "get_download_manager": ("modules.network.zeta_adapter", "get_download_manager"),
+    "ResumableDicomSocketClient": (
+        "modules.download_manager.network.socket_client",
+        "SocketDicomClient",
+    ),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attribute = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(name) from exc
+    value = getattr(import_module(module_name), attribute)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

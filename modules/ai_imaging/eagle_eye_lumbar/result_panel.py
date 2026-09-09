@@ -57,6 +57,7 @@ class EagleEyeResultPanel(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._session_dir: Path | None = None
+        self._stage_audit_panel = None
 
         self.setWindowTitle("Eagle Eye - Analysis")
         # A real top-level window: it has a title bar, so it can be moved and
@@ -106,6 +107,15 @@ class EagleEyeResultPanel(QDialog):
         self.btn_folder.clicked.connect(self._open_folder)
         buttons.addWidget(self.btn_folder)
 
+        self.btn_stage_images = QPushButton("View stage images")
+        self.btn_stage_images.setStyleSheet(_BUTTON_QSS)
+        self.btn_stage_images.setToolTip(
+            "Show the stored anatomy maps, screening inputs, and diagnostic cards "
+            "used by this analysis."
+        )
+        self.btn_stage_images.clicked.connect(self._open_stage_images)
+        buttons.addWidget(self.btn_stage_images)
+
         buttons.addStretch(1)
 
         self.btn_reanalyze = QPushButton("Re-analyze")
@@ -152,9 +162,11 @@ class EagleEyeResultPanel(QDialog):
         self.meta_label.setText("  ·  ".join(bits))
 
         if record.has_result:
-            self.title_label.setText("Eagle Eye analysis - pathological findings")
+            needs_review = bool(document.get("review_required"))
+            self.title_label.setText("Eagle Eye analysis - review required" if needs_review
+                                     else "Eagle Eye analysis - pathological findings")
             self.title_label.setStyleSheet(
-                f"color: {_ACCENT}; font-size: 15px; font-weight: 700;")
+                f"color: {'#fbbf24' if needs_review else _ACCENT}; font-size: 15px; font-weight: 700;")
             self.body.setPlainText(record.text)
         else:
             self.title_label.setText(f"Eagle Eye - {record.label}")
@@ -166,6 +178,7 @@ class EagleEyeResultPanel(QDialog):
                   "Re-analyze sends them again; it does not recapture the study.")
 
         self.btn_copy.setEnabled(record.has_result)
+        self.btn_stage_images.setEnabled(self._session_dir.is_dir())
         self.present()
 
     def present(self) -> None:
@@ -205,3 +218,15 @@ class EagleEyeResultPanel(QDialog):
                 subprocess.Popen(["xdg-open", path])
         except Exception as exc:
             logger.warning("[EAGLE-EYE-LLM] could not open %s: %s", path, exc)
+
+    def _open_stage_images(self) -> None:
+        if not self._session_dir:
+            return
+        try:
+            if self._stage_audit_panel is None:
+                from .stage_audit_panel import EagleEyeStageAuditPanel
+
+                self._stage_audit_panel = EagleEyeStageAuditPanel(self)
+            self._stage_audit_panel.show_session(self._session_dir)
+        except Exception as exc:
+            logger.warning("[EAGLE-EYE-AUDIT] could not open stage images: %s", exc)

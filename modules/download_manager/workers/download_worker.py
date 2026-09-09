@@ -33,13 +33,14 @@ class DownloadWorker(QThread):
     - Cleanup guarantee (R40)
     
     Signals:
-        progress: (study_uid, event_type, series_number, progress_percent, downloaded, total)
+        progress: (study_uid, event_type, series_uid, series_number,
+                   progress_percent, downloaded, total)
         completed: (study_uid, success)
         error: (study_uid, error_message)
     """
     
     # Signals
-    progress = Signal(str, str, str, float, int, int)  # study_uid, event_type, series_number, progress%, downloaded, total
+    progress = Signal(str, str, str, str, float, int, int)
     completed = Signal(str, bool)  # study_uid, success
     error = Signal(str, str)  # study_uid, error_message
     
@@ -177,6 +178,7 @@ class DownloadWorker(QThread):
         self.progress.emit(
             self.task.study_uid,
             event_type,
+            str(kwargs.get('series_uid') or ''),
             series_number,
             progress_percent,
             downloaded,

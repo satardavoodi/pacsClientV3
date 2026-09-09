@@ -1828,7 +1828,7 @@ def main():
 # Script execution when loaded by Slicer
 # ============================================================
 
-if RUNNING_IN_SLICER:
+if RUNNING_IN_SLICER and not os.environ.get("AIPACS_RESIDENT_ROOT"):
     # When loaded via --python-script, __name__ is "__main__" or sometimes just the module
     print("")
     print("[AIPACS_STARTUP] " + "=" * 60)
@@ -1854,6 +1854,8 @@ if RUNNING_IN_SLICER:
         traceback.print_exc()
         sys.stdout.flush()
         sys.stderr.flush()
+elif RUNNING_IN_SLICER:
+    print("[AIPACS_STARTUP] Resident runtime owns startup; legacy auto-load is disabled")
 else:
     print("")
     print("[AIPACS_STARTUP] " + "=" * 60)

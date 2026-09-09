@@ -208,7 +208,44 @@ def test_root_contact_with_negated_deviation_scores_under_not_miss():
     claim = next(c for c in score.claims if c.kind == "root")
     assert claim.outcome == scoring.UNDER
     assert claim.observed["effect"] == "contact"
-    assert score.as_dict()["scorer_version"] == "1.1.0"
+    assert score.as_dict()["scorer_version"] == "1.2.0"
     assert claim.observed["effect_assertions"] == {
         "contact": "present", "deviation": "absent", "compression": "unmentioned",
     }
+
+
+@pytest.mark.parametrize("verb,effect", [
+    ("contacting", "contact"), ("abutting", "contact"),
+    ("compressing", "compression"), ("deviating", "deviation"),
+])
+def test_root_present_participles_are_recognized(verb, effect):
+    f = scoring.parse_level_prose("L2-L3", f"Disc material {verb} the right L3 root.")
+    assert f.root["effect"] == effect
+    assert not scoring.parse_level_prose("L2-L3", f"No disc material {verb} the right L3 root.").root
+
+
+@pytest.mark.parametrize("separator", [", with ", "; ", " and "])
+def test_recess_grade_does_not_borrow_canal_grade(separator):
+    text = "Mild central canal stenosis (Lee grade 1)" + separator + "severe right lateral recess stenosis (Bartynski grade 3)."
+    f = scoring.parse_level_prose("L2-L3", text)
+    assert f.consequences["central_canal"]["grade"] == 1
+    assert f.consequences["lateral_recess"]["grade"] == 3
+    assert f.consequences["lateral_recess"]["severity"] == "severe"
+
+
+def test_scoring_keeps_lower_thoracic_map_entries():
+    report = scoring.parse_report("LEVEL MAP\n  T11-T12: axial frames 1-2\n  T12-L1: axial frames 3-4\n")
+    assert report.level_map["T11-T12"] == (1, 2)
+
+
+def test_subarticular_disc_location_cannot_mask_explicit_recess_grade():
+    f = scoring.parse_level_prose("L3-L4",
+        "Left paracentral/subarticular disc extrusion, producing mild central canal stenosis "
+        "(Lee grade 1) and severe left lateral recess stenosis (Bartynski grade 3).")
+    assert f.consequences["lateral_recess"]["severity"] == "severe"
+    assert f.consequences["lateral_recess"]["grade"] == 3
+
+
+def test_subarticular_disc_location_alone_is_not_recess_stenosis():
+    f = scoring.parse_level_prose("L3-L4", "Left paracentral/subarticular disc extrusion.")
+    assert "lateral_recess" not in f.consequences

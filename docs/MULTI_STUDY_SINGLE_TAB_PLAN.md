@@ -166,6 +166,13 @@ absolute `series_path` (`{SOURCE_PATH}/{study_uid}/{orig_no}`).
    sorts each study's series by numeric series number before building the
    offset-key groups, so the sidebar renders `0,1,2,…,10,11`. Don't drop that
    sort — server `series_list` order can be lexical.
+10. **Card construction must not trigger a late recursive Qt repolish.** Keep
+    the root-only `QWidget#seriesThumbnailCard` stylesheet at the beginning of
+    `ThumbnailManager.create_thumbnail_widget`, before layouts, child widgets,
+    graphics effects, and event filters. The 2026-09-01 native fault captured a
+    Windows `0xc0000374` termination at the former late unscoped stylesheet
+    while `_render_multistudy_grouped` was creating a card. This stability rule
+    does not alter offset keys, per-study identity, ordering, or drag payloads.
 
 ## Follow-up fixes — flicker + ordering (2026-05-24, second pass)
 

@@ -417,6 +417,12 @@ class _PWPipelineMixin:
             count_exist_thumbnails = len(
                 check_and_get_thumbnails(self.import_folder_path, self.study_uid) or []
             )
+            # A new single-study Import has no server metadata handoff to call
+            # set_server_series_info(), so merely counting cached PNGs leaves the
+            # sidebar at zero series. Start the existing database/disk projection;
+            # the entry builder runs in its worker and marshals only rendering to Qt.
+            if caller == CallerTypes.IMPORT:
+                self._load_server_thumbnails()
         else:
             count_exist_thumbnails = self.show_exist_thumbnails()
         print(f"[PROFILE] pipeline_manager: show_exist_thumbnails={count_exist_thumbnails} in {(time.perf_counter() - _t0)*1000:.1f}ms (study={self.study_uid})")

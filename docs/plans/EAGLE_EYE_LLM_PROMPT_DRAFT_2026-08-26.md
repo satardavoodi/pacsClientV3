@@ -1,5 +1,10 @@
 # Eagle Eye → LLM image review — adapted prompt (DRAFT, not final)
 
+> **ARCHIVED DESIGN DRAFT.** This file is not wired to the current runtime and
+> must not be used to edit the current pipeline. Start with
+> `docs/pipelines/eagle-eye-mri.md`; exact active atomic prompts live in
+> `atomic_pipeline.py`.
+
 Status: **draft for review.** Not wired to code. Nothing in `modules/` changed.
 Adapted from the single-screenshot lumbar prompt, restructured for the Eagle Eye
 v1.1.0 session package (protocol-driven, role-keyed manifests).

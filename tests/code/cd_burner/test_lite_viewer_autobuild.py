@@ -88,3 +88,37 @@ def test_build_lite_viewer_ensure_built_force_rebuilds(monkeypatch, tmp_path):
     monkeypatch.setattr(blv, "build_pyinstaller", lambda _v: built.__setitem__("n", 1) or 0)
     assert blv.ensure_built(force=True) == 0
     assert built["n"] == 1
+
+
+def test_lite_viewer_prune_removes_foreign_icu_that_shadows_windows_qt(tmp_path):
+    import tools.build.build_lite_viewer as blv
+
+    internal = tmp_path / "_internal"
+    internal.mkdir()
+    foreign_icu = internal / "icuuc.dll"
+    foreign_data = internal / "icudt78.dll"
+    webengine_data = internal / "icudtl.dat"
+    foreign_icu.write_bytes(b"foreign-poppler-icu")
+    foreign_data.write_bytes(b"foreign-poppler-data")
+    webengine_data.write_bytes(b"qt-webengine-data")
+
+    blv._prune_bundle(tmp_path)
+
+    assert not foreign_icu.exists()
+    assert not foreign_data.exists()
+    assert webengine_data.read_bytes() == b"qt-webengine-data"
+
+
+def test_lite_viewer_publish_rejects_gpl_libjpeg_payload(monkeypatch, tmp_path):
+    import tools.build.build_lite_viewer as blv
+
+    dist = tmp_path / "dist"
+    internal = dist / "_internal"
+    internal.mkdir(parents=True)
+    (dist / blv.EXE_NAME).write_bytes(b"MZ")
+    (internal / "_libjpeg.cp313-win_amd64.pyd").write_bytes(b"native")
+    target = tmp_path / "published"
+    monkeypatch.setattr(blv, "TARGET_DIR", target)
+
+    assert blv._publish(dist, "1.5.0", [], "pyinstaller-onedir") == 6
+    assert not target.exists()

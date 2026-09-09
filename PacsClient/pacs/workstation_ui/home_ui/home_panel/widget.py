@@ -287,7 +287,7 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 from PySide6.QtWidgets import QApplication
 
                 _gw = install_service(lambda: self.command_bus)
-                _gw.start_if_enabled()
+                _gw.start_if_enabled_async()
                 _app = QApplication.instance()
                 if _app is not None:
                     _app._agent_gateway_service = _gw

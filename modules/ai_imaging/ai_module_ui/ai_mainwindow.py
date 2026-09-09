@@ -1,12 +1,8 @@
 from PySide6.QtWidgets import (
     QMainWindow, QVBoxLayout, QTabWidget, QHBoxLayout, QWidget, QLabel
 )
-from .service_tab import ImagingToolsTab, ModelTrainingTab, ReceptionDataTab, DataSetTab
-from PySide6.QtWidgets import (
-    QMainWindow, QTabWidget
-)
-from .service_tab import ImagingToolsTab, ModelTrainingTab, ReceptionDataTab, DataSetTab
-from PySide6.QtCore import QTimer, Signal
+from .service_tab.imaging_tab import ImagingToolsTab
+from PySide6.QtCore import QTimer, Signal, Qt
 from PySide6.QtWidgets import QApplication
 import re
 from PacsClient.utils.theme_manager import get_theme_manager
@@ -64,6 +60,18 @@ def normalize_eagle_eye_mode(mode):
     return _normalize(mode)
 
 
+class _LazyTabPlaceholder(QWidget):
+    """Cheap first-paint placeholder for secondary Eagle Eye tools."""
+
+    def __init__(self, key: str, title: str):
+        super().__init__()
+        self.lazy_tab_key = key
+        layout = QVBoxLayout(self)
+        label = QLabel(f"Open {title} to load its tools.")
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+
+
 class AiMainWindow(QMainWindow):
     # Signal emitted when Eagle Eye is fully loaded and ready
     eagle_eye_ready = Signal()
@@ -74,6 +82,7 @@ class AiMainWindow(QMainWindow):
         print("=" * 80)
         super().__init__()
         self.eagle_eye_mode = normalize_eagle_eye_mode(eagle_eye_mode)
+        self._study_uid = study_uid
         
         self._apply_dark_theme()
 
@@ -87,39 +96,110 @@ class AiMainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
 
+        if self.eagle_eye_mode == 'brain_mri':
+            from modules.ai_imaging.eagle_eye_brain.widget import BrainVolumetryWidget
+            self.imaging_tab = None
+            self.brain_tab = BrainVolumetryWidget(study_uid=study_uid)
+            self.tab_widget.addTab(self.brain_tab, 'Eagle Eye Brain')
+            QTimer.singleShot(0, self.eagle_eye_ready.emit)
+            QTimer.singleShot(0, self.brain_tab.choose_study_workflow)
+            return
+
         # Imaging Tools
         self.imaging_tab = ImagingToolsTab(study_uid=study_uid, eagle_eye_mode=self.eagle_eye_mode)
         self.tab_widget.addTab(self.imaging_tab, "Imaging Tools")
 
-        # DataSet (KEEP REFERENCE!)
-        self.dataset_tab = DataSetTab(study_uid=study_uid, module_mode=self.eagle_eye_mode)
-        self.tab_widget.addTab(self.dataset_tab, "Data Set")
-
-        # Model Training
-        self.model_training_tab = ModelTrainingTab()
-        self.tab_widget.addTab(self.model_training_tab, "Model Training")
-
-        # Reception Data
-        try:
-            self.reception_tab = ReceptionDataTab()
-            self.tab_widget.addTab(self.reception_tab, "Reception Data")
-        except Exception as e:
-            print(f"[AiMainWindow] ERROR creating Reception Data tab: {e}")
-            import traceback
-            traceback.print_exc()
+        self.dataset_tab = None
+        self.model_training_tab = None
+        self.reception_tab = None
+        self.brain_tab = None
+        self._lazy_tab_placeholders = {}
+        self._lazy_tab_building = set()
+        self._install_lazy_tabs()
 
         # Sync reception context with PACS-backed imaging widget as soon as possible.
         self._sync_reception_patient_context()
 
         # Auto refresh when user opens Data Set tab
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
-        QTimer.singleShot(0, self.dataset_tab.refresh)
         
         # Connect imaging tab ready signal
         self.imaging_tab.fully_loaded.connect(self._on_imaging_tab_ready)
         
         print("[AiMainWindow] AiMainWindow initialized successfully!")
         print("=" * 80 + "\n")
+
+    def _install_lazy_tabs(self) -> None:
+        for key, title in (
+            ("brain", "Brain Volumetry"),
+            ("dataset", "Data Set"),
+            ("model_training", "Model Training"),
+            ("reception", "Reception Data"),
+        ):
+            placeholder = _LazyTabPlaceholder(key, title)
+            self._lazy_tab_placeholders[key] = placeholder
+            self.tab_widget.addTab(placeholder, title)
+
+    def _ensure_lazy_tab(self, key: str):
+        existing = {
+            "brain": self.brain_tab,
+            "dataset": self.dataset_tab,
+            "model_training": self.model_training_tab,
+            "reception": self.reception_tab,
+        }.get(key)
+        if existing is not None or key in self._lazy_tab_building:
+            return existing
+
+        placeholder = self._lazy_tab_placeholders.get(key)
+        index = self.tab_widget.indexOf(placeholder) if placeholder is not None else -1
+        if index < 0:
+            return None
+        title = self.tab_widget.tabText(index)
+        self._lazy_tab_building.add(key)
+        try:
+            if key == "brain":
+                from modules.ai_imaging.eagle_eye_brain.widget import BrainVolumetryWidget
+                widget = BrainVolumetryWidget(study_uid=self._study_uid)
+                self.brain_tab = widget
+            elif key == "dataset":
+                from .service_tab.dataset_tab import DataSetTab
+                widget = DataSetTab(
+                    study_uid=self._study_uid,
+                    module_mode=self.eagle_eye_mode,
+                )
+                self.dataset_tab = widget
+            elif key == "model_training":
+                from .service_tab.model_tab import ModelTrainingTab
+                widget = ModelTrainingTab()
+                self.model_training_tab = widget
+            elif key == "reception":
+                from .service_tab.reception_data_tab import ReceptionDataTab
+                widget = ReceptionDataTab()
+                self.reception_tab = widget
+            else:
+                return None
+
+            self.tab_widget.blockSignals(True)
+            self.tab_widget.removeTab(index)
+            self.tab_widget.insertTab(index, widget, title)
+            self.tab_widget.setCurrentIndex(index)
+            self.tab_widget.blockSignals(False)
+            if placeholder is not None:
+                placeholder.deleteLater()
+            self._lazy_tab_placeholders.pop(key, None)
+
+            if key == "dataset":
+                widget.refresh()
+            elif key == "reception":
+                self._sync_reception_patient_context()
+                widget.on_tab_activated()
+            return widget
+        except Exception as exc:
+            self.tab_widget.blockSignals(False)
+            print(f"[AiMainWindow] ERROR creating {title} tab: {exc}")
+            return None
+        finally:
+            self._lazy_tab_building.discard(key)
 
     def refresh_ai_results(self) -> bool:
         """Re-read the MG AI manifest and refresh the left-panel "AI Results" dropdown.
@@ -128,6 +208,9 @@ class AiMainWindow(QMainWindow):
         (see `_hp_modules.add_new_tab_widget`), so every execution shows up as its own
         entry. Never raises into the caller.
         """
+        if getattr(self, 'eagle_eye_mode', None) == 'brain_mri':
+            QTimer.singleShot(0, self.brain_tab.choose_study_workflow)
+            return True
         try:
             imaging_tab = getattr(self, 'imaging_tab', None)
             if imaging_tab is None:
@@ -190,6 +273,14 @@ class AiMainWindow(QMainWindow):
     
     def _on_tab_changed(self, index: int):
         w = self.tab_widget.widget(index)
+        lazy_key = getattr(w, "lazy_tab_key", None)
+        if lazy_key:
+            QTimer.singleShot(0, lambda key=lazy_key: self._ensure_lazy_tab(key))
+            try:
+                self.imaging_tab.patient_widget.on_tab_deactivated()
+            except Exception:
+                pass
+            return
         if w is self.dataset_tab:
             self.dataset_tab.refresh()
         if hasattr(self, 'reception_tab') and w is self.reception_tab:
@@ -288,16 +379,24 @@ class AiMainWindow(QMainWindow):
     # Public API for Eagle Eye
     # -----------------------------
     def set_dataset_rows(self, rows):
-        self.dataset_tab.set_rows(rows)
+        tab = self._ensure_lazy_tab("dataset")
+        if tab is not None:
+            tab.set_rows(rows)
 
     def append_dataset_rows(self, rows):
-        self.dataset_tab.append_rows(rows)
+        tab = self._ensure_lazy_tab("dataset")
+        if tab is not None:
+            tab.append_rows(rows)
 
     def set_dataset_csvs(self, csv_paths, *, refresh=True):
-        self.dataset_tab.set_csv_paths(csv_paths, refresh=refresh)
+        tab = self._ensure_lazy_tab("dataset")
+        if tab is not None:
+            tab.set_csv_paths(csv_paths, refresh=refresh)
 
     def refresh_dataset(self):
-        self.dataset_tab.refresh()
+        tab = self._ensure_lazy_tab("dataset")
+        if tab is not None:
+            tab.refresh()
 
     def _on_app_theme_changed(self, theme: dict) -> None:
         """Handle application theme changes and retint all UI elements."""

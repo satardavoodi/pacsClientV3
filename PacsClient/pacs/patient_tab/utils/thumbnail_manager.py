@@ -1604,6 +1604,18 @@ class ThumbnailManager(QObject):
 
             # Main container widget - SQUARE dimensions
             widget = QWidget()
+            widget.setObjectName("seriesThumbnailCard")
+            # Apply the root-only style before constructing children, graphics
+            # effects, and the strip event filter. A late unscoped ``QWidget``
+            # stylesheet recursively repolishes the completed native subtree;
+            # the 2026-09-01 field crash terminated with Windows heap corruption
+            # at that exact call while a multi-study sidebar was being rebuilt.
+            widget.setStyleSheet("""
+                QWidget#seriesThumbnailCard {
+                    background: transparent;
+                    border: none;
+                }
+            """)
             widget.setFixedSize(190, 215)  # 2026-05-29: was 190 - made taller so both server description label
             # and image-count label can coexist (per user request).
             main_layout = QVBoxLayout(widget)
@@ -2080,14 +2092,6 @@ class ThumbnailManager(QObject):
                     _tm_logger.debug("error in retry button click: %s", e)
             
             retry_button.clicked.connect(on_retry_clicked)
-            
-            # Clean main widget styling
-            widget.setStyleSheet("""
-                QWidget {
-                    background: transparent;
-                    border: none;
-                }
-            """)
             
             # Store references
             widget.progress_border = progress_border

@@ -86,6 +86,7 @@ from PacsClient.utils.runtime_correlation import (
     count_events_between as _corr_count_events_between,
     now_mono_ms as _corr_now_mono_ms,
 )
+from PacsClient.utils.dicom_displayability import dicom_file_pixel_facts
 
 logger = logging.getLogger(__name__)
 
@@ -4151,17 +4152,63 @@ class Lightweight2DPipeline(QObject):
             self._slice_trace_header_cache[key] = result
         return result
 
-    def _probe_number_of_frames(self, path: str) -> int:
-        """Read DICOM (0028,0008) NumberOfFrames from a header. Returns ≥ 1
-        (1 = single-frame). Used only on the metadata path for single-file series
-        (the classic multi-frame candidate) so the ordinary many-file series pays
-        no extra header read. Never raises."""
+    @staticmethod
+    def _probe_pixel_frame_facts(path: str) -> tuple[bool, int]:
+        """Return pixel-payload presence and frame count without pixel decode."""
         try:
-            ds = pydicom.dcmread(str(path), stop_before_pixels=True, force=True)
-            n = int(getattr(ds, "NumberOfFrames", 1) or 1)
-            return n if n > 1 else 1
+            has_pixel_data, frame_count = dicom_file_pixel_facts(path)
+            return bool(has_pixel_data), max(1, int(frame_count or 1))
         except Exception:
-            return 1
+            return False, 1
+
+    def _hydrate_multiframe_candidates(self, slices: List[SliceMeta]) -> List[SliceMeta]:
+        """Hydrate missing frame counts and exclude non-image DICOM objects.
+
+        Metadata projections can omit NumberOfFrames and may mix a metadata-only
+        Raw Data Storage object into the same Series UID as an Enhanced image.
+        Probe only until the first pixel-bearing object. Ordinary multi-file
+        series then retain the O(1) probe; once a multi-frame object is found,
+        inspect the remaining small object set so every cine object expands and
+        no non-pixel object becomes a black/failed image frame.
+        """
+
+        known_multiframe = any(
+            int(getattr(sm, "num_frames", 1) or 1) > 1
+            for sm in slices
+        )
+        if known_multiframe:
+            hydrated: List[SliceMeta] = []
+            for sm in slices:
+                if int(getattr(sm, "num_frames", 1) or 1) > 1:
+                    hydrated.append(sm)
+                    continue
+                has_pixels, frame_count = self._probe_pixel_frame_facts(sm.path)
+                if not has_pixels:
+                    continue
+                sm.num_frames = frame_count
+                hydrated.append(sm)
+            return hydrated
+
+        hydrated = []
+        for index, sm in enumerate(slices):
+            has_pixels, frame_count = self._probe_pixel_frame_facts(sm.path)
+            if not has_pixels:
+                continue
+            sm.num_frames = frame_count
+            hydrated.append(sm)
+            if frame_count > 1:
+                for remaining in slices[index + 1:]:
+                    remaining_has_pixels, remaining_frames = (
+                        self._probe_pixel_frame_facts(remaining.path)
+                    )
+                    if not remaining_has_pixels:
+                        continue
+                    remaining.num_frames = remaining_frames
+                    hydrated.append(remaining)
+            else:
+                hydrated.extend(slices[index + 1:])
+            return hydrated
+        return []
 
     def _expand_multiframe_slices(self, slices: List[SliceMeta]) -> List[SliceMeta]:
         """Expand every multi-frame file (NumberOfFrames > 1) into one SliceMeta
@@ -4178,21 +4225,18 @@ class Lightweight2DPipeline(QObject):
         only one small header read."""
         if not _FAST_MULTIFRAME or not slices:
             return slices
-        # Legacy DB metadata may omit NumberOfFrames. Probe the first object. A
-        # multi-frame first object identifies this as a multi-object cine, so
-        # probe the rest and retain each object's own frame count. Ordinary
-        # multi-file CT/MR returns 1 immediately and does not become an O(N)
-        # header scan on the viewer-open path.
+        # Legacy DB metadata may omit NumberOfFrames and can include a non-pixel
+        # Raw Data object in the same series. Hydrate until the first image; a
+        # multi-frame image then activates complete probing for that small mixed
+        # object set. Ordinary multi-file CT/MR still pays one header probe.
         if all(
             int(getattr(sm, "num_frames", 1) or 1) <= 1
             and getattr(sm, "frame_index", None) is None
             for sm in slices
         ):
-            first_count = self._probe_number_of_frames(slices[0].path)
-            if first_count > 1:
-                slices[0].num_frames = first_count
-                for sm in slices[1:]:
-                    sm.num_frames = self._probe_number_of_frames(sm.path)
+            slices = self._hydrate_multiframe_candidates(slices)
+        elif any(int(getattr(sm, "num_frames", 1) or 1) > 1 for sm in slices):
+            slices = self._hydrate_multiframe_candidates(slices)
         if not any(int(getattr(sm, "num_frames", 1) or 1) > 1 for sm in slices):
             return slices  # nothing multi-frame → unchanged
         out: List[SliceMeta] = []

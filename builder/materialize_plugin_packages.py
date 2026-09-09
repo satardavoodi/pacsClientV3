@@ -360,6 +360,11 @@ def materialize_plugin_packages(
                 )
                 _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
                 _validate_plugin_no_namespace_shadow(package_dir, module_id)
+                if module_id == "advanced_mpr":
+                    from builder.offline_lumbar_payload import stage_offline_lumbar
+                    stage_offline_lumbar(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
+                    from builder.eagle_eye_brain_payload import stage_eagle_eye_brain
+                    stage_eagle_eye_brain(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
                 has_payload = True
             else:
                 _write_runtime_payload_placeholder(package_dir, definition)

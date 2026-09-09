@@ -51,12 +51,20 @@ def active_viewer_context(patient_widget: Any) -> dict[str, Any]:
         fixed = getattr(patient_widget, "metadata_fixed", None)
     fixed = fixed if isinstance(fixed, dict) else {}
     pipeline = getattr(image_viewer, "pipeline", None)
+    from .eagle_eye_modes import resolve_eagle_eye_mode
+    modality = str(series.get("modality") or fixed.get("modality") or "").upper()
+    mode = resolve_eagle_eye_mode(modality, [
+        series.get("series_description"), series.get("protocol_name"),
+        series.get("body_part_examined"), study.get("study_description"),
+        fixed.get("study_description"), fixed.get("body_part"),
+    ])
 
     return {
         "selected_widget": selected,
         "vtk_widget": vtk_widget,
         "image_viewer": image_viewer,
-        "modality": str(series.get("modality") or fixed.get("modality") or "").upper(),
+        "modality": modality,
+        "eagle_eye_mode": mode,
         "study_uid": str(
             series.get("study_uid")
             or study.get("study_instance_uid")

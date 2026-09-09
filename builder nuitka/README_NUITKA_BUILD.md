@@ -1,5 +1,13 @@
 # AIPacs — Nuitka Build Workflow
 
+> **Canonical current route (2026-09-06):** start at [`../BUILD.md`](../BUILD.md).
+> The simple/monolithic command documented below is useful for diagnostics but is
+> not an official Standard/Eagle Eye/ARM64-emulated release candidate. The only
+> final matrix entry point is the isolated coordinator defined by `BUILD.md`.
+> A versioned full build also requires the multi-remote synchronization receipt
+> created through [`../RELEASE.md`](../RELEASE.md).
+> Documentation map: [`../docs/release-and-build/README.md`](../docs/release-and-build/README.md).
+
 This document describes the **Nuitka** build pipeline for AIPacs. Nuitka compiles
 the Python source into C/C++ and then into a native binary, which is
 significantly harder to reverse-engineer than the PyInstaller build (whose `.pyc`
@@ -17,7 +25,7 @@ PyInstaller (Python) build in `builder/`.
 
 | Entry point | Purpose | Config it reads |
 |---|---|---|
-| `build_nuitka.py` (root) + `builder nuitka/AIPacs_nuitka.spec.py` | **Simple / monolithic** standalone build — everything in one `dist` tree. Fast, reproducible, hard to reverse-engineer. **Start here.** | The full spec |
+| `build_nuitka.py` (root) + `builder nuitka/AIPacs_nuitka.spec.py` | Simple / monolithic diagnostic build — everything in one `dist` tree. It is not a release candidate. | The full spec |
 | `builder nuitka/build_nuitka_release.py` | **Staged / checkpointed release** pipeline — Engine + external plugin packages + Inno Setup installer, resumable stage-by-stage. | Only `LTO`, `ICON`, `ENTRY_POINT`, `OPTIONAL_DATA`, `NOFOLLOW_IMPORTS` from the spec; the rest of its inclusion logic is internal. |
 
 Both are independent of the PyInstaller build.
@@ -26,7 +34,7 @@ Both are independent of the PyInstaller build.
 
 ## 2. Quick start (simple build)
 
-### Option A — one-click, reproducible (recommended)
+### Option A — one-click diagnostic
 
 ```bat
 REM From the project root:
@@ -83,7 +91,7 @@ python build_nuitka.py --spec <path> REM use a custom spec
 
 These are the items that "work in dev but break in the frozen app" if omitted:
 
-- **Compressed DICOM codecs.** `pylibjpeg` finds its `libjpeg` / `openjpeg` /
+- **Compressed DICOM codecs.** `pylibjpeg` finds its `openjpeg` /
   `rle` decoder plugins through each distribution's `.dist-info` metadata. The
   spec ships `DIST_METADATA` → `--include-distribution-metadata=...`. Without it,
   JPEG 2000 / JPEG-lossless / RLE images decode fine in dev but silently fail in

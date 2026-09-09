@@ -1,5 +1,9 @@
 # Eagle Eye — Lumbar Spine MRI, Stage 1 (capture pipeline)
 
+> **HISTORICAL CAPTURE-STAGE DESIGN.** Preserve this document as implementation
+> evidence. The official cross-MRI architecture and stage ownership are defined
+> in `docs/pipelines/eagle-eye-mri.md`.
+
 **Date:** 2026-08-26 · **Status:** built, unit-tested, **NOT yet verified on a live study**
 **Scope:** image selection → synchronized 3×1 layout → screenshot sweeps → session storage.
 **Explicitly out of scope:** any LLM call, upload, pathology detection or report generation.

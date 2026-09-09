@@ -1,11 +1,11 @@
-"""OS printer handler using Qt printing (placeholder)."""
+"""OS printer handler using Qt printing."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import Qt, QSizeF
+from PySide6.QtGui import QPainter, QPageSize
 from PySide6.QtPrintSupport import QPrinter, QPrinterInfo, QPrintDialog
 
 
@@ -16,13 +16,18 @@ class OSPrinterHandler:
         except Exception:
             return []
 
-    def print_film(self, film_pixmap: Any, printer_name: str | None = None) -> bool:
+    def print_film(self, film_pixmap: Any, printer_name: str | None = None, film_size=None) -> bool:
         if film_pixmap is None:
             return False
 
         printer = QPrinter(QPrinter.HighResolution)
         if printer_name:
             printer.setPrinterName(printer_name)
+        if film_size is not None:
+            printer.setPageSize(QPageSize(
+                QSizeF(film_size.width_in, film_size.height_in), QPageSize.Inch,
+                film_size.name,
+            ))
 
         dialog = QPrintDialog(printer)
         if dialog.exec() != QPrintDialog.Accepted:
@@ -49,6 +54,6 @@ class OSPrinterHandler:
             x = max(0, (rect.width() - scaled.width()) // 2)
             y = max(0, (rect.height() - scaled.height()) // 2)
             painter.drawPixmap(x, y, scaled)
-            return True
         finally:
-            painter.end()
+            ended = painter.end()
+        return ended and printer.printerState() not in (QPrinter.Error, QPrinter.Aborted)

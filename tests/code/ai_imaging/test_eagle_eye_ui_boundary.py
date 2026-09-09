@@ -181,9 +181,11 @@ def test_coordinator_reapplies_the_preflight_mapping_by_series_identity():
 def test_result_panel_uses_product_model_name_without_provider_identifiers(tmp_path):
     app = QApplication.instance() or QApplication([])
     assert isinstance(app, QApplication)
+    session = tmp_path / "synthetic-session"
+    session.mkdir()
     record = AnalysisRecord(
         STATE_COMPLETE,
-        tmp_path / "synthetic-session",
+        session,
         text="PATHOLOGICAL FINDINGS\n  Synthetic finding.",
         document={
             "model": (
@@ -212,6 +214,37 @@ def test_result_panel_uses_product_model_name_without_provider_identifiers(tmp_p
     assert "34 images" in metadata
     assert "2026-08-29T20:23:24+00:00" in metadata
     assert "127813 tokens" in metadata
+    assert panel.btn_stage_images.text() == "View stage images"
+    assert panel.btn_stage_images.isEnabled()
+    panel.close()
+    panel.deleteLater()
+
+
+def test_result_panel_opens_the_independent_stage_gallery(tmp_path, monkeypatch):
+    from modules.ai_imaging.eagle_eye_lumbar import stage_audit_panel
+
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
+    session = tmp_path / "synthetic-session"
+    session.mkdir()
+    opened = []
+
+    class Gallery:
+        def __init__(self, parent):
+            opened.append(("created", parent))
+
+        def show_session(self, path):
+            opened.append(("shown", Path(path)))
+
+    monkeypatch.setattr(stage_audit_panel, "EagleEyeStageAuditPanel", Gallery)
+    panel = EagleEyeResultPanel()
+    panel._session_dir = session
+
+    panel._open_stage_images()
+    panel._open_stage_images()
+
+    assert [event for event, _value in opened] == ["created", "shown", "shown"]
+    assert opened[1][1] == session
     panel.close()
     panel.deleteLater()
 

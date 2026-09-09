@@ -32,14 +32,185 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from . import (
+    anatomy_cards,
     analysis_store,
+    atomic_pipeline,
     clinical_context,
     evidence_bundle,
+    evidence_request,
     focus_evidence,
     llm_package,
+    screening_attention,
+    screening_evidence,
 )
 
 logger = logging.getLogger(__name__)
+
+_ATOMIC_STRUCTURE_ENV = "AIPACS_EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE"
+
+
+def _atomic_structure_enabled() -> bool:
+    """Atomic structure analysis is the default; one field switch restores legacy."""
+    value = str(os.environ.get(_ATOMIC_STRUCTURE_ENV, "1") or "").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
+_AXIAL_FRAME_CITATION = re.compile(
+    r"\b(?:axial|ax)\s+(?:t2\s+)?frames?\s+(\d+)"
+    r"(?:\s*(?:-|\u2013|\u2014|through|to)\s*(\d+))?",
+    re.IGNORECASE,
+)
+
+
+def _cited_axial_frames(text: str) -> list[int]:
+    """Return bounded display-frame citations from diagnostic prose."""
+    cited = set()
+    for match in _AXIAL_FRAME_CITATION.finditer(str(text or "")):
+        first = int(match.group(1))
+        last = int(match.group(2) or first)
+        lower, upper = sorted((first, last))
+        # A diagnostic level card carries at most four axial frames. Refuse to
+        # expand an accidental year or other malformed range into a huge list.
+        if upper - lower > 32:
+            continue
+        cited.update(range(lower, upper + 1))
+    return sorted(cited)
+
+
+def _audit_verification_card_scope(package, verification_audit) -> Dict[str, Any]:
+    """Detect diagnostic citations that escape an authoritative level card.
+
+    This is an integrity check, not an anatomical relabeller. A cross-card
+    citation makes the report review-required while preserving the model's
+    original prose for clinician inspection.
+    """
+    evidence_audit = getattr(package, "evidence_audit", {}) or {}
+    if evidence_audit.get("evidence_mode") != evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS:
+        return {"schema_version": "1.0.0", "status": "not_applicable", "violations": []}
+
+    bindings = list(evidence_audit.get("card_bindings") or ())
+    rows = (
+        verification_audit.get("verifications")
+        if isinstance(verification_audit, dict)
+        else None
+    )
+    if not bindings or not isinstance(rows, list):
+        return {"schema_version": "1.0.0", "status": "unavailable", "violations": []}
+
+    by_attention = {}
+    by_level = {}
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        for attention_id in binding.get("attention_ids") or ():
+            by_attention[str(attention_id)] = binding
+        level = str(binding.get("subject_level") or "").strip()
+        if level:
+            by_level.setdefault(level, []).append(binding)
+
+    violations = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        candidate = str(row.get("candidate") or "").strip()
+        binding = by_attention.get(candidate)
+        if binding is None:
+            same_level = by_level.get(str(row.get("level") or "").strip(), ())
+            if len(same_level) == 1:
+                binding = same_level[0]
+        if binding is None:
+            continue
+
+        citation_text = "\n".join(
+            str(row.get(field) or "")
+            for field in ("reason", "refined_finding")
+        )
+        cited = _cited_axial_frames(citation_text)
+        allowed = sorted({int(value) for value in binding.get("allowed_axial_frames") or ()})
+        outside = sorted(set(cited) - set(allowed))
+        if outside:
+            violations.append({
+                "candidate": candidate,
+                "subject_level": str(binding.get("subject_level") or ""),
+                "allowed_axial_frames": allowed,
+                "cited_axial_frames": cited,
+                "outside_axial_frames": outside,
+            })
+
+    return {
+        "schema_version": "1.0.0",
+        "status": "conflict" if violations else "consistent",
+        "violations": violations,
+    }
+
+
+def _guard_verification_report(
+    package,
+    screening_text: str,
+    report: str,
+    started: dict,
+    verification_audit=None,
+) -> str:
+    """Preserve model prose but prevent silent release of conflicting labels."""
+    # Extra coverage is explicitly retained as context, not a missing lumbar
+    # assignment. Audit only diagnostic slabs; retain the separate scope notice.
+    measured_slabs = package.evidence_audit.get("measured_slabs", ())
+    anatomy_coverage = started.get("anatomy_coverage") or {}
+    context_frames = {
+        tuple(bounds) for bounds in anatomy_coverage.get("context_axial_frames", ())
+    }
+    diagnostic_slabs = [bounds for bounds in measured_slabs if tuple(bounds) not in context_frames]
+    audit = evidence_request.audit_level_maps(
+        screening_text, report, diagnostic_slabs,
+    )
+    started["level_assignment_audit"] = audit
+    card_scope = _audit_verification_card_scope(package, verification_audit)
+    started["verification_card_scope_audit"] = card_scope
+    started["integrity_guard_version"] = "1.1.0"
+    coverage = list(package.evidence_audit.get("warnings", ()))
+    issues = list(dict.fromkeys([*started.get("warnings", []), *coverage]))
+    notices = []
+    if audit["status"] != "consistent":
+        issues.append("level_assignment_conflict" if audit["status"] == "conflict" else "level_assignment_unavailable")
+        notices.append(
+            "LEVEL ASSIGNMENT REVIEW\n"
+            "Screening and verification numbering is conflicting, incomplete, or unavailable. "
+            "Neither model establishes anatomical numbering. Confirm the level and root identity "
+            "against source images before using this report; no automatic relabeling was applied."
+        )
+        notices.extend(
+            f"  {row['slab_id']}: screening {row['screening_level'] or 'unassigned'}; "
+            f"verification {row['verification_level'] or 'unassigned'}"
+            for row in audit["slabs"]
+        )
+    if card_scope["status"] != "consistent" and card_scope["status"] != "not_applicable":
+        issue = (
+            "verification_card_scope_conflict"
+            if card_scope["status"] == "conflict"
+            else "verification_card_scope_unavailable"
+        )
+        issues.append(issue)
+        notices.append(
+            "DIAGNOSTIC CARD SCOPE REVIEW\n"
+            "The verification audit cited axial frames outside its bound subject-level card, "
+            "or the structured audit needed to check those citations was unavailable. "
+            "Confirm every affected level against its labelled card; no automatic relabeling "
+            "or diagnosis change was applied."
+        )
+        notices.extend(
+            f"  {row['candidate'] or 'unassigned'} ({row['subject_level'] or 'unassigned'}): "
+            f"allowed AX {row['allowed_axial_frames']}; cited outside {row['outside_axial_frames']}"
+            for row in card_scope["violations"]
+        )
+    if coverage or started.get("warnings"):
+        notices.append("EVIDENCE COVERAGE REVIEW\n" + "; ".join(issues)
+                       + "\nMissing or fallback evidence does not establish normal anatomy.")
+    started["warnings"] = list(dict.fromkeys(issues))
+    started["review_required"] = bool(notices)
+    started["report_status"] = "review_required" if notices else "generated"
+    if not notices:
+        return report
+    return "REVIEW REQUIRED - NOT A VERIFIED FINAL REPORT\n\n" + "\n".join(notices) + "\n\nUNVERIFIED MODEL REPORT\n" + report
 
 BACKEND_COMPANY = "company"
 BACKEND_OPENAI = "openai"
@@ -49,7 +220,7 @@ BACKEND_OPENAI = "openai"
 # because a provider can rename or retire an id at any time and a wrong id
 # fails only at request time, after the whole study has been captured.
 _ENV_MODEL = "AIPACS_EAGLE_EYE_MODEL"
-DEFAULT_MODEL = (os.environ.get(_ENV_MODEL) or "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 
 def _stage_env_model(stage) -> str:
@@ -134,8 +305,9 @@ def resolve_model(backend: str = "", stage=None) -> str:
         return stage_pin
     # An explicitly exported pipeline-wide pin outranks a per-stage default: it
     # is the one-line way to undo an experiment on a machine in clinical use.
-    if (os.environ.get(_ENV_MODEL) or "").strip():
-        return DEFAULT_MODEL
+    pipeline_pin = (os.environ.get(_ENV_MODEL) or "").strip()
+    if pipeline_pin:
+        return pipeline_pin
 
     resolved = backend or resolve_backend()
     if resolved == BACKEND_OPENAI:
@@ -144,8 +316,7 @@ def resolve_model(backend: str = "", stage=None) -> str:
             from modules.EchoMind.settings_store import get_openai_model_for_feature
             return get_openai_model_for_feature(feature, fallback)
         except Exception as exc:
-            logger.warning("[EAGLE-EYE-LLM] model unresolved (%s); using %s",
-                           exc, fallback)
+            raise AnalysisUnavailable(str(exc)) from exc
     return fallback
 
 
@@ -261,26 +432,10 @@ def split_verification(text: str) -> Tuple[Optional[Dict[str, Any]], str]:
     return audit, (stripped or text.strip())
 
 
-def _candidate_context(text: str, candidates: Optional[Dict[str, Any]]) -> str:
-    """What the verification stage is told the first pass found.
-
-    Sends the PARSED candidates when they parsed, so the second pass sees the
-    same list the audit trail was built from. When they did not parse, the raw
-    first-pass answer is sent instead - degraded, but the second pass still has
-    hypotheses to challenge, which is the whole point of the design.
-    """
-    if candidates is not None:
-        body = json.dumps(candidates, ensure_ascii=False, indent=2)
-        note = ""
-    else:
-        body = text
-        note = ("\n(The first pass did not return a parseable candidate block; "
-                "its raw answer follows. Treat each abnormality it names as a "
-                "candidate.)")
-    return (
-        "PRELIMINARY CANDIDATE FINDINGS FROM THE FIRST PASS."
-        "\nThese are HYPOTHESES to be verified, not established findings."
-        f"{note}\n\n{body}\n"
+def _candidate_context(text: str, candidates: Optional[Dict[str, Any]], package=None) -> str:
+    """Compatibility entry point; raw screening prose is never forwarded."""
+    return screening_attention.attention_context(
+        screening_attention.normalize_attention(candidates, package)
     )
 
 
@@ -524,7 +679,11 @@ def _normalize_clinical_context(
             {"present", "absent", "indeterminate"},
             "indeterminate",
         ),
-        "broad_patterns": text_list(raw_global.get("broad_patterns"), 12),
+        # The paired sagittal overview is a routing prior, not a second
+        # diagnostic reader. Free prose here previously injected a named
+        # morphology and level into verification. Keep only the allowlisted
+        # categorical context; the level cards own current-study diagnosis.
+        "broad_patterns": [],
         "overview_only": True,
     }
 
@@ -557,6 +716,11 @@ def _normalize_clinical_context(
             )
             if source
         ]
+        if set(evidence_sources) == {"paired_sagittal_t1_t2"}:
+            hypothesis = "MRI-overview attention focus; diagnosis unassigned"
+            questions = [
+                "Independently assess this level on its bound diagnostic card."
+            ]
         context_attention_foci.append({
             "scope": choice(
                 raw_focus.get("scope"),
@@ -696,6 +860,10 @@ def _failed_clinical_context() -> str:
 class _StageExecutionError(RuntimeError):
     """One model request failed before it produced a usable answer."""
 
+    def __init__(self, message: str, usage: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.usage = dict(usage) if isinstance(usage, dict) else None
+
 
 def _execute_stage(
     *,
@@ -711,16 +879,20 @@ def _execute_stage(
     context: str = "",
 ) -> Dict[str, Any]:
     """Send and persist one stage. Safe to run in a worker-pool branch."""
+    request_document = package.request_document(
+        stage,
+        model=stage_model,
+        backend=backend,
+        context=context,
+    )
+    sent = request_document.get("sent")
+    if isinstance(sent, dict):
+        sent["header"] = str(header or "")
     analysis_store.write_stage_request(
         root,
         number,
         stage,
-        package.request_document(
-            stage,
-            model=stage_model,
-            backend=backend,
-            context=context,
-        ),
+        request_document,
     )
     logger.info(
         "[EAGLE-EYE-LLM] stage %d/%d (%s): sending %d image(s) to %s via %s",
@@ -766,7 +938,7 @@ def _execute_stage(
     if structured is None:
         logger.warning(
             "[EAGLE-EYE-LLM] stage %d (%s): no parseable structured block; "
-            "degrading to raw text",
+            "structured data unavailable; applying stage-specific fallback",
             number,
             stage.name,
         )
@@ -778,6 +950,75 @@ def _execute_stage(
         "structured": structured,
         "usage": usage_entry,
     }
+
+
+def _execute_atomic_stage(
+    *,
+    root: Path,
+    number: int,
+    total: int,
+    artifact_key: str,
+    stage: Any,
+    stage_model: str,
+    package: Any,
+    backend: str,
+    send: Callable[..., Dict[str, Any]],
+    header: str,
+    context: str = "",
+) -> Dict[str, Any]:
+    """Send one atomic subrequest and keep its exact independent artifacts."""
+    request_document = package.request_document(
+        stage,
+        model=stage_model,
+        backend=backend,
+        context=context,
+    )
+    sent = request_document.get("sent")
+    if isinstance(sent, dict):
+        sent["header"] = str(header or "")
+    safe_key = atomic_pipeline.safe_artifact_key(artifact_key)
+    analysis_store.write_atomic_stage_request(root, number, safe_key, request_document)
+    logger.info(
+        "[EAGLE-EYE-LLM] atomic stage %d/%d (%s, %s): sending %d image(s) "
+        "to %s via %s",
+        number,
+        total,
+        stage.name,
+        safe_key,
+        package.image_count,
+        stage_model,
+        backend,
+    )
+    try:
+        result = send(package, backend, stage_model, stage, header)
+    except Exception as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        raise _StageExecutionError(message) from exc
+    answer = _answer_text(result)
+    if not answer:
+        raise _StageExecutionError("returned an empty response")
+    usage = result.get("usage") if isinstance(result, dict) else None
+    structured = extract_json_block(answer)
+    analysis_store.write_atomic_stage_response(
+        root, number, safe_key, stage, answer, structured, usage=usage,
+    )
+    usage_entry = None
+    if usage:
+        usage_entry = dict(
+            usage,
+            stage=stage.name,
+            stage_model=stage_model,
+            atomic_artifact=safe_key,
+        )
+    produced = int((usage or {}).get("completion_tokens") or 0)
+    if structured is None:
+        if stage.max_output_tokens and produced >= stage.max_output_tokens - 8:
+            raise _StageExecutionError(
+                f"truncated_response:{produced}/{stage.max_output_tokens}",
+                usage_entry,
+            )
+        raise _StageExecutionError("unstructured_response", usage_entry)
+    return {"answer": answer, "structured": structured, "usage": usage_entry}
 
 
 def run_analysis(
@@ -815,8 +1056,8 @@ def run_analysis(
         package = llm_package.build_package(root, protocol=protocol)
 
     # The runner enters this function inside ApiWorker. Focused evidence is
-    # therefore decoded, cropped and composed off the Qt GUI thread. Layout
-    # mode is the default and returns the original package without image I/O.
+    # therefore decoded, cropped and composed off the Qt GUI thread. Explicit
+    # layout mode returns the original package without image I/O.
     selected_evidence_mode = evidence_bundle.MODE_LAYOUT
     if prepare_evidence:
         selected_evidence_mode = evidence_bundle.resolve_mode()
@@ -880,17 +1121,283 @@ def run_analysis(
 
         report_progress(context_number, "parallel_screening_context")
 
-        screening_kwargs = dict(
-            root=root,
-            number=screening_number,
-            total=total,
-            stage=screening_stage,
-            stage_model=screening_model,
-            package=package,
-            backend=resolved_backend,
-            send=send,
-            header=package.header,
-        )
+        def run_screening_branch() -> Dict[str, Any]:
+            """Compose source-grounded evidence and invoke Gemini in this worker branch."""
+            local_package = package
+            warning = ""
+            atomic_required = (
+                selected_evidence_mode == evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS
+                and _atomic_structure_enabled()
+            )
+            if selected_evidence_mode in {
+                evidence_bundle.MODE_FOCUSED_V4_CORRELATED,
+                evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS,
+            }:
+                try:
+                    local_package = screening_evidence.prepare_screening_package(package)
+                except screening_evidence.ScreeningEvidenceError as exc:
+                    if atomic_required:
+                        started["atomic_structure_pipeline"] = True
+                        started["anatomy_gate"] = {
+                            "status": "failed",
+                            "error_code": exc.code,
+                            "card_count": 0,
+                        }
+                        raise _StageExecutionError(
+                            f"anatomy_gate_failed:{exc.code}"
+                        ) from exc
+                    warning = f"focused_v4_screening_fallback:{exc.code}"
+                    logger.warning(
+                        "[EAGLE-EYE-LLM] correlated screening fell back to layout (%s)",
+                        exc.code,
+                    )
+            use_atomic = (
+                atomic_required
+                and local_package is not package
+            )
+            if atomic_required and not use_atomic:
+                started["atomic_structure_pipeline"] = True
+                started["anatomy_gate"] = {
+                    "status": "failed",
+                    "error_code": "correlated_atlas_unavailable",
+                    "card_count": 0,
+                }
+                raise _StageExecutionError(
+                    "anatomy_gate_failed:correlated_atlas_unavailable"
+                )
+            if use_atomic:
+                anatomy_stage = atomic_pipeline.anatomy_mapping_stage_for(screening_stage)
+                anatomy_outcome = None
+                anatomy_package = None
+                try:
+                    anatomy_outcome = _execute_atomic_stage(
+                        root=root,
+                        number=screening_number,
+                        total=total,
+                        artifact_key="anatomy_mapping",
+                        stage=anatomy_stage,
+                        stage_model=screening_model,
+                        package=local_package,
+                        backend=resolved_backend,
+                        send=send,
+                        header=local_package.header,
+                    )
+                    anatomy_package = anatomy_cards.prepare_anatomy_cards(
+                        local_package, anatomy_outcome["structured"],
+                    )
+                except _StageExecutionError as exc:
+                    started["atomic_structure_pipeline"] = True
+                    started["anatomy_gate"] = {
+                        "status": "failed",
+                        "error_code": str(exc),
+                        "card_count": 0,
+                    }
+                    raise _StageExecutionError(
+                        f"anatomy_gate_failed:{exc}", exc.usage,
+                    ) from exc
+                except anatomy_cards.AnatomyCardError as exc:
+                    usage = (
+                        _merge_usage([anatomy_outcome["usage"]])
+                        if anatomy_outcome and anatomy_outcome.get("usage") else None
+                    )
+                    started["atomic_structure_pipeline"] = True
+                    started["anatomy_gate"] = {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "card_count": 0,
+                    }
+                    raise _StageExecutionError(
+                        f"anatomy_gate_failed:{exc.code}", usage,
+                    ) from exc
+
+            if use_atomic:
+                try:
+                    jobs = [
+                        (
+                            request,
+                            atomic_pipeline.screening_stage_for(screening_stage, request),
+                            anatomy_cards.screening_package_for(anatomy_package, request.key),
+                        )
+                        for request in atomic_pipeline.SCREENING_REQUESTS
+                    ]
+                except anatomy_cards.AnatomyCardError as exc:
+                    usage = (
+                        _merge_usage([anatomy_outcome["usage"]])
+                        if anatomy_outcome and anatomy_outcome.get("usage") else None
+                    )
+                    started["atomic_structure_pipeline"] = True
+                    started["anatomy_gate"] = {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "card_count": 0,
+                    }
+                    raise _StageExecutionError(
+                        f"anatomy_gate_failed:{exc.code}", usage,
+                    ) from exc
+
+            if use_atomic:
+                outcomes = []
+                failures = []
+                failed_usages = []
+                with ThreadPoolExecutor(
+                    max_workers=len(jobs),
+                    thread_name_prefix="eagle-eye-atomic-screen",
+                ) as executor:
+                    futures = [
+                        executor.submit(
+                            _execute_atomic_stage,
+                            root=root,
+                            number=screening_number,
+                            total=total,
+                            artifact_key=f"screening_{request.key}",
+                            stage=atomic_stage,
+                            stage_model=screening_model,
+                            package=atomic_package,
+                            backend=resolved_backend,
+                            send=send,
+                            header=atomic_package.header,
+                        )
+                        for request, atomic_stage, atomic_package in jobs
+                    ]
+                    for (request, _atomic_stage, atomic_package), future in zip(jobs, futures):
+                        try:
+                            result = future.result()
+                        except _StageExecutionError as exc:
+                            failures.append(f"{request.key}:{exc}")
+                            if exc.usage:
+                                failed_usages.append(exc.usage)
+                            continue
+                        contract_errors = atomic_pipeline.screening_outcome_errors(
+                            request, result, package=atomic_package,
+                        )
+                        if contract_errors:
+                            failures.append(
+                                f"{request.key}:contract:" + ",".join(contract_errors)
+                            )
+                            if result.get("usage"):
+                                failed_usages.append(result["usage"])
+                            continue
+                        outcomes.append((request, result))
+                if outcomes and not failures:
+                    anatomy_map = anatomy_package.evidence_audit.get("anatomy_map", {})
+                    merged = atomic_pipeline.merge_screening_outcomes(
+                        outcomes, anatomy_map=anatomy_map,
+                    )
+                    aggregate_request = atomic_pipeline.aggregate_request_record(
+                        anatomy_package.request_document(
+                            screening_stage,
+                            model=screening_model,
+                            backend=resolved_backend,
+                        ),
+                        "screening",
+                    )
+                    aggregate_request["atomic_dispatch"] = {
+                        "version": atomic_pipeline.ATOMIC_PIPELINE_VERSION,
+                        "sent_as_single_request": False,
+                        "anatomy_mapping_request": "anatomy_mapping",
+                        "anatomy_card_count": anatomy_package.image_count,
+                        "request_groups": [request.key for request, _outcome in outcomes],
+                        "failed_request_groups": failures,
+                        "artifact_directory": f".atomic_analysis/stage{screening_number}",
+                    }
+                    analysis_store.write_stage_request(
+                        root, screening_number, screening_stage, aggregate_request,
+                    )
+                    analysis_store.write_stage_response(
+                        root,
+                        screening_number,
+                        screening_stage,
+                        merged["answer"],
+                        merged["structured"],
+                    )
+                    outcome = {
+                        "answer": merged["answer"],
+                        "structured": merged["structured"],
+                        "usage": None,
+                        "usages": (
+                            (
+                                [anatomy_outcome["usage"]]
+                                if anatomy_outcome and anatomy_outcome.get("usage") else []
+                            )
+                            + [
+                                result["usage"]
+                                for _request, result in outcomes
+                                if result.get("usage")
+                            ]
+                        ),
+                    }
+                    atomic_warnings = list(merged.get("warnings") or ())
+                    atomic_warnings.extend(
+                        f"atomic_screening_failed:{item}" for item in failures
+                    )
+                    warning = ";".join(
+                        item for item in [warning, *atomic_warnings] if item
+                    )
+                    return {
+                        "outcome": outcome,
+                        "package": anatomy_package,
+                        "warning": warning,
+                        "atomic": True,
+                        "anatomy_gate": {
+                            "status": "ready",
+                            "schema_version": anatomy_map.get("schema_version"),
+                            "card_count": anatomy_package.image_count,
+                            "evidence_mode": anatomy_cards.ANATOMY_CARD_MODE,
+                        },
+                    }
+
+                if failures:
+                    attempted_usages = (
+                        (
+                            [anatomy_outcome["usage"]]
+                            if anatomy_outcome and anatomy_outcome.get("usage") else []
+                        )
+                        + [
+                            result["usage"]
+                            for _request, result in outcomes
+                            if result.get("usage")
+                        ]
+                        + failed_usages
+                    )
+                    started["atomic_structure_pipeline"] = True
+                    started["anatomy_gate"] = {
+                        "status": "ready",
+                        "schema_version": anatomy_package.evidence_audit.get(
+                            "anatomy_map", {}
+                        ).get("schema_version"),
+                        "card_count": anatomy_package.image_count,
+                        "evidence_mode": anatomy_cards.ANATOMY_CARD_MODE,
+                    }
+                    started["pathology_screening_gate"] = {
+                        "status": "failed",
+                        "failed_request_groups": failures,
+                    }
+                    raise _StageExecutionError(
+                        "atomic_screening_failed:" + "|".join(failures),
+                        _merge_usage(attempted_usages),
+                    )
+
+            outcome = _execute_stage(
+                root=root,
+                number=screening_number,
+                total=total,
+                stage=screening_stage,
+                stage_model=screening_model,
+                package=local_package,
+                backend=resolved_backend,
+                send=send,
+                header=local_package.header,
+            )
+            return {
+                "outcome": outcome,
+                "package": local_package,
+                "warning": warning,
+                "atomic": False,
+                "anatomy_gate": {
+                    "status": "not_run",
+                    "card_count": 0,
+                },
+            }
 
         def run_context_branch() -> Dict[str, Any]:
             """Collect context and invoke Gemini inside the parallel branch."""
@@ -985,11 +1492,13 @@ def run_analysis(
         ) as executor:
             # Submit screening first so the model request can begin before the
             # context branch performs reception, PACS, or DICOM reads.
-            screening_future = executor.submit(_execute_stage, **screening_kwargs)
+            screening_future = executor.submit(run_screening_branch)
             context_future = executor.submit(run_context_branch)
             try:
-                screening_outcome = screening_future.result()
+                screening_result = screening_future.result()
             except _StageExecutionError as exc:
+                if exc.usage:
+                    started["usage"] = exc.usage
                 return analysis_store.mark_failed(
                     root,
                     f"stage {screening_number}/{total} "
@@ -997,6 +1506,67 @@ def run_analysis(
                     started=started,
                 )
             context_result = context_future.result()
+
+        screening_outcome = screening_result["outcome"]
+        screening_package = screening_result["package"]
+        screening_warning = screening_result.get("warning")
+        if screening_warning:
+            started.setdefault("warnings", []).extend(
+                item for item in screening_warning.split(";") if item
+            )
+        started["atomic_structure_pipeline"] = bool(screening_result.get("atomic"))
+        started["anatomy_gate"] = dict(screening_result.get("anatomy_gate") or {})
+        started["screening_evidence_mode"] = (
+            str(screening_package.evidence_audit.get("evidence_mode") or "")
+            if screening_package is not package
+            else evidence_bundle.MODE_LAYOUT
+        )
+        started["screening_image_count"] = screening_package.image_count
+        if screening_package is not package and screening_result.get("atomic"):
+            started["neural_compartment_coverage"] = list(
+                (screening_outcome.get("structured") or {}).get("neural_compartment_coverage") or []
+            )
+            started["anatomy_coverage"] = dict(
+                screening_package.evidence_audit.get("anatomy_map", {}).get("coverage") or {}
+            )
+            source_atlas = screening_package.evidence_audit.get("source_atlas", {})
+            started["anatomy_cards"] = {
+                "schema_version": screening_package.evidence_audit.get("schema_version"),
+                "card_count": len(screening_package.evidence_audit.get("cards", ())),
+                "cards": screening_package.evidence_audit.get("cards", []),
+            }
+            started["screening_atlas"] = {
+                "schema_version": source_atlas.get("schema_version"),
+                "series_contract": source_atlas.get("series_contract", {}),
+                "geometry_groups": source_atlas.get("geometry_groups", {}),
+                "screening_sampling": source_atlas.get("screening_sampling", {}),
+                "budget": source_atlas.get("budget", {}),
+                "capacity_notes": source_atlas.get("capacity_notes", []),
+            }
+        elif screening_package is not package:
+            started["screening_atlas"] = {
+                "schema_version": screening_package.evidence_audit.get("schema_version"),
+                "coordinate_space": screening_package.evidence_audit.get("coordinate_space"),
+                "series_contract": screening_package.evidence_audit.get(
+                    "series_contract", {}
+                ),
+                "geometry_groups": screening_package.evidence_audit.get(
+                    "geometry_groups", {}
+                ),
+                "page_count": len(screening_package.evidence_audit.get("pages", ())),
+                "tile_count": sum(
+                    len(page.get("tiles", ()))
+                    for page in screening_package.evidence_audit.get("pages", ())
+                    if isinstance(page, dict)
+                ),
+                "screening_sampling": screening_package.evidence_audit.get(
+                    "screening_sampling", {}
+                ),
+                "budget": screening_package.evidence_audit.get("budget", {}),
+                "capacity_notes": screening_package.evidence_audit.get(
+                    "capacity_notes", []
+                ),
+            }
 
         context_outcome = context_result["outcome"]
         context_failed = bool(context_result["failed"])
@@ -1008,15 +1578,19 @@ def run_analysis(
         if isinstance(source_status, dict):
             started["context_sources"] = dict(source_status)
 
-        if screening_outcome.get("usage"):
+        if screening_outcome.get("usages"):
+            usages.extend(screening_outcome["usages"])
+        elif screening_outcome.get("usage"):
             usages.append(screening_outcome["usage"])
         if context_outcome is not None and context_outcome.get("usage"):
             usages.append(context_outcome["usage"])
 
-        candidate_context = _candidate_context(
-            screening_outcome["answer"],
-            screening_outcome["structured"],
+        attention = screening_attention.normalize_attention(
+            screening_outcome["structured"], screening_package,
         )
+        started["screening_attention"] = attention
+        started.setdefault("warnings", []).extend(attention["warnings"])
+        candidate_context = screening_attention.attention_context(attention)
         if context_failed:
             started.setdefault("warnings", []).append("clinical_context_failed")
             clinical_prior = _failed_clinical_context()
@@ -1055,12 +1629,30 @@ def run_analysis(
                 verification_package = focus_evidence.prepare_verification_package(
                     package,
                     screening_outcome["answer"],
-                    screening_outcome["structured"],
+                    attention,
                     normalized_context,
                     mode=selected_evidence_mode,
                 )
                 started["verification_evidence_mode"] = selected_evidence_mode
             except focus_evidence.FocusedEvidenceError as exc:
+                if (
+                    screening_result.get("atomic")
+                    and selected_evidence_mode
+                    == evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS
+                ):
+                    started["diagnosis_gate"] = {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "card_count": 0,
+                    }
+                    started["usage"] = _merge_usage(usages)
+                    return analysis_store.mark_failed(
+                        root,
+                        f"stage {verification_number}/{total} "
+                        f"({verification_stage.name}): "
+                        f"diagnosis_gate_failed:{exc.code}",
+                        started=started,
+                    )
                 # Underscored, matching the existing focused_v2_fallback marker
                 # that operators and guards already grep for.
                 mode_marker = selected_evidence_mode.replace("-", "_")
@@ -1073,9 +1665,224 @@ def run_analysis(
                     exc.code,
                 )
         started["verification_image_count"] = verification_package.image_count
+        started["verification_evidence_audit"] = verification_package.evidence_audit
+        started["warnings"] = list(dict.fromkeys([
+            *started.get("warnings", []), *verification_package.evidence_audit.get("warnings", []),
+        ]))
         final_header = f"{verification_package.header}\n\n{merged_context}"
 
         report_progress(verification_number, verification_stage.name)
+        use_atomic_verification = (
+            bool(screening_result.get("atomic"))
+            and selected_evidence_mode == evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS
+            and verification_package.image_count > 0
+            and all(image.card_payload for image in verification_package.images)
+        )
+        atomic_diagnosis_required = (
+            bool(screening_result.get("atomic"))
+            and selected_evidence_mode == evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS
+        )
+        if atomic_diagnosis_required and not use_atomic_verification:
+            started["diagnosis_gate"] = {
+                "status": "failed",
+                "error_code": "diagnostic_card_contract_unavailable",
+                "card_count": verification_package.image_count,
+            }
+            started["usage"] = _merge_usage(usages)
+            return analysis_store.mark_failed(
+                root,
+                f"stage {verification_number}/{total} "
+                f"({verification_stage.name}): "
+                "diagnosis_gate_failed:diagnostic_card_contract_unavailable",
+                started=started,
+            )
+        if use_atomic_verification:
+            jobs = []
+            for image_index in range(1, verification_package.image_count + 1):
+                atomic_package = atomic_pipeline.verification_package_for(
+                    verification_package, image_index,
+                )
+                group = atomic_pipeline.card_group(verification_package, image_index)
+                atomic_stage = atomic_pipeline.verification_stage_for(
+                    verification_stage, group,
+                )
+                jobs.append((image_index, group, atomic_stage, atomic_package))
+
+            successful = []
+            failed_jobs = []
+            contract_warnings = []
+            with ThreadPoolExecutor(
+                max_workers=min(3, len(jobs)),
+                thread_name_prefix="eagle-eye-atomic-diagnosis",
+            ) as executor:
+                futures = [
+                    executor.submit(
+                        _execute_atomic_stage,
+                        root=root,
+                        number=verification_number,
+                        total=total,
+                        artifact_key=f"card_{image_index:02d}_{group}",
+                        stage=atomic_stage,
+                        stage_model=verification_model,
+                        package=atomic_package,
+                        backend=resolved_backend,
+                        send=send,
+                        header=f"{atomic_package.header}\n\n{clinical_prior}",
+                        context=clinical_prior,
+                    )
+                    for image_index, group, atomic_stage, atomic_package in jobs
+                ]
+                for job, future in zip(jobs, futures):
+                    try:
+                        outcome = future.result()
+                    except _StageExecutionError as exc:
+                        failed_jobs.append((*job[:2], str(exc)))
+                        if exc.usage:
+                            usages.append(exc.usage)
+                        continue
+                    if not isinstance(outcome.get("structured"), dict):
+                        failed_jobs.append((*job[:2], "unstructured_response"))
+                        continue
+                    outcome, validation_warnings = (
+                        atomic_pipeline.validate_verification_outcome(
+                            verification_package, job[0], outcome,
+                        )
+                    )
+                    contract_warnings.extend(validation_warnings)
+                    successful.append((job[0], job[1], outcome))
+
+            if not successful:
+                started["diagnosis_gate"] = {
+                    "status": "failed",
+                    "error_code": "all_card_requests_failed",
+                    "card_count": len(jobs),
+                    "failed_cards": [
+                        {
+                            "image_index": index,
+                            "structure_group": group,
+                            "reason": reason,
+                        }
+                        for index, group, reason in failed_jobs
+                    ],
+                }
+                started["usage"] = _merge_usage(usages)
+                return analysis_store.mark_failed(
+                    root,
+                    f"stage {verification_number}/{total} "
+                    f"({verification_stage.name}): "
+                    "diagnosis_gate_failed:all_card_requests_failed",
+                    started=started,
+                )
+
+            if successful:
+                for image_index, group, reason in failed_jobs:
+                    image = verification_package.images[image_index - 1]
+                    payload = image.card_payload if isinstance(image.card_payload, dict) else {}
+                    metadata = payload.get("card_metadata") if isinstance(payload, dict) else {}
+                    metadata = metadata if isinstance(metadata, dict) else {}
+                    attention_ids = list(metadata.get("attention_ids") or ()) or [None]
+                    successful.append((image_index, group, {
+                        "structured": {
+                            "schema_version": atomic_pipeline.ATOMIC_DIAGNOSIS_SCHEMA_VERSION,
+                            "verifications": [
+                                {
+                                    "candidate": attention_id,
+                                    "card_id": metadata.get("card_id"),
+                                    "structure_group": group,
+                                    "level": metadata.get("subject_level") or "unclear",
+                                    "status": "INDETERMINATE",
+                                    "refined_finding": None,
+                                    "reason": f"Atomic card request unavailable: {reason}",
+                                }
+                                for attention_id in attention_ids
+                            ],
+                            "limitations": [
+                                f"{metadata.get('card_id') or 'unassigned'} could not be classified."
+                            ],
+                            "not_assessable": [],
+                        },
+                        "usage": None,
+                    }))
+                successful.sort(key=lambda item: item[0])
+                merged = atomic_pipeline.merge_verification_outcomes(
+                    [outcome for _index, _group, outcome in successful],
+                    screening_outcome["answer"],
+                )
+                aggregate_request = atomic_pipeline.aggregate_request_record(
+                    verification_package.request_document(
+                        verification_stage,
+                        model=verification_model,
+                        backend=resolved_backend,
+                        context=clinical_prior,
+                    ),
+                    "verification",
+                )
+                aggregate_request["atomic_dispatch"] = {
+                    "version": atomic_pipeline.ATOMIC_PIPELINE_VERSION,
+                    "sent_as_single_request": False,
+                    "card_count": len(jobs),
+                    "successful_card_count": len(jobs) - len(failed_jobs),
+                    "failed_cards": [
+                        {"image_index": index, "structure_group": group, "reason": reason}
+                        for index, group, reason in failed_jobs
+                    ],
+                    "max_parallel_requests": 3,
+                    "artifact_directory": f".atomic_analysis/stage{verification_number}",
+                }
+                analysis_store.write_stage_request(
+                    root, verification_number, verification_stage, aggregate_request,
+                )
+                aggregate_answer = (
+                    "VERIFICATION\n```json\n"
+                    + json.dumps(merged["audit"], ensure_ascii=False, indent=2)
+                    + "\n```\n\nFINAL REPORT\n"
+                    + merged["report"]
+                )
+                analysis_store.write_stage_response(
+                    root,
+                    verification_number,
+                    verification_stage,
+                    aggregate_answer,
+                    merged["audit"],
+                )
+                for _index, _group, outcome in successful:
+                    if outcome.get("usage"):
+                        usages.append(outcome["usage"])
+                if failed_jobs:
+                    started.setdefault("warnings", []).extend(
+                        f"atomic_verification_failed:image_{index}:{group}"
+                        for index, group, _reason in failed_jobs
+                    )
+                if contract_warnings:
+                    started.setdefault("warnings", []).extend(contract_warnings)
+                started["atomic_verification"] = {
+                    "version": atomic_pipeline.ATOMIC_PIPELINE_VERSION,
+                    "card_count": len(jobs),
+                    "successful_card_count": len(jobs) - len(failed_jobs),
+                    "max_parallel_requests": 3,
+                    "contract_warnings": list(dict.fromkeys(contract_warnings)),
+                }
+                started["diagnosis_gate"] = {
+                    "status": "complete",
+                    "card_count": len(jobs),
+                    "successful_card_count": len(jobs) - len(failed_jobs),
+                }
+                report = merged["report"]
+                if "lumbar" in str(package.protocol_id):
+                    report = _guard_verification_report(
+                        verification_package,
+                        screening_outcome["answer"],
+                        report,
+                        started,
+                        verification_audit=merged["audit"],
+                    )
+                return analysis_store.mark_complete(
+                    root,
+                    report,
+                    started=started,
+                    usage=_merge_usage(usages),
+                )
+
         try:
             verification_outcome = _execute_stage(
                 root=root,
@@ -1100,6 +1907,11 @@ def run_analysis(
             usages.append(verification_outcome["usage"])
         answer = verification_outcome["answer"]
         _audit, report = split_verification(answer)
+        if "lumbar" in str(package.protocol_id):
+            report = _guard_verification_report(
+                verification_package, screening_outcome["answer"], report or answer, started,
+                verification_audit=_audit,
+            )
         return analysis_store.mark_complete(
             root,
             report or answer,
@@ -1137,7 +1949,22 @@ def run_analysis(
         if outcome.get("usage"):
             usages.append(outcome["usage"])
         if number < total:
-            context = _candidate_context(answer, outcome["structured"])
+            if stage.id == "lumbar_screening":
+                attention = screening_attention.normalize_attention(outcome["structured"], package)
+                started["screening_attention"] = attention
+                started.setdefault("warnings", []).extend(attention["warnings"])
+                started["review_required"] = bool(attention["warnings"])
+                context = screening_attention.attention_context(attention)
+            else:
+                # Other protocols (including Legion) own their handoff contract.
+                body = (json.dumps(outcome["structured"], ensure_ascii=False, indent=2)
+                        if outcome["structured"] is not None else answer)
+                note = ("" if outcome["structured"] is not None else
+                        "\n(The first pass did not return a parseable candidate block; "
+                        "its raw answer follows. Treat each abnormality it names as a candidate.)")
+                context = ("PRELIMINARY CANDIDATE FINDINGS FROM THE FIRST PASS.\n"
+                           "These are HYPOTHESES to be verified, not established findings."
+                           + note + "\n\n" + body + "\n")
 
     _audit, report = split_verification(answer) if total > 1 else (None, answer)
     return analysis_store.mark_complete(

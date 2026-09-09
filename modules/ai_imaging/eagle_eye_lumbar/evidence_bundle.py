@@ -12,8 +12,12 @@ standardized evidence sheet per source frame:
 * the derived files are generated in the analysis worker and never overwrite
   the clinical source captures.
 
-The feature is an explicit A/B switch. ``layout`` is the safe default and does
-no image I/O. ``focused-v1`` is accepted only when every source frame carries
+``focused-v5-level-cards`` is the canonical runtime mode and fails the analysis
+when a required anatomy, screening, or diagnostic-card boundary cannot complete.
+It never changes to ``layout`` after a gate has started. Older
+evidence composers remain available only behind an explicit engineering
+rollback gate for reproducibility. ``focused-v1`` is accepted only when every
+source frame carries
 measured viewport bounds; legacy sessions fail clearly instead of guessing by
 splitting a screenshot into thirds. ``focused-v2`` is deferred until screening
 and context finish, then a separate service composes verification-only evidence
@@ -22,8 +26,8 @@ directly from immutable DICOM volumes.
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -34,6 +38,7 @@ from .llm_package import AnalysisPackage, PackagedImage
 logger = logging.getLogger(__name__)
 
 ENV_EVIDENCE_MODE = "AIPACS_EAGLE_EYE_EVIDENCE_MODE"
+ENV_ALLOW_LEGACY_EVIDENCE = "AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE"
 MODE_LAYOUT = "layout"
 MODE_FOCUSED_V1 = "focused-v1"
 MODE_FOCUSED_V2 = "focused-v2"
@@ -42,8 +47,27 @@ MODE_FOCUSED_V2 = "focused-v2"
 # before it is scaled, and focus tiles are larger. See focus_evidence.
 MODE_FOCUSED_V3 = "focused-v3"
 MODE_FOCUSED_V3_PARASAGITTAL = "focused-v3-parasagittal"
+MODE_FOCUSED_V4_CORRELATED = "focused-v4-correlated"
+MODE_FOCUSED_V5_LEVEL_CARDS = "focused-v5-level-cards"
+DEFAULT_MODE = MODE_FOCUSED_V5_LEVEL_CARDS
+LEGACY_MODES = frozenset(
+    (
+        MODE_LAYOUT,
+        MODE_FOCUSED_V1,
+        MODE_FOCUSED_V2,
+        MODE_FOCUSED_V3,
+        MODE_FOCUSED_V3_PARASAGITTAL,
+        MODE_FOCUSED_V4_CORRELATED,
+    )
+)
 VERIFICATION_ONLY_MODES = frozenset(
-    (MODE_FOCUSED_V2, MODE_FOCUSED_V3, MODE_FOCUSED_V3_PARASAGITTAL)
+    (
+        MODE_FOCUSED_V2,
+        MODE_FOCUSED_V3,
+        MODE_FOCUSED_V3_PARASAGITTAL,
+        MODE_FOCUSED_V4_CORRELATED,
+        MODE_FOCUSED_V5_LEVEL_CARDS,
+    )
 )
 SUPPORTED_MODES = frozenset(
     (MODE_LAYOUT, MODE_FOCUSED_V1, *VERIFICATION_ONLY_MODES)
@@ -68,14 +92,27 @@ class EvidenceBundleError(RuntimeError):
 
 
 def resolve_mode() -> str:
-    """Resolve the strict evidence A/B switch from the runtime environment."""
-    mode = (os.environ.get(ENV_EVIDENCE_MODE) or MODE_LAYOUT).strip().lower()
+    """Resolve the canonical mode, permitting legacy modes only for engineering."""
+    mode = (os.environ.get(ENV_EVIDENCE_MODE) or DEFAULT_MODE).strip().lower()
     if mode not in SUPPORTED_MODES:
         allowed = ", ".join(sorted(SUPPORTED_MODES))
         raise EvidenceBundleError(
             f"unsupported evidence mode '{mode}'; expected one of: {allowed}"
         )
+    if mode in LEGACY_MODES and not _legacy_evidence_enabled():
+        logger.warning(
+            "[EAGLE-EYE-LLM] ignored retired evidence mode '%s'; using canonical '%s'",
+            mode,
+            DEFAULT_MODE,
+        )
+        return DEFAULT_MODE
     return mode
+
+
+def _legacy_evidence_enabled() -> bool:
+    """Return whether an engineer explicitly enabled retired evidence modes."""
+    value = (os.environ.get(ENV_ALLOW_LEGACY_EVIDENCE) or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def normalized_bounds(x: float, y: float, width: float, height: float,
@@ -167,6 +204,7 @@ def prepare_package(package: AnalysisPackage, mode: str = "") -> AnalysisPackage
         images=prepared,
         study_instance_uid=package.study_instance_uid,
         source_series=package.source_series,
+        evidence_audit=package.evidence_audit,
     )
 
 

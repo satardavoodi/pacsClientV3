@@ -2,7 +2,14 @@
 
 **Research review and implementation proposal | 2026-08-31**
 
-**Status:** Research proposal with bounded axial coverage repair, scoped root-negation scoring repair (scorer 1.1.0), and an opt-in additive bilateral sagittal experiment implemented and verified offline on 2026-08-31 (see section 16). The remaining phases are proposals. Clinical system prompts, models, GapGPT routing, default mode, and clinical references are unchanged. Experimental evidence captions/header explain the added images. No new paid model evaluation was performed.
+**Status:** Historical V3 research record. Bounded axial coverage repair,
+bilateral sagittal evidence, report-level integrity checks, padding-only
+headroom, and scoped scorer 1.2.0 repairs were implemented and verified offline
+on 2026-08-31 (see section 16). On 2026-09-01 the resulting architecture was
+superseded by canonical `focused-v4-correlated`, pipeline 5.3.0. V3 and earlier
+profiles are retained only for engineering rollback and controlled benchmark
+reproduction. Statements below about the then-current default are historical,
+not current operating instructions.
 
 **Review amendment:** Follow-up verification reproduced an axial focus-window coverage defect. A bounded coverage repair now precedes benchmark refactoring. Sections 2.4, 5.2, 15, and 16 distinguish focus coverage from overview coverage and document the revised order.
 
@@ -74,7 +81,10 @@ Immutable captured study and available source metadata
 
 The two Gemini requests run in parallel. Focused V3 is a verification-evidence profile, not a new clinical reasoning pipeline. The inspected V3 run still used pipeline version `4.6.1`. Its three stage prompts matched the compared V2 run, while the screening outputs and resulting selections differed.
 
-The source default remains `layout`. `AIPACS_EAGLE_EYE_EVIDENCE_MODE=focused-v3` selects V3. A successful source experiment therefore does not mean that V3 is already the build default.
+At the time of this V3 experiment the source default was `layout` and an
+environment switch selected V3. The current source and packaged-build default is
+`focused-v4-correlated`; selecting V3 now additionally requires the explicit
+engineering gate `AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE=1`.
 
 ### 2.2 Verified code boundaries
 
@@ -660,13 +670,17 @@ The evidence manifest is now schema **1.3.0**. Each focus has an `axial_window` 
 
 The previously omitted slices were missing from the high-detail focuses, **not** from the overview. This replay proves restored focused coverage; it does not prove improved extrusion recognition, specificity, or PPV. A new clinician-supervised source-build evaluation remains necessary. Phase 0 reference/scorer repair and E1/E2 are still pending; no patient-specific diagnosis or morphology rule was added.
 
-**Rollback:** the existing `AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout` path bypasses focused composition. To reproduce pre-fix focused evidence, use the preserved original artifacts; do not overwrite them or present a new-policy run as the old baseline.
+**Rollback:** current reproduction of the historical layout bypass requires
+`AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE=1` together with
+`AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout`. Prefer the preserved original artifacts
+for pre-fix evidence; do not overwrite them or present a new-policy run as the
+old baseline.
 
 ### Additional coverage preflight: additive bilateral sagittal experiment
 
 **Implemented, opt-in, offline verified (2026-08-31; OPT-55).** Select
-`focused-v3-parasagittal` through the existing evidence-mode environment
-variable or benchmark CLI. The normal V3 renderer is unchanged. All its PNGs
+`focused-v3-parasagittal` through the engineering rollback gate or benchmark
+CLI. The normal V3 renderer is unchanged. All its PNGs
 and captions are retained before optional sagittal T2 supplements are appended.
 This makes an evidence comparison possible without simultaneously changing
 screening, clinical context, diagnostic system prompts, or provider settings.
@@ -715,16 +729,53 @@ this is not a latency benchmark. No model run, build, or clinical validation
 was performed. See [implementation section 30](EAGLE_EYE_LLM_STAGE2_2026-08-26.md#30-v3-bilateral-sagittal-experiment-and-scoped-root-scoring-2026-08-31)
 for the budget comparison, packaging applicability, and trial/rollback steps.
 
+### Integrity and capacity follow-up before controlled comparisons
+
+The subsequent saved run exposed a uniform one-level naming shift despite
+monotonic order and equal slab count. The new guard compares stage-one and
+stage-three assignments on capture ranges, checks available measured slab
+boundaries, and makes conflicts or unavailable numbering review-required in
+the report and UI. It never silently relabels findings or treats screening as
+anatomical truth. Agreement remains consistency, not verified numbering.
+
+The opt-in supplement renderer now uses manifest 1.5.0 with padding-only
+compaction; its source sampling and seven-plane selection are unchanged.
+Private offline replay preserved all five base images and all 21 supplemental
+anatomical tile contents. Pixels fell from 11,990,784 to 11,253,504; encoded
+bytes fell only from 5,890,397 to 5,881,762. This is pixel-budget headroom, not
+meaningful upload reduction. The 8/8 image ceiling remains reached. Excluded
+supplements now produce visible request/result coverage warnings, while
+capacity advisories remain separate. All 60 original session files stayed
+unchanged. No paid request was made.
+
+The changed diagnosis in the later full-pipeline run is not an isolated test
+of sagittal evidence: screening and context outputs changed too, including
+screening's morphology and neural-compromise candidates. Freeze those inputs
+before attributing a diagnostic gain to the supplement. Model explanations
+alone cannot establish causality. Neither the level/side error nor clinical
+accuracy is corrected by an integrity warning or a better score parser.
+
+Final focused guards pass 19 level-integrity, 26 parasagittal, and 35 scorer
+tests. Combined AI Imaging/build-inclusion checks pass 732 tests with eight
+existing xfails; 462 mirror pairs match. See [section 31](EAGLE_EYE_LLM_STAGE2_2026-08-26.md#31-level-assignment-integrity-padding-headroom-and-scorer-120-2026-08-31)
+for contracts, exact replay results, limitations, and packaging applicability.
+
 ### Phase 0: trustworthy baseline and scoring
 
-**Partial implementation:** scorer 1.1.0 now scopes negation to root effects
+**Partial implementation:** scorer 1.1.0 first scoped negation to root effects
 instead of suppressing a root mention because a different attribute was
 negated nearby. Root-negation guards reproduced 6 failures before the fix;
-the scorer file now passes 25 tests. A saved report rescored as contact
+the scorer file then passed 25 tests. A saved report rescored as contact
 (`under` against compression), not missing root involvement. Individual score
 JSON records the scorer version and effect assertions. This does not repair
 the remaining morphology, multi-component, root-identity/effect independence,
 failed-attempt denominator, or reference-adjudication issues below.
+
+Scorer 1.2.0 additionally recognizes effect participles, scopes consequence
+grades locally, prevents a subarticular disc-location phrase from hiding an
+explicit recess grade, and retains lower-thoracic map rows. Per-run level-shift
+diagnostics do not remap scores or forgive clinical errors. The scorer file now
+passes 35 tests. The remaining deliverables below are still pending.
 
 **Deliverables:** independent morphology/presence scoring, explicit unknown states, reference-negative adjudication, configuration grouping, attempted-run accounting, and immutable baseline manifests.
 
@@ -814,6 +865,18 @@ Persistent cross-patient conversational memory is not the missing foundation. Th
 
 The axial coverage repair, opt-in bilateral sagittal supplement experiment, and narrow root-negation correction are now implemented and verified offline. The next gates are clinician-supervised comparison of the evidence conditions, completion of Phase 0 with adjudication of reference negatives, and controlled E1/E2. Do not simultaneously replace prompts, rendering, model settings, and orchestration. If a properly localized, adequately resolved, label-free evidence package still fails reliably, investigate a specialist method or require human assessment rather than adding instructions that force the expected diagnosis.
 
+### Follow-up: grading identity and frozen-input preparation
+
+Pipeline 4.7.0 corrects the mislabeled lateral-recess rubric (catalog 2.0.0) and
+separates root-effect observations (contract 1.0.0). Earlier grades remain tied to
+their saved definitions; do not reinterpret them as the corrected catalog.
+The benchmark now freezes/checks saved stage-three inputs offline, but does not
+yet replay a frozen verification request. Image selection, settings and GapGPT
+routing are unchanged. The clinician-confirmed local-axis/lesion/root workflow
+is specified, not implemented as an automatic midline or landmark UI. Complete
+the clinical annotation and remaining Phase 0 gates before laterality or E1/E2
+claims. See [section 32: implementation, sources and limits](EAGLE_EYE_LLM_STAGE2_2026-08-26.md#32-grading-correction-and-fixed-input-preparation-2026-08-31).
+
 ## Repository reading map
 
 These links are relative to this file in `docs/plans/`, not relative to the repository root or an external copy in `docs/eagle_eye/`. All eight targets were checked again after the follow-up feedback and resolve in this working tree. Copying the article to another folder requires rebasing its relative links; the current repository links do not need relocation.
@@ -828,3 +891,74 @@ These links are relative to this file in `docs/plans/`, not relative to the repo
 - [Regression catalog](architecture/REGRESSION_CATALOG.md)
 
 Public references are linked beside the claims they support. Provider documentation was checked on 2026-08-31; preview models and API behavior remain subject to change. No public source reviewed here establishes diagnostic performance for this exact model pair, GapGPT route, evidence package, and clinical population.
+
+## Implementation follow-up: focused V4 correlated screening (2026-09-01)
+
+Phase 3 is now implemented as an explicit successor mode. Gemini receives a
+raw-DICOM screening atlas rather than UI composites and returns diagnosis-free
+anatomical attention with image/tile identity and tile-content boxes. The local
+orchestrator converts those observations to patient LPS, validates cross-plane
+compatibility, and passes the retained lesion anchor to focused evidence
+selection. GPT receives the images plus sanitized correspondence results and
+must independently decide normality, diagnosis, morphology, level, side, and
+consequence.
+
+The implementation intentionally does not let a model operate the viewer or
+declare registration. Existing DICOM geometry is the authority; the viewer MCP
+can later expose the same pure service for interactive review, but it is not in
+the production inference loop. The mode retains broad overviews and wider
+context so a tight crop cannot erase migration or a missed screening focus.
+Independent layout fallbacks prevent missing geometry from blocking a study.
+
+The four synthetic regression guards pass, and the combined focused gate is
+green. This completes software plumbing, not E1-E4 or clinical validation.
+Promotion must be judged on retained screening sensitivity, correspondence
+quality, morphology/root consequences, false positives, failures, latency, and
+cost on the locked evaluation set.
+
+## Implementation follow-up: explicit card/JSON diagnostic handoff (2026-09-01)
+
+The current default preserves the two parallel Gemini branches: one performs
+diagnosis-neutral abnormality screening and cross-series localization, while
+the other extracts sanitized clinical and examination context. After both
+complete, the local geometry-owned orchestrator creates one diagnostic card
+per selected abnormal level and, when needed, one separate additional-findings
+card for source-bound attention outside a safely resolved level.
+
+Pipeline 6.2.0 no longer hides each card's machine-readable metadata at the end
+of a long caption. Every card has one independent `.card.json` sidecar, one
+manifest binding and one ordered request payload. The GapGPT bridge places that
+JSON immediately before the same PNG sent to GPT-5.6 Sol. The JSON carries
+identity, subject scope, diagnosis-free screening attention, structure
+checklist, source-slot provenance and routing conspicuity; sanitized clinical
+context remains a global prior and cannot manufacture a card. This implements
+the intended screening-to-classification boundary without adding another model
+call or UI-controller responsibility.
+
+Offline reconstruction of the latest saved source session verified two PNGs,
+two sidecars, two manifest bindings and two model-facing payloads with exact
+one-to-one equality. Synthetic coverage separately verifies the unresolved
+additional-findings path. The changed boundary passes 126 tests, complete AI
+Imaging passes 852 with 8 pre-existing xfails, builder package checks pass, and
+all 462 plugin mirror pairs match. Clinical benefit remains an evaluation
+question.
+
+## Implementation follow-up: card-first diagnostic reasoning (2026-09-01)
+
+Pipeline 6.3.0 and verification prompt 5.1.0 now match the explicit per-card
+JSON transport. GPT-5.6 Sol must bind each image to its immediately preceding
+metadata, resolve every bound attention independently, and cite the card and
+request image in the structured audit. It decides presence before disease,
+fuses same-plane sagittal T2/T1 with the card-local axial sequence, and derives
+morphology, side, migration and neural consequences rather than inheriting
+them from diagnosis-neutral screening.
+
+The verifier no longer receives legacy whole-screenshot instructions in the
+ordinary V5 path, does not perform a whole-study recount from selected cards,
+cannot move a finding into an adjacent card, and cannot manufacture a current
+MRI finding from context alone. Card-local safety review remains available for
+an associated finding visible in that card. The structured example is neutral;
+the previous hard-coded L4-L5 extrusion example was removed as an avoidable
+level and morphology anchor. Focused prompt tests pass 145; complete AI Imaging
+passes 855 with 8 pre-existing xfails. A controlled live run is still required
+to determine whether the clearer task boundary improves the clinical result.

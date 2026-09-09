@@ -85,16 +85,17 @@ PACKAGE_DATA = [
 # --------------------------------------------------------------------------- #
 # Distribution metadata (Nuitka --include-distribution-metadata)
 # --------------------------------------------------------------------------- #
-# pylibjpeg discovers its DICOM decoder plugins (libjpeg / openjpeg / rle) via
+# pylibjpeg discovers its DICOM decoder plugins (openjpeg / rle) via
 # each distribution's *.dist-info METADATA entry points. Bundling the modules
 # alone leaves pylibjpeg reporting ZERO decoders, so every JPEG 2000 /
 # JPEG-lossless / RLE image silently fails to decode in the frozen build.
 # This is the Nuitka equivalent of PyInstaller's copy_metadata() calls.
 DIST_METADATA = [
     "pylibjpeg",
-    "pylibjpeg-libjpeg",
     "pylibjpeg-openjpeg",
     "pylibjpeg-rle",
+    "python-gdcm",
+    "pyjpegls",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -207,11 +208,14 @@ FORCED_IMPORTS = [
     "pydicom.pixel_data_handlers.pillow_handler",
     "pydicom.pixel_data_handlers.rle_handler",
     "pydicom.pixel_data_handlers.gdcm_handler",  # no-ops gracefully if absent
+    "pydicom.pixel_data_handlers.jpeg_ls_handler",
     "pylibjpeg",
     "pylibjpeg.utils",
-    "libjpeg",   # pylibjpeg-libjpeg plugin (JPEG baseline/extended/lossless)
     "openjpeg",  # pylibjpeg-openjpeg plugin (JPEG 2000)
     "rle",       # pylibjpeg-rle plugin (RLE Lossless)
+    "gdcm",      # Apache-2.0 GDCM JPEG baseline/extended/lossless handler
+    "_gdcm.gdcmswig",
+    "jpeg_ls",   # MIT pyjpegls handler
     "PIL",
     "PIL.Image",
     "pydicom.fileset",   # DICOMDIR creation (CD writing)
@@ -344,15 +348,16 @@ DATA_DIRS = [
     ("modules/EchoMind/secretary/catalog", "modules/EchoMind/secretary/catalog"),
     ("modules/EchoMind/secretary/prompts", "modules/EchoMind/secretary/prompts"),
     ("json-styles", "json-styles"),
-    ("generated-files", "generated-files"),
+    # Only generated theme assets are distributable; caches, clinical probes,
+    # downloads and model preparation outputs must never enter the core.
+    ("generated-files/css", "generated-files/css"),
 ]
 
 # Single-file / optional data. build_nuitka.py places a file at
 # ``dest/basename`` (or at the exe root when dest == ".").
 OPTIONAL_DATA = [
+    ("modules/ai_imaging/eagle_eye_brain/slicer_worker.py", "modules/ai_imaging/eagle_eye_brain"),
     ("modules/EchoMind/secretary/module_map.yaml", "modules/EchoMind/secretary"),
-    ("servers.json", "."),
-    ("browser_bookmarks.json", "."),
     # Software-OpenGL (Mesa) fallback DLLs — required on machines without a GPU
     # OpenGL driver so VTK/Qt still render. Copied next to the exe.
     ("graphics_runtime/opengl32sw.dll", "."),
@@ -390,8 +395,8 @@ LTO = "auto"
 # "zig". Leave None for the most reliable Windows build with Visual Studio.
 C_COMPILER = None
 
-# Parallel C compile jobs. 0 => Nuitka default (all cores).
-JOBS = 0
+# Bound compilation to protect the workstation from concurrent compiler heaps.
+JOBS = 1
 
 SHOW_PROGRESS = True
 SHOW_MEMORY = False

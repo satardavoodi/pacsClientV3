@@ -3053,22 +3053,35 @@ def build_eagle_eye_user_content(header: str, items) -> list:
     """`[header, caption, image, caption, image, ...]` in capture order.
 
     Each item is an object with ``path`` (a real file), ``caption`` and
-    ``mime``. The caption goes BEFORE its image so the model reads what the
-    frame is before looking at it, which is also the order the manifests
-    already impose.
+    ``mime``. A diagnostic card may also carry one ``card_payload`` dictionary.
+    The caption and its compact JSON payload go BEFORE the image so the model
+    receives one unambiguous text/image unit in manifest order.
     """
     content: list = []
     if header:
         content.append({"type": "text", "text": str(header)})
 
-    for item in (items or []):
+    ordered_items = list(items or [])
+    total_images = len(ordered_items)
+    for global_index, item in enumerate(ordered_items, start=1):
         path = getattr(item, "path", None) or item["path"]
         caption = getattr(item, "caption", "") or ""
         mime = getattr(item, "mime", "") or "image/png"
+        card_payload = getattr(item, "card_payload", None)
+        if card_payload is None and isinstance(item, dict):
+            card_payload = item.get("card_payload")
         with open(path, "rb") as handle:
             encoded = base64.b64encode(handle.read()).decode("utf-8")
+        model_caption = f"IMAGE {global_index} OF {total_images}"
         if caption:
-            content.append({"type": "text", "text": caption})
+            model_caption += f"\n{caption}"
+        if card_payload:
+            model_caption += "\nCARD_METADATA_JSON: " + json.dumps(
+                card_payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+        content.append({"type": "text", "text": model_caption})
         content.append({
             "type": "image_url",
             "image_url": {

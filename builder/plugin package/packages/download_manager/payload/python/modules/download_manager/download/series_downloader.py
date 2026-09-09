@@ -258,6 +258,21 @@ class SeriesDownloader:
             len(series_list),
         )
 
+        # Publish the authoritative study denominator once, before the first
+        # series starts.  Queue/search payloads can legitimately carry unknown
+        # or stale image counts, while this list is the server manifest used by
+        # the actual download.  The event is aggregate-only and adds no
+        # per-instance UI work.
+        if self.progress_callback:
+            self.progress_callback(
+                'study_manifest',
+                '',
+                0.0,
+                0,
+                self._frozen_progress_totals[study_uid][0],
+                study_uid=study_uid,
+            )
+
         # ── Series-level priority: put the viewed series first ──────────
         # If a specific series is being viewed (CRITICAL), download it
         # before the other HIGH series.  This is re-checked before each
@@ -445,7 +460,21 @@ class SeriesDownloader:
                         if series_info.series_uid not in updated_skipped:
                             updated_skipped.append(series_info.series_uid)
                             self.state.update(study_uid, skipped_series=updated_skipped)
-                
+
+                    # The downloader state above lives in a subprocess. Send one
+                    # bounded accounting event so the main-process Overall
+                    # Progress includes a complete on-disk series without a disk
+                    # scan or per-instance UI fan-out.
+                    if self.progress_callback:
+                        self.progress_callback(
+                            'series_accounted',
+                            series_number,
+                            100.0,
+                            existing_count,
+                            series_info.image_count,
+                            series_uid=series_info.series_uid,
+                        )
+
                     logger.info(f"    ⏭️ SKIPPED: Series {series_number} already complete ({existing_count} files)")
                 
                     # ✅ CRITICAL FIX: Ensure instances are in database even for skipped series

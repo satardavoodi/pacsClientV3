@@ -4,7 +4,26 @@ This file is picked up automatically by AI agents working in this repository
 (`E:\ai-pacs\ai-pacs codes\ai-pacs beta version\`). Keep it accurate and integrate
 new guidance cleanly rather than overwriting existing sections.
 
+> **Release/build documentation map (2026-09-07):** start at
+> [`docs/release-and-build/README.md`](docs/release-and-build/README.md) to select
+> the Git, build, backend-detail, or historical-evidence path.
+>
+> **Canonical build route (2026-09-06):** humans and AI agents must start with
+> [`BUILD.md`](BUILD.md). It defines the only supported six-installer release-candidate
+> workflow, the safe faster lanes, output folders, size/content gates, and prohibited
+> shortcuts. Backend-specific build documents are subordinate implementation references.
+>
+> **Canonical Git release route (2026-09-07):** start with [`RELEASE.md`](RELEASE.md)
+> before a versioned commit, tag, push, or full build. It requires one reviewed SHA
+> across every declared remote/branch and produces the receipt consumed by `BUILD.md`.
+
 ## TESTING — the suite is GREEN by default; keep it that way (Q0, 2026-07-14)
+
+> **Current precedence correction (2026-09-02):** the text below is historical. The
+> repository-wide fast lane is presently red and `run_test.ps1` can mask its process failure.
+> Follow `AGENTS.md` and
+> `docs/reports/CODEX_REPOSITORY_READINESS_2026-08-27.md`: invoke focused pytest selections
+> directly and verify exit code 0. Do not cite the wrapper as current proof of success.
 
 The test suite was repaired on 2026-07-14: it used to **hang forever** (a build test spawned a real
 build) and was **RED by default** (~80 permanent failures), so it carried zero regression signal.
@@ -54,6 +73,10 @@ fresh logs. Current headline: #1 perf issue = **main-thread blocking** (not deco
 healthy); #1 reliability defect = **completion-by-notification not convergence** (the canonical lifecycle
 fix is partly shipped — Seam A/B cutovers default-on, live-verify pending). Next safe phase = verify the
 shipped cutovers first, then log hygiene + subprocess-spawn hardening, then off-thread work.
+
+The PHI-safe Cloud/recovery decision index is
+`docs/for-future-agents/CLOUD_DECISION_LEDGER.md`. The corrected 2026-09-02 stall evidence and
+guarded implementation are in `docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`.
 
 ## ARCHITECTURE HARD RULE — keep Fast / Advanced / VTK-modules completely separated (NON-NEGOTIABLE)
 
@@ -1158,7 +1181,8 @@ Key invariants that must not be broken:
   (`tools/dev/sync_plugin_mirrors.py`, then `verify_plugin_mirrors.py`).
 - **Lite viewer build** (`tools/build/build_lite_viewer.py`): PyInstaller onedir is the
   DEFAULT builder (~30 s; Nuitka kept via `--builder nuitka`). Each pylibjpeg plugin
-  (`rle`/`openjpeg`/`libjpeg` import names) needs BOTH its import AND its dist metadata
+  (`rle`/`openjpeg` import names) needs BOTH its import AND its dist metadata;
+  JPEG baseline/lossless uses `python-gdcm` and JPEG-LS uses `pyjpegls`
   (`--hidden-import`+`--copy-metadata` / `--include-package`+`--include-distribution-metadata`)
   or compressed DICOM silently stops decoding. `aipacs_lite_viewer.py` must NEVER import
   `modules.cd_burner...` (freeze tools follow it statically → workstation chain in the bundle).
@@ -1905,6 +1929,17 @@ one `SliceMeta` per FILE and the decoder did `arr = arr[0]`. Before editing
 - Multi-frame is a single file = fully present once downloaded, so it does NOT interact
   with the grow/disk-count logic (disk=1 file, viewer=N frames; the never-downgrade guard
   keeps N). Geometry: cine frames share IPP/IOP → treated as a scrollable stack (correct).
+- **Enhanced MR + same-series Raw Data ordering (2026-09-01).** A vendor export may place
+  one pixel-bearing Enhanced MR object and one metadata-only Raw Data Storage object under
+  the same Series UID. Legacy DB metadata omits `NumberOfFrames`, so probing only object 0
+  made Raw-first hide the internal frames and Enhanced-first retain Raw Data as a failed
+  image. `_hydrate_multiframe_candidates` now uses the shared partial-read
+  `dicom_file_pixel_facts` authority: leading non-pixel objects are excluded only from the
+  viewport, the first image is hydrated, and a detected multi-frame set is fully probed.
+  Ordinary many-file single-frame series still stop after one pixel-bearing probe. Guard:
+  `tests/code/viewer/test_fast_multiframe.py` (22); same-study read-only validation matched
+  32/32 series and 1,945/1,945 frames with zero of 19 Raw Data objects projected. Source
+  files remain preserved; source-build visual confirmation is pending.
 - **Deferred (untestable — no multi-frame data here):** per-frame volumetric geometry for
   enhanced MR/CT (PerFrameFunctionalGroupsSequence), and the same `arr[0]` fallback in the
   MPR/lazy-volume path (`pydicom_2d_backend.py:456`, `decode_service.py:194`) — the

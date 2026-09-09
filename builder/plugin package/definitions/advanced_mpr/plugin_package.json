@@ -28,9 +28,9 @@
     "os": "Windows 10 64-bit or later",
     "ram_gb_min": 8,
     "ram_gb_recommended": 16,
-    "disk_gb_min": 2,
+    "disk_gb_min": 6,
     "gpu_recommended": true,
-    "notes": "Bundled 3D Slicer runtime (~1.5 GB). Activated on first use inside AIPacs. A dedicated GPU is strongly recommended for 3D volume rendering."
+    "notes": "Shared Slicer runtime. The Eagle Eye edition also requires portable Brain/SynthSeg with volBrain reference assets and Lumbar/vertebrae_mr. No runtime model downloads. CPU latency and clinical accuracy require workstation-specific qualification; GPU remains recommended for rendering."
   },
-  "notes": "External runtime payload produced from the Slicer-based Advanced MPR build. Large package — requires dedicated disk space and sufficient RAM. GPU strongly recommended."
+  "notes": "Slicer is shared across editions. Eagle Eye owns Brain and Lumbar features; its installer component requires both complete offline payloads and documented Brain distribution evidence. Standard/ARM exclude Eagle Eye model assets. Anatomy assistance only; not a validated autonomous diagnosis."
 }

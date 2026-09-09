@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, QPointF, QTimer, QEvent
+from PySide6.QtCore import Qt, QPointF, QTimer, QEvent, Signal
 from PySide6.QtGui import QPainter, QPixmap, QPen, QColor, QFont, QBrush, QMouseEvent
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsPixmapItem, QGraphicsTextItem, QGraphicsItem, QGraphicsLineItem, QGraphicsRectItem
 
@@ -15,8 +15,9 @@ from modules.printing.render.dicom_renderer import (
     load_dicom_as_pixmap,
     get_dicom_window_level,
     compute_scout_reference_lines,
+    viewport_crop_bounds,
 )
-from modules.printing.render.film_renderer import render_film, HEADER_HEIGHT_RATIO, HEADER_PADDING_IN
+from modules.printing.render.film_renderer import render_film, HEADER_HEIGHT_RATIO, HEADER_PADDING_IN, page_background
 from modules.printing.ui.print_tools import PrintToolManager
 from PacsClient.utils.theme_manager import get_theme_manager
 
@@ -48,6 +49,8 @@ class TileItem(QGraphicsPixmapItem):
 
 
 class FilmPreviewWidget(QGraphicsView):
+    contentChanged = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._theme_manager = get_theme_manager()
@@ -60,6 +63,7 @@ class FilmPreviewWidget(QGraphicsView):
         self.setDragMode(QGraphicsView.NoDrag)
         self._items: List[TileItem] = []
         self._tiles: List[TileData] = []
+        self._viewports: dict[str, ViewportState] = {}
         self._film_size: FilmSize | None = None
         self._layout: FilmLayout | None = None
         self._overlay_info: Dict[str, str] | None = None
@@ -68,6 +72,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scout_item: QGraphicsPixmapItem | None = None
         self._scout_tile_index: int | None = None
         self._last_selected_index: int | None = None
+        self._selection_is_automatic = False
         self._sync_mode = False
         self._ref_line_items: List = []  # Track reference line scene items for cleanup
         
@@ -79,6 +84,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._right_button_down = False
         self._middle_button_down = False
         self._pan_active = False
+        self._adjustment_drag = False
         self._last_pos = QPointF()
         
         # Interaction sensitivity parameters (matching PACS viewer)
@@ -108,9 +114,13 @@ class FilmPreviewWidget(QGraphicsView):
     def _should_reserve_scout_slot(self, total_cells: int) -> bool:
         # Keep historical scout/placeholder behavior for multi-cell layouts,
         # but do not reserve the only cell in 1x1 unless an actual scout exists.
-        return bool(self._scout_path) or total_cells > 1
+        return total_cells > 1
 
     def set_tiles(self, film_size: FilmSize, layout: FilmLayout, paths: List[str], overlay_info: Dict[str, str] | None = None):
+        self._remember_viewports()
+        self._cancel_mouse_gesture()
+        self._rerender_timer.stop()
+        self._pending_tiles = []
         self._scene.clear()
         self._items = []
         self._tiles = []
@@ -118,10 +128,13 @@ class FilmPreviewWidget(QGraphicsView):
         self._film_size = film_size
         self._layout = layout
         self._overlay_info = overlay_info
+        self._background_mode = (overlay_info or {}).get("background_mode", "dark")
+        self._page_background, self._page_ink = page_background(self._background_mode)
         self._paths = list(paths)
         self._scout_item = None
         self._scout_tile_index = None
         self._last_selected_index = None
+        self._selection_is_automatic = False
         sequence_start = int((overlay_info or {}).get("sequence_start", 1) or 1)
 
         grid = GridLayoutEngine()
@@ -134,7 +147,7 @@ class FilmPreviewWidget(QGraphicsView):
         film_w_px = int(film_size.width_in * preview_dpi)
         film_h_px = int(film_size.height_in * preview_dpi)
         bg_rect = QGraphicsRectItem(0, 0, film_w_px, film_h_px)
-        bg_rect.setBrush(QBrush(QColor(self._theme["panel_bg"])))
+        bg_rect.setBrush(QBrush(self._page_background if self._page_background.alpha() else QColor("white")))
         bg_rect.setPen(QPen(Qt.NoPen))
         bg_rect.setZValue(-100)  # behind everything
         bg_rect.setAcceptedMouseButtons(Qt.NoButton)
@@ -158,7 +171,7 @@ class FilmPreviewWidget(QGraphicsView):
             cell = cells[cell_idx]
             path = paths[path_idx]
             ww, wl = get_dicom_window_level(path)
-            viewport = ViewportState(window_width=None, window_level=None, zoom=1.0, pan=(0.0, 0.0))
+            viewport = self._viewports.get(path, ViewportState())
             tile = TileData(path=path, viewport=viewport, default_ww=ww, default_wl=wl)
             rendered = load_dicom_as_pixmap(path, viewport)
             if not rendered:
@@ -191,7 +204,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         self._draw_preview_header(overlay_info, preview_dpi, header_height_in)
         self._draw_preview_grid(film_area, layout, preview_dpi, y_offset_in=header_height_in)
-        if self._scout_path:
+        if self._scout_path and reserve_scout_slot:
             self._draw_scout_reference_lines(preview_dpi)
 
         if self._items:
@@ -203,11 +216,37 @@ class FilmPreviewWidget(QGraphicsView):
                         preferred = item
                         break
                 (preferred or self._items[0]).setSelected(True)
+                self._selection_is_automatic = True
 
         # Set scene rect to exact film dimensions so fitInView shows the
         # correct aspect ratio for each film size (A3, A4, 14×17, etc.)
         self._scene.setSceneRect(0, 0, film_w_px, film_h_px)
         self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
+        self.contentChanged.emit()
+
+    def _remember_viewports(self):
+        self._viewports.update({tile.path: tile.viewport for tile in self._tiles})
+
+    def clear_document(self):
+        """Drop all study-owned state, including queued interaction work."""
+        self._rerender_timer.stop()
+        self._pending_tiles = []
+        self._scene.clear()
+        self._tiles = []
+        self._items = []
+        self._paths = []
+        self._viewports.clear()
+        self._ref_line_items = []
+        self._scout_path = None
+        self._scout_item = None
+        self._scout_tile_index = None
+        self._film_size = None
+        self._layout = None
+        self._overlay_info = None
+        self._last_selected_index = None
+        self._selection_is_automatic = False
+        self._cancel_mouse_gesture()
+        self.contentChanged.emit()
 
     def set_scout_path(self, scout_path: str | None) -> None:
         self._scout_path = scout_path
@@ -241,7 +280,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         # Left block (2 lines)
         left_name = QGraphicsTextItem(patient_name)
-        left_name.setDefaultTextColor(QColor(t["text_primary"]))
+        left_name.setDefaultTextColor(self._page_ink)
         left_name_font = QFont()
         left_name_font.setPointSize(fs_patient_name)
         left_name_font.setBold(True)
@@ -251,7 +290,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(left_name)
 
         left_id = QGraphicsTextItem(f"ID: {patient_id}")
-        left_id.setDefaultTextColor(QColor(t["text_secondary"]))
+        left_id.setDefaultTextColor(self._page_ink)
         left_id_font = QFont()
         left_id_font.setPointSize(fs_patient_id)
         left_id.setFont(left_id_font)
@@ -261,7 +300,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         # Center title (single centered line)
         center_item = QGraphicsTextItem(center_name)
-        center_item.setDefaultTextColor(QColor(t["text_primary"]))
+        center_item.setDefaultTextColor(self._page_ink)
         center_font = QFont()
         center_font.setPointSize(fs_center_name)
         center_font.setBold(True)
@@ -273,7 +312,7 @@ class FilmPreviewWidget(QGraphicsView):
 
         # Right block (2 lines)
         right1 = QGraphicsTextItem(right_line_1)
-        right1.setDefaultTextColor(QColor(t["text_secondary"]))
+        right1.setDefaultTextColor(self._page_ink)
         right_font = QFont()
         right_font.setPointSize(fs_right_block)
         right1.setFont(right_font)
@@ -283,7 +322,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(right1)
 
         right2 = QGraphicsTextItem(right_line_2)
-        right2.setDefaultTextColor(QColor(t["text_muted"]))
+        right2.setDefaultTextColor(self._page_ink)
         right2.setFont(right_font)
         right2_rect = right2.boundingRect()
         right2.setPos(width_px - right2_rect.width() - x_px, y_px + right1.boundingRect().height())
@@ -291,8 +330,9 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(right2)
 
         separator_y = int(header_height_in * dpi)
-        pen = QPen(QColor(t["border"]))
-        self._scene.addLine(0, separator_y, int(self._film_size.width_in * dpi), separator_y, pen)
+        if self._background_mode != "none":
+            pen = QPen(self._page_ink)
+            self._scene.addLine(0, separator_y, int(self._film_size.width_in * dpi), separator_y, pen)
 
     def _draw_preview_grid(
         self,
@@ -301,6 +341,8 @@ class FilmPreviewWidget(QGraphicsView):
         dpi: int,
         y_offset_in: float = 0.0,
     ) -> None:
+        if self._background_mode != "dark":
+            return
         grid = GridLayoutEngine()
         cells = grid.compute_cells(film_area, layout)
         grid_line_px = int(grid.GRID_LINE_WIDTH_IN * dpi)
@@ -315,7 +357,7 @@ class FilmPreviewWidget(QGraphicsView):
         cell_h = cells[0].height if cells else film_area.height_in
         line_in = grid.GRID_LINE_WIDTH_IN
 
-        brush = QBrush(QColor(self._theme["border"]))
+        brush = QBrush(QColor("white"))
         no_pen = QPen(Qt.NoPen)
 
         # Vertical lines (including left/right borders)
@@ -342,7 +384,7 @@ class FilmPreviewWidget(QGraphicsView):
         if not self._scout_path:
             return
         ww, wl = get_dicom_window_level(self._scout_path)
-        viewport = ViewportState(window_width=None, window_level=None, zoom=1.0, pan=(0.0, 0.0))
+        viewport = self._viewports.get(self._scout_path, ViewportState())
         rendered = load_dicom_as_pixmap(self._scout_path, viewport)
         if not rendered:
             self._draw_placeholder_cell(cell, dpi, header_height_in)
@@ -397,6 +439,10 @@ class FilmPreviewWidget(QGraphicsView):
         y_px = int((cell.y + header_height_in) * dpi)
         w_px = int(cell.width * dpi)
         h_px = int(cell.height * dpi)
+        if self._scout_tile_index is not None:
+            tile = self._tiles[self._scout_tile_index]
+            if tile.cell_px:
+                x_px, y_px, w_px, h_px = tile.cell_px
 
         # Create a clipping container at the scout cell bounds.
         # All reference line items are children of this rect, so Qt
@@ -416,18 +462,7 @@ class FilmPreviewWidget(QGraphicsView):
         if self._scout_tile_index is not None and self._scout_tile_index < len(self._tiles):
             scout_viewport = self._tiles[self._scout_tile_index].viewport
 
-        zoom = max(scout_viewport.zoom, 1.0) if scout_viewport else 1.0
-        pan_x, pan_y = scout_viewport.pan if scout_viewport else (0.0, 0.0)
-
-        # Apply the same viewport transform that _apply_viewport uses on pixels:
-        # The visible portion of the image is a crop of size (cols_s/zoom, rows_s/zoom)
-        # centered at (center + pan_offset).
-        crop_w = cols_s / zoom
-        crop_h = rows_s / zoom
-        center_x = cols_s / 2.0 + pan_x * crop_w / 2.0
-        center_y = rows_s / 2.0 + pan_y * crop_h / 2.0
-        crop_x0 = center_x - crop_w / 2.0
-        crop_y0 = center_y - crop_h / 2.0
+        crop_x0, crop_y0, crop_w, crop_h = viewport_crop_bounds(cols_s, rows_s, scout_viewport)
 
         # Scale from cropped DICOM pixel coords to screen cell coords
         scale_x = w_px / crop_w
@@ -501,6 +536,8 @@ class FilmPreviewWidget(QGraphicsView):
         self._scene.addItem(badge)
 
     def _draw_placeholder_cell(self, cell: GridCell, dpi: int, header_height_in: float) -> None:
+        if self._background_mode != "dark":
+            return
         x_px = int(cell.x * dpi)
         y_px = int((cell.y + header_height_in) * dpi)
         w_px = int(cell.width * dpi)
@@ -560,8 +597,11 @@ class FilmPreviewWidget(QGraphicsView):
         total_cells = self._layout.rows * self._layout.cols
         reserve_scout_slot = self._should_reserve_scout_slot(total_cells)
         start_cell_index = 1 if reserve_scout_slot else 0
-        if self._scout_path:
-            scout_render = load_dicom_as_pixmap(self._scout_path, None)
+        if self._scout_path and reserve_scout_slot:
+            self._remember_viewports()
+            scout_render = load_dicom_as_pixmap(self._scout_path, self._viewports.get(self._scout_path))
+            if scout_render is None:
+                return None
             if scout_render:
                 rendered_images.append(scout_render)
                 scout_info = (self._scout_path, [tile.path for tile in self._tiles if not tile.is_scout])
@@ -571,8 +611,12 @@ class FilmPreviewWidget(QGraphicsView):
             if tile.is_scout:
                 continue
             rendered = load_dicom_as_pixmap(tile.path, tile.viewport)
-            if rendered:
-                rendered_images.append(rendered)
+            if rendered is None:
+                return None
+            rendered_images.append(rendered)
+
+        if len([tile for tile in self._tiles if not tile.is_scout]) != len(self._paths):
+            return None  # Never silently print a partially decoded page.
         
         pixmap = render_film(
             rendered_images,
@@ -582,6 +626,7 @@ class FilmPreviewWidget(QGraphicsView):
             overlay_info=self._overlay_info,
             start_cell_index=start_cell_index,
             scout_info=scout_info,
+            scout_viewport=self._viewports.get(self._scout_path),
         )
         
         # Grid lines are already drawn by render_film
@@ -606,23 +651,24 @@ class FilmPreviewWidget(QGraphicsView):
         
         if etype == QEvent.MouseButtonPress and isinstance(event, QMouseEvent):
             btn = event.button()
-            mods = event.modifiers()
-            if btn == Qt.LeftButton:
-                self._left_button_down = True
+            if btn in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton):
+                self._cancel_mouse_gesture()
                 self._last_pos = event.position()
-                # Handle our custom selection BEFORE the scene does
                 self._handle_selection_click(event)
-                # Consume event so QGraphicsScene doesn't override our selection
-                return True
-            elif btn == Qt.RightButton:
-                self._right_button_down = True
-                self._last_pos = event.position()
-            elif btn == Qt.MiddleButton:
-                self._middle_button_down = True
-                self._last_pos = event.position()
-                
+                # Selection gestures never edit pixels, even with small hand motion.
+                self._adjustment_drag = (
+                    self._tile_at(event.position()) is not None
+                    and not bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
+                )
+                self._left_button_down = btn == Qt.LeftButton
+                self._right_button_down = btn == Qt.RightButton
+                self._middle_button_down = btn == Qt.MiddleButton
+                return True  # Qt must not replace our multi-selection.
+
         elif etype == QEvent.MouseMove and isinstance(event, QMouseEvent):
             if self._left_button_down or self._right_button_down or self._middle_button_down:
+                if not self._adjustment_drag:
+                    return True
                 current_pos = event.position()
                 delta_x = current_pos.x() - self._last_pos.x()
                 delta_y = current_pos.y() - self._last_pos.y()
@@ -645,82 +691,19 @@ class FilmPreviewWidget(QGraphicsView):
                 return True  # consume so scene doesn't interfere
 
         elif etype == QEvent.MouseButtonRelease and isinstance(event, QMouseEvent):
-            btn = event.button()
-            if btn == Qt.LeftButton:
-                self._left_button_down = False
-            elif btn == Qt.RightButton:
-                self._right_button_down = False
-            elif btn == Qt.MiddleButton:
-                self._middle_button_down = False
-            if btn == Qt.LeftButton:
-                return True  # consume left release too
+            if event.button() in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton):
+                self._cancel_mouse_gesture()
+                return True
 
         return super().viewportEvent(event)
 
-    def mousePressEvent(self, event):
-        """Handle mouse press events matching PACS viewer behavior."""
-        # NOTE: For left-click, viewportEvent already handled selection
-        # and returned True, so this is only reached for right/middle clicks
-        # that are forwarded by super().viewportEvent().
-        if event.button() == Qt.LeftButton:
-            self._left_button_down = True
-            self._last_pos = event.position()
-        elif event.button() == Qt.RightButton:
-            self._right_button_down = True
-            self._last_pos = event.position()
-        elif event.button() == Qt.MiddleButton:
-            self._middle_button_down = True
-            self._last_pos = event.position()
-        
-        super().mousePressEvent(event)
+    def _cancel_mouse_gesture(self):
+        self._left_button_down = self._right_button_down = self._middle_button_down = False
+        self._adjustment_drag = False
 
-    def mouseMoveEvent(self, event):
-        """Handle mouse move events matching PACS viewer behavior."""
-        if not (self._left_button_down or self._right_button_down or self._middle_button_down):
-            super().mouseMoveEvent(event)
-            return
-        
-        current_pos = event.position()
-        delta_x = current_pos.x() - self._last_pos.x()
-        delta_y = current_pos.y() - self._last_pos.y()
-        
-        # Tool mode: PAN
-        if self._tool_manager.is_pan_mode():
-            self._apply_pan(delta_x, delta_y)
-        
-        # Tool mode: ZOOM
-        elif self._tool_manager.is_zoom_mode():
-            self._apply_zoom(delta_y)
-        
-        # Tool mode: WINDOW_LEVEL
-        elif self._tool_manager.is_window_level_mode():
-            self._apply_window_level(delta_x, delta_y)
-        
-        # Default mode mappings:
-        # Left drag  -> Window Level/Width
-        # Right drag -> Zoom
-        # Middle drag -> Pan
-        elif self._tool_manager.is_default_mode():
-            if self._left_button_down:
-                self._apply_window_level(delta_x, delta_y)
-            elif self._right_button_down:
-                self._apply_zoom(delta_y)
-            elif self._middle_button_down:
-                self._apply_pan(delta_x, delta_y)
-        
-        self._last_pos = current_pos
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release events."""
-        if event.button() == Qt.LeftButton:
-            self._left_button_down = False
-        elif event.button() == Qt.RightButton:
-            self._right_button_down = False
-        elif event.button() == Qt.MiddleButton:
-            self._middle_button_down = False
-        
-        super().mouseReleaseEvent(event)
+    def focusOutEvent(self, event):
+        self._cancel_mouse_gesture()
+        super().focusOutEvent(event)
 
     def wheelEvent(self, event):
         """Wheel zoom.
@@ -743,10 +726,19 @@ class FilmPreviewWidget(QGraphicsView):
         self._apply_zoom(equivalent_delta)
         event.accept()
 
+    def _tile_at(self, position):
+        # Text/Scout overlays may be above the image. Look through decorative
+        # items rather than treating a click on an image number as blank space.
+        for candidate in self.items(position.toPoint()):
+            item = candidate
+            while item is not None:
+                if isinstance(item, TileItem):
+                    return item
+                item = item.parentItem()
+        return None
+
     def _handle_selection_click(self, event) -> None:
-        item = self.itemAt(event.position().toPoint())
-        while item is not None and not isinstance(item, TileItem):
-            item = item.parentItem()
+        item = self._tile_at(event.position())
 
         shift_pressed = bool(event.modifiers() & Qt.ShiftModifier)
         ctrl_pressed = bool(event.modifiers() & Qt.ControlModifier)
@@ -755,6 +747,8 @@ class FilmPreviewWidget(QGraphicsView):
             if not shift_pressed and not ctrl_pressed:
                 for tile_item in self._items:
                     tile_item.setSelected(False)
+                self._last_selected_index = None
+                self._selection_is_automatic = False
             return
 
         clicked_index = item.tile_index
@@ -767,35 +761,32 @@ class FilmPreviewWidget(QGraphicsView):
                 tile_item.setSelected(start <= tile_item.tile_index <= end)
         else:
             if not ctrl_pressed:
-                for tile_item in self._items:
-                    tile_item.setSelected(False)
-                item.setSelected(True)
+                # Starting an adjustment on any selected image keeps the group.
+                # A plain click on an unselected image starts a new selection.
+                if not was_selected:
+                    for tile_item in self._items:
+                        tile_item.setSelected(False)
+                    item.setSelected(True)
             else:
-                # Ctrl pressed: toggle the clicked item
-                item.setSelected(not was_selected)
+                # The first explicit click confirms an automatic initial target.
+                # Later Ctrl clicks toggle only the clicked image, never a range.
+                item.setSelected(True if self._selection_is_automatic and was_selected else not was_selected)
 
-        self._last_selected_index = clicked_index
+        if not shift_pressed or self._last_selected_index is None:
+            self._last_selected_index = clicked_index
+        self._selection_is_automatic = False
 
     def _target_tiles(self) -> List[TileData]:
         if self._sync_mode:
             return self._tiles
         selected_indices = {item.tile_index for item in self._items if item.isSelected()}
-        if not selected_indices:
-            # Default to first image when nothing is selected
-            if self._items:
-                for item in self._items:
-                    tile = self._tiles[item.tile_index] if item.tile_index < len(self._tiles) else None
-                    if tile:
-                        item.setSelected(True)
-                        selected_indices = {item.tile_index}
-                        break
-                if not selected_indices:
-                    self._items[0].setSelected(True)
-                    selected_indices = {self._items[0].tile_index}
+        if selected_indices:
+            self._selection_is_automatic = False
         return [tile for idx, tile in enumerate(self._tiles) if idx in selected_indices]
 
     def set_tool_mode(self, tool_mode: str) -> None:
         """Set the current tool mode (matching PACS toolbar)."""
+        self._cancel_mouse_gesture()
         self._tool_manager.set_tool(tool_mode)
 
     def get_tool_mode(self) -> str:
@@ -814,8 +805,10 @@ class FilmPreviewWidget(QGraphicsView):
         """
         tiles = self._target_tiles()
         for tile in tiles:
-            ww = tile.viewport.window_width or tile.default_ww or 400.0
-            wl = tile.viewport.window_level or tile.default_wl or 40.0
+            ww = tile.viewport.window_width if tile.viewport.window_width is not None else tile.default_ww
+            wl = tile.viewport.window_level if tile.viewport.window_level is not None else tile.default_wl
+            ww = 400.0 if ww is None else ww
+            wl = 40.0 if wl is None else wl
             
             # dx: window width adjustment (1.5x sensitivity, matching PACS)
             new_window_width = ww + dx * self._window_width_sensitivity
@@ -902,7 +895,9 @@ class FilmPreviewWidget(QGraphicsView):
         if not tiles:
             return
         # Coalesce updates to avoid heavy rerenders on every mouse event
-        self._pending_tiles = tiles
+        self._remember_viewports()
+        self.contentChanged.emit()
+        self._pending_tiles = list({id(tile): tile for tile in self._pending_tiles + tiles}.values())
         if not self._rerender_timer.isActive():
             self._rerender_timer.start(self._rerender_interval_ms)
 

@@ -18,10 +18,12 @@ from typing import Any, Iterable, Optional
 MODE_MAMMOGRAPHY = "mammography"
 MODE_BONE_AGE = "bone_age"
 MODE_LUMBAR_MRI = "lumbar_mri"
+MODE_BRAIN_MRI = "brain_mri"
 
-KNOWN_MODES = (MODE_MAMMOGRAPHY, MODE_BONE_AGE, MODE_LUMBAR_MRI)
+KNOWN_MODES = (MODE_MAMMOGRAPHY, MODE_BONE_AGE, MODE_LUMBAR_MRI, MODE_BRAIN_MRI)
 
 _ALIASES = {
+    MODE_BRAIN_MRI: ('brain', 'brain_mri', 'brain-mri', 'head_mri'),
     MODE_MAMMOGRAPHY: ("mg", "mammo", "mammography", "breast"),
     MODE_BONE_AGE: ("dx", "bone", "bone_age", "bone-age", "boneage"),
     MODE_LUMBAR_MRI: (
@@ -174,8 +176,8 @@ def looks_like_lumbar(*texts: Any) -> bool:
 def resolve_eagle_eye_mode(modality: Any, texts: Optional[Iterable[Any]] = None) -> Optional[str]:
     """Pick the Eagle Eye mode for a study from its modality and descriptions.
 
-    MG and DX keep their existing unconditional mapping. MR only resolves to the
-    lumbar mode when the descriptions actually say lumbar - an unrecognised MR
+    MG and DX keep their existing unconditional mapping. MR resolves to brain or
+    lumbar only when the descriptions identify the region - an unrecognised MR
     returns None and the caller keeps its previous behaviour rather than opening
     a layout built for a different body part.
     """
@@ -184,6 +186,11 @@ def resolve_eagle_eye_mode(modality: Any, texts: Optional[Iterable[Any]] = None)
         return MODE_MAMMOGRAPHY
     if value == "DX":
         return MODE_BONE_AGE
+    if value == 'MR':
+        blob = ' '.join(_normalise(text) for text in (texts or ()))
+        if (re.search(r'\b(brain|head|mprage)\b', blob)
+                and not re.search(r'\b(spine|lumbar|cervical|thoracic|neck|orbit)\b', blob)):
+            return MODE_BRAIN_MRI
     if value == "MR" and looks_like_lumbar(*(texts or ())):
         return MODE_LUMBAR_MRI
     return None

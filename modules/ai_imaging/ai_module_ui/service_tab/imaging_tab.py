@@ -26,6 +26,9 @@ from modules.ai_imaging.ai_module_ui.csv_table import read_csv_table
 from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv, load_feedback_row, upsert_bone_age_feedback_csv
 from modules.ai_imaging.ai_module_ui.mg_csv_schema import infer_mg_csv_contract, normalize_mg_action
 from modules.ai_imaging.eagle_eye_lumbar.workflow_coordinator import EagleEyeWorkflowCoordinator
+from modules.ai_imaging.mammography_ai_analyze.controller import (
+    MammographyAnalysisController,
+)
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -608,6 +611,7 @@ class ImagingToolsTab(AbstractTab):
         self.vtk_initialized = False
         self.current_sidebar = None
         self._eagle_eye_workflow = EagleEyeWorkflowCoordinator(self)
+        self._mammography_analysis = MammographyAnalysisController(self)
         self.mg_runs_loaded = False  # ÙÙ„Ú¯ Ø¬Ø¯ÛŒØ¯ Ø¨Ø±Ø§ÛŒ Ù…Ø¯ÛŒØ±ÛŒØª Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ MG runs
 
         # ---- init MG widgets FIRST (important)
@@ -786,6 +790,10 @@ class ImagingToolsTab(AbstractTab):
         """
         try:
             self._eagle_eye_workflow.teardown()
+        except Exception:
+            pass
+        try:
+            self._mammography_analysis.teardown()
         except Exception:
             pass
         try:
@@ -1525,7 +1533,8 @@ class ImagingToolsTab(AbstractTab):
                 btn.setIcon(icon)
             btn.setToolTip(tooltip)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(slot)
+            if slot is not None:
+                btn.clicked.connect(slot)
             layout.addWidget(btn)
             return btn
 
@@ -1562,6 +1571,12 @@ class ImagingToolsTab(AbstractTab):
             'Enable distance measurement ruler on the selected mammography viewer',
             self._on_mg_ruler_clicked
         )
+        self._mammography_ai_btn = _add_btn(
+            'Intelligent AI Analyze', 'fa5s.brain',
+            'Correlate mammography images with the active AI detection result',
+            None,
+        )
+        self._mammography_analysis.bind_button(self._mammography_ai_btn)
 
         # --- 3D Cursor findings selector (multiple corresponding lesions) ------
         # Lives in the TOOLBAR next to Ruler — NOT inside the VTK viewport, which

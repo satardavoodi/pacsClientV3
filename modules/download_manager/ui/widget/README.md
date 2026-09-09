@@ -68,6 +68,21 @@ All existing import paths continue to work unchanged.
 - **Worker completion timer is 0ms** — `QTimer.singleShot(0, _start_next_pending)`.
 - **Progress throttle is 100ms** — `_progress_throttle_timer` batches per-image signals.
 
+## Overall Progress Contract
+
+- `Overall Progress` means all images in the selected study/queue row; it is not the current-series percentage and is not a global total across every queued study.
+- Per-series counters may restart at zero, but study-level downloaded images are monotonic within one download generation.
+- The accumulator is an O(1), integer-only main-process ledger keyed by `SeriesInstanceUID`; no disk, database, network, decode, or VTK work is allowed in this UI path.
+- Before the first series starts, the download subprocess publishes one reliable aggregate-only `study_manifest` event. Its total comes from the server metadata actually used by the downloader and replaces an unknown or stale queue/search-payload total without resetting an already-observed numerator.
+- The subprocess progress envelope carries both immutable `SeriesInstanceUID` and display `SeriesNumber`. Duplicate numbers must never be used as the authoritative identity.
+- A complete-on-disk/resumed series emits one `series_accounted` message for aggregate state only. It must not create per-instance or viewer-progress fan-out.
+
+### Live verification record
+
+- On 2026-09-01, a human-controlled source-build run confirmed that both Overall Progress surfaces behaved cumulatively after a fresh restart.
+- The PHI-safe diagnostic sequence showed an initially unknown queue total (`0`) replaced by the authoritative downloader manifest (`319` images across `6` series). All six terminal series totals summed exactly to `319` (`2 + 45 + 135 + 135 + 1 + 1`).
+- No timestamped `ERROR` or `CRITICAL` event appeared in the application, download, viewer, or database logs during the verification window. This is source-build live verification, not installer or release readiness.
+
 ## Tests
 ```bash
 # DM tests (27 scenarios, 129 assertions)

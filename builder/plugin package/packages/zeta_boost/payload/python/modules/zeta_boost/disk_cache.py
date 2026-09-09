@@ -37,7 +37,9 @@ class ZetaBoostDiskCache:
         self._root.mkdir(parents=True, exist_ok=True)
         self._db_path = self._root / "manifest.db"
         self._lock = threading.RLock()
-        self._init_schema()
+        self._schema_ready = threading.Event()
+        self._schema_error: Optional[BaseException] = None
+        self._start_schema_initialization()
 
     # ------------------------- logging -------------------------
     def _log(self, msg: str):
@@ -50,34 +52,64 @@ class ZetaBoostDiskCache:
     # ------------------------- db -------------------------
     def _conn(self):
         conn = sqlite3.connect(str(self._db_path), timeout=30)
-        conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA busy_timeout = 10000;")
         return conn
 
+    def _start_schema_initialization(self) -> None:
+        """First-touch the manifest database without delaying patient-tab paint."""
+        threading.Thread(
+            target=self._init_schema,
+            name="zeta-manifest-init",
+            daemon=True,
+        ).start()
+
+    def _schema_available(self, *, wait: bool = False) -> bool:
+        if wait and not self._schema_ready.is_set():
+            self._schema_ready.wait(timeout=10.0)
+        return self._schema_ready.is_set() and self._schema_error is None
+
     def _init_schema(self):
-        with self._lock:
-            conn = self._conn()
-            cur = conn.cursor()
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS entries (
-                    tab_key TEXT NOT NULL,
-                    series_number TEXT NOT NULL,
-                    file_path TEXT NOT NULL,
-                    meta_path TEXT NOT NULL,
-                    bytes_size INTEGER DEFAULT 0,
-                    created_at REAL NOT NULL,
-                    last_access REAL NOT NULL,
-                    access_count INTEGER DEFAULT 0,
-                    PRIMARY KEY(tab_key, series_number)
+        started = time.perf_counter()
+        conn = None
+        try:
+            with self._lock:
+                conn = self._conn()
+                # WAL is persistent database configuration. Running this PRAGMA
+                # on every connection caused measured 0.4-2.5 s GUI stalls.
+                conn.execute("PRAGMA journal_mode = WAL;")
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS entries (
+                        tab_key TEXT NOT NULL,
+                        series_number TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        meta_path TEXT NOT NULL,
+                        bytes_size INTEGER DEFAULT 0,
+                        created_at REAL NOT NULL,
+                        last_access REAL NOT NULL,
+                        access_count INTEGER DEFAULT 0,
+                        PRIMARY KEY(tab_key, series_number)
+                    )
+                    """
                 )
-                """
-            )
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_last_access ON entries(last_access)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_tab ON entries(tab_key)")
-            conn.commit()
-            conn.close()
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_last_access ON entries(last_access)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_tab ON entries(tab_key)")
+                conn.commit()
+        except BaseException as exc:
+            self._schema_error = exc
+            self._log(f"SCHEMA_INIT_FAILED error_type={type(exc).__name__}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._schema_ready.set()
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            if elapsed_ms >= 100.0:
+                self._log(f"SCHEMA_INIT_SLOW elapsed_ms={elapsed_ms:.1f}")
 
     # ------------------------- serialization -------------------------
     def _sanitize(self, text: str) -> str:
@@ -219,6 +251,8 @@ class ZetaBoostDiskCache:
     # ------------------------- public API -------------------------
     def has(self, tab_key: str, series_number: str) -> bool:
         """Cheap manifest-only existence check (no payload deserialize, no touch)."""
+        if not self._schema_available():
+            return False
         tab_key = str(tab_key)
         series_number = str(series_number)
         with self._lock:
@@ -233,6 +267,8 @@ class ZetaBoostDiskCache:
             return row is not None
 
     def get(self, tab_key: str, series_number: str):
+        if not self._schema_available():
+            return None
         tab_key = str(tab_key)
         series_number = str(series_number)
         now = time.time()
@@ -281,6 +317,8 @@ class ZetaBoostDiskCache:
         return payload
 
     def put(self, tab_key: str, series_number: str, vtk_image_data, metadata):
+        if not self._schema_available(wait=True):
+            raise RuntimeError("ZetaBoost disk-cache schema is unavailable")
         tab_key = str(tab_key)
         series_number = str(series_number)
         now = time.time()
@@ -329,6 +367,8 @@ class ZetaBoostDiskCache:
                 raise
 
     def delete_entry(self, tab_key: str, series_number: str):
+        if not self._schema_available():
+            return
         tab_key = str(tab_key)
         series_number = str(series_number)
 
@@ -353,6 +393,8 @@ class ZetaBoostDiskCache:
                         pass
 
     def clear_tab(self, tab_key: str):
+        if not self._schema_available():
+            return
         tab_key = str(tab_key)
         with self._lock:
             conn = self._conn()
@@ -374,6 +416,8 @@ class ZetaBoostDiskCache:
 
     def prune(self):
         """Global LRU prune by total bytes and entry count."""
+        if not self._schema_available():
+            return
         with self._lock:
             conn = self._conn()
             cur = conn.cursor()

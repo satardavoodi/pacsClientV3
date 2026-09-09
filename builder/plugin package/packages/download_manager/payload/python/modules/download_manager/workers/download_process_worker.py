@@ -99,12 +99,13 @@ class DownloadProcessWorker(QThread):
     Qt bridge thread for a ``multiprocessing.Process``-based download.
 
     Signals (identical to DownloadWorker):
-        progress  : (study_uid, event_type, series_number, pct, downloaded, total)
+        progress  : (study_uid, event_type, series_uid, series_number, pct,
+                     downloaded, total)
         completed : (study_uid, success)
         error     : (study_uid, error_message)
     """
 
-    progress = Signal(str, str, str, float, int, int)
+    progress = Signal(str, str, str, str, float, int, int)
     completed = Signal(str, bool)
     error = Signal(str, str)
 
@@ -240,7 +241,7 @@ class DownloadProcessWorker(QThread):
             # Rate-limiting state for progress signals.
             _last_progress_emit_s: float = 0.0
             _pending_progress_msg: Optional[dict] = None  # latest unsent value
-            _last_series_number: Optional[str] = None
+            _last_series_identity: Optional[str] = None
             while True:
                 try:
                     msg = self._result_queue.get(timeout=_QUEUE_POLL_TIMEOUT_S)
@@ -300,21 +301,24 @@ class DownloadProcessWorker(QThread):
                 process_dead_since = None
 
                 if msg_type == "progress":
+                    _raw_uid = msg.get("series_uid", "")
                     _raw_series = msg.get("series_number", "")
                     _raw_dl = int(msg.get("downloaded", 0))
                     _raw_tot = int(msg.get("total", 0))
-                    _series_changed = (_raw_series != _last_series_number)
+                    _series_identity = _raw_uid or _raw_series
+                    _series_changed = (_series_identity != _last_series_identity)
                     _series_done = (_raw_tot > 0 and _raw_dl >= _raw_tot)
                     _now_s = time.monotonic()
                     _due = (_now_s - _last_progress_emit_s) >= _PROGRESS_EMIT_MIN_INTERVAL_S
                     if _series_changed or _series_done or _due:
                         # Emit and reset pending buffer.
-                        _last_series_number = _raw_series
+                        _last_series_identity = _series_identity
                         _last_progress_emit_s = _now_s
                         _pending_progress_msg = None
                         self.progress.emit(
                             study_uid,
                             msg.get("event_type", ""),
+                            msg.get("series_uid", ""),
                             _raw_series,
                             float(msg.get("progress_pct", 0.0)),
                             _raw_dl,
@@ -333,6 +337,7 @@ class DownloadProcessWorker(QThread):
                         self.progress.emit(
                             study_uid,
                             _pm.get("event_type", ""),
+                            _pm.get("series_uid", ""),
                             _pm.get("series_number", ""),
                             float(_pm.get("progress_pct", 0.0)),
                             int(_pm.get("downloaded", 0)),

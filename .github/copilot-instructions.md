@@ -1,5 +1,11 @@
 # AIPacs Copilot Instructions
 
+> **Current source version:** v3.6.5. Before any versioned Git publication or
+> packaging task, start at
+> [`docs/release-and-build/README.md`](../docs/release-and-build/README.md), then
+> follow root [`RELEASE.md`](../RELEASE.md) and [`BUILD.md`](../BUILD.md). The
+> stable-version history below is not an operational release or build procedure.
+
 **Current Stable Version:** v3.6.4 (2026-08-29) - Minor release: Eagle Eye lumbar-spine MRI analysis (capture pipeline + two-stage LLM reading, pipeline 4.2.0, with a parallel clinical-context branch), the new Legion Consult ROI-directed MRI consultation function, an overlay/series-switch re-entrancy native-crash fix, a Local Server `clear_table` Shiboken crash fix, strict-offline Local mode with richer Advanced Patient Search, and Nuitka force-inclusion of `modules.ai_imaging`. Built on v3.6.3. See `docs/releases/VERSION_3.6.4_RELEASE.md`.
 
 **Previous Stable:** v3.6.3 (2026-08-23) - Minor release: the new AiPacs Chat manager module (console + Laravel chat API), a verified module-install pipeline (OPT-53 — hash-verify → dependency/healthcheck → auto-enable), stable license fingerprint (MachineGuid + volume-serial, survives reboots), a centralized Consultation & Education settings tab, MPR interaction/lifecycle stability + geometry-constraint work, report image insert/capture, YBR color + import-freeze fixes, and internal-browser link policy. Built on v3.6.0. See `docs/releases/VERSION_3.6.3_RELEASE.md`.
@@ -296,9 +302,13 @@ Decision rule for AI agents:
 - **`user_data_root()` has a writable-path fallback** (v2.4.5-patch). In frozen mode the preferred path is `install_root() / "User Data"` (Program Files). If that path is not writable (non-admin user, group policy, UAC), `_is_path_writable()` detects this and the function returns `local_state_root() / USER_DATA_DIRNAME` (`%LOCALAPPDATA%\AIPacs\user_data\`) instead. This is transparent to all callers. Do NOT hardcode `install_root() / "User Data"` directly � always call `user_data_root()`. Do NOT remove `_is_path_writable()` � it is the only runtime guard against `PermissionError` on restricted machines.
 - **`sys.stdout` guard rule for frozen builds** (v2.4.5-patch). In PyInstaller windowed/no-console builds `sys.stdout is None`. Any method that calls `print()` or `sys.stdout.flush()` and is reachable from `__init__` of a widget constructed in the installed build MUST check `if sys.stdout is None: return` before any print/flush call. Use `logger.debug()` for persistent diagnostic output instead of `print()`. Confirmed crash pattern: `AttributeError: 'NoneType' object has no attribute 'flush'` from `_log_orientation_info()` in `_mpr_orientation.py`. Fixed in `_mpr_orientation.py` and `standard_mpr_viewer_original.py`; same guard must be applied to any future debug-logging helper called unconditionally from an `__init__` path.
 - **`build_release.py` must use ASCII-only print statements.** Unicode characters (e.g., `?`) in `print()` calls inside `builder/build_release.py` raise `UnicodeEncodeError` on Windows consoles without UTF-8 mode. Use ASCII `->` instead. The canonical build command sets `PYTHONUTF8=1` as a belt-and-suspenders measure, but the source should be ASCII-safe regardless.
-- **PyInstaller build command:** `.venv_build\Scripts\python.exe build.py` (full build including PyInstaller). Use `--skip-pyinstaller` only if `builder/output/dist/AIPacs/AIPacs.exe` already exists from this session � the `--skip-pyinstaller` flag still cleans staging outputs and re-runs Inno Setup.
-- **Canonical env vars for the build command:** `AIPACS_ALLOW_MISSING_ADVANCED_MPR=1` (allows build to proceed when Advanced MPR payload is absent) and `PYTHONUTF8=1` (prevents Unicode console errors). Set both for every build invocation: `$env:AIPACS_ALLOW_MISSING_ADVANCED_MPR="1"; $env:PYTHONUTF8="1"; .venv_build\Scripts\python.exe build.py`.
-- **Nuitka build command:** `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --resume` (staged Nuitka pipeline). Use Nuitka-specific flags like `--stage`, `--from-stage`, `--clean-stage`, and `--smoke-test`; do not use `--skip-pyinstaller` here.
+- **Build commands:** do not invoke PyInstaller or release-capable Nuitka stages
+  directly from the developer checkout. Follow root `BUILD.md`; the canonical
+  coordinator supplies the provenance manifest and runs both backends. Backend
+  resume flags are diagnostic interfaces inside the same approved snapshot.
+- **Release-gate overrides:** do not set `AIPACS_ALLOW_MISSING_ADVANCED_MPR` or
+  another `AIPACS_ALLOW_*`/`AIPACS_SKIP_*` value for a candidate. The coordinator
+  removes inherited overrides and missing required payloads block the release.
 - **PyInstaller version consistency (v2.5.4+)** � `.venv_build` and `.venv` MUST have the same PyInstaller version or the bundled app will crash with `AttributeError: module 'pyimod02_importers' has no attribute 'PyiFrozenImporter'`. The build system auto-detects version mismatch and forces clean-build (see `docs/architecture/BUILD_PYINSTALLER_VERSIONING.md`). For multi-PC deployments, ensure `builder/requirements/build_requirements.txt` and `requirements-dev.txt` pin the same PyInstaller version. If seen `[WARN] PyInstaller cache version mismatch detected`, it is being automatically corrected.
 
 ## Controlling the app (AI agents) - use the command surface, not pixel-clicking

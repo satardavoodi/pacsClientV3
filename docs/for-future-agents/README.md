@@ -27,11 +27,14 @@ If your change doesn't fit this pattern, you're probably making a refactor rathe
 In this order:
 
 1. **[`../../CLAUDE.md`](../../CLAUDE.md)** — the project rules (which build to run, never use the frozen exe, the regression-sensitive subsystems, the human-assisted bootstrap mode).
-2. **[`../README.md`](../README.md)** — top-level docs README.
-3. **[`../AUDIT_2026-05-28_OVERVIEW.md`](../AUDIT_2026-05-28_OVERVIEW.md)** — the staged-audit narrative + cumulative numbers.
-4. **[`../INDEX_BY_SUBSYSTEM.md`](../INDEX_BY_SUBSYSTEM.md)** — given a subsystem name, which docs and tests apply.
-5. **[`../../tests/QUICKSTART.md`](../../tests/QUICKSTART.md)** — how to run tests; the hard rules.
-6. **[`../../tests/INDEX_BY_GUARD.md`](../../tests/INDEX_BY_GUARD.md)** — given a test name, what it protects.
+2. **[`../release-and-build/README.md`](../release-and-build/README.md)** — the map for Git, build, backend details, outputs, and release evidence.
+3. **[`../../RELEASE.md`](../../RELEASE.md)** — the only versioned commit/tag/multi-remote push route and the prerequisite for full builds.
+4. **[`../../BUILD.md`](../../BUILD.md)** — the only combined PyInstaller/Nuitka release-build route.
+5. **[`../README.md`](../README.md)** — top-level docs README.
+6. **[`../AUDIT_2026-05-28_OVERVIEW.md`](../AUDIT_2026-05-28_OVERVIEW.md)** — the staged-audit narrative + cumulative numbers.
+7. **[`../INDEX_BY_SUBSYSTEM.md`](../INDEX_BY_SUBSYSTEM.md)** — given a subsystem name, which docs and tests apply.
+8. **[`../../tests/QUICKSTART.md`](../../tests/QUICKSTART.md)** — how to run tests; the hard rules.
+9. **[`../../tests/INDEX_BY_GUARD.md`](../../tests/INDEX_BY_GUARD.md)** — given a test name, what it protects.
 
 ---
 
@@ -106,6 +109,35 @@ The Eagle Eye MG/DX drag-drop path uses `QTimer.singleShot(0, _do_mirror)` to re
 
 The normal in-app drop path (`_vw_dragdrop.py:dropEvent`) already uses the same defer. **Don't remove it.**
 
+### 3.7 Thumbnail native safety and source worker windows
+
+The 2026-09-01 `0xc0000374` crash ended in
+`ThumbnailManager.create_thumbnail_widget` while a late, unscoped root
+stylesheet recursively repolished a completed card subtree. Keep the scoped
+`QWidget#seriesThumbnailCard` style before layouts, child widgets, graphics
+effects, and event filters. Read
+[`THUMBNAIL_HEAP_CRASH_AND_WINDOWS_SPAWN_FLASH_2026-09-01.md`](../reports/THUMBNAIL_HEAP_CRASH_AND_WINDOWS_SPAWN_FLASH_2026-09-01.md)
+before changing card construction.
+
+Windows source runs must configure multiprocessing through
+`PacsClient.utils.windows_multiprocessing.configure_hidden_multiprocessing`
+before `freeze_support()`. A `.venv/Scripts/pythonw.exe` is a redirector and
+must never be selected: its extra process hop breaks shared Event/semaphore
+handles and caused download workers to fail with WinError 5. Supported `.venv`
+source runs retain Python's default spawn executable. Only a direct, non-venv
+`python.exe` may select its direct `pythonw.exe` sibling. Frozen/installed
+builds must remain unchanged.
+
+Multiprocessing bootstrap policy does **not** cover embedded Qt viewer
+replacement. Live verification on 2026-09-01 showed the FAST flash remained
+independent of worker executable selection. The drop intentionally rendered
+a one-frame preview and then promoted it to the complete series. During each
+replacement, `QtFastContainer` detached the old visible `QtSliceViewer` with
+`setParent(None)` before `deleteLater()`, briefly making it a Windows top-level
+widget. Keep both bridge-install paths routed through
+`_retire_embedded_viewer_widget`: hide, retain the container parent, then defer
+deletion. Do not deduplicate the valid Preview -> Complete promotion.
+
 ---
 
 ## 4. Things to NEVER do
@@ -132,6 +164,10 @@ The normal in-app drop path (`_vw_dragdrop.py:dropEvent`) already uses the same 
 ---
 
 ## 6. Where to ship documentation
+
+Cloud/recovered decisions must be curated through
+[`CLOUD_DECISION_LEDGER.md`](./CLOUD_DECISION_LEDGER.md). Never bulk-copy transcripts or raw
+clinical logs into the repository; current code/tests remain authoritative.
 
 - **As-built plans for new subsystems** → `docs/plans/<category>/`
 - **Audit reports** → `docs/plans/architecture/AUDIT_*_<date>.md`, plus a row in [`../AUDIT_2026-05-28_OVERVIEW.md`](../AUDIT_2026-05-28_OVERVIEW.md)

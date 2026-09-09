@@ -66,9 +66,19 @@ def _dicom_file_pixel_facts(file_path: str | Path) -> tuple[bool, int]:
     return True, frames
 
 
+def dicom_file_pixel_facts(file_path: str | Path) -> tuple[bool, int]:
+    """Return ``(has_pixel_data, frame_count)`` without reading pixel values.
+
+    This is the shared public boundary for import, thumbnail, and viewer
+    classification. Metadata-only DICOM objects remain preserved on disk but
+    must not be projected as image frames.
+    """
+    return _dicom_file_pixel_facts(file_path)
+
+
 def dicom_file_has_pixel_data(file_path: str | Path) -> bool:
     """Inspect pixel-element presence without reading the pixel value."""
-    return _dicom_file_pixel_facts(file_path)[0]
+    return dicom_file_pixel_facts(file_path)[0]
 
 
 def inspect_series_pixel_inventory(series_path: str | Path) -> SeriesPixelInventory:
@@ -82,7 +92,7 @@ def inspect_series_pixel_inventory(series_path: str | Path) -> SeriesPixelInvent
     pixel_instance_count = 0
     frame_count = 0
     for path in files:
-        has_pixel_data, frames = _dicom_file_pixel_facts(path)
+        has_pixel_data, frames = dicom_file_pixel_facts(path)
         if has_pixel_data:
             pixel_instance_count += 1
             frame_count += frames

@@ -24,6 +24,7 @@ import os
 import sys
 import textwrap
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,8 @@ if str(_ROOT) not in sys.path:
 
 _TABLE = (_ROOT / "PacsClient" / "pacs" / "workstation_ui" / "home_ui"
           / "patient_table_widget.py")
+_HP_SEARCH = (_ROOT / "PacsClient" / "pacs" / "workstation_ui" / "home_ui"
+              / "home_panel" / "_hp_search.py")
 _PANEL = (_ROOT / "PacsClient" / "pacs" / "workstation_ui" / "settings_ui"
           / "storage_cleanup_panel.py")
 _UTILS = (_ROOT / "PacsClient" / "pacs" / "patient_tab" / "utils" / "utils.py")
@@ -325,6 +328,94 @@ def _calls_in(path: Path, func_name: str):
                         out.add(fn.attr)
             return out
     raise AssertionError("%s not found in %s" % (func_name, path.name))
+
+
+def _build_home_row_forwarder():
+    """Execute the real row-forwarding method on a Qt-free home stub."""
+    source = _HP_SEARCH.read_text(encoding="utf-8", errors="ignore")
+    lines = source.splitlines()
+    tree = ast.parse(source)
+    node = next(
+        item for item in ast.walk(tree)
+        if isinstance(item, ast.FunctionDef)
+        and item.name == "add_data2patient_list_table"
+    )
+    method_source = "\n".join(lines[node.lineno - 1:node.end_lineno])
+    namespace = {
+        "_logger": types.SimpleNamespace(
+            warning=lambda *_a, **_k: None,
+            error=lambda *_a, **_k: None,
+        ),
+    }
+    exec(
+        "class _Home:\n" + textwrap.indent(textwrap.dedent(method_source), "    "),
+        namespace,
+    )
+    home = namespace["_Home"]()
+    forwarded = []
+    home.patient_table_widget = types.SimpleNamespace(
+        add_patient_data=lambda **kwargs: forwarded.append(kwargs)
+    )
+    return home, forwarded
+
+
+def test_initial_search_row_never_probes_disk_before_paint(monkeypatch):
+    """Server rows paint first; the existing Status worker owns disk state.
+
+    The pre-fix method called ``get_study_download_status`` once per row on the
+    Qt thread even though ``PatientTableWidget.add_patient_data`` did not consume
+    either synthesized field. On slow/network storage this produced a measured
+    multi-second search-population freeze.
+    """
+    import PacsClient.pacs.patient_tab.utils.utils as utils_module
+
+    calls = []
+
+    def _forbidden_probe(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "partial"
+
+    monkeypatch.setattr(
+        utils_module, "get_study_download_status", _forbidden_probe
+    )
+    home, forwarded = _build_home_row_forwarder()
+    home.add_data2patient_list_table(
+        patient_id="synthetic-patient",
+        study_uid="synthetic-study",
+        series_count=4,
+        images_count=20,
+    )
+
+    assert calls == [], "initial row construction must not touch the filesystem"
+    assert forwarded == [{
+        "patient_id": "synthetic-patient",
+        "study_uid": "synthetic-study",
+        "series_count": 4,
+        "images_count": 20,
+        "has_voice": False,
+        "is_reported": False,
+    }]
+
+
+def test_explicit_download_state_is_forwarded_without_reinterpretation(monkeypatch):
+    """Local/import callers that already know state keep their exact payload."""
+    import PacsClient.pacs.patient_tab.utils.utils as utils_module
+
+    monkeypatch.setattr(
+        utils_module,
+        "get_study_download_status",
+        lambda *_a, **_k: pytest.fail("an explicit state must never be re-probed"),
+    )
+    home, forwarded = _build_home_row_forwarder()
+    home.add_data2patient_list_table(
+        patient_id="synthetic-local-patient",
+        study_uid="synthetic-local-study",
+        is_downloaded=True,
+        download_status="complete",
+    )
+
+    assert forwarded[0]["is_downloaded"] is True
+    assert forwarded[0]["download_status"] == "complete"
 
 
 def test_patient_cleanup_no_longer_runs_on_the_gui_thread():

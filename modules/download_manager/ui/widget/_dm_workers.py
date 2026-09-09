@@ -204,6 +204,15 @@ class _DMWorkersMixin:
 
             logger.info(f"🚀 [WORKER-START] Found task with {len(task.series_list)} series")
 
+            # A forced reset starts a new progress generation. Clearing this
+            # integer-only ledger is O(1) and performs no filesystem work.
+            if (
+                int(getattr(state, 'downloaded_count', 0) or 0) == 0
+                and not (getattr(state, 'completed_series', None) or [])
+                and not (getattr(state, 'skipped_series', None) or [])
+            ):
+                self._overall_progress_accumulators.pop(study_uid, None)
+
             # Create worker — DownloadProcessWorker runs the download in a
             # separate Python process (own GIL) so the viewer is never starved.
             logger.info(f"🚀 [WORKER-START] Creating DownloadProcessWorker instance...")
@@ -300,6 +309,7 @@ class _DMWorkersMixin:
         self,
         study_uid: str,
         event_type: str,
+        series_uid: str,
         series_number: str,
         progress: float,
         downloaded: int,
@@ -307,6 +317,59 @@ class _DMWorkersMixin:
     ) -> None:
         """Handle worker progress signal - THROTTLED to prevent event loop flooding"""
         try:
+            if event_type == 'study_manifest':
+                overall_downloaded, overall_total, overall_percent = self._calculate_overall_progress(
+                    study_uid,
+                    '',
+                    0,
+                    0,
+                    overall_total_hint=total,
+                )
+                pending = self._pending_progress.setdefault(study_uid, {})
+                pending['progress_percent'] = overall_percent
+                pending['downloaded_count'] = overall_downloaded
+                pending['total_count'] = overall_total
+                pending['_study_progress_args'] = (
+                    study_uid, overall_downloaded, overall_total, overall_percent
+                )
+                if not self._progress_throttle_timer.isActive():
+                    self._progress_throttle_timer.start()
+                task = self._tasks.get(study_uid)
+                logger.warning(
+                    "overall-progress-manifest ui_expected=%d authoritative_total=%d series=%d",
+                    int(task.total_image_count if task else 0),
+                    overall_total,
+                    len(task.series_list) if task else 0,
+                )
+                return
+
+            if event_type == 'series_accounted':
+                overall_downloaded, overall_total, overall_percent = self._calculate_overall_progress(
+                    study_uid,
+                    series_number,
+                    downloaded,
+                    total,
+                    series_uid=series_uid or None,
+                )
+                state = self.state_store.get(study_uid)
+                if state and not state.is_terminal:
+                    accounted_id = series_uid or series_number
+                    skipped = list(state.skipped_series or [])
+                    if accounted_id not in skipped:
+                        skipped.append(accounted_id)
+                        self.state_store.update(study_uid, skipped_series=skipped)
+
+                pending = self._pending_progress.setdefault(study_uid, {})
+                pending['progress_percent'] = overall_percent
+                pending['downloaded_count'] = overall_downloaded
+                pending['total_count'] = overall_total
+                pending['_study_progress_args'] = (
+                    study_uid, overall_downloaded, overall_total, overall_percent
+                )
+                if not self._progress_throttle_timer.isActive():
+                    self._progress_throttle_timer.start()
+                return
+
             # Log series changes but not every progress update to avoid spam
             if event_type == 'instance_downloaded':
                 # Compute overall progress across all images
@@ -314,7 +377,8 @@ class _DMWorkersMixin:
                     study_uid,
                     series_number,
                     downloaded,
-                    total
+                    total,
+                    series_uid=series_uid or None,
                 )
 
                 # NOTE: studyProgressUpdated is now batched in _pending_progress
@@ -326,17 +390,22 @@ class _DMWorkersMixin:
                 series_info = None
                 if task:
                     for s in task.series_list:
-                        if str(s.series_number) == str(series_number):
+                        if series_uid and str(s.series_uid) == str(series_uid):
+                            series_info = s
+                            break
+                        if not series_uid and str(s.series_number) == str(series_number):
                             series_info = s
                             break
 
-                series_uid = series_info.series_uid if series_info else series_number
+                series_uid = series_uid or (series_info.series_uid if series_info else series_number)
                 series_desc = series_info.series_description if series_info else ''
 
-                # Emit series started when series number changes
+                # SeriesInstanceUID prevents duplicate SeriesNumber values from
+                # collapsing into one lifecycle in multi-series studies.
+                series_identity = series_uid or series_number
                 last_series = self._last_series_number_by_study.get(study_uid)
-                if series_number and series_number != last_series:
-                    self._last_series_number_by_study[study_uid] = series_number
+                if series_identity and series_identity != last_series:
+                    self._last_series_number_by_study[study_uid] = series_identity
                     logger.info(f"📊 [PROGRESS] Series {series_number} started: {series_desc}")
                     self.log_message(f"📊 [{study_uid[:10]}...] Series {series_number} started: {series_desc}")
                     self.seriesDownloadStarted.emit(study_uid, series_uid, series_desc)
@@ -653,6 +722,7 @@ class _DMWorkersMixin:
             if study_uid in self._series_image_count_cache:
                 del self._series_image_count_cache[study_uid]
                 logger.debug(f"🗑️ Cleaned up _series_image_count_cache for {study_uid[:40]}...")
+            self._overall_progress_accumulators.pop(study_uid, None)
             
             # Remove pending progress tracking
             if study_uid in self._pending_progress:
@@ -714,6 +784,7 @@ class _DMWorkersMixin:
                 try:
                     self._additional_task_info.pop(suid, None)
                     self._series_image_count_cache.pop(suid, None)
+                    self._overall_progress_accumulators.pop(suid, None)
                 except Exception:
                     pass
                 evicted += 1

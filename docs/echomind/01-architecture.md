@@ -63,6 +63,12 @@ path; the sync only refreshes files it already knows about.
 
 There are two *implementations* and three *routes* to them.
 
+Provider selection update (2026-09-05): `get_llm_backend()` selects direct mode only
+when the user saved `openai`, a key, and a Base URL. Otherwise the effective route
+is company. No direct endpoint is supplied by code. Direct Eagle Eye models require
+explicit per-stage choices in Settings; company defaults cannot fill them. See
+[the incident and verification record](../reports/ECHOMIND_EXPLICIT_PROVIDER_SELECTION_2026-09-05.md).
+
 | Route | Chosen by | Module | Endpoint | Model | Prompts |
 |---|---|---|---|---|---|
 | **Company** (default) | `llm_backend != "openai"` | `openai_reporter` | GapGPT, company account | `company_direct.PRIMARY_REPORT_MODEL` | `build_report_system_prompt` |

@@ -98,6 +98,17 @@ from aipacs_runtime import (
     save_runtime_profile,
 )
 
+# A direct source interpreter may use its equivalent GUI interpreter for
+# spawned workers. Virtual-environment source runs retain Python's default
+# executable so shared multiprocessing handles remain valid. Frozen builds are
+# never overridden.
+try:
+    from PacsClient.utils.windows_multiprocessing import configure_hidden_multiprocessing
+
+    configure_hidden_multiprocessing(multiprocessing)
+except Exception:
+    pass
+
 # Required for multiprocessing.Process with PyInstaller frozen executables
 # (spawn start-method on Windows): must be called before any other code.
 multiprocessing.freeze_support()
@@ -1310,7 +1321,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.6.4")
+    app.setApplicationVersion("3.6.5")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1416,6 +1427,10 @@ if __name__ == "__main__":
             app.aboutToQuit.connect(_log_shutdown_initiator)
         except Exception:
             pass
+
+    # Optional external Slicer warmup runs independently after the first event turn.
+    from PacsClient.utils.advanced_analysis_startup import install as install_analysis_warmup
+    install_analysis_warmup(app)
 
     window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()

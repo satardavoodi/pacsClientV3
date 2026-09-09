@@ -16,8 +16,8 @@ def validate_print_job(job: PrintJob) -> List[str]:
         errors.append("Invalid film size.")
     if not isinstance(job.layout, FilmLayout):
         errors.append("Invalid layout.")
+    elif job.layout.rows <= 0 or job.layout.cols <= 0:
+        errors.append("Layout rows/cols must be positive.")
     if not isinstance(job.printer, PrinterConfig):
         errors.append("Invalid printer configuration.")
-    if job.layout.rows <= 0 or job.layout.cols <= 0:
-        errors.append("Layout rows/cols must be positive.")
     return errors

@@ -43,6 +43,7 @@ from ..core.constants import (
 )
 from .health_monitor import ConnectionHealthMonitor
 from PacsClient.utils.diagnostic_logging import DownloadProgressAggregator, set_log_context, now_ms, log_stage_timing
+from PacsClient.utils.dicom_vm_normalization import normalize_dicom_bytes
 
 # Import token manager for authentication
 from modules.network.socket_token_manager import get_socket_token_manager
@@ -55,6 +56,23 @@ _download_progress_aggregator = DownloadProgressAggregator(logger, interval_seco
 # a batch boundary so a dragged CRITICAL series can go first" — the series is
 # NOT failed; SeriesDownloader re-queues it right after the critical one.
 YIELDED_TO_CRITICAL = "Yielded to critical series (batch boundary)"
+
+
+def _normalize_received_dicom_bytes(payload: bytes) -> bytes:
+    """Repair known server VM collapse without risking download data loss."""
+
+    result = normalize_dicom_bytes(payload)
+    if result.error_type:
+        logger.warning(
+            "DICOM VM normalization skipped after %s; preserving received bytes",
+            result.error_type,
+        )
+    elif result.changed:
+        logger.debug(
+            "Normalized %d collapsed standard DICOM multi-value element(s)",
+            len(result.normalized_tags),
+        )
+    return result.payload
 
 
 def _cancelled_response(message: str = "Download cancelled (preemption)") -> Dict[str, Any]:
@@ -1360,6 +1378,8 @@ class SocketDicomClient:
                         t_decompress = now_ms()
                         dicom_bytes = gzip.decompress(dicom_bytes)
                         total_decompress_ms += max(0.0, now_ms() - t_decompress)
+
+                    dicom_bytes = _normalize_received_dicom_bytes(dicom_bytes)
                     
                     # Ensure directory exists (defensive check for preemption recovery)
                     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1408,7 +1428,8 @@ class SocketDicomClient:
                         series_number,
                         progress_pct,
                         downloaded_count + skipped_count,
-                        expected_count
+                        expected_count,
+                        series_uid=series_uid,
                     )
 
                     now = time.monotonic()

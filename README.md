@@ -1,18 +1,25 @@
 # AIPacs
 
-Stable release: `v3.0.6` (`2026-05-18`)
+Current project version: `v3.6.5`. Production acceptance is tracked separately
+in the current release and deployment records.
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
 
 ## Quick Start
 
 **To build a Windows installer:**
+
+Start with the [Release and Build Documentation Map](docs/release-and-build/README.md),
+then prepare the supported toolchain if needed:
+
 ```powershell
 .\setup_build_env.ps1     # One-time setup on any Windows PC
-python build.py           # Builds installer automatically
 ```
 
-See [BUILD.md](BUILD.md) for detailed instructions, troubleshooting, and build customization options.
+Then follow [BUILD.md](BUILD.md). It is the authoritative human/AI procedure and the
+only supported route for the current PyInstaller + Nuitka six-installer matrix.
+Before a full release build, follow [RELEASE.md](RELEASE.md) to commit, tag, push,
+and verify the exact same source revision across all required Git repositories.
 
 **To run for development:**
 ```powershell
@@ -24,7 +31,10 @@ See [Development Setup](docs/development/setup-and-tooling.md) for more details.
 
 ## Canonical Documentation
 
+- [Release and Build Documentation Map](docs/release-and-build/README.md)
 - [Repository Guide](docs/README.md)
+- [Git Release Workflow](RELEASE.md)
+- [Build and Installer Workflow](BUILD.md)
 - [Architecture Overview](docs/architecture/overview.md)
 - [Repository Layout](docs/architecture/repository-layout.md)
 - [Module Catalog](docs/modules/README.md)
@@ -108,40 +118,11 @@ For development and tests:
 
 ## Build
 
-Windows release build:
-
-```powershell
-python -m venv .venv_build
-.\.venv_build\Scripts\python -m pip install -r builder\requirements\build_requirements.txt
-.\.venv_build\Scripts\python -m pip install -r requirements-core.txt
-.\.venv_build\Scripts\python build.py
-```
-
-Build prerequisite for CPU-safe fallback (required for clean full builds):
-
-```powershell
-Get-ChildItem graphics_runtime\opengl32sw.dll, graphics_runtime\osmesa.dll, graphics_runtime\pipe_swrast.dll
-```
-
-If any of these files are missing, `build.py` can fail before packaging because software OpenGL fallback would be incomplete.
-
-Primary build outputs land under `builder/output/`, including staged bundles and the installer when Inno Setup is available. Successful installer builds also emit `INSTALL_NOTES*.txt` and `SHA256*.txt` under `builder/output/installer/`.
-
-Build stability guardrail (regression check): after any release build, verify the output structure includes `dist`, `stage`, `packages`, and `updates` under `builder/output/`. If `updates` is missing, run:
-
-```powershell
-.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller --skip-installer-compile
-```
-
-This revalidates publish/staging from the existing `dist` bundle and is the canonical non-installer completeness check.
-
-If Inno Setup fails with `Error 32` on `builder/output/installer/ai-pacs installer.exe`, stop any stale `ISCC.exe` process and rerun:
-
-```powershell
-.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller
-```
-
-The Windows installer is prepared for deployment on other PCs. In `Custom` mode it asks which optional modules should be installed on that workstation, stores the selection in `installation_profile.json`, and uses a GPU probe plus runtime fallback logic so unsupported systems can still run with CPU-safe software OpenGL.
+Use [BUILD.md](BUILD.md). It defines machine bootstrap, source validation,
+disposable fast lanes, the isolated full-matrix command, the two output folders,
+all six filenames, expected sizes, content/hash/version checks, interruption
+rules, and the production release gate. Backend-specific wrappers remain useful
+for diagnosis but are not alternate release entry points.
 
 
 ---

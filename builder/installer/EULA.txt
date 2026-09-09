@@ -1,6 +1,6 @@
 AI-PACS
 End User License Agreement (EULA)
-Version 3.0.2
+Document revision 3.0.2 (applies to AI-PACS release 3.6.5)
 Effective Date: 2026-05-13
 
 IMPORTANT — PLEASE READ CAREFULLY

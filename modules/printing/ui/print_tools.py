@@ -11,7 +11,7 @@ class PrintToolMode(Enum):
     PAN = "pan"
     ZOOM = "zoom"
     WINDOW_LEVEL = "window_level"
-    DEFAULT = "default"  # Default interactive mode (right-click for WL, middle for zoom)
+    DEFAULT = "default"  # Left: window/level; right: zoom; middle: pan.
 
 
 class PrintToolManager:

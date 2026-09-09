@@ -1,6 +1,6 @@
 """Eagle Eye lumbar bench: score existing sessions, or run one N times.
 
-Two subcommands.
+Four subcommands.
 
 ``score``  Parse and score FINAL REPORTs that already exist on disk. Costs
            nothing, touches no model, and is the fastest way to see how a
@@ -9,6 +9,9 @@ Two subcommands.
 ``run``    Copy a captured session N times and run the analysis pipeline on
            each copy, then score all N. This SPENDS MODEL BUDGET - N x 3
            requests - so it asks for confirmation unless --yes is given.
+
+``freeze`` / ``check-frozen`` preserve and verify a saved stage-three input
+           offline. These commands never run a model or score a report.
 
 Both report per-claim hit rates over N runs rather than a single verdict.
 Repeated model runs can disagree about morphology, so one run is not a
@@ -41,6 +44,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools.eagle_eye_bench import reference as reference_mod  # noqa: E402
 from tools.eagle_eye_bench import scoring  # noqa: E402
+from modules.ai_imaging.eagle_eye_lumbar import evidence_bundle  # noqa: E402
 
 COPY_ENTRIES = (
     "session.json",
@@ -78,6 +82,14 @@ def score_session(session_dir: Path, ref: Dict[str, Any]) -> Optional[scoring.Ru
         return None
     parsed = scoring.parse_report(report_path.read_text(encoding="utf-8", errors="replace"))
     score = scoring.score_report(ref, parsed, run_id=Path(session_dir).name)
+    from modules.ai_imaging.eagle_eye_lumbar.evidence_request import audit_level_maps
+    screening_path = Path(session_dir) / "llm_stage1_response.txt"
+    screening_text = screening_path.read_text(encoding="utf-8", errors="replace") if screening_path.is_file() else ""
+    score.level_assignment_audit = audit_level_maps(
+        screening_text, report_path.read_text(encoding="utf-8", errors="replace"),
+    )
+    if score.level_assignment_audit["status"] != "consistent":
+        score.parse_notes.append("Level assignment requires review; claims remain scored at reported levels.")
     meta = Path(session_dir) / "llm_result.json"
     if meta.is_file():
         try:
@@ -172,7 +184,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 1
 
     if args.evidence_mode:
-        os.environ["AIPACS_EAGLE_EYE_EVIDENCE_MODE"] = args.evidence_mode
+        os.environ[evidence_bundle.ENV_EVIDENCE_MODE] = args.evidence_mode
+        if args.evidence_mode in evidence_bundle.LEGACY_MODES:
+            os.environ[evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE] = "1"
 
     scores: List[scoring.RunScore] = []
     for index in range(1, total + 1):
@@ -206,6 +220,24 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    from tools.eagle_eye_bench import frozen_input
+    try:
+        if args.command == "freeze":
+            identity = frozen_input.freeze(Path(args.session), Path(args.out))
+            print(f"Frozen input: {identity}")
+        else:
+            identity = frozen_input.check(Path(args.snapshot), args.expected_id)
+            print(f"Frozen input verified: {identity}")
+    except frozen_input.SnapshotError as exc:
+        print(f"Snapshot operation failed: {exc}")
+        return 1
+    except OSError:
+        print("Snapshot operation failed. Check local path availability and permissions.")
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="eagle_eye_bench")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -225,9 +257,22 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--label", default="")
     run.add_argument("--evidence-mode", default="",
                      choices=["", "layout", "focused-v1", "focused-v2",
-                              "focused-v3", "focused-v3-parasagittal"])
+                              "focused-v3", "focused-v3-parasagittal",
+                              "focused-v4-correlated"],
+                     help=("canonical V4 by default; retired modes are enabled "
+                           "only for this engineering benchmark process"))
     run.add_argument("--yes", action="store_true", help="skip the budget confirmation")
     run.set_defaults(func=cmd_run)
+
+    freeze = sub.add_parser("freeze", help="freeze a saved stage-three input offline")
+    freeze.add_argument("--session", required=True)
+    freeze.add_argument("--out", required=True, help="new private folder outside the source session")
+    freeze.set_defaults(func=cmd_snapshot)
+
+    check = sub.add_parser("check-frozen", help="verify frozen input integrity offline")
+    check.add_argument("--snapshot", required=True)
+    check.add_argument("--expected-id", default="", help="optional previously recorded snapshot digest")
+    check.set_defaults(func=cmd_snapshot)
     return parser
 
 

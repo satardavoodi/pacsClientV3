@@ -1,5 +1,10 @@
 # Nuitka Incremental Build Plan
 
+> **Scope and precedence:** this is the staged-backend implementation plan. Start
+> at [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md)
+> and follow root `RELEASE.md` and `BUILD.md`. Stage commands below are diagnostic
+> interfaces inside an approved snapshot, not an alternate release route.
+
 Status: In Progress (checkpoint pipeline implemented)
 Updated: April 26, 2026
 

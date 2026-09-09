@@ -76,6 +76,35 @@ _STALL_TIMEOUT_S = 10.0
 _STEP_SETTLE_MS = 130
 _PASS_GAP_MS = 400
 
+
+def _local_series_sources_for_selection(selection, roles) -> Dict[str, Dict[str, Any]]:
+    """Persist bounded source identity plus semantic-classification confidence."""
+    fields = (
+        "index",
+        "series_uid",
+        "series_number",
+        "series_description",
+        "protocol_name",
+        "modality",
+        "plane",
+        "slice_count",
+        "echo_time",
+        "repetition_time",
+        "series_path",
+    )
+    sources: Dict[str, Dict[str, Any]] = {}
+    for role in roles:
+        candidate = selection.candidate_for(role)
+        if candidate is None:
+            continue
+        source = {field: getattr(candidate, field, None) for field in fields}
+        source["series_path"] = str(source.get("series_path") or "")
+        slot = selection[role]
+        source["assigned_by"] = "user" if slot.manual else "automatic"
+        source["confidence"] = str(slot.confidence or "none")
+        sources[str(role)] = source
+    return sources
+
 # A T1 slice further than this from its T2 counterpart is still shown (it IS
 # the nearest one) but the manifest records the correspondence as weak.
 _MAX_MATCH_MM = 12.0
@@ -214,28 +243,7 @@ class EagleEyeCaptureController(QObject):
 
     def _local_series_sources(self) -> Dict[str, Dict[str, Any]]:
         """Bounded local provenance used only by worker-side DICOM composition."""
-        fields = (
-            "index",
-            "series_uid",
-            "series_number",
-            "series_description",
-            "protocol_name",
-            "modality",
-            "plane",
-            "slice_count",
-            "echo_time",
-            "repetition_time",
-            "series_path",
-        )
-        sources: Dict[str, Dict[str, Any]] = {}
-        for role in self.roles:
-            candidate = self.selection.candidate_for(role)
-            if candidate is None:
-                continue
-            source = {field: getattr(candidate, field, None) for field in fields}
-            source["series_path"] = str(source.get("series_path") or "")
-            sources[str(role)] = source
-        return sources
+        return _local_series_sources_for_selection(self.selection, self.roles)
 
     def abort(self, reason: str = "cancelled") -> None:
         """Stop after the current tick; whatever was captured is still written."""

@@ -36,6 +36,7 @@ import traceback
 from typing import Optional, Callable, List, Any
 from PySide6.QtWidgets import QWidget, QPushButton, QToolButton, QMessageBox
 from PySide6.QtCore import QObject, Signal, QTimer
+from shiboken6 import isValid
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class ButtonSafeguard(QObject):
         Args:
             button: QWidget (typically QPushButton or QToolButton) to manage
         """
-        if button and button not in self._registered_buttons:
+        if button is not None and isValid(button) and button not in self._registered_buttons:
             self._registered_buttons.append(button)
             logger.debug(f"[ButtonSafeguard] Registered button: {getattr(button, 'text', lambda: 'Unknown')()}")
     
@@ -104,6 +105,16 @@ class ButtonSafeguard(QObject):
     def is_operation_in_progress(self) -> bool:
         """Check if an operation is currently in progress."""
         return self._operation_in_progress
+
+    def _prune_deleted_buttons(self) -> None:
+        """Sidebar rebuilds can delete Qt objects while their Python wrappers remain."""
+        self._registered_buttons[:] = [
+            button for button in self._registered_buttons if isValid(button)
+        ]
+        self._original_button_states = {
+            button: state for button, state in self._original_button_states.items()
+            if isValid(button)
+        }
     
     def start_operation(self, operation_name: str = "Operation") -> bool:
         """
@@ -122,20 +133,23 @@ class ButtonSafeguard(QObject):
             )
             return False
         
+        self._prune_deleted_buttons()
         self._operation_in_progress = True
         self._operation_count += 1
         logger.info(f"[ButtonSafeguard] Starting operation: {operation_name} (#{self._operation_count})")
         
         # Save and disable all buttons
         self._original_button_states.clear()
-        for button in self._registered_buttons:
-            if button and not button.isHidden():
-                try:
+        for button in tuple(self._registered_buttons):
+            try:
+                if isValid(button) and not button.isHidden():
                     self._original_button_states[button] = button.isEnabled()
                     button.setEnabled(False)
-                except RuntimeError:
-                    # Button was deleted
-                    pass
+            except RuntimeError:
+                # An enabled-change event can destroy a widget synchronously.
+                if isValid(button):
+                    raise
+        self._prune_deleted_buttons()
         
         self.operation_started.emit()
         return True
@@ -158,15 +172,17 @@ class ButtonSafeguard(QObject):
         )
         
         # Restore button states
-        for button, original_state in self._original_button_states.items():
+        self._prune_deleted_buttons()
+        for button, original_state in tuple(self._original_button_states.items()):
             try:
-                if button and not button.isHidden():
+                if isValid(button) and not button.isHidden():
                     button.setEnabled(original_state)
             except RuntimeError:
-                # Button was deleted
-                pass
+                if isValid(button):
+                    raise
         
         self._original_button_states.clear()
+        self._prune_deleted_buttons()
         self._operation_in_progress = False
         self.operation_completed.emit(success)
     

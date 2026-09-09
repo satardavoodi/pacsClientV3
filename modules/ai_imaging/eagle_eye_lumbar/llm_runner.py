@@ -108,7 +108,11 @@ class EagleEyeAnalysisRunner(QObject):
         # supposed to screen on one model and verify on another did both on the
         # first one (session 20260826T191537Z). Resolve here only for what this
         # thread has to write, and let the loop resolve for itself.
-        stage_models = llm_backend.resolve_stage_models(package.analysis, backend)
+        try:
+            stage_models = llm_backend.resolve_stage_models(package.analysis, backend)
+        except llm_backend.AnalysisUnavailable as exc:
+            self._fail_before_start(str(exc))
+            return False
         model_summary = llm_backend.summarize_models(stage_models)
         started_doc = analysis_store.mark_analyzing(
             self.session_dir, package.analysis,

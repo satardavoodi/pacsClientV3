@@ -23,6 +23,8 @@ import warnings
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from PacsClient.utils.dicom_vm_normalization import normalize_collapsed_multivalue_dataset
+
 try:
     from pydicom import dcmread
     from pydicom.fileset import FileSet
@@ -95,6 +97,8 @@ def _new_stats() -> Dict[str, object]:
         "studies": 0,
         "series": 0,
         "instances_added": 0,
+        "vm_instances_normalized": 0,
+        "vm_elements_normalized": 0,
         "duplicates_skipped": 0,
         "unreadable": 0,
         "failed": 0,
@@ -239,6 +243,15 @@ class DicomDirBuilder:
                                         sop_uid, file_info["path"],
                                     )
                                     continue
+                                normalized_tags = normalize_collapsed_multivalue_dataset(ds)
+                                if normalized_tags:
+                                    stats["vm_instances_normalized"] = (
+                                        int(stats["vm_instances_normalized"]) + 1
+                                    )
+                                    stats["vm_elements_normalized"] = (
+                                        int(stats["vm_elements_normalized"])
+                                        + len(normalized_tags)
+                                    )
                                 _ensure_dicomdir_fields(ds)
                                 fs.add(ds)
                                 expected_sop_instance_uids.add(str(ds.SOPInstanceUID))

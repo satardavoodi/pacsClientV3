@@ -11,7 +11,7 @@ import time
 import gc
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSlider, QLabel,
-    QSizePolicy, QFrame, QApplication, QGridLayout,
+    QSizePolicy, QFrame, QGridLayout,
 )
 from PySide6.QtCore import Qt, QTimer
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
@@ -162,17 +162,12 @@ class _VCLayoutMixin:
                 # Do NOT append again here — double-append causes duplicate entries
                 # that open as orphan popup windows (they never get parented via addWidget).
 
-                # v2.2.3.2.7: Yield to Qt event loop between viewer creations.
-                # On software OpenGL each VTK widget creation takes 5-15s.
-                # Without this yield, scroll events and timers starve for
-                # the entire creation loop (10-60s for 2-4 viewers).
-                # setUpdatesEnabled(False) is still active so no flicker.
-                if i < required_count - 1:
-                    try:
-                        from PySide6.QtWidgets import QApplication
-                        QApplication.processEvents()
-                    except Exception:
-                        pass
+                # Keep layout construction atomic. QApplication.processEvents()
+                # here can dispatch queued switches, timers, or deferred deletes
+                # against this only-partially-built viewport tree. QWidget/VTK
+                # construction must stay on the GUI thread; responsiveness work
+                # therefore belongs before construction, not in a nested event
+                # loop inside this mutation boundary.
 
             # 3. Arrange in grid
             for i, node in enumerate(self.lst_nodes_viewer):

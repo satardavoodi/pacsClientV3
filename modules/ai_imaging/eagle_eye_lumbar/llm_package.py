@@ -63,12 +63,13 @@ class PackagedImage:
     """One screenshot plus the caption that tells the model what it is."""
 
     __slots__ = ("path", "caption", "session", "index", "capture",
-                 "source_path", "evidence_mode")
+                 "source_path", "evidence_mode", "card_payload")
 
     def __init__(self, path: Path, caption: str, session: str, index: int,
                  capture: Optional[Dict[str, Any]] = None,
                  source_path: Optional[Path] = None,
-                 evidence_mode: str = "layout"):
+                 evidence_mode: str = "layout",
+                 card_payload: Optional[Dict[str, Any]] = None):
         self.path = Path(path)
         self.caption = str(caption)
         self.session = str(session)
@@ -79,6 +80,7 @@ class PackagedImage:
         self.capture = dict(capture or {})
         self.source_path = Path(source_path) if source_path is not None else self.path
         self.evidence_mode = str(evidence_mode or "layout")
+        self.card_payload = dict(card_payload or {})
 
     @property
     def mime(self) -> str:
@@ -103,6 +105,8 @@ class PackagedImage:
                 source = self.source_path.name
             document["evidence_mode"] = self.evidence_mode
             document["source_file"] = source.replace("\\", "/")
+        if self.card_payload:
+            document["card_payload"] = dict(self.card_payload)
         return document
 
 
@@ -110,12 +114,13 @@ class AnalysisPackage:
     """Everything one analysis request needs, in the order it must be sent."""
 
     __slots__ = ("session_dir", "session_id", "protocol_id", "analysis",
-                 "header", "images", "study_instance_uid", "source_series")
+                 "header", "images", "study_instance_uid", "source_series", "evidence_audit")
 
     def __init__(self, session_dir: Path, session_id: str, protocol_id: str,
                  analysis, header: str, images: Sequence[PackagedImage],
                  study_instance_uid: str = "",
-                 source_series: Optional[Dict[str, Dict[str, Any]]] = None):
+                 source_series: Optional[Dict[str, Dict[str, Any]]] = None,
+                 evidence_audit: Optional[Dict[str, Any]] = None):
         self.session_dir = Path(session_dir)
         self.session_id = str(session_id)
         self.protocol_id = str(protocol_id)
@@ -125,6 +130,7 @@ class AnalysisPackage:
         # differ.
         self.analysis = analysis
         self.header = str(header)
+        self.evidence_audit = dict(evidence_audit or {})
         self.images = list(images)
         self.study_instance_uid = str(study_instance_uid or "")
         self.source_series = {
@@ -137,8 +143,14 @@ class AnalysisPackage:
     def image_count(self) -> int:
         return len(self.images)
 
-    def request_document(self, stage, model: str = "", backend: str = "",
-                         context: str = "") -> Dict[str, Any]:
+    def request_document(
+        self,
+        stage,
+        model: str = "",
+        backend: str = "",
+        context: str = "",
+        header: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """What ONE stage sends, written beside the captures.
 
         Split deliberately into what was SENT and local provenance. The sent
@@ -147,6 +159,18 @@ class AnalysisPackage:
         Provenance holds the real study UID so a stored result can be traced
         back to the study; it is not part of the request.
         """
+        sent_images = [img.as_dict(self.session_dir) for img in self.images]
+        card_payloads = [
+            dict(img.card_payload) for img in self.images if img.card_payload
+        ]
+        sent = {
+            "header": self.header if header is None else str(header),
+            "context": str(context or ""),
+            "image_count": self.image_count,
+            "images": sent_images,
+        }
+        if card_payloads:
+            sent["card_payloads"] = card_payloads
         return {
             "eagle_eye_version": EAGLE_EYE_VERSION,
             "created_at": _utc_now_iso(),
@@ -157,12 +181,7 @@ class AnalysisPackage:
             "pipeline": self.analysis.as_dict(),
             "prompt": dict(stage.as_dict(), text=stage.text),
             "patient": {"patient_id": ANONYMOUS_PATIENT_ID},
-            "sent": {
-                "header": self.header,
-                "context": str(context or ""),
-                "image_count": self.image_count,
-                "images": [img.as_dict(self.session_dir) for img in self.images],
-            },
+            "sent": sent,
             "local_provenance": {
                 "study_instance_uid": self.study_instance_uid,
                 "session_dir": str(self.session_dir),
@@ -354,9 +373,9 @@ def _slab_lines(slabs: List[Tuple[int, int]]) -> List[str]:
         f"    {ranges}",
         "    These boundaries are MEASURED, not estimated. Use them as given and",
         "    do not re-derive them by eye. Angled multi-slab lumbar axials are",
-        "    prescribed one slab per disc level, so treat each group as one level",
-        "    unless the images clearly contradict it. Assigning the LEVEL NAMES",
-        "    is still yours; the grouping is not.",
+        "    acquisition groups only. Do not assume that a group equals a disc",
+        "    level or infer its level from group number or list position. Anatomical",
+        "    meaning must be assigned separately; group membership is authoritative.",
     ]
 
 
@@ -465,6 +484,9 @@ def build_package(session_dir, protocol=None) -> AnalysisPackage:
         images=images,
         study_instance_uid=str(session_doc.get("study_instance_uid") or ""),
         source_series=_load_local_series_sources(root),
+        evidence_audit={"measured_slabs": _axial_slabs([
+            image.capture for image in images if image.session.lower() == "axial"
+        ])},
     )
     logger.info("[EAGLE-EYE-LLM] packaged %d image(s) from %s",
                 package.image_count, package.session_id)

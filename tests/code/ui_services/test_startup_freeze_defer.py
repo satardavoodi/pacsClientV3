@@ -46,10 +46,13 @@ def test_aipacs_ui_theme_dedup_wired():
     assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP"' not in s, "flag retired — dedup is unconditional now"
     assert 'getattr(self, "_applied_theme_sig", None) == t' in s, "skip guard"
     assert "self._applied_theme_sig = t" in s, "signature stored after a full apply + child cascade"
-    # guard sits inside apply_theme, before the first (MainWindow) setStyleSheet
+    # The guard precedes the non-cascading palette update. A root stylesheet is
+    # forbidden here because it repolishes the completed child tree.
     a = s.index("def apply_theme(self, theme=None):")
-    style = s.index("self.MainWindow.setStyleSheet(", a)
+    style = s.index("window_palette.setColor(", a)
     assert s.index('getattr(self, "_applied_theme_sig"', a) < style
+    end = s.index("def connect_left_navigation", a)
+    assert "self.MainWindow.setStyleSheet(" not in s[a:end]
 
 
 # --- source-pins: license-info defer -------------------------------------------------

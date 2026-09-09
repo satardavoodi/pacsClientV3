@@ -26,6 +26,60 @@ from .report_status_dialog import ReportStatusDialog
 logger = logging.getLogger(__name__)
 
 
+_VISIT_STATUS_EXECUTOR = None
+_VISIT_STATUS_EXECUTOR_LOCK = threading.Lock()
+
+
+def _submit_visit_status_write(study_uid: str, status: str) -> bool:
+    """Queue one ordered visit-status write outside the Qt GUI thread.
+
+    The single worker preserves ``opened`` -> ``synced`` ordering and avoids
+    multiplying SQLite writers while Download Manager is committing batches.
+    UI colour changes remain immediate even if persistence later fails under
+    the role-aware OPT-45 lock ceiling.
+    """
+    if (os.getenv("AIPACS_VISIT_STATUS_ASYNC", "1") or "1").strip() == "0":
+        try:
+            from PacsClient.utils import set_visit_status
+            return bool(set_visit_status(study_uid, status))
+        except Exception:
+            logger.warning("[VISIT-STATUS] synchronous persistence failed", exc_info=True)
+            return False
+
+    global _VISIT_STATUS_EXECUTOR
+    try:
+        if _VISIT_STATUS_EXECUTOR is None:
+            with _VISIT_STATUS_EXECUTOR_LOCK:
+                if _VISIT_STATUS_EXECUTOR is None:
+                    from concurrent.futures import ThreadPoolExecutor
+                    _VISIT_STATUS_EXECUTOR = ThreadPoolExecutor(
+                        max_workers=1,
+                        thread_name_prefix="visit-status-db",
+                    )
+
+        def _persist() -> None:
+            try:
+                from PacsClient.utils import set_visit_status
+                if not set_visit_status(study_uid, status):
+                    logger.warning(
+                        "[VISIT-STATUS] persistence returned false status=%s", status
+                    )
+            except Exception:
+                logger.warning(
+                    "[VISIT-STATUS] background persistence failed status=%s",
+                    status,
+                    exc_info=True,
+                )
+
+        _VISIT_STATUS_EXECUTOR.submit(_persist)
+        return True
+    except Exception:
+        # Never fall back to a blocking GUI-thread write: immediate visual state
+        # is safer than reintroducing the measured multi-second patient-open stall.
+        logger.warning("[VISIT-STATUS] could not queue persistence", exc_info=True)
+        return False
+
+
 # ── Safe local-delete of attachments ────────────────────────────────────────
 # Deleting a study's local DICOM (to free disk) must NEVER destroy an approved
 # recording that has not yet been confirmed on the server. The server is the
@@ -3843,11 +3897,7 @@ class PatientTableWidget(QWidget):
         try:
             # Save to database for persistence
             if status in ('opened', 'synced'):
-                try:
-                    from PacsClient.utils import set_visit_status
-                    set_visit_status(study_uid, status)
-                except Exception:
-                    pass
+                _submit_visit_status_write(study_uid, status)
             
             for row in range(self.results_table.rowCount()):
                 uid_item = self.results_table.item(row, COL['study_uid'])

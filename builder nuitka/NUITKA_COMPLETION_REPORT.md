@@ -1,5 +1,10 @@
 # Nuitka Build System — Completion Report
 
+> **Historical evidence:** this report does not define the current release
+> process. Start at
+> [`../docs/release-and-build/README.md`](../docs/release-and-build/README.md),
+> then follow root `RELEASE.md` and `BUILD.md`.
+
 Date: 2026-07-02
 
 ## Summary

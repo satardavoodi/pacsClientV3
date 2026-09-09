@@ -1,5 +1,9 @@
 # AI‑PACS build pipeline — evaluation + v3.5.7 release report
 
+> **Historical evidence:** do not reuse this release's commands or outputs for a
+> current build. Start at
+> [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md).
+
 **Date:** 2026‑08‑02
 **Source:** `beta-version` @ `37a59f4d` — *release(v3.5.7)*, working tree clean
 **Builder:** Dr.Alizadeh PC · `E:\ai-pacs\ai-pacs codes\ai-pacs beta version` · `.venv_build`

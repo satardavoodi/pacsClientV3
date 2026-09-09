@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, Callable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -38,9 +38,17 @@ from aipacs_runtime import (  # noqa: E402
 from build_release import (  # noqa: E402
     find_iscc,
     load_version,
+    validate_build_arch,
     validate_local_graphics_runtime,
 )
 from builder.materialize_plugin_packages import materialize_plugin_packages  # noqa: E402
+from builder.distribution_profiles import compile_editions  # noqa: E402
+from builder.source_identity import (  # noqa: E402
+    BuildAuthorityError,
+    source_fingerprint,
+    validate_build_authority,
+)
+from builder.build_process import run_logged_build  # noqa: E402
 from builder.plugin_package_registry import PLUGIN_PACKAGES_DIR, load_plugin_package_definitions  # noqa: E402
 
 from nuitka_build_config import (  # noqa: E402
@@ -152,6 +160,20 @@ class BuildContext:
         }
 
     def _bootstrap_state(self) -> None:
+        identity = {
+            "version": self.version,
+            "source_sha256": source_fingerprint(PROJECT_ROOT),
+            "python": sys.version,
+            "nuitka": importlib.metadata.version("nuitka"),
+            "edition": getattr(self.args, "edition", "all"),
+            "compiler": getattr(self.args, "compiler", "auto"),
+        }
+        previous = self.state.get("build_identity")
+        if self.run_mode != "fresh" and self.state.get("stages") and previous != identity:
+            raise StageError("Source/version/toolchain changed or checkpoint has no identity; start a fresh build")
+        if self.run_mode == "fresh":
+            self.state = {"stages": {}, "completed_stages": []}
+        self.state["build_identity"] = identity
         self.state.setdefault("schema_version", 1)
         self.state.setdefault("created_at_utc", utc_now())
         self.state["updated_at_utc"] = utc_now()
@@ -515,23 +537,7 @@ def run_command_with_log(
     env: dict[str, str] | None = None,
 ) -> int:
     append_log(log_path, f"[COMMAND] {' '.join(cmd)}")
-    process = subprocess.Popen(
-        cmd,
-        cwd=str(cwd),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        universal_newlines=True,
-        bufsize=1,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        print(line, end="")
-        append_log(log_path, line.rstrip("\n"))
-    process.wait()
-    append_log(log_path, f"[EXIT_CODE] {process.returncode}")
-    return int(process.returncode)
+    return run_logged_build(cmd, cwd=cwd, env=env, log_path=log_path)
 
 
 def build_root_launcher_exe(ctx: BuildContext, core_stage: Path, log_path: Path) -> Path:
@@ -783,6 +789,7 @@ def create_nuitka_command(
             break
     _nuitka_version = ".".join(_numeric_parts) if _numeric_parts else "0"
     cmd.append(f"--product-version={_nuitka_version}")
+    cmd.append(f"--file-version={_nuitka_version}")
     cmd.append("--company-name=AIPacs")
     cmd.append("--file-description=AIPacs - staged Nuitka build")
     console_mode = os.environ.get("AIPACS_NUITKA_CONSOLE_MODE") or str(
@@ -804,15 +811,17 @@ def create_nuitka_command(
     # accidental cwd imports in frozen startup.
     cmd.append("--python-flag=static_hashes")
     cmd.append("--python-flag=safe_path")
-    lto = getattr(ctx.spec, "LTO", "auto")
+    lto = "no" if profile == "full_core" else getattr(ctx.spec, "LTO", "auto")
     if profile in {"minimal", "qt_shell", "heavy_native", "full_core"} and lto == "yes":
         lto = "no"
     if lto in {"yes", "no", "auto"}:
         cmd.append(f"--lto={lto}")
 
-    jobs = int(getattr(ctx.spec, "JOBS", 0) or 0)
+    jobs = 1 if profile == "full_core" else int(getattr(ctx.spec, "JOBS", 1) or 1)
     if jobs > 0:
         cmd.append(f"--jobs={jobs}")
+    if profile == "full_core":
+        cmd.extend(["--low-memory", "--disable-cache=ccache"])
 
     compiler = str(getattr(ctx.spec, "C_COMPILER", "") or "").strip().lower()
     compiler_override = str(getattr(ctx.args, "compiler", "auto") or "auto").strip().lower()
@@ -890,6 +899,7 @@ def create_nuitka_command(
         # project than broad forced/include-package lists.
         include_packages = {
             "pydicom",
+            "pylibjpeg", "openjpeg", "rle", "jpeg_ls", "_gdcm",
             # Eagle Eye enters through lazy UI callbacks; include the internal
             # package explicitly in the default staged core build.
             "modules.ai_imaging",
@@ -913,13 +923,33 @@ def create_nuitka_command(
                 "pydicom.pixel_data_handlers",
                 "pydicom.pixel_data_handlers.numpy_handler",
                 "pydicom.pixel_data_handlers.gdcm_handler",
+                "pydicom.pixel_data_handlers.jpeg_ls_handler",
+                "gdcm",
+                "_gdcm.gdcmswig",
             ]
         )
         nofollow = set(filtered_nofollow_from_spec)
         append_mesa_runtime_flags(cmd)
 
     if profile == "full_core":
-        pass
+        # The staged builder must retain the same dynamically discovered codec
+        # entry points as the monolithic spec and PyInstaller backend.
+        for distribution in (
+            "pylibjpeg",
+            "pylibjpeg-openjpeg",
+            "pylibjpeg-rle",
+            "python-gdcm",
+            "pyjpegls",
+        ):
+            cmd.append(f"--include-distribution-metadata={distribution}")
+        try:
+            import _gdcm
+
+            gdcm_xml = Path(_gdcm.__file__).resolve().parent / "XML"
+            if gdcm_xml.is_dir():
+                cmd.append(f"--include-data-dir={gdcm_xml}=_gdcm/XML")
+        except Exception:
+            pass
     elif profile in {"dicom", "heavy_native"}:
         # Keep optional plugins external during partial stages as well.
         nofollow = set(filtered_nofollow_from_spec)
@@ -976,13 +1006,34 @@ def resolve_built_dist(stage: Stage, entrypoint: str) -> Path:
 def run_nuitka_stage(ctx: BuildContext, stage: Stage, log_path: Path, profile: str, entrypoint: str) -> StageResult:
     cmd, report_path, output_root = create_nuitka_command(ctx, stage, profile=profile, entrypoint=entrypoint)
 
-    # Remove stale Nuitka output left by a previously interrupted or failed
-    # compile. Keeping an old .dist can make smoke tests execute a payload built
-    # with an older command line, even after the current compile succeeds.
+    # A full-core MSVC compile can remain silent for more than 90 minutes. When
+    # that exact stage timed out, preserve its SCons object cache on --resume so
+    # Nuitka can link the already compiled objects. Partial .dist output is
+    # always discarded so later smoke checks cannot execute a stale payload.
     try:
         if Path(output_root).exists():
-            append_log(log_path, f"[INFO] Removing stale Nuitka output dir: {output_root}")
-            shutil.rmtree(output_root, ignore_errors=True)
+            previous = dict(ctx.state.get("stages", {}).get(str(stage.number), {}) or {})
+            error_text = str(previous.get("error") or "")
+            build_dir = Path(output_root) / f"{Path(entrypoint).stem}.build"
+            preserve_objects = (
+                bool(ctx.args.resume)
+                and stage.number == 6
+                and previous.get("status") == "failed"
+                and "exit code 124" in error_text
+                and build_dir.is_dir()
+            )
+            if preserve_objects:
+                append_log(log_path, f"[INFO] Preserving timed-out Stage 06 object cache: {build_dir}")
+                for child in Path(output_root).iterdir():
+                    if child == build_dir:
+                        continue
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+            else:
+                append_log(log_path, f"[INFO] Removing stale Nuitka output dir: {output_root}")
+                shutil.rmtree(output_root, ignore_errors=True)
     except Exception as _clean_err:  # pragma: no cover - defensive only
         append_log(log_path, f"[WARN] Could not pre-clean Nuitka output dir: {_clean_err}")
 
@@ -992,6 +1043,14 @@ def run_nuitka_stage(ctx: BuildContext, stage: Stage, log_path: Path, profile: s
     append_log(log_path, "[INFO] Compiler cache env override disabled (using toolchain defaults)")
     if "--msvc=latest" in cmd:
         env = _apply_vcvars_env(env, log_path)
+        if stage.number == 6:
+            # Nuitka/SCons adds /Ox to every generated unit. The generated
+            # SimpleITK wrapper exceeds MSVC's pass-2 heap under /Ox on this
+            # supported build host. _CL_ is appended by MSVC, so /Od wins
+            # without patching Nuitka or its generated SCons files.
+            trailing_options = env.get("_CL_", "").strip()
+            env["_CL_"] = f"{trailing_options} /Od".strip()
+            append_log(log_path, "[INFO] MSVC Stage 06 low-memory override enabled: _CL_=/Od")
     if "--zig" in cmd:
         # Let Nuitka select and manage Zig by default; forcing CC/CXX/LINK to
         # a PATH Zig can pin older toolchains and produce unstable binaries.
@@ -1205,15 +1264,15 @@ def stage_05_heavy_native(ctx: BuildContext, stage: Stage, log_path: Path) -> St
 def stage_06_full_core(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
     entrypoint = str(getattr(ctx.spec, "ENTRY_POINT", "main.py"))
     result = run_nuitka_stage(ctx, stage, log_path, profile="full_core", entrypoint=entrypoint)
-    try:
+    if getattr(ctx.args, "gui_smoke", False):
         smoke_launch_exe(
             Path(result.artifact_paths[0]),
             log_path,
             env_overrides={"AIPACS_NUITKA_SMOKE_TEST": "1"},
             timeout_sec=25,
         )
-    except Exception as exc:
-        result.notes.append(f"Stage 6 smoke-launch warning: {exc}")
+    else:
+        result.notes.append("Workstation GUI smoke not requested; no application was launched")
 
     report = Path(result.report_path or "")
     if report.exists():
@@ -1318,7 +1377,8 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
 def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
     # build_lite_viewer=True → always build a fresh portable viewer so the
     # run_cd payload ships it (skip via AIPACS_SKIP_LITE_VIEWER_BUILD=1).
-    materialize_plugin_packages(include_runtime_payloads=True, build_lite_viewer=True)
+    include_slicer = True
+    materialize_plugin_packages(include_runtime_payloads=include_slicer, build_lite_viewer=True)
     plugin_stage = STAGE_DIR / "plugin_packages"
     if plugin_stage.exists():
         shutil.rmtree(plugin_stage, ignore_errors=True)
@@ -1328,6 +1388,8 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
     optional_ids = sorted({str(item["module_id"]) for item in optional_defs})
     copied_dirs: list[str] = []
     for module_id in optional_ids:
+        if module_id == "advanced_mpr" and not include_slicer:
+            continue
         source_dir = PLUGIN_PACKAGES_DIR / module_id
         if not source_dir.exists():
             raise StageError(f"Optional plugin package missing from materialized source: {source_dir}")
@@ -1344,7 +1406,7 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
     feed_path.write_text(json.dumps(feed_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     stage_notes: list[str] = []
-    if "advanced_mpr" in optional_ids:
+    if include_slicer and "advanced_mpr" in optional_ids:
         advanced_mpr_dir = plugin_stage / "advanced_mpr"
         advanced_mpr_manifest = advanced_mpr_dir / "module_package.json"
         allow_missing_advanced_mpr = _env_truthy(ALLOW_MISSING_ADVANCED_MPR_ENV)
@@ -1417,65 +1479,28 @@ def stage_09_installer_staging(ctx: BuildContext, stage: Stage, log_path: Path) 
 
 
 def stage_10_inno_setup(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
-    iscc = find_iscc()
-    if iscc is None:
-        raise StageError("Inno Setup compiler (ISCC.exe) not found")
-
-    installer_script = INSTALLER_DIR / "AIPacs_Nuitka_Setup.iss"
-    if not installer_script.exists():
-        raise StageError(f"Installer script missing: {installer_script}")
-
-    cmd = [
-        str(iscc),
-        f"/DMyAppVersion={ctx.version}",
-        f"/DStageDir={STAGE_DIR}",
-        f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
-        "/DInstallerBaseName=ai-pacs installer",
-        str(installer_script),
-    ]
-
-    rc = run_command_with_log(cmd, cwd=INSTALLER_DIR, log_path=log_path)
-    primary = INSTALLER_OUTPUT_DIR / "ai-pacs installer.exe"
-    if rc != 0:
-        log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
-        if "Successful compile" not in log_text or not primary.exists():
+    # The same installer contract, EULA, module writers and ARM-emulation
+    # detection serve both backends. Every selected edition is mandatory.
+    def compile_command(command, *, cwd):
+        rc = run_command_with_log(command, cwd=cwd, log_path=log_path)
+        if rc != 0:
             raise StageError(f"Installer compile failed with exit code {rc}")
 
-    compiled = sorted(INSTALLER_OUTPUT_DIR.glob("*.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not compiled:
-        raise StageError("Installer compilation finished but no output executable was found")
-
-    compiled_installer = compiled[0]
-    versioned = INSTALLER_OUTPUT_DIR / f"ai-pacs installer v{ctx.version}.exe"
-    if compiled_installer.resolve() != primary.resolve():
-        copy2_with_retry(compiled_installer, primary)
-    else:
-        primary = compiled_installer
-    copy2_with_retry(primary, versioned)
-
-    metadata = {
-        "version": ctx.version,
-        "generated_at_utc": utc_now(),
-        "artifacts": {
-            "compiled": str(compiled_installer),
-            "primary": str(primary),
-            "versioned": str(versioned),
-        },
-        "sha256": {
-            "primary": sha256_file(primary),
-            "versioned": sha256_file(versioned),
-        },
-    }
-    (INSTALLER_OUTPUT_DIR / "nuitka_installer_release_metadata.json").write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    adapter = SimpleNamespace(
+        OUTPUT_DIR=INSTALLER_OUTPUT_DIR.parent, INSTALLER_OUTPUT_DIR=INSTALLER_OUTPUT_DIR,
+        EXPECTED_INSTALLER_OUTPUT_DIR=Path(
+            os.environ.get("AIPACS_NUITKA_EXPECTED_INSTALLER_OUTPUT_DIR", str(INSTALLER_OUTPUT_DIR))
+        ).resolve(),
+        STAGE_DIR=STAGE_DIR, BUILDER_DIR=BUILDER_ROOT,
+        INSTALLER_SCRIPT=BUILDER_ROOT / "installer/AIPacs_Setup.iss",
+        INSTALLER_SCRIPT_WOA=BUILDER_ROOT / "installer/AIPacs_Setup_WoA.iss",
+        find_iscc=find_iscc, run_command=compile_command, BACKEND="nuitka",
     )
-
+    inventory = compile_editions(adapter, ctx.version, ctx.args.edition)
     return StageResult(
-        command=cmd,
         output_paths=[str(INSTALLER_OUTPUT_DIR)],
-        artifact_paths=[str(primary), str(versioned)],
-        notes=[f"Inno Setup installer built: {primary}"],
+        artifact_paths=[row["installer"] for row in inventory["outputs"]],
+        notes=["All requested edition installers compiled; not published"],
     )
 
 
@@ -1771,6 +1796,8 @@ def audit_native_footprint(_ctx: BuildContext) -> int:
 
 
 def parse_stage_selection(args: argparse.Namespace) -> tuple[list[int], bool]:
+    if getattr(args, "release", False):
+        return [0, 6, 7, 8, 9, 10], False
     if args.stage is not None:
         return [args.stage], False
     if args.from_stage is not None:
@@ -1781,14 +1808,19 @@ def parse_stage_selection(args: argparse.Namespace) -> tuple[list[int], bool]:
 
 
 def compute_resume_stages(ctx: BuildContext) -> list[int]:
+    failed = ctx.state.get("failed_stage")
+    if failed is not None:
+        try:
+            failed = int(failed)
+        except (TypeError, ValueError):
+            failed = None
+        if failed in STAGES:
+            return [n for n in STAGES if n >= failed]
+
     completed = set(int(x) for x in ctx.state.get("completed_stages", []))
     for number in sorted(STAGES.keys()):
         if number not in completed:
             return [n for n in STAGES if n >= number]
-    failed = ctx.state.get("failed_stage")
-    if failed is not None:
-        failed = int(failed)
-        return [n for n in STAGES if n >= failed]
     return []
 
 
@@ -1845,6 +1877,10 @@ def stage_failure_message(stage: Stage, log_path: Path, report_path: str | None)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Checkpoint-based staged Nuitka release pipeline")
+    parser.add_argument("--edition", choices=["all", "standard", "eagle-eye", "arm"], default="all")
+    parser.add_argument("--release", action="store_true", help="Build preflight and full release stages, omitting incremental bootstrap demos")
+    parser.add_argument("--asset-root", type=Path, help="Verified offline distribution asset cache")
+    parser.add_argument("--gui-smoke", action="store_true", help="Explicitly opt into launching the compiled workstation")
     parser.add_argument("--resume", action="store_true", help="Resume from failed/incomplete stage")
     parser.add_argument("--from-stage", type=int, dest="from_stage", help="Run from selected stage forward")
     parser.add_argument("--stage", type=int, help="Run only one stage")
@@ -1861,6 +1897,14 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "zig", "msvc", "mingw64", "clang"],
         default="auto",
         help="Override compiler selection for Nuitka compile stages",
+    )
+    parser.add_argument(
+        "--internal-build",
+        action="store_true",
+        help=(
+            "Allow release-capable stages only inside a non-promotable internal snapshot "
+            "prepared by the canonical build coordinator."
+        ),
     )
     parser.add_argument(
         "--spec",
@@ -1959,6 +2003,8 @@ STAGES: dict[int, Stage] = {
 
 def main() -> int:
     args = parse_args()
+    # All three editions share a real x64 core; the ARM edition is emulated.
+    validate_build_arch("x64")
 
     validate_stage_number(args.from_stage, "--from-stage")
     validate_stage_number(args.stage, "--stage")
@@ -1966,6 +2012,8 @@ def main() -> int:
 
     if args.resume and args.stage is not None:
         raise StageError("--resume cannot be combined with --stage")
+    if args.release and (args.resume or args.stage is not None or args.from_stage is not None):
+        raise StageError("--release requires a fresh complete release pipeline")
     if args.resume and args.from_stage is not None:
         raise StageError("--resume cannot be combined with --from-stage")
     if args.stage is not None and args.from_stage is not None:
@@ -2012,6 +2060,27 @@ def main() -> int:
     if args.audit_native_footprint:
         return audit_native_footprint(ctx)
 
+    selected_stages, is_resume = parse_stage_selection(args)
+    if is_resume:
+        selected_stages = compute_resume_stages(ctx)
+    if any(number >= 6 for number in selected_stages):
+        try:
+            validate_build_authority(PROJECT_ROOT, ctx.version, internal=args.internal_build)
+        except BuildAuthorityError as exc:
+            raise StageError(f"[BUILD_AUTHORITY] {exc}") from exc
+        if args.internal_build:
+            print("[INTERNAL] Non-promotable diagnostic build; outputs are not release artifacts.")
+
+    from builder import release_gate
+    if not release_gate.report(release_gate.run_pre_build_gate(), label="nuitka pre-build"):
+        raise StageError("Nuitka pre-build gate failed")
+    if args.edition in {"all", "standard", "eagle-eye", "arm"}:
+        from tools.build.prepare_distribution_assets import DEFAULT_ROOT, verify
+        asset_root = (args.asset_root or DEFAULT_ROOT).resolve()
+        verify(asset_root)
+        os.environ["AIPACS_ADVANCED_MPR_RUNTIME_SOURCE"] = str(asset_root / "slicer-runtime")
+        os.environ["AIPACS_OFFLINE_LUMBAR_BUNDLE_SOURCE"] = str(asset_root / "offline_lumbar")
+        os.environ["AIPACS_ISCC_EXE"] = str(asset_root / "inno-setup/ISCC.exe")
     return run_pipeline(ctx)
 
 

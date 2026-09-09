@@ -93,6 +93,48 @@ def test_parasagittal_mode_preserves_every_baseline_image(tmp_path, monkeypatch)
     assert manifest["budget"]["image_count"] == len(result.images)
 
 
+def test_parasagittal_compacts_padding_without_losing_planes_or_sampling(tmp_path, monkeypatch):
+    from PIL import Image
+    result, manifest = _prepare(tmp_path, monkeypatch, MODE)
+    record = manifest["parasagittal_supplements"][0]
+    assert record["tile_count"] == 7
+    assert all(s["mm_per_pixel"] == [1.0, 1.0] for s in record["sampling"])
+    with Image.open(result.images[-1].path) as image:
+        assert image.width * image.height < 1536 * 856
+    assert result.evidence_audit["budget"] == manifest["budget"]
+
+
+@pytest.mark.parametrize("shape", [(100, 100), (256, 256), (257, 513), (1024, 311),
+                                  (384, 385), (511, 125), (800, 1100)])
+def test_compact_cells_preserve_exact_display_pixels_at_varied_aspect_ratios(tmp_path, monkeypatch, shape):
+    from modules.ai_imaging.evidence_core.volume import fit_grayscale
+    height, width = shape
+    pixels = (np.arange(height * width).reshape(shape) % 254 + 1).astype(np.uint8)
+    monkeypatch.setattr(focus_evidence, "_sagittal_roi",
+                        lambda *args: (pixels, (0, 0, width, height), (1.0, 1.0)))
+    draw_sheet = focus_evidence._draw_sheet
+    checked = []
+
+    def verify_sheet(rows, title, tile_size):
+        for _, tiles, _ in rows:
+            for array, _ in tiles:
+                original = fit_grayscale(array, (384, 384))
+                compact = fit_grayscale(array, tile_size)
+                a, b = original.crop(original.getbbox()), compact.crop(compact.getbbox())
+                assert a.size == b.size
+                assert a.tobytes() == b.tobytes()
+                checked.append(True)
+        return draw_sheet(rows, title, tile_size)
+
+    monkeypatch.setattr(focus_evidence, "_draw_sheet", verify_sheet)
+    focus_evidence._parasagittal_image(
+        _sagittal_volume(), (63.5, 63.5, 6.0), (0.0, 300.0),
+        {"focus_id": "synthetic", "level": "L2-L3", "axial_window": {"anchor_capture_frame": 1}},
+        tmp_path,
+    )
+    assert len(checked) == 7
+
+
 def test_parasagittal_mode_does_not_trust_screening_side(tmp_path, monkeypatch):
     left, _ = _prepare(tmp_path / "left", monkeypatch, MODE, side="left")
     right, _ = _prepare(tmp_path / "right", monkeypatch, MODE, side="right")
@@ -110,10 +152,13 @@ def test_parasagittal_budget_shortfall_retains_baseline(tmp_path, monkeypatch, l
     assert manifest["warnings"]
 
 
-def test_parasagittal_mode_is_an_explicit_verification_only_choice(monkeypatch):
+def test_parasagittal_mode_is_an_engineering_only_verification_choice(monkeypatch):
     monkeypatch.delenv(evidence_bundle.ENV_EVIDENCE_MODE, raising=False)
-    assert evidence_bundle.resolve_mode() == "layout"
+    monkeypatch.delenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, raising=False)
+    assert evidence_bundle.resolve_mode() == "focused-v5-level-cards"
     monkeypatch.setenv(evidence_bundle.ENV_EVIDENCE_MODE, MODE)
+    assert evidence_bundle.resolve_mode() == "focused-v5-level-cards"
+    monkeypatch.setenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, "true")
     assert evidence_bundle.resolve_mode() == MODE
     assert MODE in evidence_bundle.VERIFICATION_ONLY_MODES
     package = object()
@@ -159,7 +204,7 @@ def test_parasagittal_without_foci_keeps_broad_overviews(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("supplement_failure", [False, True])
-def test_pipeline_dispatches_supplements_only_to_verification(tmp_path, monkeypatch, supplement_failure):
+def test_pipeline_dispatches_supplements_only_to_verification(tmp_path, monkeypatch, supplement_failure, configured_direct_eagle_models):
     from modules.ai_imaging.eagle_eye_lumbar import analysis_store, clinical_context, llm_backend
 
     monkeypatch.setattr(focus_evidence, "load_series_volume", lambda _: _sagittal_volume())
@@ -169,6 +214,7 @@ def test_pipeline_dispatches_supplements_only_to_verification(tmp_path, monkeypa
             raise focus_evidence.EvidenceError("Synthetic render failure")
         monkeypatch.setattr(focus_evidence, "_parasagittal_image", fail)
     monkeypatch.setenv(evidence_bundle.ENV_EVIDENCE_MODE, MODE)
+    monkeypatch.setenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, "1")
     package = _package(tmp_path)
     context = clinical_context.empty_context_package(package.study_instance_uid, package.session_dir)
     calls = []
@@ -186,3 +232,7 @@ def test_pipeline_dispatches_supplements_only_to_verification(tmp_path, monkeypa
     assert all(image.evidence_mode == "layout" for image in calls[0][1].images)
     assert all(image.evidence_mode == MODE for image in calls[1][1].images)
     assert len(calls[1][1].images) == (3 if supplement_failure else 4)
+    if supplement_failure:
+        assert "parasagittal_unavailable" in calls[1][1].header
+        assert any("parasagittal_unavailable" in w for w in result.document["warnings"])
+        assert "EVIDENCE COVERAGE" in result.text

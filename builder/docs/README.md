@@ -1,13 +1,31 @@
 # Build Systems Index
 
-This repository has **two separate build systems**. They are not interchangeable and they do not share the same entry scripts, output folders, or command-line flags.
+> Documentation map: [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md).
+>
+> **Canonical current route:** start at [`../../BUILD.md`](../../BUILD.md). It is
+> the only authoritative procedure for the combined PyInstaller + Nuitka,
+> Eagle Eye + Standard + ARM64-emulated release matrix. Commands below describe
+> backend internals and historical recovery only; do not use them as an alternate
+> final-release workflow.
+> A full build also requires the Git synchronization receipt created through
+> [`../../RELEASE.md`](../../RELEASE.md); backend scripts are not a substitute.
+
+This repository has **two separate build backends** coordinated by one release
+workflow. They are not interchangeable and they do not share output folders or
+command-line flags.
+
+**2026-08-31 PyInstaller output policy:** the default now prepares Eagle Eye,
+Standard and ARM compatibility outputs with isolated payloads. See
+[distribution editions and offline assets](DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md)
+for cached inputs, commands, size gates, no-publish behavior, and release blockers.
 
 ## 1. PyInstaller Build Chain
 
 Use this when you want the current Windows release pipeline based on the Python/PyInstaller builder.
 
 - Builder root: `builder/`
-- Canonical entry points:
+- Backend implementation entry points (diagnostics only; the official entry is
+  `tools/build/build_local_candidate.py` from root `BUILD.md`):
   - `build.bat`
   - `build.py`
   - `builder/build_release.py`
@@ -22,17 +40,14 @@ Use this when you want the current Windows release pipeline based on the Python/
   - `BUILD_CHECKLIST.md`
   - `INSTALLER_QA_CHECKLIST.md`
 
-Typical commands:
+Historical/direct backend commands are intentionally omitted from this index.
+Release-capable direct invocation is authority-gated and will fail in the mutable
+developer checkout. Use the internal snapshot commands in root `BUILD.md` for a
+diagnostic backend run.
 
-```powershell
-.\.venv_build\Scripts\python.exe build.py
-.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller
-.\.venv_build\Scripts\python.exe build.py --skip-installer-compile
-.\.venv_build\Scripts\python.exe build.py --clean-build
-.\.venv_build\Scripts\python.exe builder\run_resumable_build.py
-```
-
-For long-running or unstable sessions, prefer `builder\run_resumable_build.py` so stage 1 (dist/stage/packages/updates) and stage 2 (installer compile) can resume independently.
+Backend flags are documented for implementation diagnosis below. Copy the full
+internal-snapshot command from root `BUILD.md`; it supplies the external build
+interpreter, verified asset path, and mandatory `--internal-build` marker.
 
 ## 2. Nuitka Build Chain
 
@@ -137,32 +152,15 @@ When validating a new release build, treat this as the minimum expected output s
 - `builder/output/updates/`
 - `builder/output/installer/` (when installer compilation is enabled)
 
-Recommended deterministic validation flow for CI/manual/AI agents:
-
-1. Build core bundle (or reuse existing dist):
-
-```powershell
-.\.venv_build\Scripts\python.exe build.py
-```
-
-2. Verify post-build structure without installer variability:
-
-```powershell
-.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller --skip-installer-compile
-```
-
-This command must produce `stage`, `packages`, and `updates` from the current `dist` bundle.
-
-3. Compile installer after the above succeeds:
-
-```powershell
-.\.venv_build\Scripts\python.exe build.py --skip-pyinstaller
-```
-
-If installer compilation fails with file-in-use (`Error 32`) on `builder/output/installer/ai-pacs installer.exe`, clear the stale lock holder (typically a stuck `ISCC.exe`) and rerun step 3.
+The commands that originally accompanied this historical v2.4.7 section are no
+longer valid release entry points. Use the lane and snapshot commands in root
+`BUILD.md`. Inside an approved snapshot, the backend must still produce `stage`,
+`packages`, and `updates`; file-lock and resume notes below remain useful for
+diagnosis.
 
 Operational guardrails:
 
 - Ensure `builder/output/.build_release.lock` is removed at the end of a successful run.
-- If `dist` exists but `updates` is missing, rerun `--skip-pyinstaller --skip-installer-compile` before treating the build as complete.
+- If `dist` exists but `updates` is missing, treat the backend as incomplete and
+  follow the recovery route in root `BUILD.md`; do not promote the partial output.
 - Always derive version from `pyproject.toml`; do not hardcode release version in builder scripts.

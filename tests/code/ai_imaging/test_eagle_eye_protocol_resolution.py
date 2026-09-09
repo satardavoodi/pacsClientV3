@@ -524,6 +524,9 @@ def test_the_resolution_serialises_everything_the_manifest_needs():
 
 BUTTON_SRC = (REPO_ROOT / "modules" / "viewer" / "interactor_styles"
               / "ai_chat_interactorstyle.py").read_text(encoding="utf-8")
+LUMBAR_BUTTON_START = BUTTON_SRC.index("    def _open_lumbar_eagle_eye")
+LUMBAR_BUTTON_END = BUTTON_SRC.index("    @staticmethod", LUMBAR_BUTTON_START)
+LUMBAR_BUTTON_SRC = BUTTON_SRC[LUMBAR_BUTTON_START:LUMBAR_BUTTON_END]
 TAB_SRC = (REPO_ROOT / "modules" / "ai_imaging" / "ai_module_ui" / "service_tab"
            / "imaging_tab.py").read_text(encoding="utf-8")
 WORKFLOW_SRC = (REPO_ROOT / "modules" / "ai_imaging" / "eagle_eye_lumbar"
@@ -531,9 +534,9 @@ WORKFLOW_SRC = (REPO_ROOT / "modules" / "ai_imaging" / "eagle_eye_lumbar"
 
 
 def test_the_button_resolves_before_it_opens_anything():
-    assert "resolver.resolve" in BUTTON_SRC or "ee_resolver.resolve" in BUTTON_SRC
-    resolve_at = BUTTON_SRC.index("ee_resolver.resolve")
-    open_at = BUTTON_SRC.index("switch_right_panel('ai_module')")
+    assert "ee_resolver.resolve" in LUMBAR_BUTTON_SRC
+    resolve_at = LUMBAR_BUTTON_SRC.index("ee_resolver.resolve")
+    open_at = LUMBAR_BUTTON_SRC.index("switch_right_panel('ai_module')")
     assert resolve_at < open_at, "the layout must not open before resolution"
 
 

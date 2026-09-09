@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 from datetime import datetime
+import logging
 
-from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QPixmap, QPainter, QColor, QPen
+from PySide6.QtCore import Qt, QSize, QTimer, QThreadPool, Slot
+from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QImage
 from PySide6.QtPrintSupport import QPrinterInfo
 from PySide6.QtWidgets import (
     QWidget,
@@ -48,7 +49,7 @@ from modules.printing.ui.film_preview_widget import FilmPreviewWidget
 from modules.printing.printers.os_printer import OSPrinterHandler
 from modules.printing.printers.dicom_printer import (
     DicomImagePayload,
-    DicomPrintHandler,
+    DicomPrintWorker,
     DicomPrintJob,
     DicomPrinterSettings,
 )
@@ -56,6 +57,8 @@ from modules.printing.render.dicom_renderer import load_dicom_as_pixmap, load_se
 from PacsClient.utils.config import BASE_PATH
 from PacsClient.utils import db_manager
 from PacsClient.utils.theme_manager import get_theme_manager
+
+logger = logging.getLogger(__name__)
 
 
 class PrintingWidget(QWidget):
@@ -87,6 +90,24 @@ class PrintingWidget(QWidget):
             "font_right_block": 18,
         }
 
+        self._print_worker = None
+        self._selection_dirty = True
+        self._preview_study_uid = None
+        self._background_mode = load_printing_config().get("background_mode", "dark")
+        if self._background_mode not in ("white", "dark", "none"):
+            self._background_mode = "dark"
+        stored_header = load_printing_config().get("header", {})
+        if isinstance(stored_header, dict):
+            for key, default in self._header_settings.items():
+                value = stored_header.get(key, default)
+                if key.startswith("font_"):
+                    try:
+                        value = max(6, min(120, int(value)))
+                    except (TypeError, ValueError):
+                        value = default
+                else:
+                    value = str(value or "")
+                self._header_settings[key] = value
         self._viewport_state = ViewportState()
         self._printer_configs = self._load_printer_configs()
         # Load persisted DICOM printer settings (IP / port / AE titles / film
@@ -108,30 +129,6 @@ class PrintingWidget(QWidget):
             self._load_series()
         if hasattr(self, "filming_container_layout"):
             self._load_filming_pages()
-
-    def eventFilter(self, watched, event):
-        """Optional mouse-event tracer for the series list.
-
-        The previous implementation spammed every click with two ``print``
-        lines, polluting the runtime log and adding measurable latency on
-        slow consoles. The filter now stays silent unless the
-        ``AIPACS_PRINTING_MOUSE_DEBUG`` environment variable is set, so the
-        diagnostic capability is preserved without the runtime noise.
-        """
-        try:
-            from os import environ
-            if environ.get("AIPACS_PRINTING_MOUSE_DEBUG") and watched == self.series_list.viewport():
-                from PySide6.QtCore import QEvent
-                if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
-                    mods = event.modifiers()
-                    kind = "Press" if event.type() == QEvent.MouseButtonPress else "Release"
-                    print(
-                        f"[MOUSE_DEBUG] {kind}: Ctrl={bool(mods & Qt.ControlModifier)}, "
-                        f"Shift={bool(mods & Qt.ShiftModifier)}, button={event.button()}"
-                    )
-        except Exception:
-            pass
-        return super().eventFilter(watched, event)
 
     def _scaled(self, px: int) -> int:
         screen = self.screen()
@@ -182,6 +179,17 @@ class PrintingWidget(QWidget):
 
         toolbar.addWidget(self.layout_button)
         toolbar.addWidget(self.header_button)
+        self.background_combo = QComboBox()
+        for label, mode in (("White", "white"), ("Dark", "dark"), ("No background", "none")):
+            self.background_combo.addItem(label, mode)
+        self.background_combo.setCurrentIndex(self.background_combo.findData(self._background_mode))
+        self.background_combo.setToolTip(
+            "Page background outside images. No background saves transparent gaps and leaves paper unpainted. "
+            "DICOM printers use white gaps because their grayscale image boxes do not support transparency."
+        )
+        self.background_combo.currentIndexChanged.connect(self._on_background_changed)
+        toolbar.addWidget(QLabel("Background"))
+        toolbar.addWidget(self.background_combo)
         toolbar.addWidget(self.layout_label)
         toolbar.addSpacing(8)
 
@@ -251,8 +259,6 @@ class PrintingWidget(QWidget):
         self._selection_debounce.setInterval(50)  # ms
         self._selection_debounce.timeout.connect(self._on_series_selection_changed)
         self.series_list.itemSelectionChanged.connect(self._selection_debounce.start)
-        # Install event filter to log mouse events for debugging
-        self.series_list.viewport().installEventFilter(self)
         series_layout.addWidget(self.series_list)
 
         self.sync_checkbox = QCheckBox("Sync adjustments across images")
@@ -265,6 +271,7 @@ class PrintingWidget(QWidget):
         left_layout.addStretch(1)
 
         self.preview_widget = FilmPreviewWidget()
+        self.preview_widget.contentChanged.connect(self._invalidate_export)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -287,6 +294,8 @@ class PrintingWidget(QWidget):
         self.range_end = QSpinBox()
         self.range_end.setRange(1, 100000)
         self.range_end.setValue(20)
+        self.range_start.valueChanged.connect(self._invalidate_selection)
+        self.range_end.valueChanged.connect(self._invalidate_selection)
         self.range_end.setButtonSymbols(QAbstractSpinBox.PlusMinus)
         self.range_end.setMinimumWidth(self._scaled(96))
         self.range_end.setMinimumHeight(self._scaled(36))
@@ -370,18 +379,24 @@ class PrintingWidget(QWidget):
 
         self.delete_tiles_btn = QPushButton("Delete Selected Images")
         self.delete_tiles_btn.clicked.connect(self._delete_selected_tiles)
+        self.delete_page_btn = QPushButton("Delete Current Page")
+        self.delete_page_btn.setToolTip("Remove the current sheet from this print layout; source files are kept")
+        self.delete_page_btn.clicked.connect(self._delete_current_page)
+        self.clear_all_btn = QPushButton("Clear All Sheets")
+        self.clear_all_btn.setToolTip("Clear this print layout; source files and saved filming pages are kept")
+        self.clear_all_btn.clicked.connect(self._clear_all_sheets)
 
         self.refresh_series_btn = QPushButton("Load Series")
         self.refresh_series_btn.clicked.connect(self._load_series)
 
-        self.preview_btn = QPushButton("Generate Report")
+        self.preview_btn = QPushButton("Generate Preview")
         self.preview_btn.setToolTip("Generate preview/report pages from selected series")
         self.preview_btn.clicked.connect(self._generate_preview)
         
         self.save_preview_btn = QPushButton("Save Preview")
         self.save_preview_btn.clicked.connect(self._save_preview)
 
-        self.print_btn = QPushButton("Print")
+        self.print_btn = QPushButton("Print Current Page")
         self.print_btn.clicked.connect(self._handle_print)
 
         action_buttons = [
@@ -390,6 +405,8 @@ class PrintingWidget(QWidget):
             self.save_preview_btn,
             self.print_btn,
             self.delete_tiles_btn,
+            self.delete_page_btn,
+            self.clear_all_btn,
             self.layout_button,
             self.header_button,
             self.dicom_settings_btn,
@@ -441,15 +458,22 @@ class PrintingWidget(QWidget):
         buttons_row.addWidget(self.save_preview_btn)
         buttons_row.addWidget(self.print_btn)
         buttons_row.addWidget(self.delete_tiles_btn)
+        buttons_row.addWidget(self.delete_page_btn)
+        buttons_row.addWidget(self.clear_all_btn)
         layout.addLayout(buttons_row)
 
         self._apply_modern_styles()
+        self._on_printer_type_changed(self.printer_type_combo.currentText())
 
     def update_patients(self, selected_patients: list):
         """Replace the patient list with new data and refresh the UI."""
-        print(f"[PRINTING] update_patients called with {len(selected_patients)} patients")
-        for p in selected_patients:
-            print(f"[PRINTING]   patient={p.get('patient_name')}, study_uid={p.get('study_uid')!r}")
+        self._reset_document()
+        self._active_patient = None
+        self._selected_patient_info = {}
+        self._selected_study_uid = None
+        self._selected_series = []
+        self.series_list.clear()
+        self._load_filming_pages()
         self._selected_patients = selected_patients or []
         self._load_selected_patients()
 
@@ -586,6 +610,8 @@ class PrintingWidget(QWidget):
         self._current_layout = layout
         if hasattr(self, "layout_label"):
             self.layout_label.setText(f"Layout: {layout.rows} x {layout.cols}")
+        if getattr(self, "_selected_paths", None):
+            self._update_page_display()
 
     def _get_available_layouts(self) -> List[FilmLayout]:
         config = load_printing_config()
@@ -619,11 +645,11 @@ class PrintingWidget(QWidget):
         patient = selected_items[0].data(Qt.UserRole)
         if not patient:
             return
+        self._reset_document()
+        self._selected_series = []
         self._active_patient = patient
         self._selected_patient_info = patient
         self._selected_study_uid = patient.get("study_uid")
-        print(f"[PRINTING] Patient selected: name={patient.get('patient_name')}, "
-              f"study_uid={self._selected_study_uid!r} (len={len(self._selected_study_uid) if self._selected_study_uid else 0})")
         self._load_series()
         self._load_filming_pages()
 
@@ -631,25 +657,21 @@ class PrintingWidget(QWidget):
         self.series_list.clear()
         self._series_records = []
         if not self._selected_study_uid:
-            print("[PRINTING] No study_uid selected")
             return
-        print(f"[PRINTING] Loading series for study_uid: {self._selected_study_uid}")
         
         # Use enriched series loader for fault-tolerance
         try:
             from modules.printing.data.dicom_enrichment import get_series_with_enrichment
             series = get_series_with_enrichment(self._selected_study_uid)
         except Exception as e:
-            print(f"[PRINTING] ⚠️ Enrichment failed, falling back: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("Printing series enrichment failed (%s)", type(e).__name__)
+            # Keep patient identifiers out of exception output.
             try:
                 series = get_series_for_study(self._selected_study_uid)
             except Exception as e2:
-                print(f"[PRINTING] ❌ Fallback also failed: {e2}")
+                logger.warning("Printing series lookup failed (%s)", type(e2).__name__)
                 series = []
         
-        print(f"[PRINTING] Found {len(series)} series")
         
         for item in series:
             try:
@@ -673,12 +695,9 @@ class PrintingWidget(QWidget):
                 )
                 self.series_list.setItemWidget(list_item, widget)
                 self._series_records.append(item)
-                src = item.get("_source", "db")
-                print(f"[PRINTING]   [{src}] series_pk={item.get('series_pk')}, series_number={series_num}, images={img_count}")
             except Exception as exc:
-                import traceback
-                print(f"[PRINTING] ❌ Error building series item: {exc}")
-                traceback.print_exc()
+                logger.warning("Printing series card failed (%s)", type(exc).__name__)
+                continue
         
         if self.series_list.count() > 0:
             first_item = self.series_list.item(0)
@@ -700,11 +719,14 @@ class PrintingWidget(QWidget):
         selected_items = self.series_list.selectedItems()
         
         # Update internal state
+        previous = self._selected_series
         self._selected_series = []
         for item in selected_items:
             series = item.data(Qt.UserRole)
             if series:
                 self._selected_series.append(series)
+        if previous != self._selected_series:
+            self._invalidate_selection()
         
         self.status_label.setText(f"Selected {len(self._selected_series)} series")
 
@@ -741,7 +763,6 @@ class PrintingWidget(QWidget):
         def make_mouse_release_handler(series_ref):
             def on_mouse_release(event):
                 # Select this series when clicked anywhere on the card
-                print(f"[PRINTING] Series thumbnail clicked: series_number={series_ref.get('series_number')}")
                 self._select_series_for_action(series_ref, clear_existing=True)
             return on_mouse_release
         
@@ -849,6 +870,7 @@ class PrintingWidget(QWidget):
         return matched
 
     def _ensure_series_selection(self) -> List[dict]:
+        self._flush_series_selection()
         # Prefer explicit current selection
         if self._selected_series:
             return self._selected_series
@@ -1150,7 +1172,7 @@ class PrintingWidget(QWidget):
         for cb in [self.film_size_combo, self.left_drag_mode, self.printer_type_combo, self.local_printer_combo]:
             cb.setStyleSheet(combo_style)
 
-        for btn in [self.layout_button, self.header_button, self.refresh_series_btn, self.preview_btn, self.save_preview_btn, self.print_btn, self.delete_tiles_btn, self.dicom_settings_btn]:
+        for btn in [self.layout_button, self.header_button, self.refresh_series_btn, self.preview_btn, self.save_preview_btn, self.print_btn, self.delete_tiles_btn, self.delete_page_btn, self.clear_all_btn, self.dicom_settings_btn]:
             btn.setStyleSheet(button_style)
         
         for page_btn in [self.prev_page_btn, self.next_page_btn]:
@@ -1227,47 +1249,51 @@ class PrintingWidget(QWidget):
         paths: List[str] = []
         selected_series = self._ensure_series_selection()
         if not selected_series:
-            print("[PRINTING] No series selected")
             return []
-        print(f"[PRINTING] Collecting paths for {len(selected_series)} selected series")
         for series in selected_series:
             series_pk = series.get("series_pk")
             
             # Handle series discovered from filesystem (no series_pk)
             if not series_pk:
-                print(f"[PRINTING] Series has no pk, using direct path from discovery")
                 series_path_str = series.get("series_path")
                 if series_path_str:
                     series_dir = Path(series_path_str)
                     if series_dir.exists():
                         files = [
-                            *series_dir.glob("*.dcm"),
-                            *series_dir.glob("*.DCM"),
+                            *(p for p in series_dir.iterdir() if p.suffix.lower() == ".dcm"),
                         ]
                         files = [str(p) for p in natsorted(files) if p.is_file()]
-                        print(f"[PRINTING]   Got {len(files)} paths from direct scan")
                         paths.extend(files)
                 continue
             
-            print(f"[PRINTING] Processing series_pk={series_pk}")
             series_paths = get_dicom_paths_for_series(
                 series_pk,
                 study_uid=series.get("study_uid") or self._selected_study_uid,
                 series_number=series.get("series_number"),
             )
-            series_paths = [p for p in sorted(series_paths) if p and Path(p).exists()]
-            print(f"[PRINTING]   Got {len(series_paths)} paths")
+            series_paths = [p for p in series_paths if p and Path(p).exists()]
             paths.extend(series_paths)
 
-        print(f"[PRINTING] Total paths before range filter: {len(paths)}")
         start = max(self.range_start.value(), 1) - 1
         end = max(self.range_end.value(), start + 1)
         end = min(end, len(paths))
-        print(f"[PRINTING] Range filter: {start} to {end}")
         return paths[start:end]
 
     def _build_viewport(self) -> ViewportState:
         return ViewportState()
+
+    def _effective_film_size(self):
+        film = self.film_size_combo.currentData()
+        if isinstance(film, FilmSize) and self.printer_type_combo.currentText() == "DICOM Printer":
+            landscape = self._dicom_print_settings.get("film_orientation") == "LANDSCAPE"
+            width, height = sorted((film.width_in, film.height_in))
+            return FilmSize(film.name, height if landscape else width, width if landscape else height)
+        return film
+
+    def _flush_series_selection(self):
+        if self._selection_debounce.isActive():
+            self._selection_debounce.stop()
+            self._on_series_selection_changed()
 
     def _on_film_size_changed(self, index: int) -> None:
         """Re-render the preview when the film size combo changes."""
@@ -1275,79 +1301,78 @@ class PrintingWidget(QWidget):
             return  # No preview yet — nothing to refresh
         self._update_page_display()
 
+    def _invalidate_export(self):
+        self._film_pixmap = None
+
+    def _on_background_changed(self, index):
+        self._background_mode = self.background_combo.currentData()
+        self._invalidate_export()
+        try:
+            cfg = load_printing_config()
+            cfg["background_mode"] = self._background_mode
+            save_printing_config(cfg)
+        except Exception:
+            QMessageBox.warning(self, "Background", "Setting applies for this session but could not be saved.")
+        if self._selected_paths:
+            self._update_page_display()
+
+    def _invalidate_selection(self):
+        self._selection_dirty = True
+        self._invalidate_export()
+        self.status_label.setText("Selection changed; generate preview to update pages")
+
+    def _reset_document(self):
+        self._selection_debounce.stop()
+        self._selected_paths = []
+        self._preview_study_uid = None
+        self._selection_dirty = True
+        self._film_pixmap = None
+        self._current_page = 0
+        self._total_pages = 1
+        self.preview_widget.clear_document()
+        self.page_label.setText("Page 0/0")
+        self.prev_page_btn.setEnabled(False)
+        self.next_page_btn.setEnabled(False)
+
     def _generate_preview(self):
-        print("[PRINTING] === Generate Preview Started ===")
         self.status_label.setText("Generating preview...")
-        self._selected_paths = self._collect_image_paths()
-        print(f"[PRINTING] Collected {len(self._selected_paths)} image paths")
-        
-        scout_path = self.preview_widget.get_scout_path() if self.preview_widget else None
-        print(f"[PRINTING] Scout path: {scout_path}")
-        if scout_path:
-            self._selected_paths = [p for p in self._selected_paths if p != scout_path]
-            print(f"[PRINTING] After removing scout: {len(self._selected_paths)} paths")
-        
-        if not self._selected_paths:
-            study_uid = self._selected_study_uid or "Unknown"
-            print(f"[PRINTING] ERROR: No image paths found for study {study_uid}")
-            QMessageBox.warning(
-                self,
-                "No images",
-                (
-                    "No local DICOM files were found for the selected series.\n\n"
-                    f"Study UID: {study_uid}\n"
-                    "Please re-download this study/series from PACS, then try Generate Report again."
-                ),
-            )
+        paths = self._collect_image_paths()
+        scout_path = self.preview_widget.get_scout_path()
+        paths = list(dict.fromkeys(p for p in paths if p != scout_path))
+        if not paths or not self._selected_study_uid:
+            self._reset_document()
+            QMessageBox.warning(self, "No images", "No local images are available for this selection.")
             self.status_label.setText("No images for preview")
             return
-
-        layout = self._current_layout
-        film_size = self.film_size_combo.currentData()
-        print(f"[PRINTING] Layout: {layout.rows}x{layout.cols}, Film size: {film_size.name if film_size else 'None'}")
-        
-        if not isinstance(layout, FilmLayout) or not isinstance(film_size, FilmSize):
-            print("[PRINTING] ERROR: Invalid layout or film size")
-            QMessageBox.warning(self, "Invalid layout", "Select a layout and film size.")
-            return
-
-        # Calculate pagination accounting for scout reservation logic
-        total_cells = layout.rows * layout.cols
-        scout_reserved = bool(scout_path) or total_cells > 1
-        available_cells_for_images = total_cells - (1 if scout_reserved else 0)
-        images_per_page = max(1, available_cells_for_images)
-        
-        print(f"[PRINTING] Total cells: {total_cells}, Scout reserved: {scout_reserved}, Available for images: {available_cells_for_images}, Per page: {images_per_page}")
-        
-        self._total_pages = max(1, (len(self._selected_paths) + images_per_page - 1) // images_per_page)
+        self._selected_paths = paths
+        self._preview_study_uid = self._selected_study_uid
+        self._selection_dirty = False
         self._current_page = 0
-        print(f"[PRINTING] Total pages: {self._total_pages}")
-        
         self._update_page_display()
 
     def _update_page_display(self):
         layout = self._current_layout
-        film_size = self.film_size_combo.currentData()
+        film_size = self._effective_film_size()
         if not isinstance(layout, FilmLayout) or not isinstance(film_size, FilmSize):
-            print("[PRINTING-DISPLAY] Invalid layout/film_size")
             return
 
         # Match the pagination logic from _generate_preview
         total_cells = layout.rows * layout.cols
         scout_path = self.preview_widget.get_scout_path() if self.preview_widget else None
-        scout_reserved = bool(scout_path) or total_cells > 1
+        scout_reserved = total_cells > 1
         available_cells_for_images = total_cells - (1 if scout_reserved else 0)
         images_per_page = max(1, available_cells_for_images)
         
+        self._total_pages = max(1, (len(self._selected_paths) + images_per_page - 1) // images_per_page)
+        self._current_page = min(self._current_page, self._total_pages - 1)
         start_idx = self._current_page * images_per_page
         end_idx = min(start_idx + images_per_page, len(self._selected_paths))
         page_paths = self._selected_paths[start_idx:end_idx]
         
-        print(f"[PRINTING-DISPLAY] Page {self._current_page + 1}: start={start_idx}, end={end_idx}, paths={len(page_paths)}/{len(self._selected_paths)}")
 
         overlay_info = self._build_overlay_info()
+        overlay_info["background_mode"] = self._background_mode
         overlay_info["sequence_start"] = start_idx + 1
-        print(f"[PRINTING-DISPLAY] Calling set_tiles with {len(page_paths)} paths, layout {layout.rows}x{layout.cols}")
         self.preview_widget.set_tiles(film_size, layout, page_paths, overlay_info=overlay_info)
         # IMPORTANT: do NOT regenerate the full 150-DPI film pixmap here on
         # every page change. ``set_tiles`` already decoded each DICOM at
@@ -1373,24 +1398,28 @@ class PrintingWidget(QWidget):
             self._update_page_display()
 
     def _handle_print(self):
+        if self._print_worker is not None:
+            return
+        self._flush_series_selection()
         # If the user clicked Print without first generating a preview, do
         # that now. The cached low-DPI ``_film_pixmap`` is invalidated by
         # ``_update_page_display`` after every nav, so we don't trust it
         # past existence — we always re-render at the printer's higher DPI.
-        if not self._selected_paths:
+        if self._selection_dirty or self._preview_study_uid != self._selected_study_uid:
             self._generate_preview()
-            if not self._selected_paths:
-                return
+        if not self._selected_paths:
+            return
 
         try:
             high_res_pixmap = self._render_for_print(dpi=300)
         except Exception as exc:
-            print(f"[PRINTING] high-res render failed: {exc}")
+            logger.warning("Printing page render failed (%s)", type(exc).__name__)
             high_res_pixmap = None
         if high_res_pixmap is None:
             QMessageBox.warning(self, "Print", "Failed to render print image.")
             return
 
+        printed_study_uid = self._selected_study_uid
         printer = PrinterConfig(name="Selected", printer_type="os")
         job = self._build_print_job(printer)
         errors = validate_print_job(job)
@@ -1401,11 +1430,15 @@ class PrintingWidget(QWidget):
         if self.printer_type_combo.currentText() == "Local Printer":
             handler = OSPrinterHandler()
             selected_printer = self.local_printer_combo.currentText().strip() or None
-            success = handler.print_film(high_res_pixmap, selected_printer)
+            try:
+                success = handler.print_film(high_res_pixmap, selected_printer, film_size=job.film_size)
+            except Exception as exc:
+                logger.warning("OS print submission failed (%s)", type(exc).__name__)
+                success = False
             if not success:
                 QMessageBox.warning(self, "Print", "OS print canceled or failed.")
             else:
-                self._mark_current_study_printed()
+                self._mark_current_study_printed(printed_study_uid)
             return
 
         if self.printer_type_combo.currentText() == "DICOM Printer":
@@ -1414,33 +1447,48 @@ class PrintingWidget(QWidget):
                     ip_address=self._dicom_print_settings.get("ip_address", "127.0.0.1"),
                     port=int(self._dicom_print_settings.get("port", 104)),
                     ae_title=self._dicom_print_settings.get("ae_title", "PRINTER"),
+                    local_ae_title=self._dicom_print_settings.get("local_ae_title", "AIPACS"),
                 )
-                handler = DicomPrintHandler(settings)
-                job = self._build_dicom_job()
-                success = handler.send_print_job(job)
-                if not success:
-                    QMessageBox.warning(self, "DICOM Print", "DICOM print failed.")
-                else:
-                    self._mark_current_study_printed()
-            except Exception as exc:
-                QMessageBox.warning(self, "DICOM Print", str(exc))
+                job = self._build_dicom_job(high_res_pixmap)
+                worker = DicomPrintWorker(settings, job, printed_study_uid)
+                worker.signals.completed.connect(self._dicom_print_finished)
+                self._print_worker = worker
+                self.print_btn.setEnabled(False)
+                self.printer_status.setText("Sending current page...")
+                QThreadPool.globalInstance().start(worker)
+            except Exception:
+                self._print_worker = None
+                self.print_btn.setEnabled(True)
+                QMessageBox.warning(self, "DICOM Print", "Could not prepare the print job.")
             return
 
         QMessageBox.warning(self, "Print", "Unsupported printer type.")
 
-    def _mark_current_study_printed(self) -> None:
+    @Slot(str, object)
+    def _dicom_print_finished(self, study_uid, success):
+        self._print_worker = None
+        self._on_printer_type_changed(self.printer_type_combo.currentText())
+        if success:
+            self.printer_status.setText("Print job accepted by printer")
+            self._mark_current_study_printed(study_uid)
+        else:
+            self.printer_status.setText("Print submission failed or was not confirmed")
+            QMessageBox.warning(self, "DICOM Print", getattr(success, "message", "The printer did not confirm the job.") + "\nCheck its queue before retrying.")
+
+    def _mark_current_study_printed(self, study_uid=None) -> None:
         """Flag the currently-selected study as printed in the DB and notify
         any subscribers (patient list Status column) so the printer icon
         appears on the patient row immediately.
         """
-        study_uid = str(self._selected_study_uid or "").strip()
+        study_uid = str(study_uid or self._selected_study_uid or "").strip()
         if not study_uid:
             return
         try:
             from database.manager import mark_study_printed
             mark_study_printed(study_uid)
         except Exception as exc:
-            print(f"[PRINTING] mark_study_printed failed: {exc}")
+            logger.warning("Printing status update failed (%s)", type(exc).__name__)
+            return
         # Best-effort UI hint to refresh patient-list status icons.
         try:
             from modules.education.case_of_day_database import case_of_day_events
@@ -1452,7 +1500,7 @@ class PrintingWidget(QWidget):
             if hub is not None:
                 hub.saved.emit({
                     "study_uid": study_uid,
-                    "patient_id": str((self._selected_patient_info or {}).get("patient_id") or ""),
+                    "patient_id": "",
                     "event": "printed",
                 })
         except Exception:
@@ -1460,7 +1508,7 @@ class PrintingWidget(QWidget):
 
     def _build_print_job(self, printer: PrinterConfig) -> PrintJob:
         layout = self._current_layout
-        film_size = self.film_size_combo.currentData()
+        film_size = self._effective_film_size()
         if not isinstance(layout, FilmLayout):
             layout = FilmLayout(rows=1, cols=1)
         if not isinstance(film_size, FilmSize):
@@ -1486,28 +1534,31 @@ class PrintingWidget(QWidget):
             metadata={"range": f"{self.range_start.value()}-{self.range_end.value()}"},
         )
 
-    def _build_dicom_job(self) -> DicomPrintJob:
+    def _build_dicom_job(self, film_pixmap=None) -> DicomPrintJob:
         layout = self._current_layout
-        film_size = self.film_size_combo.currentData()
+        film_size = self._effective_film_size()
         layout = layout if isinstance(layout, FilmLayout) else FilmLayout(1, 1)
         film_size = film_size if isinstance(film_size, FilmSize) else FilmSize("14x17", 14, 17)
 
-        viewport = self._build_viewport() if self.sync_checkbox.isChecked() else None
-        rendered = load_series_pixmaps(self._selected_paths, viewport)
-        rendered = rendered[: layout.rows * layout.cols]
-        images: List[DicomImagePayload] = []
-
-        for render in rendered:
-            qimage = render.pixmap.toImage()
-            qimage = qimage.convertToFormat(qimage.Format_Grayscale8)
-            width = qimage.width()
-            height = qimage.height()
-            ptr = qimage.bits()
-            ptr.setsize(qimage.sizeInBytes())
-            pixel_data = bytes(ptr)
-            images.append(DicomImagePayload(rows=height, columns=width, pixel_data=pixel_data))
-
-        image_display_format = f"STANDARD\\{layout.rows},{layout.cols}"
+        # Send the exact composed current sheet, including header and adjustments.
+        film_pixmap = film_pixmap if film_pixmap is not None else self._render_for_print(dpi=300)
+        if film_pixmap is None or film_pixmap.isNull():
+            raise ValueError("No printable page is available.")
+        # Grayscale DICOM has no alpha channel: composite unpainted gaps onto
+        # white before discarding alpha, otherwise transparent black becomes ink.
+        source = film_pixmap.toImage()
+        opaque = QImage(source.size(), QImage.Format_RGB32)
+        opaque.fill(Qt.white)
+        painter = QPainter(opaque)
+        painter.drawImage(0, 0, source)
+        painter.end()
+        qimage = opaque.convertToFormat(QImage.Format_Grayscale8)
+        width, height = qimage.width(), qimage.height()
+        raw = bytes(qimage.constBits())
+        stride = qimage.bytesPerLine()
+        pixels = b"".join(raw[row * stride:row * stride + width] for row in range(height))
+        images = [DicomImagePayload(rows=height, columns=width, pixel_data=pixels)]
+        image_display_format = "STANDARD\\1,1"
         film_size_key = film_size.name.upper().replace(" ", "")
         film_size_map = {
             "14X17": "14INX17IN",
@@ -1523,6 +1574,8 @@ class PrintingWidget(QWidget):
 
         return DicomPrintJob(
             images=images,
+            border_density="BLACK" if self._background_mode == "dark" else "WHITE",
+            empty_image_density="BLACK" if self._background_mode == "dark" else "WHITE",
             image_display_format=image_display_format,
             film_size_id=film_size_id,
             print_priority=self._dicom_print_settings.get("print_priority", "MED"),
@@ -1600,7 +1653,32 @@ class PrintingWidget(QWidget):
     def _delete_selected_tiles(self):
         if not self.preview_widget:
             return
-        self._selected_paths = self.preview_widget.delete_selected_tiles()
+        before = set(self.preview_widget._paths)
+        remaining = set(self.preview_widget.delete_selected_tiles())
+        removed = before - remaining
+        self._selected_paths = [path for path in self._selected_paths if path not in removed]
+        if self._selected_paths:
+            self._update_page_display()
+        else:
+            self._clear_all_sheets()
+
+    def _delete_current_page(self):
+        """Remove every source path on the displayed sheet, regardless of selection."""
+        if not self._selected_paths:
+            return
+        removed = set(self.preview_widget._paths)
+        self._selected_paths = [path for path in self._selected_paths if path not in removed]
+        if self._selected_paths:
+            self._update_page_display()
+        else:
+            self._clear_all_sheets()
+
+    def _clear_all_sheets(self):
+        """Keep the empty composition current until selection changes or explicit generation."""
+        self._reset_document()
+        self._selection_dirty = False
+        self._preview_study_uid = self._selected_study_uid
+        self.status_label.setText("All sheets cleared; use Generate Preview to create a new layout")
 
     def _on_left_drag_mode_changed(self, text: str):
         if not self.preview_widget:
@@ -1629,15 +1707,22 @@ class PrintingWidget(QWidget):
             pass
         if not printers:
             printers = OSPrinterHandler().list_printers()
-        if not printers:
-            printers = ["Default System Printer"]
         self.local_printer_combo.addItems(printers)
+        self.local_printer_combo.setPlaceholderText("No system printers found")
 
     def _on_printer_type_changed(self, text: str):
         is_local = text == "Local Printer"
         self.local_printer_combo.setEnabled(is_local)
         self.dicom_settings_btn.setEnabled(not is_local)
-        self.printer_status.setText("Ready" if is_local else "DICOM settings required")
+        available = not is_local or self.local_printer_combo.count() > 0
+        self.printer_status.setText(
+            ("System printer selected" if available else "No system printers found")
+            if is_local else "DICOM configured; connection not checked"
+        )
+        if hasattr(self, "print_btn"):
+            self.print_btn.setEnabled(available and self._print_worker is None)
+        if self._selected_paths:
+            self._update_page_display()
 
     def _open_dicom_printer_settings(self):
         dialog = QDialog(self)
@@ -1664,7 +1749,7 @@ class PrintingWidget(QWidget):
         medium_combo.setCurrentText(str(self._dicom_print_settings.get("medium_type", "PAPER")))
 
         destination_combo = QComboBox()
-        destination_combo.addItems(["PROCESSOR", "MAGAZINE", "BIN_i"])
+        destination_combo.addItems(["PROCESSOR", "MAGAZINE"])
         destination_combo.setCurrentText(str(self._dicom_print_settings.get("film_destination", "PROCESSOR")))
 
         priority_combo = QComboBox()
@@ -1699,6 +1784,8 @@ class PrintingWidget(QWidget):
                 }
             )
             self._persist_dicom_print_settings()
+            if self._selected_paths:
+                self._update_page_display()
             self.printer_status.setText(
                 f"DICOM: {self._dicom_print_settings['ip_address']}:{self._dicom_print_settings['port']} ({self._dicom_print_settings['ae_title']})"
             )
@@ -1732,6 +1819,11 @@ class PrintingWidget(QWidget):
         phone_edit, phone_spin = _make_row("Phone", "phone", "font_right_block")
         website_edit, website_spin = _make_row("Website", "website", "font_right_block")
         extra_edit, extra_spin = _make_row("Address / Extra", "extra", "font_right_block")
+        # These fields share one printed text block and therefore one font size.
+        for source in (phone_spin, website_spin, extra_spin):
+            for target in (phone_spin, website_spin, extra_spin):
+                if source is not target:
+                    source.valueChanged.connect(target.setValue)
 
         # --- Patient fields (read-only text; font size adjustable) ---
         form.addRow("", QLineEdit())  # spacer
@@ -1776,18 +1868,28 @@ class PrintingWidget(QWidget):
                     "font_right_block": phone_spin.value(),
                 }
             )
+            try:
+                cfg = load_printing_config()
+                cfg["header"] = dict(self._header_settings)
+                save_printing_config(cfg)
+            except Exception:
+                QMessageBox.warning(self, "Header Settings", "Settings apply for this session but could not be saved.")
             if self._selected_paths:
                 self._update_page_display()
 
     def _save_preview(self):
         """Save current preview page to filming folder."""
+        self._flush_series_selection()
+        if self._selection_dirty or self._preview_study_uid != self._selected_study_uid:
+            self._generate_preview()
+        if not self._selected_paths:
+            return
         # Lazy export: most page-nav happens without saving, so we only pay
         # the cost of re-rendering at save time. See _update_page_display.
         if self._film_pixmap is None:
             try:
                 self._film_pixmap = self.preview_widget.export_film_pixmap(dpi=150)
             except Exception as exc:
-                print(f"[PRINTING] Lazy export for save failed: {exc}")
                 self._film_pixmap = None
         if self._film_pixmap is None:
             QMessageBox.warning(self, "Save Preview", "Generate a preview first.")
@@ -1818,7 +1920,7 @@ class PrintingWidget(QWidget):
         
         # Prepare metadata
         layout = self._current_layout
-        film_size = self.film_size_combo.currentData()
+        film_size = self._effective_film_size()
         metadata = {
             "patient_name": self._active_patient.get("patient_name", "Unknown"),
             "patient_id": self._active_patient.get("patient_id", "Unknown"),
@@ -1828,6 +1930,7 @@ class PrintingWidget(QWidget):
             "layout": f"{layout.rows}x{layout.cols}" if layout else "unknown",
             "film_size": film_size.name if film_size else "unknown",
             "timestamp": datetime.now().isoformat(),
+            "background_mode": self._background_mode,
         }
         
         # Save the page
@@ -2019,7 +2122,7 @@ class PrintingWidget(QWidget):
         return container
     
     def _load_saved_filming_page(self, page_data: dict):
-        """Load a saved filming page image and set it as the current printable preview."""
+        """View a saved filming page without replacing the active print document."""
         thumb_path = page_data.get("thumbnail_path")
         if not thumb_path or not Path(thumb_path).exists():
             QMessageBox.warning(self, "Load Filming Page", "Saved filming image was not found on disk.")
@@ -2029,8 +2132,6 @@ class PrintingWidget(QWidget):
         if pixmap.isNull():
             QMessageBox.warning(self, "Load Filming Page", "Failed to open saved filming image.")
             return
-
-        self._film_pixmap = pixmap
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Saved Filming Page")
@@ -2056,7 +2157,7 @@ class PrintingWidget(QWidget):
         row.addWidget(close_btn)
         layout.addLayout(row)
 
-        self.status_label.setText("Loaded saved filming page as current preview")
+        self.status_label.setText("Viewing saved filming page; active print page unchanged")
         dialog.exec()
     
     def _delete_filming_page(self, page_data: dict):
@@ -2121,8 +2222,8 @@ class PrintingWidget(QWidget):
             cfg = load_printing_config() or {}
             cfg["dicom_printer"] = dict(self._dicom_print_settings)
             save_printing_config(cfg)
-        except Exception as exc:
-            print(f"[PRINTING] persist DICOM settings failed: {exc}")
+        except Exception:
+            QMessageBox.warning(self, "DICOM Settings", "Settings apply for this session but could not be saved.")
 
     def _load_printer_configs(self) -> List[PrinterConfig]:
         config = load_printing_config()

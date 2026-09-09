@@ -1,4 +1,4 @@
-"""Guards for the opt-in Eagle Eye focused evidence bundle.
+"""Guards for the canonical Eagle Eye evidence bundle and rollback paths.
 
 The production capture remains the immutable source of truth. Focused evidence
 is a deterministic, worker-side derivative that gives diagnostic panes more
@@ -140,12 +140,25 @@ def test_focused_bundle_refuses_legacy_captures_without_measured_viewport_bounds
         evidence.prepare_package(package, mode=evidence.MODE_FOCUSED_V1)
 
 
-def test_evidence_mode_is_an_explicit_strict_ab_switch(monkeypatch):
+def test_level_cards_v5_is_the_canonical_runtime_mode(monkeypatch):
     monkeypatch.delenv(evidence.ENV_EVIDENCE_MODE, raising=False)
-    assert evidence.resolve_mode() == evidence.MODE_LAYOUT
+    monkeypatch.delenv(evidence.ENV_ALLOW_LEGACY_EVIDENCE, raising=False)
+    assert evidence.resolve_mode() == evidence.MODE_FOCUSED_V5_LEVEL_CARDS
 
-    monkeypatch.setenv(evidence.ENV_EVIDENCE_MODE, "focused-v1")
-    assert evidence.resolve_mode() == evidence.MODE_FOCUSED_V1
+    for legacy_mode in evidence.LEGACY_MODES:
+        monkeypatch.setenv(evidence.ENV_EVIDENCE_MODE, legacy_mode)
+        assert evidence.resolve_mode() == evidence.MODE_FOCUSED_V5_LEVEL_CARDS
+
+
+def test_legacy_evidence_modes_require_an_explicit_engineering_gate(monkeypatch):
+    monkeypatch.setenv(evidence.ENV_ALLOW_LEGACY_EVIDENCE, "1")
+    for legacy_mode in evidence.LEGACY_MODES:
+        monkeypatch.setenv(evidence.ENV_EVIDENCE_MODE, legacy_mode)
+        assert evidence.resolve_mode() == legacy_mode
+
+
+def test_unsupported_evidence_mode_remains_a_configuration_error(monkeypatch):
+    monkeypatch.delenv(evidence.ENV_ALLOW_LEGACY_EVIDENCE, raising=False)
 
     monkeypatch.setenv(evidence.ENV_EVIDENCE_MODE, "typo")
     with pytest.raises(evidence.EvidenceBundleError, match="unsupported evidence mode"):
@@ -319,6 +332,7 @@ PATHOLOGICAL FINDINGS
 def test_worker_prepares_focused_evidence_before_gapgpt_dispatch(tmp_path, monkeypatch):
     package = _source_package(tmp_path)
     monkeypatch.setenv(evidence.ENV_EVIDENCE_MODE, evidence.MODE_FOCUSED_V1)
+    monkeypatch.setenv(evidence.ENV_ALLOW_LEGACY_EVIDENCE, "1")
     dispatched = []
 
     def call(prepared, backend_name, model, stage, header):

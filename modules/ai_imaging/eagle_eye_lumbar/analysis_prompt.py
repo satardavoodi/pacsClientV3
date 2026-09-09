@@ -5,7 +5,7 @@ engine that packages images and calls the model must not contain the words
 "lumbar" or "L4-L5". Adding Brain MRI analysis is a new entry here plus one
 reference from the protocol.
 
-TWO MRI READS PLUS A PARALLEL CLINICAL-CONTEXT BRANCH (v4.0.0)
+LOCALIZATION, DIAGNOSIS AND A PARALLEL CLINICAL-CONTEXT BRANCH (v5.0.0)
 --------------------------------------------------------------
 Screening and verification want opposite dispositions. A single prompt asked to
 be both thorough and conservative resolves the tension somewhere in the middle
@@ -14,9 +14,10 @@ over-called disc ones. So the pipeline runs two passes with opposite briefs -
 stage 1 casts wide, stage 2 tries to knock each candidate down using the plane
 and sequence where that abnormality is actually decided.
 
-Stage 2 does not "look again". It receives stage 1's candidates as HYPOTHESES
-and must confirm, refine, downgrade, reject or mark each indeterminate. The
-user-facing report is stage 2's, never stage 1's.
+The diagnostic reader receives anatomy and presence HYPOTHESES, not diagnostic
+labels or grades. It must confirm or reject presence, independently classify
+supported pathology, refine localization or mark unresolved decisions. The
+user-facing report is the diagnostic reader's, never the screening list.
 
 In parallel with screening, a separate Gemini request reads supported clinical
 document images. It extracts age, indication, prior imaging, prior surgery, and
@@ -207,115 +208,139 @@ class AnalysisPipeline:
 # Lumbar MRI
 # ---------------------------------------------------------------------------
 
-# Shared by BOTH passes. Written once so the two stages cannot come to disagree
-# about what they are looking at - each stage's `text` is this plus its own
-# body, so the fingerprint still covers everything actually sent.
-_LUMBAR_PACKAGE = """\
-WHAT YOU ARE RECEIVING
+# Verification receives self-contained, geometry-built diagnostic cards by
+# default. Legacy layout instructions remain only as an explicitly conditional
+# fallback so they cannot compete with the card identity contract.
+_LUMBAR_VERIFICATION_PACKAGE = """\
+WHAT YOU ARE RECEIVING - DIAGNOSTIC CARD READER
 
-One lumbar MRI study, captured from a PACS workstation as two ordered
-screenshot sessions. Every image is a screenshot of the same three panes,
-left to right:
+The request header is authoritative for the evidence format. In the default
+FOCUSED V5 LEVEL CARDS mode, every uploaded image is one self-contained
+diagnostic card built from immutable DICOM sources. Exactly one
+CARD_METADATA_JSON payload immediately precedes that image. Bind the JSON and
+image before reading anatomy. Card labels, borders, edge ticks, slot names and
+page position are identity and geometry metadata; they are never diagnoses.
 
-    Panel 1: Sagittal T2     Panel 2: Sagittal T1     Panel 3: Axial T2
+The cards are a selected positive-attention package, not a whole-MRI survey.
+One named-level card defines one diagnostic task at its printed SUBJECT LEVEL.
+An ADDITIONAL FINDINGS card defines one unresolved anatomical scope. Do not use
+one card to diagnose or normalize anatomy outside its bound scope.
 
-SESSION A - SAGITTAL SWEEP.
-The two sagittal panes step together through the sagittal stack. They are held
-at the SAME geometric position as each other by the workstation's slice
-synchronisation, matched on DICOM patient coordinates rather than slice number,
-so Panel 1 and Panel 2 show the same anatomy in T2 and in T1. Treat them as a
-matched pair - a signal difference between them at one location is real.
+SEQUENCE AND SIGNAL
 
-SESSION B - AXIAL SWEEP.
-The axial pane steps through the axial stack, superior to inferior. Both
-sagittal panes are parked on one fixed mid-line slice and carry a reference
-line marking the level of the displayed axial image.
+Treat the axial row as an ordered spatial sequence and review adjacent tiles
+together. Treat each vertically paired sagittal T2/T1 column as the same
+patient plane. Never judge signal from brightness ACROSS different frames.
+Windowing may differ; compare within one image or within its geometry-matched
+T2/T1 pair.
 
-Each image arrives with a caption naming its session, capture index, slice
-index and patient-coordinate position. Read the captions - they are measured
-values, not guesses.
+Slice-position labels describe where a SLICE was sampled. They never describe
+where a FINDING is; never describe where a FINDING is from a sampling label.
+Derive lesion side, zone and extent from the diagnostic
+anatomy, not from a slot name, card border or tile position.
 
-WHICH PANE YOU READ FROM
+LEVEL AND FRAME AUTHORITY
 
-The reference line is suppressed on whichever panes a session exists to
-evaluate, so no line covers the anatomy under assessment.
+The AUTHORITATIVE CARD BINDINGS, SUBJECT LEVEL and allowed AX frame labels are
+the task identity for a V5 card. Preserve them. The measured AXIAL SLAB
+STRUCTURE in the request header remains the provenance for those frame ranges.
+Do NOT re-derive the boundaries by eye. Never renumber from zero or substitute
+a DICOM source ordinal for a printed AX capture frame. Bound card levels and
+their frame ranges must remain monotonic. Do not build a new whole-study level
+map from focused cards or from any other selected positive-card package.
 
-    Read diagnostically from the panes with NO reference line.
-    Treat a pane that carries a line as a localiser only.
+LEGACY LAYOUT FALLBACK - ONLY WHEN THE REQUEST HEADER DECLARES IT
 
-  * Session A: read Sagittal T2 and Sagittal T1. The axial pane tells you where
-    that sagittal slice sits.
-  * Session B: read Axial T2. The sagittal panes tell you which level the axial
-    image is at.
-
-METADATA YOU MAY AND MAY NOT TRUST
-
-Trust: session identity, capture order, slice index, patient-coordinate
-positions. These are measured from the DICOM headers.
-
-Do NOT treat a caption's slice-position label as a zone assignment. Labels such
-as midline, paracentral, foraminal or extraforaminal are computed from fixed
-millimetre bands around an ESTIMATED mid-line. They describe where the SLICE
-was taken. They never describe where a FINDING is. The zone of any finding -
-central, paracentral, subarticular/lateral recess, foraminal, extraforaminal -
-and its side come from the AXIAL images.
-
-No vertebral level NAME is supplied. Level assignment is yours, from the images.
-
-The GROUPING is not. When the package header carries an AXIAL SLAB STRUCTURE
-block, those frame ranges were computed from the DICOM slice positions - the
-same measured z-coordinates in the captions - and they are exact. Use them as
-given:
-
-  * Do NOT re-derive the boundaries by eye, and do not adjust them because a
-    frame "looks like" it belongs with the next group. A few-hundred-pixel
-    screenshot cannot beat the header.
-  * Your level map must use those groups, unchanged, with the frame numbers
-    exactly as the block states them.
-  * Assign a level NAME to each group. That, and only that, is the judgement
-    being asked of you here.
-
-Report frame numbers using the caption numbering - "frame 7 of 30" is frame 7.
-Never renumber from zero and never use the DICOM slice index in a level map.
-
-If no slab block is present the stack is not slabbed; fall back to the
-z-coordinates in the captions, where a run of closely spaced slices followed by
-a large jump marks a boundary.
-
-Either way the mapping must be monotonic: frames assigned to L5-S1 cannot
-precede those assigned to L4-L5.
-
-CONSTRAINTS THAT APPLY TO BOTH PASSES
-
- 1. Never report a normal structure, and never add a normal sentence to make
-    the output look complete.
- 2. Never infer pathology from age; never infer symptoms from imaging.
- 3. Never assign a side the axial orientation markers do not support.
- 4. Never judge signal from brightness ACROSS different frames. Window and
-    level are set per slice and differ frame to frame, so an apparent
-    brightness difference between two frames is not a signal change. Compare
-    within a single frame, or between the position-matched T2 and T1 panes of
-    the same frame.
- 5. Do not diagnose infection from non-specific endplate signal change alone.
- 6. Do not call an indeterminate marrow focus malignant; say "indeterminate
-    focal marrow signal abnormality".
- 7. These are workstation screenshots, not full-resolution DICOM, and each pane
-    is a few hundred pixels across. Findings at or below that scale may not be
-    assessable. Say so for the specific structure rather than guessing.
+An explicitly declared legacy package may contain workstation captures rather
+than V5 cards. Read diagnostically from the panes with NO reference line and
+treat a pane carrying a reference line as a localizer only. In this legacy mode,
+an AXIAL SLAB STRUCTURE block supplies exact measured groups: Do NOT re-derive
+the boundaries by eye. Assign a level NAME to each group, preserve the groups
+unchanged, Never renumber from zero, and keep the resulting map monotonic.
+Without an explicit legacy declaration, do not apply screenshot-panel or
+whole-stack recounting assumptions to V5 cards.
 
 PATIENT LATERALITY, NEVER SCREEN SIDE
 
-Radiological images may be displayed with the patient's right on the left side
-of the screen. Determine laterality only from a visible R/L orientation marker
-or trusted DICOM patient-coordinate metadata. In the standard axial
-radiological display, screen-left beneath a visible R marker is the patient's
-right, and screen-right beneath a visible L marker is the patient's left.
-Never convert image-left into patient-left or image-right into patient-right.
-The marker identifies the PATIENT side regardless of where it appears on the
-display. If the marker is absent, cropped, unreadable, or conflicts with trusted
-metadata, laterality is indeterminate; report central or indeterminate as
-supported instead of guessing a side. Apply this patient-centric mapping again
-when verifying the zone, lateral recess, neural foramen, and affected root.
+Radiological images may display the patient's right on screen-left. Determine
+laterality only from a visible R/L orientation marker or trusted DICOM
+patient-coordinate metadata. In the standard axial radiological display,
+screen-left beneath a visible R marker is the patient's right, and screen-right
+beneath a visible L marker is the patient's left. Never convert image-left into
+patient-left or image-right into patient-right. If the marker is absent,
+cropped, unreadable, or conflicts with trusted metadata, laterality is
+indeterminate; report central or indeterminate instead of guessing a side.
+
+GENERAL DIAGNOSTIC CONSTRAINTS
+
+- Never infer pathology from age, prevalence or clinical history.
+- Never infer symptoms from imaging.
+- Never report a normal structure merely to make the output look complete.
+- If the supplied card cannot assess a required feature, say so for that
+  feature rather than borrowing another card or guessing.
+
+"""
+
+
+_LUMBAR_SCREENING_PACKAGE = """\
+WHAT YOU ARE RECEIVING - SCREENING READER
+
+The request header is authoritative for the evidence format. In ordinary
+SOURCE-GROUNDED CORRELATED ATLAS mode, the uploaded images are pages rendered
+from immutable DICOM sources, not workstation screenshots. Each page contains
+ordered grayscale tiles with a cyan tile_id, source role and source-slice label.
+Read only the diagnostic grayscale content inside each tile. Treat labels,
+borders and page position as identity metadata, never as pathology.
+
+If the header explicitly declares a layout fallback, the uploaded images are
+ordered workstation captures. Read diagnostically from the panes with NO
+reference line and use a pane carrying a reference line only as a localizer.
+Do not transfer screen coordinates between the atlas and layout formats.
+
+The images and captions belong to one study. Sagittal T2, sagittal T1 and axial
+T2 are ordered spatial stacks, not unrelated photographs and not a time-series
+video. Review adjacent slices before deciding that a visual change persists.
+Never judge signal from brightness ACROSS different frames. Windowing may differ;
+compare within one image or between position-matched T1/T2 evidence.
+
+AXIAL SLAB STRUCTURE AND LEVEL MAP
+
+When the request header carries an AXIAL SLAB STRUCTURE block, its frame ranges
+were measured from DICOM patient coordinates and are authoritative boundaries.
+Do NOT re-derive the boundaries by eye. Preserve every range exactly.
+Assign a level NAME to each group. Never renumber from zero or substitute a DICOM
+InstanceNumber/source-volume index for the supplied capture frame. The level map
+must be monotonic. If anatomical numbering is uncertain, state that uncertainty
+without moving or resizing a measured slab.
+
+PATIENT LATERALITY, NEVER SCREEN SIDE
+
+Radiological images may display the patient's right on screen-left. Determine
+laterality only from visible R/L orientation markers or trusted DICOM
+patient-coordinate metadata. In the standard axial radiological display,
+screen-left beneath a visible R marker is the patient's right, and screen-right
+beneath a visible L marker is the patient's left. Never convert image-left into
+patient-left or image-right into patient-right. If the marker is absent,
+unreadable or conflicting, laterality is indeterminate.
+
+GENERAL SCREENING CONSTRAINTS
+
+- Never infer pathology from age, prevalence or clinical history.
+- Never emit a normal structure merely to make the output look complete.
+- Never use a caption's geometric offset as a finding zone, level or side.
+- A location proposal is not a measurement, segmentation or diagnosis.
+- Image-quality uncertainty is not a negative examination. Use not_assessable
+  only when the relevant anatomy genuinely cannot be evaluated.
+
+"""
+
+
+_LUMBAR_DIAGNOSTIC_CRITERIA = """\
+DIAGNOSTIC CRITERIA - DIAGNOSTIC READER ONLY
+
+Do not diagnose infection from non-specific endplate signal change alone.
+Do not call an indeterminate marrow focus malignant; say "indeterminate
+focal marrow signal abnormality".
 
 DISC HYDRATION / DESICCATION FALSE-POSITIVE CONTROL
 
@@ -386,121 +411,271 @@ to erase the sagittal defining feature.
 
 _LUMBAR_SCREENING_BODY = """\
 
-ROLE - FIRST PASS, BROAD SCREENING
+ROLE - FIRST PASS, LOCALIZATION-ONLY SCREENING
 
-You are an expert musculoskeletal and neuroradiology image-analysis assistant
-specialised in lumbar spine MRI, performing the FIRST of two passes.
+You are a radiological image-screening assistant for lumbar MRI. Your ONLY
+clinical decision is whether an anatomical structure is normal or plausibly
+abnormal on the images. Optimize sensitivity for visible abnormal foci, not
+diagnostic classification. Uncertainty about the cause must not suppress a
+focus. Confidence means confidence in abnormal PRESENCE, not diagnostic certainty.
+Do not invent findings, infer them from age/history, or pad the list.
 
-Your job here is DETECTION, not adjudication. Produce a list of candidate
-abnormalities for a second pass to verify. A second reader will challenge every
-item you raise using the plane and sequence where that abnormality is actually
-decided, so a candidate that does not survive costs little - but one you never
-raise can never be recovered.
+Do NOT name a disease, differential, morphology subtype, grade or severity.
+Do NOT explain what the focus is. The diagnostic reader alone decides whether it
+is real pathology and, if so, its diagnosis, morphology and consequences.
+Your handoff says WHERE, IN WHICH STRUCTURE, and IN WHICH CAPTURES to look.
 
-That second reader applies a deliberately high reporting threshold and is
-expected to remove a large share of what you list. That is the design, and it
-is not a reason for you to pre-filter: the culling is its job, not yours. Stay
-inclusive here.
+COMPLETE THESE STEPS IN ORDER
 
-Therefore: be systematic and inclusive rather than conservative. Raise a
-candidate whenever you see something that plausibly deserves a closer look, and
-mark how sure you are. Do NOT invent findings, do not raise something because
-it is statistically common in lumbar MRI, and do not pad the list.
+1. Perform one global sweep of the entire represented study before emitting any
+   row. Identify the most visually conspicuous abnormal focus first, regardless
+   of whether it is cranial or caudal.
+2. For each directly visible focus, decide abnormal presence and anatomical site.
+3. Rank its visual salience relative to the rest of THIS study.
+4. Trace it through immediate adjacent slices and propose corresponding T2/T1/
+   axial observations only when their anatomy and position plausibly match.
+5. Self-check duplicate rows, unsupported locations and cross-plane conflicts.
+6. Emit the compact contract below. Do not add explanatory prose inside a row.
 
-FOCUS BEFORE LABEL
+SYSTEMATIC ANATOMICAL SWEEP
 
-The primary obligation is to preserve the abnormal focus for verification. A
-screening label is a working hypothesis, not a commitment. Try to name the most
-likely morphology, level, side, and zone, but do not suppress a visible focus
-because that classification is uncertain. If displaced disc material is
-present but bulge versus protrusion versus extrusion cannot be decided, raise
-`disc_displacement_indeterminate` and put the plausible alternatives in the
-note. Do not omit displaced disc material because its exact morphology needs
-the second reader.
+At every represented level inspect disc, endplate, bone_marrow, vertebral_body,
+posterior_element, facet_joint, ligamentum_flavum, central_canal, lateral_recess,
+neural_foramen, nerve_root, conus, cauda_equina, epidural_space,
+paraspinal_soft_tissue and alignment. Use other only when no listed structure
+fits. Check signal and shape for abnormality without classifying either.
+A distinctly bright central nucleus relative to its dark peripheral annulus on
+the SAME sagittal T2 image can be normal. The dark annulus alone is not an
+abnormal focus; brightness differences across differently windowed images are
+not proof of abnormal signal.
 
-DO NOT LIMIT YOURSELF TO DISCS
+Use sagittal T2/T1 for the broad anatomical survey and axial T2 for spatial
+correlation and neural structures. Review adjacent captures as an ordered
+sequence, not isolated pictures. Do not miss another abnormal structure at the
+same level merely because one focus is already present.
 
-Disc pathology dominates most reads and crowds out the rest. Work through every
-category below at every visible level, and give the osseous and posterior-
-element groups the same attention as the discs.
+VISIBLE IMPORTANCE, NOT DIAGNOSTIC SEVERITY
 
-Disc / degenerative
-  desiccation · height loss · broad-based bulge · focal protrusion · extrusion ·
-  disc displacement of indeterminate morphology · sequestered fragment (only
-  if clearly separate) · annular fissure or high-intensity zone where visible ·
-  cranial or caudal migration
+For every abnormal focus report visual_salience and within_study_priority.
+Visual salience is not diagnostic severity or clinical urgency. It describes
+only how conspicuous the directly visible abnormal signal, contour, space
+effacement or neural relationship is in this study:
 
-Canal / neural
-  central canal narrowing · lateral recess narrowing · neural foraminal
-  narrowing · nerve-root contact · nerve-root displacement · nerve-root
-  compression where confidently visible · cauda equina crowding
+  subtle   - small but directly visible; easily missed without targeted review
+  definite - reproducible visible abnormality of intermediate conspicuity
+  marked   - immediately conspicuous abnormality with marked shape, signal or
+             space/neural effect
 
-Osseous / spondylotic - ACTIVELY LOOK, these are routinely under-reported
-  marginal vertebral osteophytes · endplate osteophytes · posterior
-  disc-osteophyte complex · spondylotic change · degenerative endplate contour
-  change · Modic-type marrow change where reasonably characteristic · Schmorl
-  node · vertebral body deformity or compression · enthesopathic change where
-  genuinely visible
+within_study_priority is a relative evidence-routing rank, not a diagnosis:
 
-Posterior elements
-  facet arthropathy · facet hypertrophy · facet joint effusion · ligamentum
-  flavum hypertrophy · synovial or facet cyst
+  dominant  - the single most visually consequential focus in this study
+  major     - another conspicuous focus that must reach targeted verification
+  secondary - definite but less consequential than the major foci
+  minor     - subtle focus suitable for verification after higher ranks
 
-Alignment
-  anterolisthesis · retrolisthesis · focal deformity · appreciable scoliosis
+Do not rank by level order, prevalence or diagnostic name. A marked caudal focus
+must outrank subtle cranial foci. Confidence still means certainty that an
+abnormal focus is present; it does not replace salience or priority.
 
-Other
-  epidural mass, collection or lipomatosis · conus or cauda equina abnormality ·
-  anything else genuinely visible
+Record slice_persistence as single_slice, two_adjacent_slices or
+three_or_more_adjacent_slices. Do not claim persistence by counting duplicated
+or position-mismatched T1/T2 tiles. In observable_features use only directly
+visible signal_change, contour_change, space_effacement and
+visible_neural_relationship. These observations direct the diagnostic reader;
+they do not establish pathology type, grade or final consequence.
+
+LOCALIZE AND LINK THE SAME FOCUS
+
+Anatomical location is mandatory; pixel coordinates alone are not a location.
+For example, disc, endplate or facet_joint names anatomy, not a diagnosis.
+Every focus must name its structure AND its supported level/vertebra, then give
+image coordinates and captures as visual pointers to that anatomical location.
+Use other/unclear when anatomy cannot be established; never invent a structure
+from a pixel position. Keep distinct anatomical foci separate even at one level.
+
+Give the disc interval when justified. For a vertebral-body/marrow/endplate
+focus also give the vertebra when justified; use level unclear if an interval
+cannot be assigned. A geometric offset label is not an anatomical level or side.
+Do not convert uncertainty in location into a normal decision.
+
+For each focus list the most informative source tiles or original captures,
+then their immediate neighbors, up to five locations per pane (15 total).
+When the header declares SOURCE-GROUNDED CORRELATED ATLAS, identify every
+location by the uploaded image number and the cyan tile_id printed inside that
+image. Do not invent or alter a tile_id. Otherwise refer to the session,
+capture-frame number and pane printed in the supplied captions. Never use a
+DICOM InstanceNumber or an unlabeled source-volume index.
+Link sagittal T2, sagittal T1 and axial T2 observations in ONE row only when they
+plausibly show the same focus: check level, position, contour and adjacent
+anatomy. These are proposed clinical correspondences. In correlated-atlas mode
+the orchestrator will independently accept or challenge the link using DICOM
+patient geometry; do not claim geometric verification yourself.
+Do not assume that equal T1/T2 capture numbers mean equal source-slice indexes.
+Do not read the parked axial localizer in a sagittal sweep as diagnostic axial
+evidence. Do not invent a matching capture when the focus cannot be correlated.
+
+FILL THE PREDECLARED DIAGNOSTIC LEVEL CARD
+
+For every allowlisted level that has at least one abnormal finding, fill exactly
+one `level_card_templates` entry. This is source selection, not diagnosis. Choose
+the exact source-atlas tile that best represents each predefined reading slot:
+
+- sagittal_t2.right_foraminal_plane
+- sagittal_t2.right_paracentral_plane
+- sagittal_t2.midline_plane
+- sagittal_t2.left_paracentral_plane
+- sagittal_t2.left_foraminal_plane
+- sagittal_t1.right_foraminal_plane
+- sagittal_t1.right_paracentral_plane
+- sagittal_t1.midline_plane
+- sagittal_t1.left_paracentral_plane
+- sagittal_t1.left_foraminal_plane
+- axial_t2.disc_level_plane
+- axial_t2.max_abnormality_plane
+- axial_t2.caudal_extent_plane
+
+For the five right-foraminal through left-foraminal sagittal slots, select the
+plane that best samples the patient's named region; these labels describe the
+sampling plane, not the side of a lesion. For axial slots, select one image
+through the subject disc, one
+where the abnormal focus is most conspicuous, and one that best tests caudal
+continuity or migration. A single axial image contains central, subarticular,
+foraminal and extraforaminal zones; those zones are not separate slice slots.
+
+Choose the anatomical midline plane first from vertebral-body, spinal-canal and
+posterior-element symmetry, not from the abnormal focus and not merely from the
+middle file number. Do not select five consecutive sagittal slices. When source
+depth permits, leave one intervening source slice between midline and each
+paracentral sample, then one intervening source slice between each paracentral
+and foraminal sample. A boundary or asymmetric acquisition may require the
+nearest anatomically representative outer plane, but it must remain farther
+from midline than the corresponding paracentral plane. The local orchestrator
+validates this spacing and may replace the proposal with a recorded fallback.
+Use only an exact printed tile_id from the matching source role. For every slot,
+also give `abnormality_conspicuity` from 0 to 3 and the `attention_ids` directly
+visible in that tile. This score means visibility of the screening abnormality
+in THAT tile: 0 not visible, 1 subtle, 2 definite, 3 marked. It is not disease
+severity, a diagnosis, or a grade. Bind only attention IDs emitted in the same
+level's findings. The local normalizer re-derives the final card-to-attention
+binding from shared source tile identities after duplicate findings are merged;
+an ID that is not localized on the selected tile will be removed.
+
+Use null rather than inventing a source tile. The local orchestrator owns final
+positional truth: it validates source identity, patient-right/midline/patient-left
+order and measured-slab membership, synchronizes T1 planes to the chosen T2
+planes through DICOM patient geometry, and may replace an invalid proposal with
+an explicitly audited fallback. Do not claim that a source position is verified
+merely because you selected it.
+
+Do not emit a level template for `level: unclear`. Keep its abnormal locations
+in the finding. The orchestrator will put all such source-bound foci into one
+separate ADDITIONAL FINDINGS card rather than forcing a disc level.
+
+For a visible focus supply box_2d as [ymin, xmin, ymax, xmax], normalized 0..1000.
+In correlated-atlas mode it is relative to the grayscale diagnostic CONTENT of
+the named tile, excluding its black letterbox padding, border and labels. In
+layout mode it is relative to the ENTIRE ORIGINAL screenshot and includes the
+pane position. Enclose the abnormal region, not the whole disc level or pane.
+A box is an approximate visual pointer, not a segmentation or measurement.
+Use no location when a box cannot be placed reliably. Never alter an image.
 
 OUTPUT
 
-Return exactly these two blocks and nothing else.
+Return exactly two blocks and nothing else:
 
 LEVEL MAP
   <level>: axial frames <n>-<n>
-  [note any level whose numbering is uncertain]
+  [note numbering uncertainty; preserve measured acquisition slab boundaries]
 
-CANDIDATE FINDINGS
+SCREENING ATTENTION
 ```json
 {
+  "schema_version": "2.7.0",
   "findings": [
     {
-      "level": "L4-L5",
-      "candidate": "central_canal_stenosis",
-      "laterality": "central",
-      "confidence": "moderate",
-      "grade_system": "lee_central_canal",
-      "grade": 1,
-      "evidence": ["axial_t2"],
-      "key_frames": {"axial": [12, 11, 13], "sagittal": [4, 3, 5]},
-      "note": "anterior CSF partly effaced; all rootlets remain separated"
+      "structure": "<allowlisted_anatomical_structure>",
+      "assessment": "abnormal",
+      "level": "<supported_level_or_unclear>",
+      "vertebra": null,
+      "laterality": "indeterminate",
+      "confidence": "high",
+      "visual_salience": "marked",
+      "within_study_priority": "dominant",
+      "slice_persistence": "three_or_more_adjacent_slices",
+      "observable_features": {
+        "signal_change": "definite",
+        "contour_change": "marked",
+        "space_effacement": "marked",
+        "visible_neural_relationship": "displacement"
+      },
+      "locations": [
+        {"image": 1, "tile_id": "<exact_printed_tile_id>",
+         "box_2d": [100, 100, 200, 200]}
+      ]
+    }
+  ],
+  "level_card_templates": [
+    {
+      "level": "L5-S1",
+      "slots": {
+        "sagittal_t2.right_foraminal_plane": {"image": 1, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 1, "attention_ids": ["attention-01"]},
+        "sagittal_t2.right_paracentral_plane": {"image": 1, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 2, "attention_ids": ["attention-01"]},
+        "sagittal_t2.midline_plane": {"image": 1, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 3, "attention_ids": ["attention-01"]},
+        "sagittal_t2.left_paracentral_plane": {"image": 1, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 1, "attention_ids": ["attention-01"]},
+        "sagittal_t2.left_foraminal_plane": {"image": 1, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 0, "attention_ids": []},
+        "sagittal_t1.right_foraminal_plane": {"image": 2, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 1, "attention_ids": ["attention-01"]},
+        "sagittal_t1.right_paracentral_plane": {"image": 2, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 2, "attention_ids": ["attention-01"]},
+        "sagittal_t1.midline_plane": {"image": 2, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 2, "attention_ids": ["attention-01"]},
+        "sagittal_t1.left_paracentral_plane": {"image": 2, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 1, "attention_ids": ["attention-01"]},
+        "sagittal_t1.left_foraminal_plane": {"image": 2, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 0, "attention_ids": []},
+        "axial_t2.disc_level_plane": {"image": 3, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 2, "attention_ids": ["attention-01"]},
+        "axial_t2.max_abnormality_plane": {"image": 3, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 3, "attention_ids": ["attention-01"]},
+        "axial_t2.caudal_extent_plane": {"image": 3, "tile_id": "<exact_printed_tile_id>", "abnormality_conspicuity": 2, "attention_ids": ["attention-01"]}
+      }
     }
   ]
 }
 ```
 
-Field rules:
-  level        - the vertebral level, or "unclear" if you could not assign one
-  candidate    - one snake_case token naming the abnormality
-  laterality   - left | right | bilateral | central | not_applicable
-  confidence   - high | moderate | low
-  grade_system - for central canal, lateral recess or neural foraminal stenosis,
-                 use the exact grading-system id from the contract above;
-                 otherwise null
-  grade        - integer 0 | 1 | 2 | 3 when grade_system is present and the
-                 primary sequence is assessable; otherwise null
-  evidence     - the pane roles that support it: sagittal_t2, sagittal_t1,
-                 axial_t2. Name only panes you actually read it from.
-  key_frames   - up to five original capture-frame numbers per plane, ordered
-                 most decisive first and then immediate neighbors. Use only
-                 frame numbers printed in the supplied captions. An empty list
-                 is valid; never invent a number.
-  note         - one short clause. Not a report sentence.
+The numbers above illustrate syntax only: use ONLY actual supplied captures
+and observed locations, not these example coordinates.
+structure: one anatomical token from the sweep above.
+assessment: abnormal | not_assessable. Omit normal structures entirely.
+level: T12-L1 | L1-L2 | L2-L3 | L3-L4 | L4-L5 | L5-S1 | unclear.
+vertebra: T12 | L1 | L2 | L3 | L4 | L5 | S1 | null.
+laterality: left | right | bilateral | central | indeterminate | not_applicable.
+confidence: high | moderate | low.
+visual_salience: subtle | definite | marked.
+within_study_priority: minor | secondary | major | dominant. Use dominant once
+unless two spatially distinct foci are genuinely inseparable in conspicuity.
+slice_persistence: single_slice | two_adjacent_slices |
+three_or_more_adjacent_slices.
+observable_features values:
+  signal_change, contour_change, space_effacement: none | subtle | definite |
+  marked | not_assessable.
+  visible_neural_relationship: none | contact | displacement | compression |
+  not_assessable. These are visual observations for verification, not final
+  diagnostic claims or grades.
+locations: [] is valid if the structure is not localizable; never fabricate.
+Correlated-atlas location: image + tile_id + box_2d.
+Layout location: session + frame + pane + box_2d, where session is sagittal |
+axial and pane is sagittal_t2 | sagittal_t1 | axial_t2. Never mix the two forms.
 
-One entry per abnormality, not per frame or per slice. If a level has nothing,
-it simply does not appear. If the study has no candidate abnormality at all,
-return `{"findings": []}` - that is an acceptable and expected result.
+One row per anatomical abnormal focus, not per image. Separate distinct foci in
+one structure; link corresponding planes under the same row. If repeated
+observations refer to the same anatomical focus, merge their locations into one
+row. Never emit both normal and abnormal for the same anatomical focus. When
+the cause is uncertain but a direct abnormal feature is visible, retain the
+focus without naming its cause. When abnormal PRESENCE itself is uncertain, use
+low confidence only if a direct visible feature supports the row; otherwise omit
+it or use not_assessable when image quality prevents the decision. When left and right observations
+both support the same structure and level, use bilateral; for any other unresolved
+side disagreement use indeterminate. Do not add a
+candidate, diagnosis, grade, severity, differential or free-text diagnostic note.
+If assessable structures look normal, omit them. If a relevant structure cannot
+be assessed, keep a not_assessable row: unknown is NEVER normal.
+If there are neither suspicious foci nor material assessment gaps, return
+{"schema_version": "2.7.0", "findings": [], "level_card_templates": []}.
 """
 
 
@@ -578,6 +753,11 @@ only when the paired sagittal panes or an explicit clinical/prior source support
 the location. If the level is uncertain, use `unclear` rather than guessing.
 State which full-MRI questions the verifier must answer. Do not infer axial
 laterality, zone, root compression, or stenosis severity from this limited set.
+When `paired_sagittal_t1_t2` is the only evidence source, do not name disc
+morphology, stenosis, root effect, Modic type or another current-study diagnosis
+in `hypothesis`, `broad_patterns` or `verification_questions`. Emit only a
+diagnosis-free regional/level attention request; the bound diagnostic card owns
+classification.
 
 Return exactly one JSON object in a fenced block using this contract:
 
@@ -667,16 +847,26 @@ _LUMBAR_VERIFICATION_BODY = """\
 
 ROLE - SECOND PASS, TARGETED VERIFICATION
 
-You are performing a second-pass verification of this lumbar spine MRI. You
-receive the same images plus a preliminary list of candidate findings from a
-first pass. You also receive a separate multi-source clinical and examination
-context extraction when any supported context source was available.
+You are the diagnostic reader of this lumbar spine MRI. In the default path you
+receive a small ordered set of diagnostic cards built from diagnosis-neutral
+Gemini screening attention. Each card is paired with machine-readable JSON and
+contains the focused MRI evidence for one named level or one unresolved
+additional-finding scope. Each attention_id identifies a suspected anatomical
+focus. It does NOT identify a disease.
+You also receive separate multi-source clinical and examination context when
+any supported context source was available. Decide independently whether each
+focus is normal or pathological and, if pathological, what it represents.
 
 THREE INPUTS, THREE DIFFERENT AUTHORITIES
 
-1. SCREENING CANDIDATES define the attention foci. They tell you WHERE another
-   reader saw a possible abnormality and provide a working label to challenge.
-   They do not establish what the abnormality is.
+1. SCREENING ATTENTION AND CARD BINDINGS define the diagnostic tasks. They tell
+   you WHERE another reader saw a possible abnormality: structure, tentative
+   level, capture frames and optional original-image coordinates. They carry NO
+   diagnostic label, subtype or severity. They do not establish what the
+   abnormality is. The orchestrator canonicalizes repeated observations to one
+   attention_id per anatomical focus and resolves contradictory screening
+   assessments before handoff; adjudicate that one focus against its explicitly
+   bound card evidence.
 2. CLINICAL AND EXAMINATION CONTEXT ranks and expands the differential. It may
    make trauma, degeneration, disc disease, tumor, infection, or postoperative
    change more or less plausible and may direct extra scrutiny globally or at a
@@ -688,35 +878,148 @@ Use all three together without merging their authority. Context can change what
 you test, never what the MRI proves. A screening candidate can focus attention,
 never dictate the final diagnosis.
 
-FOCUSED V2 EVIDENCE, WHEN DECLARED IN THE PACKAGE HEADER
+LEGACY EVIDENCE, ONLY WHEN EXPLICITLY DECLARED IN THE PACKAGE HEADER
 
-The verification request may replace the original workstation screenshots with
-a compact, locally rendered DICOM evidence package. The sagittal overview shows
-contiguous near-midline T2 slices and optional T1 context. The axial overview
-shows ordered samples spanning the entire source stack. Each level-fusion sheet
-contains up to five CONTIGUOUS axial T2 capture frames centered on a screening
-anchor and bounded to one acquisition slab, plus sagittal images projected to
-the same patient-space level. Read every available axial ribbon as a short
-sequence: compare the center with its available immediate neighbors and track
-whether a contour appears, enlarges, migrates, or resolves.
-Do not judge morphology from the center tile alone. Colored edge-orientation
-letters on derived tiles are computed locally from DICOM direction cosines and
-identify the PATIENT direction; use them instead of screen position.
+An engineering-only legacy request may contain layout captures or older focused
+sheets instead of V5 cards. In that case follow the package header and ordinary
+image-evidence rules, and do not invent card identities. The remainder of the
+card-specific contract applies whenever the header declares FOCUSED V5 LEVEL
+CARDS, which is the default diagnostic path.
 
-The level and family printed on a focus sheet are attention hypotheses, not
-ground truth. Reclassify or reject them normally. A sampled overview is not
-proof that an unsampled slice is normal, and absence of a level-fusion sheet is
-not evidence of absence. If a required structure is not represented at enough
-detail, mark that decision indeterminate instead of extrapolating.
+FOCUSED V5 LEVEL CARDS, WHEN DECLARED IN THE PACKAGE HEADER
 
-FRAME NUMBER AUTHORITY IN FOCUSED V2
+The request contains one self-contained diagnostic card per resolved subject
+level, plus at most one ADDITIONAL FINDINGS card for abnormal screening foci that
+cannot be assigned safely to a named disc interval. The AUTHORITATIVE CARD
+BINDINGS map each attention_id to exactly one request IMAGE, one subject level
+or the additional-findings scope, and an allowlisted set of displayed AX capture
+frames. Every named-level card uses five vertically matched sagittal pairs
+above one axial sequence:
+
+  RIGHT FORAMINAL                       | RIGHT PARACENTRAL
+  sagittal_t2.right_foraminal_plane     | sagittal_t2.right_paracentral_plane
+  sagittal_t1.right_foraminal_plane     | sagittal_t1.right_paracentral_plane
+
+  MIDLINE                               | LEFT PARACENTRAL
+  sagittal_t2.midline_plane             | sagittal_t2.left_paracentral_plane
+  sagittal_t1.midline_plane             | sagittal_t1.left_paracentral_plane
+
+  LEFT FORAMINAL
+  sagittal_t2.left_foraminal_plane
+  sagittal_t1.left_foraminal_plane
+  ---------------------------------------------------------------------------
+  axial_t2.disc_level_plane | axial_t2.max_abnormality_plane |
+  axial_t2.caudal_extent_plane
+
+Read the sagittal columns in patient-space order from right foraminal through
+right paracentral and midline to left paracentral and left foraminal. Within
+EACH column compare T2 directly with the geometry-
+matched T1 immediately below it before moving to the next column. Then read the
+axial row left to right as a short level-bound sequence. Use sagittal T2 for
+signal, contour, continuity and disc morphology; use its paired sagittal T1
+particularly for marrow/endplate anatomy and foraminal fat at the SAME patient
+plane; use the axial row for canal, recess, root and focal disc relationships.
+Cyan, amber and violet borders identify T2, T1 and axial T2 respectively. They
+carry no diagnostic meaning and never encode abnormality, laterality, severity
+or Gemini confidence. The sagittal slot labels are
+sampling positions, not lesion laterality and not proof that the foramen is
+abnormal. A locally selected fallback remains evidence but is not model-verified
+anatomical midline or foraminal centring.
+
+The five sagittal columns are deliberately spaced rather than consecutive.
+When source depth permits, one intervening source slice separates midline from
+each paracentral plane and another intervening source slice separates each
+paracentral plane from its foraminal plane. This sampling pattern preserves the
+change in morphology across the central, paracentral and foraminal zones; do
+not reinterpret the five columns as five adjacent cine frames.
+
+Each card image is immediately preceded by exactly one `CARD_METADATA_JSON`
+payload. Treat it as the authoritative machine-readable binding for that card:
+request image index, image filename, structure attention, source provenance,
+tile-to-attention links, geometry/fallback status and per-tile
+`abnormality_conspicuity`. The 0-3 score reports how visible Gemini found the
+abnormal screening focus in that single tile. It is an attention-routing hint,
+not diagnostic severity, morphology, stenosis grade or truth. Reassess every
+tile yourself. A score of 0 does not make the whole structure or level normal.
+The `structure_checklist` distinguishes `abnormal_screening_attention` from
+`not_raised_by_screening`. The latter is never a normal claim: independently
+check the disc, endplates, marrow, vertebral body, facets, ligamentum flavum,
+canal, lateral recesses, foramina and roots represented on the card.
+Cyan edge ticks, when present, are locally computed DICOM plane intersections;
+they intentionally stop at the image borders and are not lesion outlines.
+
+CARD-FIRST DIAGNOSTIC WORKFLOW
+
+Process cards in request IMAGE order. For each image, bind the PNG to the
+immediately preceding CARD_METADATA_JSON before interpreting anatomy. The outer
+payload supplies `image_index`, `image_file`, and `card_metadata`; the nested
+metadata supplies `card_id`, `card_kind`, `subject_level`, `attention_ids`,
+`structures`, `structure_checklist`, and `slots`.
+
+Do not begin diagnostic classification until the binding is valid. The JSON
+image index and filename must identify the current image, and its card_id,
+subject scope and attention IDs must agree with AUTHORITATIVE CARD BINDINGS. If
+identity is missing or contradictory, do not borrow another card; return the
+affected decision as INDETERMINATE and state the binding conflict.
+
+Read one complete card as one multiplanar evidence unit, then make one
+independent decision for every attention_id listed in that card. Several
+attention IDs may share a level card, but disc, endplate, marrow, facet, canal,
+recess, foramen and root remain separate anatomical questions. Conversely, one
+attention ID must never be duplicated across cards or audit rows.
+
+For every bound attention_id, perform these operations in order:
+
+1. BIND — record the exact card_id, card image index, card kind and subject
+   scope that supplied the evidence.
+2. LOCALIZE — verify the anatomical compartment and subject level from the
+   card; the screening structure and level remain hypotheses.
+3. PRESENCE — decide abnormal, normal/non-pathological, artifact, or
+   indeterminate before naming a disease.
+4. CORRELATE — use adjacent axial tiles as a short spatial sequence and fuse
+   sagittal T2 with its same-plane T1 partner. Do not classify isolated tiles
+   and vote by majority.
+5. CLASSIFY — if abnormal, compare the meaningful normal and pathological
+   alternatives and select the diagnosis whose defining signal and morphology
+   are actually demonstrated.
+6. CHARACTERIZE — determine morphology, side, zone, extent and migration from
+   the planes that decide them; do not inherit them from screening metadata.
+7. CONSEQUENCES — evaluate canal, recess, foramen and nerve-root effects as
+   independent attributes, then apply the required grading contract.
+8. AUDIT — cite only evidence represented in this card and emit one bound JSON
+   decision before moving to the next card.
+
+Keep two nomenclature axes separate. On axial images evaluate the
+central/subarticular/foraminal/extraforaminal zone. Across the craniocaudal
+sequence evaluate discal/pedicular/infrapedicular position and migration. These
+axes are not interchangeable: subarticular is not an axial slice name, and
+infrapedicular is not a left-right zone.
+
+- Resolve an attention_id using only its bound card. Do not borrow morphology,
+  level, side, severity, root effect or frame evidence from another card.
+- A sagittal tile may retain a small amount of neighboring anatomy to show
+  continuity or migration. The printed SUBJECT LEVEL, not the most dramatic
+  neighboring contour, identifies the structure being adjudicated.
+- Cite only AX frames printed on the bound card. A citation outside its allowed
+  frame set is evidence from a different task and invalidates the decision.
+- Correlate the sagittal and axial tiles inside the same card before assigning
+  morphology. They are a single evidence unit, not independent votes.
+- The positive-focus V5 request deliberately omits whole-stack and whole-lumbar
+  overview sheets. Do not infer normality or add a new level outside the cards.
+  An associated consequence visible within the same card may still be ADDED.
+- On an ADDITIONAL FINDINGS card, do not force a lumbar disc level merely to
+  fit the standard map. Classify the bound structure and preserve localization
+  uncertainty unless anatomy within that same card resolves it.
+
+FRAME NUMBER AUTHORITY FOR DIAGNOSTIC CARDS
 
 Every label written as `AX frame n/N` is the ORIGINAL superior-to-inferior
 axial capture-frame number used by the measured slab structure and by the final
 LEVEL MAP. Use only those AX frame labels when reporting a frame range. A raw
 DICOM source ordinal is local provenance, not a report frame. The ordinal of a
 composite evidence image in this request is a sheet number, not an axial frame.
-Never reverse or renumber the LEVEL MAP from raw-source or composite indexes.
+Each named card's axial evidence is bounded to one acquisition slab. Never
+reverse or renumber the LEVEL MAP from raw-source or composite indexes.
 
 CLINICAL CONTEXT AS A PRIOR - NEVER AS IMAGE EVIDENCE
 
@@ -741,23 +1044,17 @@ a finding on the current MRI.
 CONTEXT-DIRECTED ATTENTION FOCI
 
 The context branch may provide `context_attention_foci`. Global entries rank the
-overall differential and require no separate audit row. Every regional or
-level-specific context attention focus must be resolved against the complete
-MRI package, whether or not screening raised a candidate at that location.
+overall differential and require no separate audit row. A regional or
+level-specific context focus may expand the differential only when it maps to
+an existing bound diagnostic card. When one audit row resolves both inputs, set
+`input_source` to `screening_candidate_and_context_focus` and record the bounded
+context anatomy in `context_focus`.
 
-- First map the context focus to any screening candidates at the same location.
-  Use it to expand the differential, never to preselect the answer. When one
-  audit row resolves both inputs, set `input_source` to
-  `screening_candidate_and_context_focus` and record the context anatomy in
-  `context_focus`.
-- If no screening candidate covers that focus, inspect it independently on the
-  decisive sequences and planes.
-- If the complete MRI confirms reportable pathology omitted by screening, add a
-  verification entry with `input_source` set to `context_attention_focus` and
-  status ADDED.
-- If the focus is normal, unsupported, or a non-pathological variant, record it
-  as REJECTED in the audit and omit it from the final report.
-- If the package cannot decide it, use INDETERMINATE and state what is missing.
+Context cannot create a diagnostic card. An unmatched context focus is not
+permission to diagnose an unbound level, borrow neighboring anatomy, or create
+an ADDED current-MRI finding. Preserve it only as an unverified prior; the MRI
+report must remain silent unless a supplied card independently demonstrates the
+abnormality.
 
 The context hypothesis is never copied into the report without independent MRI
 confirmation.
@@ -793,24 +1090,27 @@ A candidate is not evidence. It was produced by a deliberately inclusive
 screening pass whose job was to miss nothing, so a meaningful fraction of the
 list is expected to be wrong. Your job is to go back to the plane and sequence
 where each abnormality is actually decided and find out. The candidate defines
-an anatomic focus; its label is only the first item in that focus's differential.
+an anatomic focus, not a first diagnosis to anchor your differential.
 
 USE A HIGH-SPECIFICITY REPORTING THRESHOLD.
 
 HIGH SPECIFICITY APPLIES TO THE FINAL DIAGNOSIS, not to whether you re-examine
 a positive focus. The first-pass findings are intentionally sensitive. Your
-role is to adjudicate each focus: confirm the proposed diagnosis, reclassify it
-to a better-supported alternative, refine its location or consequences,
-downgrade it, or reject it when the focus is normal or unsupported. Remove
-overcalled, borderline, age-related and clinically insignificant abnormalities,
-but do not equate a wrong label with absent pathology.
+role is to adjudicate each focus independently: first confirm abnormal presence
+or reject it as normal/artifact; if abnormal, classify its pathology and refine
+its location and consequences. Do not inherit a diagnostic label from screening
+or context. Test the relevant alternatives using signal AND shape on the
+defining sequences and correlated planes. A focus may have more than one
+coexisting component; preserve each supported component rather than choosing
+only one label. Morphology classes are not a severity ladder.
 
-A wrong screening label is not the same as absent pathology. If the screening
-diagnosis is unsupported but another pathology is convincingly present at the
-same focus, never use REJECTED merely because the screening label was wrong.
-Use RECLASSIFIED and name the best-supported alternative. REJECTED means that
-the proposed focus is normal, artifactual, a non-pathological variant, or has
-no convincing abnormality on the decisive images.
+REJECTED means that the focus is normal, artifactual, a non-pathological variant,
+or has no convincing abnormality on the decisive images. Uncertain subtype is
+not proof of normality: retain a supported abnormal focus with indeterminate
+classification when the package cannot establish its defining morphology.
+CONFIRMED means abnormal presence was confirmed and independently classified;
+REFINED means its proposed localization also needed correction. INDETERMINATE
+means the available evidence cannot resolve presence or the required decision.
 
 Two different questions are being asked, and this is the second one:
 
@@ -819,7 +1119,7 @@ Two different questions are being asked, and this is the second one:
              place in a concise pathology-only report?"
 
 If the answer to the second is no, remove it. You are not obliged to preserve
-the screening diagnosis, but you remain obliged to resolve the focus. A shorter
+any preliminary impression, but you remain obliged to resolve the focus. A shorter
 report of convincing findings is the goal; an overinclusive one is a failure
 when minor changes hide the findings that matter. A report that omits the
 better-supported diagnosis at a known abnormal focus is also a failure.
@@ -833,25 +1133,53 @@ For each candidate, look for BOTH confirming and contradicting evidence, then
 decide. Never keep a finding merely because it was on the list, and never
 soften a rejection into a hedge to avoid contradicting the first pass.
 
-You must also perform the mandatory safety sweep below for major findings the
-first pass missed. Hold anything added to the same evidence standard as a
-candidate you confirm.
+You must also perform the card-local safety check below. Hold anything added to
+the same evidence standard as a focus you confirm. It may add a consequence or
+a second abnormal component demonstrated inside the same bound card and subject
+level, but it must never transfer a finding from visible neighboring anatomy or
+create a report finding at an unbound level.
 
 PATHOLOGY-FOCUS DIFFERENTIAL WORKFLOW
 
-For every anatomic focus represented by one or more screening candidates:
+For every attention_id, read its structure, level, vertebra, laterality and
+locations together. A shared disc level does not make an endplate focus and a
+facet focus the same lesion. Keep their identities and decisions separate even
+if the evidence builder puts them on one sheet. The identifier is a reference,
+not a diagnostic label or a guarantee that the screening anatomy is correct.
 
-  1. PRESENCE - decide whether the focus is abnormal, normal, artifactual, a
+  1. ANATOMICAL LOCATION FIRST - locate the named structure on the MRI before
+     judging its appearance. The structure field means disc, endplate,
+     facet_joint, bone_marrow or another anatomical compartment, not a pixel
+     coordinate or disease. If screening named the wrong compartment, correct
+     it explicitly while retaining the same attention_id; do not silently
+     diagnose an adjacent structure instead. If it cannot be located, keep the
+     localization indeterminate rather than declaring the focus normal.
+  2. SAME-FOCUS CORRELATION - review its cited source observations and available
+     neighbors, and test whether the cited sagittal T2, sagittal T1 and axial
+     observations show the same anatomical focus. Coordinates identify either
+     a screening-atlas tile or an original layout capture, never a current
+     focused composite. Use the supplied provenance to identify corresponding
+     evidence; never transfer a box directly to a crop.
+     When the attention map records deterministic patient-space validation,
+     trust only that the cited observations occupy a compatible physical region.
+     Geometry does not validate the proposed anatomy, level, side, normality or
+     diagnosis; re-derive all of those. Otherwise the screening links remain
+     unvalidated proposals. A missing counterpart or uncertain match must not become invented evidence
+     or a false normal decision. State the material limitation when unresolved.
+  3. PRESENCE - decide whether the focus is abnormal, normal, artifactual, a
      partial-volume appearance, or an expected/non-pathological variant.
-  2. DIAGNOSTIC FAMILY - decide which family best explains it: disc
+  4. DIAGNOSTIC FAMILY - use the verified anatomical compartment and signal/shape
+     evidence to decide which family best explains it: disc
      displacement, degeneration, osseous/endplate, posterior element,
      alignment, neural compromise, postoperative change, or other.
-  3. DIFFERENTIAL - explicitly compare the plausible diagnoses within that
+  5. DIFFERENTIAL - explicitly compare the plausible diagnoses within that
      family. For disc displacement this always includes normal contour,
      generalized bulge, protrusion, extrusion, sequestration, and migration.
-  4. CHARACTERISATION - verify level, side, zone, cranial/caudal extent,
+     Do not apply the disc differential automatically to an endplate or facet
+     focus; choose alternatives appropriate to that anatomy and the MRI.
+  6. CHARACTERISATION - verify level, side, zone, cranial/caudal extent,
      morphology, and severity rather than inheriting them from screening.
-  5. CONSEQUENCE - determine canal, lateral-recess, foraminal, nerve-root, or
+  7. CONSEQUENCE - determine canal, lateral-recess, foraminal, nerve-root, or
      other anatomical consequences separately from the diagnosis itself.
 
 NORMAL / NON-PATHOLOGICAL ALTERNATIVE
@@ -859,31 +1187,31 @@ NORMAL / NON-PATHOLOGICAL ALTERNATIVE
 Normal is a real differential outcome. Reject a focus when the apparent change
 is normal anatomy, a non-pathological variant, artifact, partial volume, or
 unsupported on the decisive sequence. Do not call normal merely because the
-screening label was wrong: first exhaust the alternative pathologies that can
+focus has an uncertain cause: first test the alternative pathologies that can
 explain the same visible focus.
 
-THE LEVEL IS PART OF THE FINDING - VERIFY IT
+CARD SUBJECT LEVEL IS TASK SCOPE
 
-The first pass assigned its own level names. You have the same measured slab
-grouping it had, so build YOUR level map first, then check each candidate
-against it before judging the finding.
+For a named V5 card, `card_subject_level` and the printed SUBJECT LEVEL define
+the bounded task supplied by the local slab geometry. They are identity, not a
+diagnosis, but this focused package does not contain the whole-study overview
+needed to renumber the lumbar spine. Do not build a new whole-study level map
+from focused cards, and never relocate its finding into a neighboring card.
 
-A candidate whose level is wrong is not a wrong finding - it is a right finding
-in the wrong place, and reporting it unmoved is worse than rejecting it. If your
-map puts the abnormality at a different level than the candidate names, give it
-REFINED and say so explicitly in `refined_finding`:
-
-    "L3-L4 (first pass called this L4-L5): ..."
-
-Do not silently keep the first pass's label while printing your own map above
-it. If the two cannot be reconciled, the level is INDETERMINATE - say which two
-levels are in question and why.
+Verify that the anatomy shown is internally compatible with the bound subject
+level. If it is compatible, report that level and independently refine only the
+structure, side, axial zone, morphology, extent and consequences demonstrated
+inside the card. If the visible anatomy appears incompatible with the binding,
+return INDETERMINATE with a card-identity conflict; do not repair the conflict
+by borrowing or renaming another card. An ADDITIONAL FINDINGS card has no bound
+disc level and must retain `unclear` unless its own anatomy safely resolves the
+location without using another image.
 
 WHERE EACH ABNORMALITY IS DECIDED
 
 Disc bulge / protrusion / extrusion
-  Treat the screening label as one differential option, not the answer. Apply
-  the shared morphology contract to sagittal and axial T2. Establish whether
+  Independently compare normal contour and the displacement alternatives. Apply
+  the diagnostic morphology contract to sagittal and axial T2. Establish whether
   the contour is normal; a generalized bulge; a focal protrusion; an extrusion;
   a sequestration; or migrated material. Sagittal T2 may establish the
   base-to-dome relationship and cranial/caudal extent; axial T2 establishes
@@ -1017,22 +1345,15 @@ borderline, never as grounds to delete something convincingly demonstrated:
   * a change commonly seen at this patient's age, at ordinary severity
 
 Removing such a candidate is the correct outcome, not a failure to decide. Give
-it REJECTED or DOWNGRADED with the reason, so the decision stays on record.
+it REJECTED with the reason, so the decision stays on record.
 
 STATUS FOR EVERY CANDIDATE
 
-  CONFIRMED      present as described
-  RECLASSIFIED   the focus is truly abnormal, but a different diagnosis or
-                 morphology is better supported
-  REFINED        the diagnosis remains, but level, zone, side, extent, or other
-                 non-severity characterisation changes
-  UPGRADED       the diagnosis remains, but severity or consequence is greater
-                 than screening claimed
-  DOWNGRADED     the diagnosis remains, but severity or consequence is less
-                 than screening claimed
+  CONFIRMED      abnormal presence confirmed and independently classified
+  REFINED        abnormal presence confirmed with corrected localization
   REJECTED       no supported pathology remains at the focus
   INDETERMINATE  cannot be decided from this package; say what is missing
-  ADDED          a separate focus the mandatory safety sweep found
+  ADDED          a separate component the card-local safety check found
 
 THE DECISION THRESHOLD
 
@@ -1049,7 +1370,7 @@ every one of these:
 Do not average the answers. A confident no rejects that DIAGNOSIS, not
 automatically the entire focus. Test the remaining differential first. Use
 REJECTED only when no alternative pathology convincingly explains the focus;
-otherwise use RECLASSIFIED, REFINED, UPGRADED, or DOWNGRADED as appropriate.
+otherwise classify the supported pathology and use CONFIRMED or REFINED.
 
 There is deliberately NO question here asking whether the finding has a canal,
 recess, foraminal or root consequence. That question decides BORDERLINE findings
@@ -1063,16 +1384,18 @@ every positive focus. Specificity comes from selecting the best-supported
 diagnosis and rejecting normal alternatives, not from inheriting or deleting a
 screening label without testing its competitors.
 
-MANDATORY SAFETY SWEEP AFTER THE CANDIDATES
+CARD-LOCAL SAFETY CHECK
 
-After adjudicating every screening focus, independently re-scan the complete
-MRI package for major report-changing findings that must not depend on the
-first-pass label: disc extrusion, sequestration, migrated disc material,
-high-grade canal/recess/foraminal compromise, definite nerve-root compression,
-fracture, destructive marrow lesion, epidural mass or collection, infection,
-and cauda-equina or conus abnormality. Add any convincingly demonstrated missed
-focus with status ADDED. This sweep is not permission to add borderline minor
-findings.
+Before leaving each card, inspect all anatomy actually represented inside that
+same card for a missed report-changing component related to its subject scope:
+disc extrusion or sequestration, migration, high-grade canal/recess/foraminal
+compromise, definite nerve-root compression, fracture, destructive marrow
+change, epidural process, infection, or cauda-equina/conus abnormality when that
+anatomy is present. A convincingly demonstrated additional component at the
+same bound subject level may receive status ADDED with `input_source` set to
+`card_safety_check`. Do not re-scan or diagnose anatomy outside the supplied
+cards, and do not turn visible neighboring levels into findings. This check is
+not permission to add borderline minor changes.
 
 OUTPUT
 
@@ -1083,47 +1406,70 @@ VERIFICATION
 {
   "verifications": [
     {
-      "candidate": "L5-S1 broad_based_bulge",
+      "candidate": "<attention_id_or_null>",
+      "card_id": "<bound_card_id>",
+      "card_image_index": 1,
+      "card_kind": "<lumbar_level_or_additional_findings>",
+      "card_subject_level": "<bound_subject_level_or_null>",
+      "screening_structure": "<screening_anatomical_structure_or_null>",
+      "structure": "<verified_anatomical_structure_or_null>",
+      "level": "<verified_level_or_unclear>",
+      "vertebra": null,
       "input_source": "screening_candidate",
       "context_focus": null,
       "focus_present": true,
-      "screening_diagnosis": "broad_based_bulge",
+      "screening_diagnosis": null,
       "alternatives_considered": [
-        "normal_disc_contour",
-        "generalized_disc_bulge",
-        "disc_protrusion",
-        "disc_extrusion",
-        "disc_sequestration"
+        "<normal_or_non_pathological_alternative>",
+        "<plausible_pathology_1>",
+        "<plausible_pathology_2>"
       ],
-      "final_diagnosis": "disc_extrusion",
-      "status": "RECLASSIFIED",
-      "change_direction": "upgraded",
-      "refined_finding": "Central disc extrusion with caudal migration.",
-      "reason": "Sagittal T2 shows a displaced component wider than its base with caudal extension; axial T2 confirms the central zone.",
+      "final_diagnosis": "<best_supported_diagnosis_or_null>",
+      "status": "<CONFIRMED|REFINED|REJECTED|INDETERMINATE|ADDED>",
+      "change_direction": "none",
+      "refined_finding": "<concise_card_bound_finding_or_null>",
+      "reason": "<card-bound confirming and contradicting evidence>",
       "grade_system": null,
       "grade": null,
-      "decided_on": ["sagittal_t2", "axial_t2"]
+      "decided_on": ["<decisive_sequence_or_plane>"]
     }
   ]
 }
 ```
 
-Every screening candidate must appear exactly once. Every regional or
-level-specific context focus must also be resolved exactly once, either by
-linking it to the screening row that covers the same focus or by creating a
-separate context row. `input_source` is `screening_candidate`,
-`context_attention_focus`, `screening_candidate_and_context_focus`, or
-`safety_sweep`. `candidate` is null for a context-only or safety-sweep entry.
-`context_focus` is null when no context focus contributed and otherwise records
+Every attention_id listed in a supplied card must appear exactly once. A
+screening attention row without a bound card cannot support diagnosis; if the
+request explicitly requires it to be audited, use INDETERMINATE with null card
+identity and state that no diagnostic card was supplied. `input_source` is
+`screening_candidate`, `screening_candidate_and_context_focus`, or
+`card_safety_check`. `candidate` is null only for a card-local safety-check row.
+Also resolve each screening not_assessable attention_id: use INDETERMINATE
+unless the supplied diagnostic evidence actually resolves that assessment gap.
+Normal-count metadata is not a candidate or proof that unlisted anatomy is normal.
+`card_id`, `card_image_index`, `card_kind`, and `card_subject_level` must copy
+the current payload binding exactly; never infer or renumber them. For an
+ADDITIONAL FINDINGS card, `card_kind` is `additional_findings` and
+`card_subject_level` is null. `context_focus` is null when no context focus contributed and otherwise records
 the bounded anatomic focus supplied by context. `focus_present` is true for a
 supported abnormal focus, false for a normal/unsupported focus, and null when
-indeterminate. `screening_diagnosis` records the first-pass label;
+indeterminate. `candidate` references the supplied attention_id, not a disease.
+`screening_structure` copies that attention record's anatomical structure, or
+is null for a card-local safety-check entry. `structure` records the anatomical
+compartment actually reviewed, including a normal one; use null if it cannot be
+localized. Use the same anatomical vocabulary as screening, not a disease name.
+`level` and `vertebra` record supported anatomical localization, with unclear/null
+when unresolved. Explain any correction from screening anatomy in `reason` and
+use REFINED for a confirmed abnormal focus whose localization changed. Keep
+the original attention_id, even when structure, level or side was corrected.
+`screening_diagnosis` is always null for localization-only screening;
 `alternatives_considered` records the meaningful differential actually tested;
 `final_diagnosis` is the best-supported diagnosis or null for
-REJECTED/INDETERMINATE. `change_direction` is `upgraded`, `downgraded`,
-`equivalent`, or `none`. `refined_finding` may be null only for REJECTED or
-INDETERMINATE. A separate focus found from context or the safety sweep takes
-status ADDED with a null `screening_diagnosis`.
+REJECTED/INDETERMINATE. `change_direction` is `none`: there is no screening
+morphology or severity to upgrade/downgrade. Classification and severity are
+separate decisions, not rungs on one ladder. `refined_finding` may be null only
+for REJECTED or INDETERMINATE. A separate component found by the card-local
+safety check takes status ADDED with a null `screening_diagnosis` and the same
+card binding.
 
 For central canal, lateral recess or neural foraminal stenosis, `grade_system`
 and `grade` are required when assessable and must follow the contract above.
@@ -1132,7 +1478,12 @@ required grade.
 
 FINAL REPORT
 LEVEL MAP
-  <level>: axial frames <n>-<n>
+  <copy every authoritative level/frame binding from the request header exactly>
+
+Do not infer, recount, resize, rename or reorder the LEVEL MAP from diagnostic
+cards. It is acquisition identity, not a diagnostic conclusion. If the request
+does not supply an authoritative map, write `Not supplied` rather than creating
+one from the selected cards.
 
 PATHOLOGICAL FINDINGS
   <level>: <finding, with zone, side, and the canal / lateral recess /
@@ -1144,8 +1495,8 @@ TECHNIQUE / PROTOCOL LIMITATIONS
 NOT ASSESSABLE
   <structure or level>: <what prevented assessment>
 
-Only findings with status CONFIRMED, RECLASSIFIED, REFINED, UPGRADED,
-DOWNGRADED or ADDED appear in the report. Rejected and indeterminate ones do not
+Only findings with status CONFIRMED, REFINED or ADDED appear in the report.
+Rejected and indeterminate ones do not
 - the audit block above is where they are recorded. Combine several
 abnormalities at one level into one statement where they describe one process.
 When a generalized bulge has a superimposed protrusion or extrusion, lead with
@@ -1182,35 +1533,34 @@ LUMBAR_SCREENING = AnalysisStage(
     # fused only after correlating the same lesion across planes.
     # 1.7.0: emits bounded decisive and neighboring frame anchors so the local
     # focused-v2 composer can preserve short slice sequences for verification.
-    version="1.7.0",
-    label="Lumbar MRI - broad pathology screening (parallel branch 1 of 2)",
-    text=_LUMBAR_PACKAGE + "\n" + grading.LUMBAR_STENOSIS_GRADING_PROMPT +
-         _LUMBAR_SCREENING_BODY,
-    # UNDER EVALUATION (2026-08-26, owner's call): the screening pass runs on
-    # Gemini while verification stays on gpt-5.6-sol. Detection over ~31 frames
-    # and adjudication against a strict threshold are different jobs, and this
-    # is the cheapest honest way to find out whether a different model reads the
-    # osseous and posterior-element categories better. The two passes are
-    # separately swappable precisely so this A/B does not disturb the report.
+    # 1.8.0: corrected Bartynski criteria; separate root-effect observations.
+    # 2.0.0: anatomy/presence/localization only; no diagnostic criteria or grades.
+    # 2.0.1: anatomy is mandatory and distinct from pixel localization.
+    # 2.1.0: correlated-atlas tile identities and tile-content coordinates.
+    # 2.2.0: one canonical row per anatomical focus; contradictory screening
+    # assessments and laterality duplicates are resolved before diagnosis.
+    # 2.3.0: source-format-specific instructions plus diagnosis-free salience,
+    # within-study priority, observable features and adjacent-slice persistence.
+    # 2.4.0: proposes exact source-atlas tiles for a fixed nine-slot level card;
+    # local code validates identity and role before any slot reaches diagnosis.
+    # 2.5.0: emits per-tile conspicuity and attention bindings; local DICOM
+    # geometry owns final plane order, T1/T2 sync and the additional-findings card.
+    # 2.6.0: retains both paracentral planes between the foraminal endpoints and
+    # midline so diagnosis receives five geometry-ordered sagittal pairs.
+    # 2.7.0: selects anatomical midline first and requires spaced sagittal
+    # sampling instead of five consecutive source slices.
+    version="2.7.0",
+    label="Lumbar MRI - abnormality localization and routing (parallel branch 1 of 2)",
+    text=_LUMBAR_SCREENING_PACKAGE + _LUMBAR_SCREENING_BODY,
+    # Company stages use the reviewed Gemini Pro endpoint. Per-stage model
+    # overrides remain available for explicit, traceable comparisons.
     model_feature="eagle_eye_screening",
     model_default="gemini-3.1-pro-preview",
     temperature=1.0,
-    # 4000 was TOO TIGHT and it was never a safe margin, on either model.
-    # gpt-5.6-sol produced 3993 tokens for 19 candidates and parsed - 99.8% of
-    # the ceiling, i.e. it fit by luck. gemini-3.1-pro-preview produced 3996
-    # and its JSON was cut off mid-string, which reaches the next pass as
-    # "no parseable candidates" and silently collapses two passes into one.
-    #
-    # This stage is the VERBOSE one by design: it lists every candidate at
-    # every level as pretty-printed JSON, and a model that formats generously
-    # spends tokens on whitespace. The ceiling only costs money when it is
-    # actually used, so give it room the widest study cannot fill.
-    #
-    # 12000 was already too close. Session 20260826T211657Z produced 8848
-    # tokens - 20 candidates instead of 13 once the slab block let it stop
-    # guessing boundaries and spend its output on findings - leaving 1.36x
-    # headroom. A richer study would have overrun it. Sized at ~2.7x the
-    # largest answer measured.
+    # Historical broad-screening output reached 8848 tokens and a 4000-token
+    # ceiling truncated valid JSON. Contract 2.7.0 remains bounded,
+    # but the ceiling stays unchanged until repeated live runs establish a safe
+    # lower bound; truncation would erase the entire screening handoff.
     max_output_tokens=24000,
 )
 
@@ -1219,12 +1569,15 @@ LUMBAR_CLINICAL_CONTEXT = AnalysisStage(
     name=STAGE_CLINICAL_CONTEXT,
     # 2.1.0: receives deterministic near-midline paired sagittal T2/T1 frames
     # and emits bounded global, regional, and level-specific attention foci.
-    version="2.1.0",
+    # 2.2.0: MRI-overview-only context cannot inject a level-specific diagnosis
+    # or confirmation question into the bound diagnostic-card reader.
+    # 2.3.0: use the Gemini 3 recommended temperature with the company profile.
+    version="2.3.0",
     label="Lumbar MRI - clinical context extraction (parallel branch 2 of 2)",
     text=_LUMBAR_CLINICAL_CONTEXT_BODY,
     model_feature="eagle_eye_screening",
     model_default="gemini-3.1-pro-preview",
-    temperature=0.2,
+    temperature=1.0,
     max_output_tokens=6000,
     input_kind="clinical_context",
 )
@@ -1266,15 +1619,38 @@ LUMBAR_VERIFICATION = AnalysisStage(
     # ribbon as a sequence, and preserves the attention-label/evidence boundary.
     # 3.0.1: AX labels in focused-v2 are explicitly the original capture-frame
     # authority; raw DICOM ordinals and composite indexes cannot renumber maps.
-    version="3.0.1",
+    # 3.1.0: grading catalog 2.0.0; no root-effect-to-recess-grade substitution.
+    # 4.0.0: independently classifies diagnosis-free screening attention records.
+    # 4.1.0: anatomy-first correlation and separate source/reviewed anatomy audit.
+    # 4.2.0: consumes geometry-validated, diagnosis-free cross-plane foci.
+    # 4.3.0: consumes a canonical, deduplicated screening handoff and treats
+    # each attention_id as one independently adjudicated anatomical task.
+    # 4.4.0: consumes one self-contained diagnostic level card per focus and
+    # forbids cross-card evidence or out-of-card axial-frame citations.
+    # 4.5.0: consumes the fixed sagittal T2/T1 plus axial T2 nine-slot card and
+    # keeps axial zones distinct from craniocaudal migration levels.
+    # 4.6.0: consumes card-local JSON, non-severity tile conspicuity, DICOM edge
+    # locators and the explicit additional-findings scope.
+    # 4.7.0: reads geometry-matched sagittal T2/T1 as vertical pairs before the
+    # separated left-to-right axial sequence; border color is sequence-only.
+    # 4.8.0: reads five right-to-left sagittal pairs, including both paracentral
+    # planes, before the three-frame axial sequence.
+    # 4.9.0: interprets the five columns as spaced central, paracentral and
+    # foraminal samples rather than consecutive cine frames.
+    # 5.0.0: receives exactly one explicit JSON payload immediately before
+    # each diagnostic card, with an independently saved sidecar for audit.
+    # 5.1.0: makes verification card-first, records exact card identity in each
+    # decision, and replaces incompatible whole-package/context-only sweeps
+    # with bounded card-local adjudication.
+    # 5.2.0: Gemini Pro also owns diagnosis; preserve card and grading contracts.
+    version="5.2.0",
     label="Lumbar MRI - targeted verification and final report (fusion pass 3 of 3)",
-    text=_LUMBAR_PACKAGE + "\n" + grading.LUMBAR_STENOSIS_GRADING_PROMPT +
-         _LUMBAR_VERIFICATION_BODY,
-    # The pass the user actually reads stays on the model that produced the
-    # verified live result. Change one variable at a time.
+    text=(_LUMBAR_VERIFICATION_PACKAGE + _LUMBAR_DIAGNOSTIC_CRITERIA + "\n"
+          + grading.LUMBAR_STENOSIS_GRADING_PROMPT + _LUMBAR_VERIFICATION_BODY),
+    # Same reviewed company endpoint as anatomy, screening and context.
     model_feature="eagle_eye",
-    model_default="gpt-5.6-sol",
-    temperature=0.2,
+    model_default="gemini-3.1-pro-preview",
+    temperature=1.0,
     # Raised with screening for the same reason: this pass must echo EVERY
     # candidate back with a status and a reason, so its output grows with pass
     # 1's list - and pass 1's list grew from 13 to 20 candidates once it stopped
@@ -1318,8 +1694,75 @@ LUMBAR_VERIFICATION = AnalysisStage(
 #: reversed and independently angled source DICOM slabs.
 LUMBAR_PATHOLOGY = AnalysisPipeline(
     id="lumbar_pathology",
-    version="4.6.1",
-    label="Lumbar MRI - parallel image/context review, then verify",
+    # 4.7.0: named grading correction; historical results retain their versions.
+    # 5.0.0: localization-only screening and allowlisted diagnostic handoff.
+    # 5.1.0: explicit anatomical-location contract on both sides of the handoff.
+    # 5.2.0: source-grounded screening atlas and deterministic correlation handoff.
+    # 5.3.0: canonical contradiction-resolved screening-to-diagnosis handoff.
+    # 5.4.0: bounded submillimetric sagittal screening atlas with sampling audit.
+    # 5.5.0: salience-aware screening handoff and deterministic focus retention.
+    # 5.6.0: one explicitly bound self-contained diagnostic card per level.
+    # 5.7.0: fixed nine-slot card template proposed by screening and validated
+    # locally before deterministic rendering for the diagnostic reader.
+    # 5.8.0: geometry-owned T1/T2 synchronization, per-card JSON, per-tile
+    # conspicuity, edge-only locators and one bounded additional-findings card.
+    # 5.9.0: same-plane sagittal pair columns, sequence-only borders and an
+    # aspect-efficient sagittal tile size reduce comparison distance and pixels.
+    # 6.0.0: five paired sagittal planes preserve foraminal, paracentral and
+    # midline evidence while the bounded three-frame axial sequence remains fixed.
+    # 6.1.0: anatomy-first midline selection and guarded source-slice spacing.
+    # 6.2.0: binds one model-facing JSON payload and one local JSON sidecar to
+    # every level or additional-findings diagnostic card.
+    # 6.3.0: aligns diagnostic reasoning and structured output with that exact
+    # card/JSON transport contract.
+    # 7.0.0: five anatomy-bounded Gemini screens produce independent
+    # structure cards; GPT-5.6 Sol classifies one card per request and local
+    # code merges card-bound decisions deterministically.
+    # 7.0.1: three compact low-variance Gemini screening requests replace five;
+    # truncated or unstructured groups fail closed to the
+    # bounded monolithic fallback instead of becoming an empty screen.
+    # 7.0.2: restores the established 6000-token safety ceiling per grouped
+    # request. Grouping narrows cognitive scope; it does not constrain a
+    # difficult study's available response budget.
+    # 7.1.0: applies a task-specific evidence allowlist to each grouped Gemini
+    # request so disc/canal screening omits T1 and marrow screening omits axial
+    # images while foraminal/posterior screening retains all required roles.
+    # 7.2.0: raises bounded atomic response headroom after a live run exhausted
+    # all three screening allowances before emitting parseable findings. Stored
+    # stage-image audit is available from the result panel; image budgets and
+    # diagnostic pixels are unchanged.
+    # 7.3.0: inserts an anatomy-only Gemini gate, validates its source-tile and
+    # DICOM-geometry bindings locally, renders three structure-group anatomy
+    # cards, and sends one card rather than raw atlas pages to each screen.
+    # 7.4.0: makes the three-gate V5 route fail closed, removes automatic
+    # monolithic screening fallback, and assigns sagittal right/left roles from
+    # DICOM LPS geometry instead of model interpretation or seeded tile IDs.
+    # 7.5.0: keeps the same evidence cards while requiring disc-bound neural
+    # consequence review, exact vertebral endplate identity, objective
+    # ligamentum-flavum confirmation, and temperature-0 clinical stages.
+    # 7.6.0: restores presence/structure/level/magnitude-only screening and
+    # one-structure diagnosis; removes screening zone/neural interpretation
+    # and disc-card companion multitasking.
+    # 7.7.0: makes axial sample roles deterministic from DICOM patient-Z
+    # geometry and separates disc from canal/neural screening cards.
+    # 7.8.0: adopts the canonical Eagle Eye MRI card registry and separates
+    # foraminal screening from facet/posterior-element screening.
+    # 7.9.0: separates workstation-owned geometry grouping from model-owned
+    # sequence and anatomical-level semantics before screening cards are built.
+    # 8.0.0: preserves immutable neutral sagittal and axial geometry-group
+    # identities through anatomical mapping, screening, and diagnosis cards.
+    # 8.1.0: makes Gate 1 and Gate 1-to-2 groups visually self-explanatory
+    # through whitespace-separated task-specific blocks and section headers.
+    # 8.2.0: keeps every screening group complete and records focused diagnosis
+    # selections as validated subsets of one immutable parent geometry group.
+    # 8.3.0: makes central-canal screening auditable and distinct from disc or
+    # recess impressions, with bounded overview-only MR-myelography context.
+    # 8.4.0: retains extra anatomical groups as explicit context without
+    # shifting lumbar labels or assigning out-of-scope diagnoses.
+    # 8.5.0: verifies physical side and complete paired neural compartment coverage.
+    # 8.6.0: Gemini Pro throughout; atomic stages inherit recorded sampling.
+    version="8.6.0",
+    label="Lumbar MRI - anatomy-gated screening and card-bound diagnosis",
     stages=(LUMBAR_SCREENING, LUMBAR_CLINICAL_CONTEXT, LUMBAR_VERIFICATION),
     parallel_stage_names=(STAGE_SCREENING, STAGE_CLINICAL_CONTEXT),
 )

@@ -191,7 +191,7 @@ def test_evidence_package_covers_stacks_and_omits_source_paths_from_manifest(
 
 
 def test_two_stage_backend_carries_screening_answer_and_skips_lumbar_preparation(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, configured_direct_eagle_models
 ):
     image = tmp_path / "evidence.png"
     image.write_bytes(b"png-placeholder")
@@ -226,5 +226,5 @@ def test_two_stage_backend_carries_screening_answer_and_skips_lumbar_preparation
 
     assert record.has_result
     assert record.text == "FINAL CONSULT"
-    assert [item[0] for item in calls] == ["gemini-3.1-pro-preview", "gpt-5.6-sol"]
+    assert [item[0] for item in calls] == ["synthetic-screening-model", "synthetic-diagnosis-model"]
     assert "STEP ONE CANDIDATES" in calls[1][2]

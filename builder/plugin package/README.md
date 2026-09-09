@@ -1,5 +1,10 @@
 # Plugin Package Workspace
 
+> Plugin packages are one input to the coordinated build. For release/build
+> routing, start at
+> [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md);
+> this page only owns the package workspace contract.
+
 This folder is the source-of-truth workspace for AIPacs plugin packaging.
 
 ## Purpose

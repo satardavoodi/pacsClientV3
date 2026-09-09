@@ -30,13 +30,19 @@ from aipacs_runtime import (
     default_installation_profile,
 )
 from builder.plugin_package_registry import load_plugin_package_definitions
+from builder.source_identity import BuildAuthorityError, validate_build_authority
 BUILDER_DIR = PROJECT_ROOT / "builder"
 OUTPUT_DIR = BUILDER_DIR / "output"
 DIST_DIR = OUTPUT_DIR / "dist"
 BUILD_DIR = OUTPUT_DIR / "build"
 STAGE_DIR = OUTPUT_DIR / "stage"
 MANIFEST_DIR = STAGE_DIR / "manifest"
-INSTALLER_OUTPUT_DIR = OUTPUT_DIR / "installer"
+INSTALLER_OUTPUT_DIR = Path(
+    os.environ.get("AIPACS_PY_INSTALLER_OUTPUT_DIR", str(OUTPUT_DIR / "installer"))
+).resolve()
+EXPECTED_INSTALLER_OUTPUT_DIR = Path(
+    os.environ.get("AIPACS_PY_EXPECTED_INSTALLER_OUTPUT_DIR", str(OUTPUT_DIR / "installer"))
+).resolve()
 PACKAGE_OUTPUT_DIR = OUTPUT_DIR / "packages"
 UPDATES_OUTPUT_DIR = OUTPUT_DIR / "updates"
 UPDATES_CORE_DIR = UPDATES_OUTPUT_DIR / "core"
@@ -47,6 +53,7 @@ INSTALLER_SCRIPT = BUILDER_DIR / "installer" / "AIPacs_Setup.iss"
 INSTALLER_SCRIPT_ARM64 = BUILDER_DIR / "installer" / "AIPacs_Setup_arm64.iss"
 INSTALLER_SCRIPT_WOA = BUILDER_DIR / "installer" / "AIPacs_Setup_woa.iss"
 REQUIRED_RELEASE_GRAPHICS_BINARIES = ("opengl32sw.dll", "osmesa.dll", "pipe_swrast.dll")
+FOREIGN_QT_ICU_DLL_PATTERNS = ("icuuc.dll", "icuin.dll", "icudt*.dll")
 PRIMARY_INSTALLER_BASENAME = "ai-pacs installer"
 
 # ── ARM64 plan §5/§7 (2026-07-07): per-architecture build support ────────────
@@ -497,6 +504,31 @@ def validate_release_bundle_graphics_runtime(source_dir: Path) -> None:
     )
 
 
+def remove_foreign_qt_icu_dlls(bundle_root: Path) -> list[Path]:
+    """Remove non-PySide ICU DLLs that can shadow the Windows Qt dependency.
+
+    PySide6 6.10 does not ship ``icuuc.dll``. QtCore resolves the Windows ICU
+    compatibility DLL from System32. A build host may nevertheless expose an
+    unrelated Poppler/ICU directory through PATH; PyInstaller then copies that
+    unversioned DLL into the application runtime, where it wins DLL search and
+    makes ``PySide6.QtCore`` fail at startup with error 127. Remove only the
+    app-local ICU DLL names from PyInstaller runtime roots. WebEngine's
+    distinct ``icudtl.dat`` resource is intentionally untouched.
+    """
+    removed: list[Path] = []
+    runtime_roots = (bundle_root, bundle_root / "engine", bundle_root / "_internal")
+    for runtime_root in runtime_roots:
+        if not runtime_root.is_dir():
+            continue
+        for pattern in FOREIGN_QT_ICU_DLL_PATTERNS:
+            for candidate in runtime_root.glob(pattern):
+                if not candidate.is_file():
+                    continue
+                candidate.unlink()
+                removed.append(candidate)
+    return removed
+
+
 def stage_core_bundle(source_dir: Path, incremental: bool = False) -> Path:
     """Copy (or incrementally sync) the PyInstaller bundle into stage/core/.
 
@@ -522,7 +554,8 @@ def stage_core_bundle(source_dir: Path, incremental: bool = False) -> Path:
 
 def stage_advanced_mpr_payload() -> dict[str, object]:
     print_step("Staging Advanced MPR runtime payload")
-    runtime_root = advanced_mpr_runtime_root()
+    configured = os.environ.get("AIPACS_ADVANCED_MPR_RUNTIME_SOURCE")
+    runtime_root = Path(configured).resolve() if configured else advanced_mpr_runtime_root()
     payload_info = {
         "source": str(runtime_root),
         "staged": False,
@@ -746,6 +779,7 @@ def build_module_packages(
         build_strategy = str(definition.get("build_strategy") or "")
         can_reuse_runtime_payload = (
             reuse_staged_payload
+            and not advanced_payload.get("excluded", False)
             and build_strategy == "runtime_payload"
             and (package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME).exists()
         )
@@ -777,6 +811,12 @@ def build_module_packages(
             _validate_staged_plugin_no_namespace_shadow(package_dir, module_id)
             if module_id == "run_cd":
                 _validate_run_cd_lite_viewer(package_dir)
+
+        if module_id == "advanced_mpr" and has_payload:
+            from builder.offline_lumbar_payload import stage_offline_lumbar
+            stage_offline_lumbar(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
+            from builder.eagle_eye_brain_payload import stage_eagle_eye_brain
+            stage_eagle_eye_brain(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,
@@ -941,6 +981,12 @@ def cleanup_old_installer_builds() -> int:
 
 
 def find_iscc() -> Path | None:
+    configured = os.environ.get("AIPACS_ISCC_EXE")
+    if configured:
+        candidate = Path(configured).resolve()
+        if not candidate.is_file():
+            raise RuntimeError("Configured Inno Setup compiler is missing")
+        return candidate
     local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
     candidates = [
         shutil.which("iscc"),
@@ -1367,6 +1413,12 @@ def parse_args() -> argparse.Namespace:
             "  python build.py --skip-installer-compile # no ISCC, just dist+stage\n"
         ),
     )
+    parser.add_argument("--edition", choices=("all", "eagle-eye", "standard", "arm", "legacy"), default="all",
+                        help="Default: all three local installers. ARM uses x64 emulation. Legacy retains the old publishing workflow.")
+    parser.add_argument("--compact-max-mb", type=int, default=700,
+                        help="Maximum compressed Standard/ARM installer size in decimal MB (target approximately 600 MiB).")
+    parser.add_argument("--asset-root", type=Path,
+                        help="Verified offline asset cache; defaults to generated-files/distribution-assets.")
     parser.add_argument(
         "--skip-pyinstaller",
         action="store_true",
@@ -1423,6 +1475,14 @@ def parse_args() -> argparse.Namespace:
             "builder/release_gate.py). The gate exists because stale mirrors / "
             "stale PYZ / missing config templates have shipped 'works in source, "
             "missing in installed build' regressions. Never use for a customer release."
+        ),
+    )
+    parser.add_argument(
+        "--internal-build",
+        action="store_true",
+        help=(
+            "Allow a non-promotable diagnostic build only inside an internal snapshot "
+            "prepared by tools/build/build_local_candidate.py --internal --prepare-only."
         ),
     )
     return parser.parse_args()
@@ -1516,14 +1576,34 @@ def verify_frozen_mpr_geometry(source_dir: Path) -> None:
 
 def main() -> int:
     global CURRENT_BUILD_ARCH
-    lock_path = _acquire_build_lock()
     args = parse_args()
     CURRENT_BUILD_ARCH = args.arch
     validate_build_arch(args.arch)
+    if args.edition != "legacy" and args.arch != "x64":
+        raise SystemExit("The three-edition matrix uses x64 binaries; use --edition legacy for the separate native ARM toolchain.")
+    if args.compact_max_mb <= 0:
+        raise SystemExit("--compact-max-mb must be positive")
+    lock_path = _acquire_build_lock()
     try:
         if args.clean_only:
             clean_outputs(preserve_build=False, preserve_installer=False)
             return 0
+
+        version = load_version()
+        try:
+            validate_build_authority(PROJECT_ROOT, version, internal=args.internal_build)
+        except BuildAuthorityError as exc:
+            raise SystemExit(f"[BUILD_AUTHORITY] {exc}") from exc
+        if args.internal_build:
+            print("[INTERNAL] Non-promotable diagnostic build; outputs are not release artifacts.")
+
+        if args.edition != "legacy":
+            from tools.build.prepare_distribution_assets import DEFAULT_ROOT, verify
+            asset_root = (args.asset_root or DEFAULT_ROOT).resolve()
+            verify(asset_root)
+            os.environ["AIPACS_ADVANCED_MPR_RUNTIME_SOURCE"] = str(asset_root / "slicer-runtime")
+            os.environ["AIPACS_OFFLINE_LUMBAR_BUNDLE_SOURCE"] = str(asset_root / "offline_lumbar")
+            os.environ["AIPACS_ISCC_EXE"] = str(asset_root / "inno-setup/ISCC.exe")
 
         requested_pyinstaller_version = current_pyinstaller_version()
         cached_pyinstaller_version = read_cached_pyinstaller_version()
@@ -1555,8 +1635,6 @@ def main() -> int:
             preserve_installer=(incremental or args.skip_installer_compile),
             preserve_plugin_stage=(incremental and args.skip_pyinstaller),
         )
-        version = load_version()
-
         # Release gate, phase 1 (PRE-BUILD): plugin-mirror freshness. Failing
         # here is cheap; failing after PyInstaller wastes minutes on a build
         # that would ship stale module code (mechanism #3 of the 2026-06-11
@@ -1587,6 +1665,9 @@ def main() -> int:
         elif not (source_dir / "AIPacs.exe").exists():
             raise SystemExit("--skip-pyinstaller was used but builder/output/dist/AIPacs/AIPacs.exe is missing.")
 
+        removed_icu = remove_foreign_qt_icu_dlls(source_dir)
+        for removed_path in removed_icu:
+            print(f"[OK] Removed foreign Qt ICU DLL: {removed_path.relative_to(source_dir)}")
         sync_theme_qss(source_dir)
         validate_release_bundle_graphics_runtime(source_dir)
         verify_frozen_mpr_geometry(source_dir)
@@ -1601,7 +1682,7 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — marker is best-effort
             print(f"[WARN] version marker stamp failed: {exc}")
         advanced_payload = stage_advanced_mpr_payload()
-        if not bool(advanced_payload.get("staged")):
+        if not bool(advanced_payload.get("staged")) and not advanced_payload.get("excluded", False):
             allow_missing = os.environ.get("AIPACS_ALLOW_MISSING_ADVANCED_MPR", "").strip().lower() in {
                 "1",
                 "true",
@@ -1649,6 +1730,15 @@ def main() -> int:
                     "[RELEASE_GATE] Staged bundle contains wrong-architecture binaries "
                     f"(expected {args.arch}). See the listing above."
                 )
+
+        if args.edition != "legacy":
+            from builder.distribution_profiles import compile_editions
+            compile_editions(sys.modules[__name__], version, args.edition,
+                             stage_only=args.skip_installer_compile,
+                             compact_max_bytes=args.compact_max_mb * 1_000_000)
+            # A local three-output build must not select/publish an arbitrary edition
+            # to the existing single-installer update feed.
+            return 0
 
         installer_artifacts: dict[str, str] = {}
         if not args.skip_installer_compile:

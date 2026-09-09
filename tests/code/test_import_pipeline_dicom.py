@@ -186,7 +186,7 @@ def test_import_converts_synthesized_jpeg2000(tmp_path):
 
 
 def test_import_converts_jpeg_lossless(tmp_path):
-    _roundtrip_one(tmp_path, _JPEG_LOSSLESS, "pylibjpeg_libjpeg")
+    _roundtrip_one(tmp_path, _JPEG_LOSSLESS, "gdcm")
 
 
 # ── 3. fallbacks: kill-switch, undecodable syntax, decode failure ─────────

@@ -1,5 +1,10 @@
 # Installer QA Checklist (PC A / PC B)
 
+> **Current precedence (2026-09-06):** select and create candidates through
+> [`../../BUILD.md`](../../BUILD.md). Apply this QA checklist to every backend and
+> edition intended for distribution. Legacy single-installer filenames below are
+> historical examples, not the current six-file output contract.
+
 Release target for this publication: `v2.3.7` (`2026-04-22`)
 
 Use this checklist for every Windows installer release to validate functionality and avoid regressions.

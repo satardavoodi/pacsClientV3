@@ -1,5 +1,14 @@
 # Build Checklist
 
+> Documentation map: [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md).
+>
+> **Current precedence (2026-09-06):** use [`../../BUILD.md`](../../BUILD.md) for
+> lane selection and the official six-installer command. This checklist supplies
+> PyInstaller subsystem details only; its legacy output names and resumable commands
+> are not alternate final-release entry points.
+> The exact source commit must first pass [`../../RELEASE.md`](../../RELEASE.md)
+> and provide the Git synchronization receipt consumed by the root build command.
+
 This checklist applies to the **PyInstaller-based builder in `builder/`**. For the staged Nuitka build chain in `builder nuitka/`, use `NUITKA_BUILD_PLAN.md` and its stage-specific commands instead of the commands below.
 
 ## Pre-Build Checks

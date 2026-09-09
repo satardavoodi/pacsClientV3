@@ -11,6 +11,12 @@ For workstation-internal work, the canonical entry points remain:
   monitor placement, multi-study viewer regression guards, etc.)
 - [`docs/README.md`](docs/README.md) — extensive architecture,
   pipelines, performance, releases
+- [`docs/release-and-build/README.md`](docs/release-and-build/README.md) — the
+  repository-local map for Git publication, PyInstaller/Nuitka builds, installer
+  outputs, and release evidence
+- [`RELEASE.md`](RELEASE.md) — versioned commit, tag, and multi-remote publication
+- [`BUILD.md`](BUILD.md) — source validation, internal packaging, and the official
+  six-installer candidate workflow
 
 This `WORKSPACE.md` file exists only to direct cross-project work to
 the right place.
@@ -52,7 +58,8 @@ Workspace docs live at:
 - Zeta Download Manager work.
 - Anything inside `database/`, `modules/viewer/`, `modules/network/`
   that does not introduce a new endpoint or contract.
-- Build / Nuitka / PyInstaller changes.
+- Build / Nuitka / PyInstaller changes. Start at
+  [`docs/release-and-build/README.md`](docs/release-and-build/README.md).
 - Per-release notes.
 
 Those continue to be governed by this repository's own docs.

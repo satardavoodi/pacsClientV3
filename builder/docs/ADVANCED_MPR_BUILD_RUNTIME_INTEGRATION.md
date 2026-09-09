@@ -1,5 +1,9 @@
 # Advanced MPR Build/Runtime Integration (Anti-Regression Guide)
 
+> This is a subsystem packaging invariant, not a build entry point. Start at
+> [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md)
+> and follow root `RELEASE.md` and `BUILD.md` before producing installers.
+
 ## Purpose
 
 Defines the canonical structure and guardrails for shipping and launching

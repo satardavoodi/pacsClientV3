@@ -56,7 +56,8 @@ def test_installer_optional_components_match_optional_plugin_modules():
         r'Components:\s+optional\\[^\s\"]+',
         re.MULTILINE,
     )
-    source_module_pattern = re.compile(r'plugin_packages\\([^\\]+)\\\*')
+    # A component may also have lossless copy rules for nested model resources.
+    source_module_pattern = re.compile(r'plugin_packages\\([^\\]+)\\')
     component_module_pattern = re.compile(r'Components:\s+optional\\([A-Za-z0-9_]+)')
 
     component_modules = sorted(set(component_pattern.findall(iss_text)))

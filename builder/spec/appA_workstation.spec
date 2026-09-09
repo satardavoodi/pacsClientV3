@@ -26,6 +26,7 @@ from spec_utils import (  # noqa: E402
     app_a_datas,
     codec_hiddenimports,
     codec_metadata_datas,
+    codec_resource_datas,
     graphics_runtime_binaries,
     icon_path_app_a,
     load_hiddenimports,
@@ -239,12 +240,14 @@ for package_name in ["qtawesome"]:
 # pylibjpeg builds an EMPTY decoder table and JPEG 2000 / JPEG-lossless /
 # JPEG-LS images fail to decode with no error the operator can act on.
 _safe_extend(datas, codec_metadata_datas(copy_metadata))
+_safe_extend(datas, codec_resource_datas())
 
 
 datas = list(dict.fromkeys(datas))
 hiddenimports = sorted(dict.fromkeys(hiddenimports))
 
 excludes = [
+    "libjpeg",
     "PyQt5",
     "PyQt6",
     "tkinter",

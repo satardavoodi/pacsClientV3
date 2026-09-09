@@ -315,8 +315,545 @@ def test_v2_is_untouched_by_the_v3_work(tmp_path, patched_volumes):
     assert sheet.width % focus_evidence.TILE_SIZE[0] == 0
 
 
-def test_v3_defaults_off_so_the_switch_is_deliberate(monkeypatch):
+def test_v3_is_available_only_through_the_engineering_rollback_gate(monkeypatch):
     monkeypatch.delenv(evidence_bundle.ENV_EVIDENCE_MODE, raising=False)
-    assert evidence_bundle.resolve_mode() == evidence_bundle.MODE_LAYOUT
+    monkeypatch.delenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, raising=False)
+    assert evidence_bundle.resolve_mode() == evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS
     monkeypatch.setenv(evidence_bundle.ENV_EVIDENCE_MODE, V3)
+    assert evidence_bundle.resolve_mode() == evidence_bundle.MODE_FOCUSED_V5_LEVEL_CARDS
+    monkeypatch.setenv(evidence_bundle.ENV_ALLOW_LEGACY_EVIDENCE, "1")
     assert evidence_bundle.resolve_mode() == V3
+
+
+def test_level_card_mode_sends_one_self_contained_card_per_focus(
+    tmp_path, patched_volumes
+):
+    """The diagnostic reader must not reconstruct a level from global sheets."""
+    structured = {
+        "schema_version": "2.3.0",
+        "findings": [
+            {
+                "attention_id": "attention-07",
+                "structure": "disc",
+                "assessment": "abnormal",
+                "level": "L4-L5",
+                "laterality": "central",
+                "confidence": "high",
+                "visual_salience": "marked",
+                "within_study_priority": "dominant",
+                "slice_persistence": "three_or_more_adjacent_slices",
+                "locations": [],
+                "key_frames": {"axial": [3], "sagittal": []},
+                "geometry": {"status": "verified_single_plane"},
+            }
+        ],
+    }
+    package = focus_evidence.prepare_verification_package(
+        _package(tmp_path),
+        "LEVEL MAP\n  L4-L5: axial frames 1-6",
+        structured,
+        None,
+        mode="focused-v5-level-cards",
+    )
+
+    assert len(package.images) == 1
+    card = package.images[0]
+    assert card.evidence_mode == "focused-v5-level-cards"
+    assert "ATOMIC DIAGNOSTIC CARD: disc" in card.caption
+    assert "SUBJECT LEVEL L4-L5" in card.caption
+    assert "attention-07" in card.caption
+    assert "AX frames 1-6" in card.caption
+
+    manifest = _manifest(package.session_dir, "focused-v5-level-cards")
+    assert manifest["overview_image_count"] == 0
+    assert manifest["focus_image_count"] == 1
+    assert "parasagittal_supplements" not in manifest
+    focus = manifest["focuses"][0]
+    assert focus["attention_ids"] == ["attention-07"]
+    assert 1 <= len(focus["axial_capture_frames"]) <= 3
+    assert len([
+        slot for slot in focus["card_slots"] if slot["role"] == "axial_t2"
+    ]) == 3
+    assert all(1 <= frame <= 6 for frame in focus["axial_capture_frames"])
+    assert len(focus["sagittal_t2_source_slices"]) == 3
+    assert len(focus["sagittal_t1_source_slices"]) == 0
+    binding = manifest["card_bindings"][0]
+    assert binding["image_index"] == 1
+    assert binding["focus_id"] == "focus-01"
+    assert binding["attention_ids"] == ["attention-07"]
+    assert binding["subject_level"] == "L4-L5"
+    assert binding["allowed_axial_frames"] == focus["axial_capture_frames"]
+    assert binding["card_kind"] == "atomic_structure_card"
+    assert binding["structure_group"] == "disc"
+    assert binding["card_metadata"] == focus["card_metadata"]
+    card_json_path = card.path.with_suffix(".card.json")
+    assert focus["card_json_file"] == card_json_path.name
+    assert binding["card_json_file"] == card_json_path.name
+    assert card_json_path.is_file()
+    card_payload = json.loads(card_json_path.read_text(encoding="utf-8"))
+    assert card_payload == card.card_payload
+    assert card_payload["image_index"] == 1
+    assert card_payload["image_file"] == card.path.name
+    assert card_payload["card_metadata"] == focus["card_metadata"]
+    assert (
+        "IMAGE 1 = focus-01 = attention-07 = SUBJECT LEVEL L4-L5 = STRUCTURE disc"
+        in package.header
+    )
+
+
+def test_disc_card_uses_three_t2_sagittal_planes_and_three_axials(
+    tmp_path, patched_volumes
+):
+    """A disc decision must not carry unused foraminal or sagittal T1 pixels."""
+    slot_names = (
+        "sagittal_t2.right_foraminal_plane",
+        "sagittal_t2.right_paracentral_plane",
+        "sagittal_t2.midline_plane",
+        "sagittal_t2.left_paracentral_plane",
+        "sagittal_t2.left_foraminal_plane",
+        "sagittal_t1.right_foraminal_plane",
+        "sagittal_t1.right_paracentral_plane",
+        "sagittal_t1.midline_plane",
+        "sagittal_t1.left_paracentral_plane",
+        "sagittal_t1.left_foraminal_plane",
+        "axial_t2.disc_level_plane",
+        "axial_t2.max_abnormality_plane",
+        "axial_t2.caudal_extent_plane",
+    )
+    structured = {
+        "schema_version": "2.4.0",
+        "atomic_pipeline_version": "2.3.0",
+        "findings": [{
+            "attention_id": "attention-03",
+            "structure": "disc", "assessment": "abnormal", "level": "L5-S1",
+            "laterality": "indeterminate", "confidence": "high",
+            "visual_salience": "marked", "within_study_priority": "dominant",
+            "slice_persistence": "three_or_more_adjacent_slices",
+            "locations": [], "key_frames": {"axial": [3], "sagittal": []},
+            "geometry": {"status": "verified_single_plane"},
+        }],
+        "level_card_template_version": "1.0.0",
+        "level_card_templates": [{
+            "level": "L5-S1", "status": "complete",
+            "slots": [
+                {
+                    "slot": name,
+                    "role": name.split(".", 1)[0],
+                    "source_slice": (
+                        (1, 3, 5, 7, 9)[index % 5]
+                        if name.startswith("sagittal") else index - 9
+                    ),
+                    "capture_frame": (None if name.startswith("sagittal") else index - 9),
+                    "selection": "gemini_atlas_proposal",
+                    "geometry_group_id": (
+                        "axial-group-06"
+                        if name.startswith("axial")
+                        else "sagittal-group-01"
+                        if "right_foraminal" in name
+                        else "sagittal-group-03"
+                        if "left_foraminal" in name
+                        else "sagittal-group-02"
+                    ),
+                }
+                for index, name in enumerate(slot_names)
+            ],
+        }],
+    }
+    structured["group_integrity"] = {
+        "version": "1.0.0",
+        "status": "validated",
+        "groups": [
+                {
+                    "group_id": "sagittal-group-01",
+                    "series_role": role,
+                    "member_kind": "source_slice",
+                    "original_members": [1, 2],
+                    "anatomical_role": "right_lateral",
+            }
+            for role in ("sagittal_t2", "sagittal_t1")
+        ] + [
+            {
+                "group_id": "sagittal-group-02",
+                "series_role": role,
+                "member_kind": "source_slice",
+                    "original_members": [3, 4, 5, 6, 7],
+                    "anatomical_role": "central",
+            }
+            for role in ("sagittal_t2", "sagittal_t1")
+        ] + [
+            {
+                "group_id": "sagittal-group-03",
+                "series_role": role,
+                "member_kind": "source_slice",
+                    "original_members": [8, 9],
+                    "anatomical_role": "left_lateral",
+            }
+            for role in ("sagittal_t2", "sagittal_t1")
+        ] + [{
+            "group_id": "axial-group-06",
+            "series_role": "axial_t2",
+            "member_kind": "capture_frame",
+            "original_members": [1, 2, 3, 4, 5, 6],
+        }],
+    }
+    parent_members = {
+        ("sagittal-group-01", "sagittal_t2"): [1, 2],
+        ("sagittal-group-01", "sagittal_t1"): [1, 2],
+        ("sagittal-group-02", "sagittal_t2"): [3, 4, 5, 6, 7],
+        ("sagittal-group-02", "sagittal_t1"): [3, 4, 5, 6, 7],
+        ("sagittal-group-03", "sagittal_t2"): [8, 9],
+        ("sagittal-group-03", "sagittal_t1"): [8, 9],
+        ("axial-group-06", "axial_t2"): [1, 2, 3, 4, 5, 6],
+    }
+    for slot in structured["level_card_templates"][0]["slots"]:
+        slot["parent_group_id"] = slot["geometry_group_id"]
+        slot["parent_group_members"] = parent_members[
+            (slot["geometry_group_id"], slot["role"])
+        ]
+
+    package = focus_evidence.prepare_verification_package(
+        _package(tmp_path),
+        "LEVEL MAP\n  L5-S1: axial frames 1-6",
+        structured,
+        None,
+        mode="focused-v5-level-cards",
+    )
+
+    assert len(package.images) == 1
+    with Image.open(package.images[0].path) as card:
+        assert card.size == (1152, 798)
+        assert card.width * card.height == 919_296
+        assert card.width * card.height * 8 <= focus_evidence.DEFAULT_BUDGET.max_pixels
+    manifest = _manifest(package.session_dir, "focused-v5-level-cards")
+    focus = manifest["focuses"][0]
+    assert focus["card_template_version"] == "2.0.0"
+    assert focus["layout_kind"] == "atomic-structure-card-v1"
+    assert focus["structure_group"] == "disc"
+    assert focus["sagittal_sampling_policy"] == "anatomical-midline-spaced-v1"
+    assert focus["tile_sizes"] == {
+        "sagittal": [320, 224],
+        "axial": [384, 384],
+    }
+    expected_visual_order = [
+        "sagittal_t2.right_paracentral_plane",
+        "sagittal_t2.midline_plane",
+        "sagittal_t2.left_paracentral_plane",
+        "axial_t2.disc_level_plane",
+        "axial_t2.max_abnormality_plane",
+        "axial_t2.caudal_extent_plane",
+    ]
+    assert [slot["slot"] for slot in focus["card_slots"]] == expected_visual_order
+    assert [slot["geometry_group_id"] for slot in focus["card_slots"]] == [
+        "sagittal-group-02",
+        "sagittal-group-02",
+        "sagittal-group-02",
+        "axial-group-06",
+        "axial-group-06",
+        "axial-group-06",
+    ]
+    assert focus["card_metadata"]["geometry_group_ids"] == {
+        "sagittal": ["sagittal-group-02"],
+        "axial": ["axial-group-06"],
+    }
+    integrity = focus["card_metadata"]["group_integrity"]
+    assert integrity["status"] == "validated"
+    axial_parent = next(
+        row for row in integrity["groups"]
+        if row["group_id"] == "axial-group-06"
+    )
+    assert axial_parent["original_members"] == [1, 2, 3, 4, 5, 6]
+    assert axial_parent["selected_members"] == [1, 2, 3]
+    assert axial_parent["selection_kind"] == "focused_subset"
+    assert all(
+        slot["parent_group_id"] == slot["geometry_group_id"]
+        for slot in focus["card_metadata"]["slots"]
+    )
+    assert focus["visual_reading_order"] == expected_visual_order
+    assert focus["visual_groups"] == [
+        {
+            "group_id": "sagittal-pair-right-paracentral",
+            "column": 1,
+            "patient_plane": "right_paracentral_plane",
+            "same_patient_plane": True,
+            "reading_order": "top_to_bottom",
+            "slots": ["sagittal_t2.right_paracentral_plane"],
+        },
+        {
+            "group_id": "sagittal-pair-midline",
+            "column": 2,
+            "patient_plane": "midline_plane",
+            "same_patient_plane": True,
+            "reading_order": "top_to_bottom",
+            "slots": ["sagittal_t2.midline_plane"],
+        },
+        {
+            "group_id": "sagittal-pair-left-paracentral",
+            "column": 3,
+            "patient_plane": "left_paracentral_plane",
+            "same_patient_plane": True,
+            "reading_order": "top_to_bottom",
+            "slots": ["sagittal_t2.left_paracentral_plane"],
+        },
+        {
+            "group_id": "axial-level-sequence",
+            "column": None,
+            "patient_plane": "level_bound_axial_slab",
+            "same_patient_plane": False,
+            "reading_order": "left_to_right",
+            "slots": [
+                "axial_t2.disc_level_plane",
+                "axial_t2.max_abnormality_plane",
+                "axial_t2.caudal_extent_plane",
+            ],
+        },
+    ]
+    assert focus["sequence_border_legend"] == {
+        "sagittal_t2": "cyan",
+        "sagittal_t1": "amber",
+        "axial_t2": "violet",
+        "diagnostic_meaning": False,
+    }
+    assert len(focus["sagittal_t2_source_slices"]) == 3
+    assert focus["sagittal_t2_source_slices"] == [3, 5, 7]
+    assert focus["sagittal_t1_source_slices"] == []
+    assert focus["axial_capture_frames"] == [1, 2, 3]
+    assert "FOCUSED V5 ATOMIC STRUCTURE CARDS" in package.header
+    assert "VOL labels are source-volume indices" in package.header
+    assert "Read the printed sagittal groups first" in package.header
+    assert "sequence identity only, never diagnostic meaning" in package.header
+    assert "Only the printed disc question is under review" in package.images[0].caption
+    payload_order = package.images[0].card_payload["card_metadata"]["layout"][
+        "visual_reading_order"
+    ]
+    assert payload_order[:3] == expected_visual_order[:3]
+
+
+def test_five_plane_fallback_orders_distinct_sagittal_slices_by_patient_lps():
+    z, y, x = np.indices((11, 64, 64), dtype=np.float32)
+    volume = SeriesVolume(
+        pixels=z + y + x,
+        origin=(-24.0, 0.0, 0.0),
+        spacing=(1.0, 1.0, 4.8),
+        direction=(0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0),
+        plane="sagittal",
+    )
+    point = volume.continuous_index_to_patient((32.0, 32.0, 5.0))
+
+    indices = focus_evidence._fallback_sagittal_indices(volume, point)
+
+    assert indices == (1, 3, 5, 7, 9)
+    patient_x = [
+        volume.continuous_index_to_patient((32.0, 32.0, index))[0]
+        for index in indices
+    ]
+    assert patient_x == sorted(patient_x)
+    assert len(set(indices)) == 5
+
+
+def test_diagnostic_subset_rejects_a_member_outside_its_parent_group():
+    with pytest.raises(
+        focus_evidence.FocusedEvidenceError,
+        match="outside immutable group axial-group-01",
+    ):
+        focus_evidence._diagnostic_group_integrity([{
+            "slot": "axial_t2.max_abnormality_plane",
+            "role": "axial_t2",
+            "source_slice": None,
+            "capture_frame": 4,
+            "geometry_group_id": "axial-group-01",
+            "parent_group_id": "axial-group-01",
+            "parent_group_members": [1, 2, 3],
+        }])
+
+
+def test_five_plane_fallback_does_not_follow_a_lateral_lesion_anchor():
+    z, y, x = np.indices((11, 64, 64), dtype=np.float32)
+    volume = SeriesVolume(
+        pixels=z + y + x,
+        origin=(-24.0, 0.0, 0.0),
+        spacing=(1.0, 1.0, 4.8),
+        direction=(0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0),
+        plane="sagittal",
+    )
+    lateral_lesion_point = volume.continuous_index_to_patient((32.0, 32.0, 1.0))
+
+    indices = focus_evidence._fallback_sagittal_indices(
+        volume, lateral_lesion_point
+    )
+
+    assert indices == (1, 3, 5, 7, 9)
+
+
+def test_level_card_fallback_uses_distinct_same_slab_axials_and_binds_card_json(
+    tmp_path, patched_volumes
+):
+    """A missing Gemini template must not relabel one axial frame three times."""
+    structured = {
+        "schema_version": "2.5.0",
+        "findings": [{
+            "attention_id": "attention-01",
+            "structure": "disc", "assessment": "abnormal", "level": "L5-S1",
+            "laterality": "indeterminate", "confidence": "high",
+            "visual_salience": "marked", "within_study_priority": "dominant",
+            "slice_persistence": "three_or_more_adjacent_slices",
+            "observable_features": {"contour_change": "marked"},
+            "locations": [], "key_frames": {"axial": [6], "sagittal": []},
+            "geometry": {"status": "verified_single_plane"},
+        }],
+    }
+    package = focus_evidence.prepare_verification_package(
+        _package(tmp_path),
+        "LEVEL MAP\n  L5-S1: axial frames 1-6",
+        structured,
+        None,
+        mode="focused-v5-level-cards",
+    )
+
+    manifest = _manifest(package.session_dir, "focused-v5-level-cards")
+    focus = manifest["focuses"][0]
+    assert len(focus["axial_capture_frames"]) == 3
+    assert all(1 <= frame <= 6 for frame in focus["axial_capture_frames"])
+    assert focus["card_metadata"]["structures"][0]["structure"] == "disc"
+    assert "observable_features" not in focus["card_metadata"]["structures"][0]
+    assert focus["card_metadata"]["structures"][0]["abnormality_magnitude"] == "marked"
+    assert package.images[0].caption.count("CARD_METADATA_JSON") == 1
+    assert "CARD_METADATA_JSON: {" not in package.images[0].caption
+    card_metadata = package.images[0].card_payload["card_metadata"]
+    assert card_metadata == focus["card_metadata"]
+    assert card_metadata["template_id"] == "mri.lumbar_spine.diagnosis.disc"
+    assert card_metadata["tile_scores_are_diagnostic_severity"] is False
+    assert card_metadata["structure_checklist"]["disc"] == (
+        "abnormal_screening_attention"
+    )
+    assert set(card_metadata["structure_checklist"]) == {"disc"}
+    assert card_metadata.get("required_companion_assessments") in (None, [])
+    assert all(
+        "markers" not in slot["reference_locator"]
+        for slot in card_metadata["slots"]
+    )
+
+
+def test_unclear_abnormality_becomes_one_additional_findings_card(
+    tmp_path, patched_volumes
+):
+    """An abnormal focus outside a named disc interval must not be discarded."""
+    structured = {
+        "schema_version": "2.5.0",
+        "findings": [{
+            "attention_id": "attention-09",
+            "structure": "bone_marrow", "assessment": "abnormal", "level": "unclear",
+            "vertebra": "L2", "laterality": "not_applicable", "confidence": "moderate",
+            "visual_salience": "definite", "within_study_priority": "secondary",
+            "slice_persistence": "two_adjacent_slices",
+            "observable_features": {"signal_change": "definite"},
+            "locations": [{
+                "pane": "sagittal_t2", "source_slice": 5,
+                "capture_frame": None, "box_2d": [400, 400, 500, 500],
+            }],
+            "key_frames": {"axial": [], "sagittal": []},
+            "geometry": {"status": "verified_single_plane"},
+        }],
+    }
+    package = focus_evidence.prepare_verification_package(
+        _package(tmp_path), "LEVEL MAP", structured, None,
+        mode="focused-v5-level-cards",
+    )
+
+    assert len(package.images) == 1
+    assert "ADDITIONAL FINDINGS CARD" in package.images[0].caption
+    manifest = _manifest(package.session_dir, "focused-v5-level-cards")
+    assert manifest["focuses"][0]["card_kind"] == "additional_findings_card"
+    assert manifest["focuses"][0]["attention_ids"] == ["attention-09"]
+    card = package.images[0]
+    card_json_path = card.path.with_suffix(".card.json")
+    assert card_json_path.is_file()
+    additional_payload = json.loads(card_json_path.read_text(encoding="utf-8"))
+    assert additional_payload == card.card_payload
+    assert additional_payload["image_index"] == 1
+    assert additional_payload["card_metadata"]["card_kind"] == "additional_findings"
+    assert additional_payload["card_metadata"]["subject_level"] is None
+    assert "screening_focus_without_allowlisted_level" not in manifest["warnings"]
+
+
+def test_t1_slots_are_geometry_synchronized_to_the_selected_t2_planes(
+    tmp_path, patched_volumes
+):
+    slot_names = (
+        "sagittal_t2.right_foraminal_plane",
+        "sagittal_t2.right_paracentral_plane",
+        "sagittal_t2.midline_plane",
+        "sagittal_t2.left_paracentral_plane",
+        "sagittal_t2.left_foraminal_plane",
+        "sagittal_t1.right_foraminal_plane",
+        "sagittal_t1.right_paracentral_plane",
+        "sagittal_t1.midline_plane",
+        "sagittal_t1.left_paracentral_plane",
+        "sagittal_t1.left_foraminal_plane",
+    )
+    structured = {
+        "findings": [{
+            "attention_id": "attention-01", "structure": "endplate",
+            "assessment": "abnormal", "level": "L5-S1", "confidence": "high",
+            "visual_salience": "marked", "within_study_priority": "dominant",
+            "slice_persistence": "three_or_more_adjacent_slices",
+            "locations": [], "key_frames": {"axial": [3]},
+        }],
+        "level_card_templates": [{
+            "level": "L5-S1", "slots": [
+                {
+                    "slot": name, "role": name.split(".", 1)[0],
+                    "source_slice": (
+                        (3, 4, 5, 6, 7)[index] if index < 5 else 1
+                    ),
+                    "capture_frame": None,
+                }
+                for index, name in enumerate(slot_names)
+            ],
+        }],
+    }
+    package = focus_evidence.prepare_verification_package(
+        _package(tmp_path), "LEVEL MAP\n  L5-S1: axial frames 1-6",
+        structured, None, mode="focused-v5-level-cards",
+    )
+
+    focus = _manifest(package.session_dir, "focused-v5-level-cards")["focuses"][0]
+    assert len(focus["sagittal_t1_source_slices"]) == 3
+    assert focus["sagittal_t1_source_slices"] == focus["sagittal_t2_source_slices"]
+    assert any(
+        slot["selection"] == "local_geometry_t1_t2_sync"
+        for slot in focus["card_slots"] if slot["role"] == "sagittal_t1"
+    )
+
+
+def test_edge_locator_draws_only_bounded_ticks_not_an_interior_reference_line():
+    z, y, x = np.indices((5, 128, 128), dtype=np.float32)
+    sagittal = SeriesVolume(
+        pixels=z + y + x,
+        origin=(-2.0, 0.0, 0.0),
+        spacing=(1.0, 1.0, 1.0),
+        direction=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        plane="sagittal",
+        frame_of_reference_uid="1.2.3",
+        source_geometry_verified=True,
+    )
+    axial_source = DicomSlice(
+        pixels=np.ones((128, 128), dtype=np.float32),
+        position_lps=(-64.0, -64.0, 64.0),
+        orientation_lps=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        pixel_spacing=(1.0, 1.0),
+        source_ordinal=1,
+        frame_of_reference_uid="1.2.3",
+    )
+    axial = focus_evidence._CapturedAxialSlice(
+        capture_frame=7,
+        capture_position_lps=axial_source.position_lps,
+        source=axial_source,
+    )
+
+    markers, audit = focus_evidence._edge_locator(
+        sagittal, 2, (0, 0, 128, 128), axial
+    )
+
+    assert audit["status"] == "included"
+    assert audit["diagnostic_interior_line_drawn"] is False
+    assert len(markers) == 2

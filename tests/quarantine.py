@@ -49,8 +49,6 @@ QUARANTINE = {
         ("UNTRIAGED", "AssertionError: assert 'http' == 'permission'"),
     "tests/code/system/test_mpr_tool_autoexit.py::test_auto_exit_cleans_empty_views_keeps_completed_and_fires_callback":
         ("UNTRIAGED", "assert (False is True)"),
-    "tests/code/test_home_info_panel.py::test_persian_edition_data_complete":
-        ("UNTRIAGED", "AssertionError: assert 'AI-PACS Version 3.2.8' in 'AI-PACS Version 3.5.2 This edition has been customized and localized for Persian-speaking users at the request of our... healthca"),
     "tests/code/test_notify_malformed_dispatch_guard.py::test_malformed_dispatch_returns_false_not_raise":
         ("UNTRIAGED", "assert 'raise' not in 'if _malform...           ''"),
     "tests/code/test_right_panel_input_sync_guard.py::test_immediate_renderer_defers_under_gate":

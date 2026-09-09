@@ -425,7 +425,7 @@ def test_resolve_mode_keeps_mg_and_dx_unconditional():
     assert modes.resolve_eagle_eye_mode("MG", []) == modes.MODE_MAMMOGRAPHY
     assert modes.resolve_eagle_eye_mode("DX", []) == modes.MODE_BONE_AGE
     assert modes.resolve_eagle_eye_mode("MR", ["MRI LUMBAR SPINE"]) == modes.MODE_LUMBAR_MRI
-    assert modes.resolve_eagle_eye_mode("MR", ["MRI BRAIN"]) is None
+    assert modes.resolve_eagle_eye_mode("MR", ["MRI BRAIN"]) == modes.MODE_BRAIN_MRI
     assert modes.resolve_eagle_eye_mode("CT", ["LUMBAR"]) is None
 
 

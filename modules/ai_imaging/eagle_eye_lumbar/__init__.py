@@ -12,9 +12,12 @@ Package layout
 ``series_probe``       builds classifier candidates from a loaded PatientWidget.
 ``session_store``      on-disk session + JSON manifests.
 ``capture_controller`` Qt-side, timer-driven sweep over the 3x1 Eagle Eye layout.
-``evidence_bundle``    optional model-facing evidence composition.
+``evidence_bundle``    canonical V5 level-card selection and rollback policy.
 ``evidence_request``   bounded model-attention normalization and focus planning.
-``focus_evidence``     worker-side focused-v2 DICOM composite construction.
+``screening_evidence`` source-grounded DICOM screening atlas construction.
+``anatomy_cards``     anatomy-only mapping validation and Gate 1-to-2 cards.
+``screening_attention``canonical diagnosis-free attention handoff.
+``focus_evidence``     worker-side lesion-centred verification evidence.
 ``clinical_context``   bounded clinical-document attachment package.
 ``llm_runner``         off-thread bridge to the shared EchoMind/GapGPT transport.
 ``workflow_coordinator`` capture, analysis, result, retry, and teardown lifecycle.

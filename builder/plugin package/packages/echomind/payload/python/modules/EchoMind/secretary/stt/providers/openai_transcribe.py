@@ -18,7 +18,7 @@ class OpenAITranscribeProvider:
         cfg = get_openai_settings()
         api_key = str(cfg.get("api_key") or "").strip()
         model = get_openai_model_for_feature("transcription", "gpt-4o-transcribe")
-        base_url = str(cfg.get("base_url") or "https://api.openai.com/v1").strip().rstrip("/")
+        base_url = str(cfg.get("base_url") or "").strip().rstrip("/")
         organization = str(cfg.get("organization") or "").strip()
         project = str(cfg.get("project") or "").strip()
 
@@ -30,6 +30,11 @@ class OpenAITranscribeProvider:
                 "transcript": "",
                 "files": [],
             }
+
+        if not base_url:
+            return {"ok": False, "provider": self.name,
+                    "error": "Enter your provider Base URL in EchoMind OpenAI settings.",
+                    "transcript": "", "files": []}
 
         headers = {"Authorization": f"Bearer {api_key}"}
         if organization:

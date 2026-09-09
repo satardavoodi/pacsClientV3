@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from typing import Tuple
 
 
-GRADING_CATALOG_VERSION = "1.0.0"
+# Version 1.0.0 mislabeled a root contact/deviation/compression ladder as
+# Bartynski. Do not reinterpret saved grades from that catalog as version 2.
+GRADING_CATALOG_VERSION = "2.0.0"
+ROOT_OBSERVATION_VERSION = "1.0.0"
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,8 @@ NEURAL_FORAMEN = GradingSystem(
 )
 
 
+# Bartynski and Lin (2003), Table 1 and Figure 2:
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC7973614/
 LATERAL_RECESS = GradingSystem(
     id="bartynski_lateral_recess",
     target="lateral_recess_stenosis",
@@ -121,25 +126,45 @@ LATERAL_RECESS = GradingSystem(
         GradeDefinition(
             1,
             "mild",
-            "The lateral recess is narrowed or contacts the traversing nerve "
-            "root without nerve-root deviation.",
+            "Recess narrowing with no objective compression or flattening of "
+            "the root; deviation alone does not establish grade 2.",
         ),
         GradeDefinition(
             2,
             "moderate",
-            "Lateral recess narrowing produces definite nerve-root deviation "
-            "without compression.",
+            "Greater recess narrowing with the root flattened or widened, "
+            "but residual CSF remains around the root in the recess.",
         ),
         GradeDefinition(
             3,
             "severe",
-            "Lateral recess narrowing produces definite nerve-root compression.",
+            "Severe nerve-root compression with obliteration of recess CSF.",
         ),
     ),
 )
 
 
 LUMBAR_STENOSIS_SYSTEMS = (CENTRAL_CANAL, NEURAL_FORAMEN, LATERAL_RECESS)
+
+
+@dataclass(frozen=True)
+class RootObservation:
+    """An effect on a root, not a stenosis severity or disc morphology."""
+
+    effect: str
+    criteria: str
+
+
+# Pfirrmann et al. (2004), nerve-root compromise, NOT disc degeneration:
+# https://pubmed.ncbi.nlm.nih.gov/14699183/
+# Keep effect words in the existing finding/reason fields. Do not overload
+# the stenosis-only grade_system/grade fields with a second ordinal scale.
+ROOT_OBSERVATIONS = (
+    RootObservation("none", "No root compromise is demonstrated."),
+    RootObservation("contact", "Disc material touches the root without displacement or compression."),
+    RootObservation("deviation", "The root is displaced without compression."),
+    RootObservation("compression", "The root is compressed with altered morphology."),
+)
 
 
 def prompt_rubric() -> str:
@@ -165,6 +190,22 @@ def prompt_rubric() -> str:
         for grade in system.grades:
             lines.append(
                 f"  Grade {grade.value} / {grade.severity}: {grade.criteria}")
+    lines.extend((
+        "",
+        "ROOT COMPROMISE OBSERVATIONS (Pfirrmann, 2004)",
+        f"Root observation contract version: {ROOT_OBSERVATION_VERSION}",
+        "This is not Pfirrmann disc-degeneration grading.",
+        "Record root identity, patient side and observed effect separately;",
+        "keep root observations in the finding/reason text, not stenosis grade fields.",
+    ))
+    for observation in ROOT_OBSERVATIONS:
+        lines.append(f"  {observation.effect}: {observation.criteria}")
+    lines.extend((
+        "Do not equate root-effect categories with lateral-recess grades.",
+        "Assess recess morphology and residual recess CSF independently of root deviation.",
+        "A CSF-area asymmetry alone establishes neither a grade nor patient laterality.",
+        "If the root or recess cannot be assessed, state that limitation; do not infer normality.",
+    ))
     return "\n".join(lines) + "\n"
 
 

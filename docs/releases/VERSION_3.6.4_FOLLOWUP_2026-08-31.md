@@ -102,6 +102,9 @@ documented in the credential-hardening release notes.
   evidence that the new source was compiled.
 - For a source rollback, revert this publication commit with a new reviewed commit; do not reset
   or force-push shared branches. Preserve local settings, clinical data, and generated artifacts.
-- For evidence-mode rollback, use `AIPACS_EAGLE_EYE_EVIDENCE_MODE=layout` and restart through the
-  normal human-controlled source workflow. This disables experimental evidence preparation, not
-  every prompt change in this batch.
+- The current Eagle Eye runtime uses canonical `focused-v4-correlated`. Retired evidence profiles
+  are not normal application settings. An engineering-only rollback requires both
+  `AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE=1` and an explicit
+  `AIPACS_EAGLE_EYE_EVIDENCE_MODE=<retired-mode>`, followed by the normal human-controlled source
+  restart. This preserves reproducibility without allowing a stale legacy value to downgrade the
+  routine runtime.

@@ -2,6 +2,20 @@
 
 Verified: 2026-08-31. Companion: [core control runbook](ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md).
 
+Implementation follow-up: [offline lumbar MR segmentation](ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md)
+documents the subsequently prepared TotalSegmentator CPU bundle, dedicated Slicer adapter,
+and combined installer integration. The source-audit table below retains its original
+inspection status; it is not the current implementation inventory.
+
+**Live UI update, 2026-08-31:** the user confirmed that the custom Advanced
+Analysis viewer opens and responds after the launch-safeguard and hidden-modal
+repairs. Our **AI-PACS Offline Lumbar** extension is the implemented local
+TotalSegmentator adapter; MONAI/MedSAM entries below remain individually scoped
+research/integration candidates. A working viewer does not establish that every
+third-party extension GUI works, or that a clinical segmentation is accurate.
+For the current execution procedure and LLM-versus-model boundary, see the
+[control runbook](ADVANCED_ANALYSIS_SLICER_CONTROL_RUNBOOK.md#current-live-status-and-first-lumbar-model-demonstration).
+
 **Third-party extension calculations can be exposed through the same local bridge and a future MCP adapter. This was demonstrated with one downloaded extension on our existing custom runtime. It does not mean every extension installs or runs unchanged, or that its GUI will load.**
 
 The practical recommendation is to use a separate adapter for each selected extension, preinstall and pin its dependencies outside inference requests, and qualify its computation and GUI separately. There is no automatic rule that every installed extension becomes a safe MCP tool.
@@ -216,4 +230,4 @@ Do not expose install/update/uninstall, arbitrary Python, free-form Docker argum
 
 For every candidate record: source/package/model hashes; license terms; supported modality/sequences; dependencies and GPU/CPU requirements; parameter schema; patient-data destinations; import and geometry tests; synthetic/reference-case results; performance; cancellation; saved-output roundtrip; and rollback.
 
-Rollback should restore a versioned analysis environment and remove only its owned module-path configuration. Do not rely on pip uninstall to reconstruct a modified shipped runtime. No production installation, model inference, GUI repair, or clinical accuracy claim is part of this completed documentation task.
+Rollback should restore a versioned analysis environment and remove only its owned module-path configuration. Do not rely on pip uninstall to reconstruct a modified shipped runtime. The original extension research audit did not perform a production installation or establish clinical accuracy. Subsequent model implementation and viewer repairs are tracked in the linked implementation guides and must not be confused with that historical audit.

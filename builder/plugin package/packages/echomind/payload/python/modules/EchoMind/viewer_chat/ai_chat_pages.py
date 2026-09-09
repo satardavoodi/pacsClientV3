@@ -6241,14 +6241,23 @@ class OneChatPage(QWidget):
         • accepted audio
         • rejected audio + detailed criteria
         • silence
-        • automatic one-shot fallback: a "clear"-mode failure (rejection,
-          silence, or network error) is auto-resent once in "noisy" mode
+        • one-shot noisy fallback for clear-mode rejection or empty text on
+          providers supporting quality_mode; transport retries keep clear mode
         • displays metrics bubble
         • removes voice chip only when success
 
-        quality_mode : "clear" (default, first attempt) or "noisy" (retry).
+        quality_mode : "clear" by default; explicit user choice on first attempt,
+                       or the mode selected by the retry handler.
         _is_retry    : internal — True only for the auto-fallback resend.
         """
+        if not _is_retry:
+            # Signal payloads carry the file-picker choice; microphone/resend
+            # payloads use the composer's selection. Never override a retry.
+            selected_mode = (payload or {}).get(
+                "quality_mode", getattr(self.composer, "_transcribe_quality_mode", "clear")
+            )
+            quality_mode = selected_mode if selected_mode in ("clear", "noisy") else "clear"
+
         # Also warm the reception cache here: an audio file dropped straight into the
         # composer never passes through _start_record, so it would otherwise miss the
         # one idle window we have. A duplicate call costs nothing — prefetch() is

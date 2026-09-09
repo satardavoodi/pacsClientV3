@@ -1,5 +1,11 @@
 # Build Document
 
+> **Scope and precedence:** this generated knowledge base describes PyInstaller
+> internals. For any current packaging task, start at
+> [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md),
+> then follow root `RELEASE.md` and `BUILD.md`. Older commands below are not a
+> release entry point.
+
 Last updated (UTC): `2026-02-23T23:03:54.106807+00:00`
 
 This is the long-lived build knowledge base for packaging this repository on Windows using the **PyInstaller-based builder** in `builder/`. Re-run the audit (`builder/audit/scripts/run_audit.py`) and regenerate this document (`builder/audit/scripts/generate_build_docs.py`) whenever imports/dependencies/resources/runtime paths change.

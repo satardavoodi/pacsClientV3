@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from builder.plugin_package_registry import load_plugin_package_definitions  # noqa: E402
+from builder.build_release import load_version  # noqa: E402
 
 
 OPTIONAL_PLUGIN_MODULES = [
@@ -111,6 +112,10 @@ def run_checks(py_stage: Path, nuitka_stage: Path, nuitka_reports: Path, require
     nu_feed_map = _feed_map(nu_feed)
 
     _compare("app_version", py_profile.get("app_version"), nu_profile.get("app_version"), failures)
+    source_version = load_version()
+    for label, profile in (("PyInstaller", py_profile), ("Nuitka", nu_profile)):
+        _compare(label + " source app_version", profile.get("app_version"), source_version, failures)
+        _compare(label + " source installer version", profile.get("installer", {}).get("current_version"), source_version, failures)
     _compare("modules map", py_profile.get("modules"), nu_profile.get("modules"), failures)
     _compare("installer.current_version", py_profile.get("installer", {}).get("current_version"), nu_profile.get("installer", {}).get("current_version"), failures)
 

@@ -28,6 +28,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -38,6 +39,24 @@ from modules.ai_imaging.eagle_eye_lumbar import analysis_store as astore     # n
 from modules.ai_imaging.eagle_eye_lumbar import llm_backend as backend       # noqa: E402
 from modules.ai_imaging.eagle_eye_lumbar import llm_package as pkg           # noqa: E402
 from modules.ai_imaging.eagle_eye_lumbar import protocols as protos          # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _generic_transport_tests_use_the_explicit_legacy_kill_switch(monkeypatch):
+    """Keep synthetic transport tests independent of source-DICOM Gate 1 setup."""
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE", "0")
+    from modules.EchoMind import settings_store
+    from modules.ai_imaging.eagle_eye_lumbar import clinical_context
+
+    # Tests of direct transport must provide explicit model choices; they must
+    # neither inherit workstation credentials nor rely on company defaults.
+    config = settings_store._defaults()
+    config.update(openai_eagle_eye_model="synthetic-diagnosis-model",
+                  openai_eagle_eye_screening_model="synthetic-screening-model")
+    monkeypatch.setattr(settings_store, "load_settings", lambda: dict(config))
+    monkeypatch.setattr(backend, "company_entitlement_error", lambda: "")
+    monkeypatch.setattr(clinical_context, "_default_reception_fetch", lambda *_a: None)
+    monkeypatch.setattr(clinical_context, "_default_history_fetch", lambda *_a, **_k: [])
 
 # A 1x1 PNG. The package must never care what is IN the image.
 _PNG = bytes.fromhex(
@@ -310,6 +329,31 @@ def test_the_request_records_the_model_and_the_full_prompt_text(session):
     assert len(document["prompt"]["text"]) > 1000
 
 
+def test_the_request_records_each_diagnostic_card_payload_once(session):
+    package = pkg.build_package(session)
+    card_payload = {
+        "schema_version": "1.0.0",
+        "image_index": 1,
+        "image_file": package.images[0].path.name,
+        "card_metadata": {
+            "card_id": "focus-01",
+            "card_kind": "lumbar_level",
+            "subject_level": "L5-S1",
+            "attention_ids": ["attention-03"],
+        },
+    }
+    package.images[0].card_payload = card_payload
+
+    document = package.request_document(package.analysis.stages[-1])
+
+    assert document["sent"]["card_payloads"] == [card_payload]
+    assert document["sent"]["images"][0]["card_payload"] == card_payload
+    assert all(
+        "card_payload" not in image
+        for image in document["sent"]["images"][1:]
+    )
+
+
 # ---------------------------------------------------------------------------
 # 5. The pipeline is versioned AND fingerprinted, per stage and as a whole
 # ---------------------------------------------------------------------------
@@ -362,21 +406,28 @@ def test_a_stored_result_can_be_traced_back_to_its_prompts():
         assert "text" not in entry
 
 
-def test_both_stages_carry_the_shared_package_rules():
-    """The two passes must not come to disagree about what they are reading."""
-    for stage in (prompts.LUMBAR_SCREENING, prompts.LUMBAR_VERIFICATION):
-        text = stage.text
-        assert "Read diagnostically from the panes with NO reference line" in text
-        assert "never describe where a FINDING is" in text
+def test_each_image_reader_has_the_correct_evidence_format_contract():
+    """Screening reads the DICOM atlas; verification retains layout fallback rules."""
+    screening = prompts.LUMBAR_SCREENING.text
+    screening_one_line = " ".join(screening.split())
+    verification = prompts.LUMBAR_VERIFICATION.text
+
+    assert "SOURCE-GROUNDED CORRELATED ATLAS" in screening
+    assert "rendered from immutable DICOM sources, not workstation screenshots" in screening_one_line
+    assert "If the header explicitly declares a layout fallback" in screening_one_line
+    assert "Read diagnostically from the panes with NO" in screening
+    assert "Read diagnostically from the panes with NO reference line" in verification
+    assert "never describe where a FINDING is" in verification
+    for text in (screening, verification):
         assert "Never judge signal from brightness ACROSS different frames" in text
         assert "monotonic" in text
 
 
-def test_both_image_readers_use_preserved_central_t2_signal_against_desiccation():
+def test_diagnostic_reader_retains_desiccation_control():
     """A hydrated nucleus must not be mistaken for a desiccated disc merely
     because the peripheral annulus is dark or the disc is not uniformly bright.
     """
-    for stage in (prompts.LUMBAR_SCREENING, prompts.LUMBAR_VERIFICATION):
+    for stage in (prompts.LUMBAR_VERIFICATION,):
         text = stage.text
         one_line = " ".join(text.split())
         assert "DISC HYDRATION / DESICCATION FALSE-POSITIVE CONTROL" in text
@@ -388,29 +439,29 @@ def test_both_image_readers_use_preserved_central_t2_signal_against_desiccation(
         assert "Do not call desiccation from axial T2 alone" in one_line
 
 
-def test_stage_one_screens_broadly_and_names_the_osseous_categories():
-    """The owner's complaint about v1: the read was almost all discs."""
+def test_stage_one_screens_anatomy_without_diagnostic_categories():
     text = prompts.LUMBAR_SCREENING.text
-    assert "DETECTION, not adjudication" in text
-    assert "DO NOT LIMIT YOURSELF TO DISCS" in text
-    for token in ("marginal vertebral osteophytes", "endplate osteophytes",
-                  "posterior\n  disc-osteophyte complex", "facet hypertrophy",
-                  "ligamentum\n  flavum hypertrophy", "Modic-type marrow change",
-                  "anterolisthesis", "retrolisthesis"):
-        assert token in text, token
-    assert "CANDIDATE FINDINGS" in text
+    for token in ("disc", "endplate", "bone_marrow", "vertebral_body",
+                  "facet_joint", "ligamentum_flavum", "alignment", "nerve_root"):
+        assert token in text
+    assert "SCREENING ATTENTION" in text
+    assert "Do NOT name a disease, differential, morphology subtype, grade or severity" in text
 
 
-def test_screening_preserves_a_pathology_focus_when_morphology_is_uncertain():
+
+def test_screening_preserves_a_focus_without_classifying_its_cause():
     text = " ".join(prompts.LUMBAR_SCREENING.text.split())
-    assert "The primary obligation is to preserve the abnormal focus" in text
-    assert "A screening label is a working hypothesis" in text
-    assert "disc_displacement_indeterminate" in text
-    assert "Do not omit displaced disc material because its exact morphology" in text
+    assert "Uncertainty about the cause must not suppress a focus" in text
+    assert "Confidence means confidence in abnormal PRESENCE" in text
+    assert "diagnostic classification" in text
+    assert "disc_displacement_indeterminate" not in text
+    assert "dark annulus alone is not an abnormal focus" in text
+    assert "unknown is NEVER normal" in text
 
 
-def test_both_image_readers_share_the_disc_displacement_morphology_contract():
-    for stage in (prompts.LUMBAR_SCREENING, prompts.LUMBAR_VERIFICATION):
+
+def test_diagnostic_reader_retains_the_disc_morphology_contract():
+    for stage in (prompts.LUMBAR_VERIFICATION,):
         text = " ".join(stage.text.split())
         assert "DISC DISPLACEMENT MORPHOLOGY CONTRACT" in text
         assert "more than 25 percent of the disc circumference" in text
@@ -435,9 +486,9 @@ def test_both_image_readers_report_patient_laterality_not_screen_side():
         assert "laterality is indeterminate" in text
 
 
-def test_both_image_readers_fuse_the_same_lesion_across_planes_for_morphology():
+def test_diagnostic_reader_fuses_the_same_lesion_across_planes():
     """A partial axial cut must not outvote the sagittal extrusion feature."""
-    for stage in (prompts.LUMBAR_SCREENING, prompts.LUMBAR_VERIFICATION):
+    for stage in (prompts.LUMBAR_VERIFICATION,):
         text = " ".join(stage.text.split())
         assert "LESION IDENTITY BEFORE MORPHOLOGY" in text
         assert "the same disc level and the same displaced component" in text
@@ -447,6 +498,31 @@ def test_both_image_readers_fuse_the_same_lesion_across_planes_for_morphology():
         assert "Axial T2 may intersect only the neck or a smaller portion" in text
 
 
+def test_both_readers_share_the_fixed_level_card_slot_contract():
+    screening = prompts.LUMBAR_SCREENING.text
+    verification = prompts.LUMBAR_VERIFICATION.text
+    for slot in (
+        "right_foraminal_plane",
+        "right_paracentral_plane",
+        "midline_plane",
+        "left_paracentral_plane",
+        "left_foraminal_plane",
+        "disc_level_plane",
+        "max_abnormality_plane",
+        "caudal_extent_plane",
+    ):
+        assert slot in screening
+        assert slot in verification
+    assert "level_card_templates" in screening
+    assert "Use null rather than inventing a source tile" in screening
+    assert "Do not select five consecutive sagittal slices" in screening
+    assert "one intervening source slice" in screening
+    assert "one intervening source slice" in verification
+    assert "central/subarticular/foraminal/extraforaminal" in verification
+    assert "discal/pedicular/infrapedicular" in verification
+    assert "not interchangeable" in verification
+
+
 def test_stage_two_challenges_rather_than_re_reads():
     """"Look again" is not verification - it must name where each abnormality
     is actually decided, and be able to reject."""
@@ -454,17 +530,14 @@ def test_stage_two_challenges_rather_than_re_reads():
     one_line = " ".join(text.split())
     assert "TREAT EVERY PRELIMINARY FINDING AS A HYPOTHESIS" in text
     assert "A candidate is not evidence" in text
-    assert "Apply the shared morphology contract to sagittal and axial T2" in one_line
+    assert "Apply the diagnostic morphology contract to sagittal and axial T2" in one_line
     assert "A convincing sagittal extrusion is not downgraded to bulge" in one_line
     assert "SAGITTAL T1 first - perineural foraminal fat is the finding" in text
     assert "Preserved foraminal fat on T1\n  rejects the candidate" in text
     assert "Confirm on AXIAL images" in text
     for status in (
         "CONFIRMED",
-        "RECLASSIFIED",
         "REFINED",
-        "UPGRADED",
-        "DOWNGRADED",
         "REJECTED",
         "INDETERMINATE",
         "ADDED",
@@ -476,7 +549,7 @@ def test_stage_two_challenges_rather_than_re_reads():
 def test_verification_uses_screening_context_and_mri_as_distinct_authorities():
     text = " ".join(prompts.LUMBAR_VERIFICATION.text.split())
     assert "THREE INPUTS, THREE DIFFERENT AUTHORITIES" in text
-    assert "SCREENING CANDIDATES define the attention foci" in text
+    assert "SCREENING ATTENTION AND CARD BINDINGS define the diagnostic tasks" in text
     assert "CLINICAL AND EXAMINATION CONTEXT ranks and expands" in text
     assert "MRI IMAGES decide whether pathology is present" in text
     assert "Context can change what you test, never what the MRI proves" in text
@@ -486,16 +559,16 @@ def test_verification_reclassifies_a_positive_focus_instead_of_rejecting_its_lab
     text = prompts.LUMBAR_VERIFICATION.text
     one_line = " ".join(text.split())
     assert "HIGH SPECIFICITY APPLIES TO THE FINAL DIAGNOSIS" in text
-    assert "A wrong screening label is not the same as absent pathology" in one_line
-    assert "never use REJECTED merely because the screening label was wrong" in one_line
+    assert "Uncertain subtype is not proof of normality" in one_line
+    assert "Do not inherit a diagnostic label from screening or context" in one_line
     assert "NORMAL / NON-PATHOLOGICAL ALTERNATIVE" in text
     for token in (
         '"focus_present": true',
-        '"screening_diagnosis": "broad_based_bulge"',
+        '"screening_diagnosis": null',
         '"alternatives_considered"',
-        '"final_diagnosis": "disc_extrusion"',
-        '"status": "RECLASSIFIED"',
-        '"change_direction": "upgraded"',
+        '"final_diagnosis": "<best_supported_diagnosis_or_null>"',
+        '"status": "<CONFIRMED|REFINED|REJECTED|INDETERMINATE|ADDED>"',
+        '"change_direction": "none"',
     ):
         assert token in text
     assert "false positive is worse than a miss" not in text
@@ -511,7 +584,7 @@ def test_stage_two_is_an_ADJUDICATOR_not_only_a_re_read():
     one_line = " ".join(text.split())
     assert "USE A HIGH-SPECIFICITY REPORTING THRESHOLD" in text
     assert "Your\nrole is to adjudicate each focus" in text
-    assert "do not equate a wrong label with absent pathology" in text
+    assert "Morphology classes are not a severity ladder" in text
     assert "you remain obliged to resolve the focus" in text
     # The two questions, stated as two questions.
     assert '"Could this be abnormal?"' in text
@@ -529,7 +602,7 @@ def test_stage_two_is_an_ADJUDICATOR_not_only_a_re_read():
     # pathology at the same focus.
     assert "THE DECISION THRESHOLD" in text
     assert "A confident no rejects that DIAGNOSIS, not automatically the entire focus" in one_line
-    assert "MANDATORY SAFETY SWEEP AFTER THE CANDIDATES" in text
+    assert "CARD-LOCAL SAFETY CHECK" in text
 
 
 def test_the_consequence_test_gates_BORDERLINE_findings_only():
@@ -582,7 +655,7 @@ def test_stenosis_grading_is_a_versioned_domain_contract_not_ad_hoc_prompt_text(
     paragraphs that can drift."""
     from modules.ai_imaging.eagle_eye_lumbar import grading
 
-    assert grading.GRADING_CATALOG_VERSION == "1.0.0"
+    assert grading.GRADING_CATALOG_VERSION == "2.0.0"
     assert grading.CENTRAL_CANAL.id == "lee_central_canal"
     assert grading.CENTRAL_CANAL.primary_sequence == "axial_t2"
     assert [grade.severity for grade in grading.CENTRAL_CANAL.grades] == [
@@ -599,9 +672,12 @@ def test_stenosis_grading_is_a_versioned_domain_contract_not_ad_hoc_prompt_text(
     assert "morphological change" in grading.NEURAL_FORAMEN.grades[3].criteria
 
     assert grading.LATERAL_RECESS.primary_sequence == "axial_t2"
-    assert "without nerve-root deviation" in grading.LATERAL_RECESS.grades[1].criteria
-    assert "nerve-root deviation" in grading.LATERAL_RECESS.grades[2].criteria
+    assert "no objective compression" in grading.LATERAL_RECESS.grades[1].criteria
+    assert "deviation alone" in grading.LATERAL_RECESS.grades[1].criteria
+    assert "flattened or widened" in grading.LATERAL_RECESS.grades[2].criteria
+    assert "residual CSF" in grading.LATERAL_RECESS.grades[2].criteria
     assert "nerve-root compression" in grading.LATERAL_RECESS.grades[3].criteria
+    assert "obliteration of recess CSF" in grading.LATERAL_RECESS.grades[3].criteria
 
     rubric = grading.LUMBAR_STENOSIS_GRADING_PROMPT
     assert "leave the grading fields null" in rubric
@@ -609,20 +685,25 @@ def test_stenosis_grading_is_a_versioned_domain_contract_not_ad_hoc_prompt_text(
     assert "NOT_ASSESSABLE is not a status" in rubric
 
 
-def test_both_passes_receive_the_same_stenosis_grading_rubric():
+def test_only_diagnostic_reader_receives_the_stenosis_grading_rubric():
     """Screening may be inclusive and verification conservative, but the
     meaning of a grade cannot change between readers."""
-    for stage in (prompts.LUMBAR_SCREENING, prompts.LUMBAR_VERIFICATION):
+    for stage in (prompts.LUMBAR_VERIFICATION,):
         text = stage.text
         assert "STENOSIS GRADING CONTRACT" in text
         assert "lee_central_canal" in text
         assert "lee_neural_foramen" in text
         assert "bartynski_lateral_recess" in text
         assert "Do not infer a grade from measurements alone" in text
+        assert "ROOT COMPROMISE OBSERVATIONS (Pfirrmann, 2004)" in text
+        assert "Do not equate root-effect categories with lateral-recess grades" in text
+        assert "Root observation contract version: 1.0.0" in text
+        assert "Pfirrmann disc-degeneration grading" in text
 
     screening_output = prompts.LUMBAR_SCREENING.text.split("OUTPUT", 1)[1]
-    assert '"grade_system": "lee_central_canal"' in screening_output
-    assert '"grade": 1' in screening_output
+    assert '"grade_system"' not in screening_output
+    assert '"grade"' not in screening_output
+    assert "STENOSIS GRADING CONTRACT" not in prompts.LUMBAR_SCREENING.text
 
 
 def test_the_specificity_CALIBRATION_STAYS_OUT_of_stage_one():
@@ -642,9 +723,8 @@ def test_the_specificity_CALIBRATION_STAYS_OUT_of_stage_one():
         assert token not in screening, token
     # Stage 1 is told the OPPOSITE, and told why, so it does not invent its own
     # filter to protect its list.
-    assert "Stay\ninclusive here" in screening
-    assert "the culling is its job, not yours" in screening
-    assert "be systematic and inclusive rather than conservative" in screening
+    assert "Optimize sensitivity for visible abnormal foci" in screening
+    assert "The diagnostic reader alone decides" in screening
 
 
 def test_each_stage_names_its_OWN_model_slot():
@@ -652,25 +732,185 @@ def test_each_stage_names_its_OWN_model_slot():
     single-stage A/B possible without disturbing the report."""
     assert prompts.LUMBAR_SCREENING.model_feature == "eagle_eye_screening"
     assert prompts.LUMBAR_SCREENING.model_default == "gemini-3.1-pro-preview"
-    # The pass the user READS stays put. Change one variable at a time.
+    # Diagnosis uses the same company model with its independent Settings slot.
     assert prompts.LUMBAR_VERIFICATION.model_feature == "eagle_eye"
-    assert prompts.LUMBAR_VERIFICATION.model_default == "gpt-5.6-sol"
+    assert prompts.LUMBAR_VERIFICATION.model_default == "gemini-3.1-pro-preview"
     # ...and the model travels with the stored provenance, or a later
     # comparison cannot tell two runs apart.
     for entry in prompts.LUMBAR_PATHOLOGY.as_dict()["stages"]:
         assert entry["model_default"]
 
 
+def test_eagle_eye_transport_exposes_global_image_numbers_in_model_facing_captions(
+    tmp_path,
+):
+    """Atlas page-local numbering must never masquerade as upload numbering."""
+    from modules.EchoMind.viewer_chat.openai_reporter import build_eagle_eye_user_content
+
+    paths = []
+    for index in range(2):
+        path = tmp_path / f"image-{index + 1}.png"
+        Image.new("L", (8, 8), color=40 + index).save(path)
+        paths.append(path)
+    items = [
+        pkg.PackagedImage(paths[0], "Sagittal T2 atlas page 1", "screening", 1),
+        pkg.PackagedImage(paths[1], "Axial T2 atlas page 1", "screening", 2),
+    ]
+
+    content = build_eagle_eye_user_content("HEADER", items)
+    text_parts = [part["text"] for part in content if part["type"] == "text"]
+    assert text_parts == [
+        "HEADER",
+        "IMAGE 1 OF 2\nSagittal T2 atlas page 1",
+        "IMAGE 2 OF 2\nAxial T2 atlas page 1",
+    ]
+
+
+def test_eagle_eye_transport_places_one_card_json_immediately_before_its_image(
+    tmp_path,
+):
+    from modules.EchoMind.viewer_chat.openai_reporter import build_eagle_eye_user_content
+
+    path = tmp_path / "focus-01_L5_S1.png"
+    Image.new("L", (8, 8), color=80).save(path)
+    card_payload = {
+        "schema_version": "1.0.0",
+        "image_index": 1,
+        "image_file": path.name,
+        "card_metadata": {
+            "card_id": "focus-01",
+            "card_kind": "lumbar_level",
+            "subject_level": "L5-S1",
+            "attention_ids": ["attention-03"],
+        },
+    }
+    item = pkg.PackagedImage(
+        path,
+        "DIAGNOSTIC LEVEL CARD: SUBJECT LEVEL L5-S1",
+        "focus-01",
+        1,
+        card_payload=card_payload,
+    )
+
+    content = build_eagle_eye_user_content("HEADER", [item])
+
+    assert len(content) == 3
+    text_block = content[1]["text"]
+    assert text_block.count("CARD_METADATA_JSON: ") == 1
+    encoded = text_block.split("CARD_METADATA_JSON: ", 1)[1]
+    assert json.loads(encoded) == card_payload
+    assert content[2]["type"] == "image_url"
+
+
+def test_level_card_scope_audit_rejects_cross_card_axial_frame_citations():
+    package = SimpleNamespace(evidence_audit={
+        "evidence_mode": "focused-v5-level-cards",
+        "card_bindings": [
+            {
+                "image_index": 1,
+                "focus_id": "focus-01",
+                "attention_ids": ["attention-01"],
+                "subject_level": "L4-L5",
+                "allowed_axial_frames": [16, 17, 18, 19, 20],
+            },
+            {
+                "image_index": 2,
+                "focus_id": "focus-02",
+                "attention_ids": ["attention-02"],
+                "subject_level": "L5-S1",
+                "allowed_axial_frames": [21, 22, 23, 24, 25],
+            },
+        ],
+    })
+    audit = {
+        "verifications": [
+            {
+                "candidate": "attention-01",
+                "level": "L4-L5",
+                "reason": "Axial frames 19-23 show the displaced component.",
+            },
+            {
+                "candidate": "attention-02",
+                "level": "L5-S1",
+                "reason": "AX frames 22-24 confirm the finding.",
+            },
+        ]
+    }
+
+    result = backend._audit_verification_card_scope(package, audit)
+
+    assert result["status"] == "conflict"
+    assert result["violations"] == [
+        {
+            "candidate": "attention-01",
+            "subject_level": "L4-L5",
+            "allowed_axial_frames": [16, 17, 18, 19, 20],
+            "cited_axial_frames": [19, 20, 21, 22, 23],
+            "outside_axial_frames": [21, 22, 23],
+        }
+    ]
+
+
+def test_cross_card_citation_makes_the_preserved_report_review_required():
+    package = SimpleNamespace(evidence_audit={
+        "evidence_mode": "focused-v5-level-cards",
+        "measured_slabs": [[16, 20], [21, 25]],
+        "warnings": [],
+        "card_bindings": [
+            {
+                "image_index": 1,
+                "focus_id": "focus-01",
+                "attention_ids": ["attention-01"],
+                "subject_level": "L4-L5",
+                "allowed_axial_frames": [16, 17, 18, 19, 20],
+            },
+            {
+                "image_index": 2,
+                "focus_id": "focus-02",
+                "attention_ids": ["attention-02"],
+                "subject_level": "L5-S1",
+                "allowed_axial_frames": [21, 22, 23, 24, 25],
+            },
+        ],
+    })
+    level_map = (
+        "LEVEL MAP\n"
+        "L4-L5: axial frames 16-20\n"
+        "L5-S1: axial frames 21-25\n"
+    )
+    verification = {
+        "verifications": [{
+            "candidate": "attention-01",
+            "level": "L4-L5",
+            "reason": "AX frames 19-23 show the finding.",
+        }]
+    }
+    started = {}
+
+    guarded = backend._guard_verification_report(
+        package,
+        level_map,
+        level_map + "PATHOLOGICAL FINDINGS\nL4-L5: finding.",
+        started,
+        verification_audit=verification,
+    )
+
+    assert guarded.startswith("REVIEW REQUIRED - NOT A VERIFIED FINAL REPORT")
+    assert "DIAGNOSTIC CARD SCOPE REVIEW" in guarded
+    assert "UNVERIFIED MODEL REPORT" in guarded
+    assert started["verification_card_scope_audit"]["status"] == "conflict"
+    assert "verification_card_scope_conflict" in started["warnings"]
+    assert started["report_status"] == "review_required"
+
+
 def test_sampling_is_defined_per_stage_and_recorded_as_provenance():
-    """Gemini 3 is optimized for its provider default temperature while GPT
-    verification needs a lower-variance adjudication setting.  One transport
-    default for both models silently applies the wrong policy to one reader."""
+    """The Gemini profile keeps its recommended sampling in saved provenance."""
     assert prompts.LUMBAR_SCREENING.temperature == 1.0
-    assert prompts.LUMBAR_CLINICAL_CONTEXT.temperature == 0.2
-    assert prompts.LUMBAR_VERIFICATION.temperature == 0.2
+    assert prompts.LUMBAR_CLINICAL_CONTEXT.temperature == 1.0
+    assert prompts.LUMBAR_VERIFICATION.temperature == 1.0
 
     stages = prompts.LUMBAR_PATHOLOGY.as_dict()["stages"]
-    assert [stage["temperature"] for stage in stages] == [1.0, 0.2, 0.2]
+    assert [stage["temperature"] for stage in stages] == [1.0, 1.0, 1.0]
 
 
 def test_every_stage_feature_IS_MAPPED_in_the_settings_authority(monkeypatch):
@@ -705,24 +945,24 @@ def test_the_model_is_resolved_PER_STAGE_not_once_per_run(session, monkeypatch):
     backend.run_analysis(session, call=_capture)
 
     assert seen == [("screening", "gemini-3.1-pro-preview"),
-                    ("verification", "gpt-5.6-sol")]
+                    ("verification", "gemini-3.1-pro-preview")]
 
     record = astore.read_record(session)
-    # A mixed run must not report one pass's model as the whole run's.
+    # The per-stage audit remains complete even when the summary collapses.
     assert record.stage_models == [
         "gemini-3.1-pro-preview",
         "gemini-3.1-pro-preview",
-        "gpt-5.6-sol",
+        "gemini-3.1-pro-preview",
     ]
     assert "gemini-3.1-pro-preview" in record.model
-    assert "gpt-5.6-sol" in record.model
+    assert record.model == "gemini-3.1-pro-preview"
     # Each stage's request document records the model IT was sent with.
     first = json.loads((session / "llm_stage1_request.json").read_text("utf-8"))
     second = json.loads((session / "llm_stage2_request.json").read_text("utf-8"))
     third = json.loads((session / "llm_stage3_request.json").read_text("utf-8"))
     assert first["model"] == "gemini-3.1-pro-preview"
     assert second["model"] == "gemini-3.1-pro-preview"
-    assert third["model"] == "gpt-5.6-sol"
+    assert third["model"] == "gemini-3.1-pro-preview"
 
 
 def test_ONE_stage_can_be_pinned_in_the_field_without_touching_the_other(
@@ -738,11 +978,11 @@ def test_ONE_stage_can_be_pinned_in_the_field_without_touching_the_other(
         return _ok()(package, backend_name, model, stage, header)
 
     backend.run_analysis(session, call=_capture)
-    assert seen == [("screening", "gpt-5.6-sol"), ("verification", "gpt-5.6-sol")]
+    assert seen == [("screening", "gpt-5.6-sol"), ("verification", "gemini-3.1-pro-preview")]
     assert astore.read_record(session).stage_models == [
         "gpt-5.6-sol",
         "gemini-3.1-pro-preview",
-        "gpt-5.6-sol",
+        "gemini-3.1-pro-preview",
     ]
 
 
@@ -920,13 +1160,18 @@ def test_a_capture_missing_its_z_disables_the_block_entirely():
 def test_the_slab_block_states_the_frames_and_who_owns_the_naming():
     lines = "\n".join(pkg._slab_lines(_LIVE_SLABS))
     assert "AXIAL SLAB STRUCTURE" in lines
+    assert "acquisition groups only" in lines
+    assert "Do not assume that a group equals a disc" in lines
+    assert "prescribed one slab per disc level" not in lines
     assert "7 slabs" in lines
     assert "1-4 | 5-8 | 9-12 | 13-16 | 17-20 | 21-26 | 27-30" in lines
     assert "MEASURED, not estimated" in lines
     assert "do not re-derive them by eye" in lines
-    # The division of labour has to be explicit or the model re-groups anyway.
-    assert "Assigning the LEVEL NAMES" in lines
-    assert "the grouping is not" in lines
+    # The division of labour has to be explicit or the model promotes geometry
+    # into anatomy before the dedicated anatomy gate.
+    assert "Anatomical" in lines
+    assert "meaning must be assigned separately" in lines
+    assert "group membership is authoritative" in lines
 
 
 def test_the_slab_block_reaches_the_package_header(session):
@@ -950,16 +1195,17 @@ def test_BOTH_stages_are_told_to_use_the_measured_grouping():
         assert "Never renumber from zero" in text, stage.id
 
 
-def test_stage_two_must_FLAG_a_level_it_moves():
-    """Silently keeping pass 1's label under pass 2's map is how a finding gets
-    reported one level off with nothing in the output to show it."""
+def test_card_reader_does_not_recount_or_move_a_bound_subject_level():
+    """A card-only reader lacks the overview needed to renumber the study."""
     text = prompts.LUMBAR_VERIFICATION.text
-    assert "THE LEVEL IS PART OF THE FINDING" in text
-    assert "a right finding\nin the wrong place" in text
-    assert "(first pass called this L4-L5)" in text
-    assert "Do not silently keep the first pass's label" in text
-    # ...and stage 1 is NOT given this, because it has no earlier pass to check.
-    assert "THE LEVEL IS PART OF THE FINDING" not in prompts.LUMBAR_SCREENING.text
+    one_line = " ".join(text.split())
+    assert "CARD SUBJECT LEVEL IS TASK SCOPE" in text
+    assert "Do not build a new whole-study level map from focused cards" in one_line
+    assert "never relocate its finding into a neighboring card" in text
+    assert "return INDETERMINATE with a card-identity conflict" in text
+    assert "copy every authoritative level/frame binding from the request header exactly" in text
+    assert "Do not infer, recount, resize, rename or reorder the LEVEL MAP" in text
+    assert "THE LEVEL IS PART OF THE FINDING" not in text
 
 
 def test_the_prompt_belongs_to_the_protocol_not_the_engine():
@@ -1036,9 +1282,9 @@ def test_a_successful_run_stores_the_text_and_the_provenance(session):
     assert "PATHOLOGICAL FINDINGS" in reread.text
     # Pinned on purpose, not read from the pipeline: a stored result must be
     # traceable to a named revision, so bumping the pipeline is a deliberate
-    # edit here too. 4.6.1 = focused-v2 preserves original capture-frame
-    # identity across reversed, independently angled DICOM source slabs.
-    assert reread.prompt_version == "4.6.1"
+    # edit here too. 8.1.0 keeps geometry grouping workstation-owned while
+    # sequence and anatomical-level semantics are assigned by Gate 1.
+    assert reread.prompt_version == "8.6.0"
     assert reread.stage_count == 3
     assert reread.document["pipeline_fingerprint"] == prompts.LUMBAR_PATHOLOGY.fingerprint
     assert reread.document["image_count"] == 7
@@ -1152,7 +1398,7 @@ def test_the_real_dispatch_forwards_each_stages_temperature(session, monkeypatch
     for stage in package.analysis.stages:
         backend._dispatch(package, "company", stage.model_default, stage, "header")
 
-    assert [item["temperature"] for item in captured] == [1.0, 0.2, 0.2]
+    assert [item["temperature"] for item in captured] == [1.0, 1.0, 1.0]
 
 
 # ---------------------------------------------------------------------------
@@ -1172,9 +1418,10 @@ def test_stage_two_receives_stage_ones_candidates_as_hypotheses(session):
 
     screening_header, verification_header = seen[0][1], seen[1][1]
     assert "PRELIMINARY CANDIDATE" not in screening_header
-    assert "PRELIMINARY CANDIDATE FINDINGS FROM THE FIRST PASS" in verification_header
-    assert "HYPOTHESES to be verified" in verification_header
-    assert "broad_based_disc_bulge" in verification_header
+    assert "SCREENING ATTENTION MAP - LOCALIZATION ONLY" in verification_header
+    assert "HYPOTHESES about abnormal presence" in verification_header
+    assert "broad_based_disc_bulge" not in verification_header
+    assert '"structure": "disc"' in verification_header
 
 
 def test_the_user_sees_stage_TWO_not_the_screening_list(session):
@@ -1186,6 +1433,65 @@ def test_the_user_sees_stage_TWO_not_the_screening_list(session):
     assert "CANDIDATE FINDINGS" not in text
     assert "VERIFICATION" not in text
     assert "verifications" not in text
+
+
+@pytest.mark.parametrize("anatomical_structure, vertebra", [
+    ("disc", None), ("endplate", "L4"), ("facet_joint", None),
+])
+def test_anatomical_attention_is_identical_in_crop_planning_and_diagnostic_handoff(
+    session, monkeypatch, anatomical_structure, vertebra,
+):
+    """Exercise the actual parallel orchestrator without a model or DICOM IO."""
+    from modules.ai_imaging.eagle_eye_lumbar import focus_evidence
+
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_EVIDENCE_MODE", "focused-v3")
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_ALLOW_LEGACY_EVIDENCE", "1")
+    raw = {"schema_version": "2.0.0", "findings": [
+        {"structure": "facet_joint", "assessment": "normal", "level": "L1-L2"},
+        {"structure": anatomical_structure, "assessment": "abnormal", "level": "L4-L5",
+         "vertebra": vertebra,
+         "candidate": "disc_extrusion", "grade": 3, "note": "discard this label",
+         "locations": [
+             {"session": "sagittal", "frame": 2, "pane": "sagittal_t2",
+              "box_2d": [100, 100, 200, 200]},
+             {"session": "sagittal", "frame": 2, "pane": "sagittal_t1",
+              "box_2d": [100, 440, 200, 550]},
+             {"session": "axial", "frame": 3, "pane": "axial_t2",
+              "box_2d": [200, 700, 400, 900]},
+         ]},
+    ]}
+    planned = []
+
+    def prepare(package, screening_text, structured, context, *, mode):
+        planned.append(structured)
+        return package
+
+    def call(package, backend_name, model, stage, header):
+        return {"content": json.dumps(raw) if stage.name == "screening" else _VERIFICATION_ANSWER}
+
+    monkeypatch.setattr(focus_evidence, "prepare_verification_package", prepare)
+    record = backend.run_analysis(session, backend="company", call=call)
+    assert record.state == astore.STATE_COMPLETE
+    assert len(planned) == 1
+    attention = planned[0]
+    assert attention == record.document["screening_attention"]
+    assert len(attention["findings"]) == 1
+    assert attention["normal_count"] == 1
+    assert attention["warnings"] == []
+    assert attention["findings"][0]["structure"] == anatomical_structure
+    assert attention["findings"][0]["vertebra"] == vertebra
+    assert attention["findings"][0]["key_frames"]["axial"] == [3]
+    req = json.loads((session / "llm_stage3_request.json").read_text(encoding="utf-8"))
+    context = req["sent"]["context"]
+    public_attention, _end = json.JSONDecoder().raw_decode(context[context.index("{"):])
+    assert public_attention["findings"] == attention["findings"]
+    assert public_attention["not_assessable"] == attention["not_assessable"]
+    assert public_attention["correspondence_status"] == attention["correspondence_status"]
+    assert "normal_count" not in public_attention
+    assert "warnings" not in public_attention
+    assert "disc_extrusion" not in req["sent"]["context"]
+    saved = json.loads((session / "llm_stage1_structured.json").read_text(encoding="utf-8"))
+    assert saved["data"] == raw
 
 
 def test_every_stage_is_preserved_for_evaluation(session):
@@ -1210,13 +1516,439 @@ def test_every_stage_is_preserved_for_evaluation(session):
 
     # The final request records the candidates and clinical prior it received.
     req3 = json.loads((session / "llm_stage3_request.json").read_text(encoding="utf-8"))
-    assert "broad_based_disc_bulge" in req3["sent"]["context"]
+    assert "broad_based_disc_bulge" not in req3["sent"]["context"]
+    assert '"structure": "disc"' in req3["sent"]["context"]
     assert "NO CLINICAL CONTEXT DOCUMENT" in req3["sent"]["context"]
 
 
+def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
+    session, monkeypatch,
+):
+    from modules.ai_imaging.eagle_eye_lumbar import (
+        anatomy_cards, atomic_pipeline, focus_evidence, screening_evidence,
+    )
+
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_EVIDENCE_MODE", "focused-v5-level-cards")
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE", "1")
+    base = pkg.build_package(session)
+    atlas_images = []
+    pages = []
+    for index, (role, source) in enumerate(zip(
+        ("sagittal_t2", "sagittal_t1", "axial_t2"), base.images[:3]
+    ), start=1):
+        atlas_images.append(pkg.PackagedImage(
+            source.path, f"{role} atlas", f"screening-{role}", index,
+            evidence_mode="correlated-screening-atlas",
+        ))
+        pages.append({"image_index": index, "role": role, "tiles": []})
+    atlas = pkg.AnalysisPackage(
+        base.session_dir, base.session_id, base.protocol_id, base.analysis,
+        "atlas header", atlas_images,
+        study_instance_uid=base.study_instance_uid,
+        source_series=base.source_series,
+        evidence_audit={
+            "coordinate_space": "tile_content_0_1000",
+            "pages": pages,
+            "schema_version": "1.0.0",
+        },
+    )
+
+    anatomy_images = []
+    anatomy_pages = []
+    for index, request in enumerate(atomic_pipeline.SCREENING_REQUESTS, start=1):
+        anatomy_images.append(pkg.PackagedImage(
+            base.images[index - 1].path,
+            f"{request.key} anatomy card",
+            f"anatomy-card-{request.key}",
+            index,
+            evidence_mode="anatomy-gate-v4",
+            card_payload={"anatomy_card": {"request_key": request.key}},
+        ))
+        anatomy_pages.append({
+            "image_index": index,
+            "role": "anatomy_card",
+            "request_key": request.key,
+            "tiles": [],
+        })
+    anatomy_package = pkg.AnalysisPackage(
+        base.session_dir, base.session_id, base.protocol_id, base.analysis,
+        "anatomy card header", anatomy_images,
+        study_instance_uid=base.study_instance_uid,
+        source_series=base.source_series,
+        evidence_audit={
+            "schema_version": "1.0.0",
+            "evidence_mode": "anatomy-gate-v4",
+            "anatomy_map": {
+                "schema_version": "1.0.0",
+                "axial_levels": [{"level": "L5-S1", "axial_frames": [1, 3]}],
+            },
+            "cards": [
+                {"image_index": index, "request_key": request.key}
+                for index, request in enumerate(atomic_pipeline.SCREENING_REQUESTS, start=1)
+            ],
+            "pages": anatomy_pages,
+        },
+    )
+
+    cards = []
+    bindings = []
+    for index, (group, attention) in enumerate(
+        (("disc", "attention-01"), ("canal_neural", "attention-02")), start=1
+    ):
+        metadata = {
+            "card_id": f"focus-{index:02d}",
+            "subject_level": "L5-S1",
+            "structure_group": group,
+            "attention_ids": [attention],
+        }
+        cards.append(pkg.PackagedImage(
+            base.images[index - 1].path, f"{group} card", f"focus-{index:02d}", index,
+            evidence_mode="focused-v5-level-cards",
+            card_payload={"card_metadata": metadata},
+        ))
+        bindings.append({
+            "image_index": index,
+            "focus_id": f"focus-{index:02d}",
+            "attention_ids": [attention],
+            "subject_level": "L5-S1",
+            "allowed_axial_frames": [1, 2, 3],
+            "structure_group": group,
+        })
+    card_package = pkg.AnalysisPackage(
+        base.session_dir, base.session_id, base.protocol_id, base.analysis,
+        "card package header\n  EVIDENCE MODE: FOCUSED V5 ATOMIC STRUCTURE CARDS",
+        cards,
+        study_instance_uid=base.study_instance_uid,
+        source_series=base.source_series,
+        evidence_audit={
+            "evidence_mode": "focused-v5-level-cards",
+            "card_bindings": bindings,
+            "warnings": [],
+            "measured_slabs": [],
+        },
+    )
+    monkeypatch.setattr(
+        screening_evidence, "prepare_screening_package", lambda _package: atlas,
+    )
+    monkeypatch.setattr(
+        anatomy_cards, "prepare_anatomy_cards",
+        lambda _package, _structured: anatomy_package,
+    )
+    monkeypatch.setattr(
+        anatomy_cards, "screening_package_for",
+        lambda _package, request_key: pkg.AnalysisPackage(
+            anatomy_package.session_dir,
+            anatomy_package.session_id,
+            anatomy_package.protocol_id,
+            anatomy_package.analysis,
+            "one anatomy card",
+            [next(
+                image for image in anatomy_package.images
+                if image.card_payload["anatomy_card"]["request_key"] == request_key
+            )],
+            evidence_audit={"pages": [], "anatomy_card_request": request_key},
+        ),
+    )
+    monkeypatch.setattr(
+        focus_evidence, "prepare_verification_package",
+        lambda *_args, **_kwargs: card_package,
+    )
+
+    calls = []
+
+    def call(_package, _backend_name, _model, stage, _header):
+        calls.append((stage.name, _package.image_count))
+        if stage.name == "anatomy_mapping":
+            return {"content": json.dumps({
+                "schema_version": "1.0.0",
+                "sagittal_planes": {},
+                "axial_levels": [],
+            })}
+        if stage.name.startswith("screening_"):
+            request_group = stage.name.removeprefix("screening_")
+            findings = []
+            if request_group == "disc":
+                findings = [{
+                    "structure": "disc", "assessment": "abnormal",
+                    "level": "L5-S1", "laterality": "not_applicable",
+                    "confidence": "high", "visual_salience": "marked",
+                    "within_study_priority": "dominant",
+                    "slice_persistence": "three_or_more_adjacent_slices",
+                    "locations": [],
+                }]
+            elif request_group == "canal_neural":
+                findings = [{
+                    "structure": "lateral_recess", "assessment": "abnormal",
+                    "level": "L5-S1", "laterality": "right",
+                    "confidence": "high", "visual_salience": "marked",
+                    "within_study_priority": "dominant",
+                    "slice_persistence": "three_or_more_adjacent_slices",
+                    "locations": [],
+                }]
+            document = {
+                "schema_version": atomic_pipeline.ATOMIC_SCREENING_SCHEMA_VERSION,
+                "screening_request": request_group,
+                "level_map": [{"level": "L5-S1", "axial_frames": [1, 3]}],
+                "findings": findings,
+            }
+            if request_group == "canal_neural":
+                document["central_canal_observations"] = [{
+                    "level": "L5-S1", "axial_group_id": "axial-group-06",
+                    "assessment": "normal", "caliber": "preserved",
+                    "csf_visibility": "preserved",
+                    "visual_basis": "preserved_caliber",
+                    "myelographic_correlation": "not_available",
+                    "axial_tile_ids": ["axial-series-a:0001"],
+                    "reason": "Overall thecal sac caliber is preserved.",
+                }]
+            if request_group in {"canal_neural", "foraminal"}:
+                from test_eagle_eye_neural_contract import compartment_rows
+                document["compartment_observations"] = compartment_rows(
+                    request_group, [{"level": "L5-S1", "axial_group_id": "axial-group-06"}], findings,
+                )
+            return {"content": json.dumps(document)}
+        if stage.name == "verification_disc":
+            return {"content": json.dumps({
+                "card_id": "focus-01", "subject_level": "L5-S1",
+                "structure_group": "disc", "verifications": [{
+                    "candidate": "attention-01", "card_id": "focus-01",
+                    "structure_group": "disc", "level": "L5-S1",
+                    "structure": "disc",
+                    "status": "REFINED",
+                    "refined_finding": "Right paracentral disc extrusion.",
+                    "reason": "Multiplanar morphology is concordant.",
+                }], "limitations": [], "not_assessable": [],
+            })}
+        if stage.name == "verification_canal_neural":
+            return {"content": json.dumps({
+                "card_id": "focus-02", "subject_level": "L5-S1",
+                "structure_group": "canal_neural", "verifications": [{
+                    "candidate": "attention-02", "card_id": "focus-02",
+                    "structure_group": "canal_neural", "level": "L5-S1",
+                    "structure": "lateral_recess",
+                    "status": "REFINED",
+                    "refined_finding": "Severe right lateral recess narrowing.",
+                    "reason": "The bound axial sequence shows marked effacement.",
+                }], "limitations": [], "not_assessable": [],
+            })}
+        raise AssertionError(f"unexpected model call: {stage.name}")
+
+    record = backend.run_analysis(
+        session, backend="openai", call=call, package=base,
+    )
+
+    assert record.state == astore.STATE_COMPLETE
+    assert sorted(name for name, _count in calls if name.startswith("screening_")) == sorted([
+        "screening_disc", "screening_canal_neural", "screening_foraminal",
+        "screening_endplate_marrow", "screening_posterior_elements",
+    ])
+    assert {
+        name: count for name, count in calls if name.startswith("screening_")
+    } == {
+        "screening_disc": 1,
+        "screening_canal_neural": 1,
+        "screening_foraminal": 1,
+        "screening_endplate_marrow": 1,
+        "screening_posterior_elements": 1,
+    }
+    assert ("anatomy_mapping", 3) in calls
+    assert sorted(name for name, _count in calls if name.startswith("verification_")) == [
+        "verification_canal_neural", "verification_disc",
+    ]
+    assert all(
+        count == 1 for name, count in calls if name.startswith("verification_")
+    )
+    assert "Right paracentral disc extrusion" in record.text
+    assert "Severe right lateral recess narrowing" in record.text
+    saved = json.loads((session / "llm_result.json").read_text(encoding="utf-8"))
+    assert len(saved["neural_compartment_coverage"]) == 7
+    assert any(row["structure"] == "lateral_recess" and row["assessment"] == "abnormal"
+               for row in saved["neural_compartment_coverage"])
+    atomic_root = session / ".atomic_analysis"
+    assert len(list((atomic_root / "stage1").glob("*_request.json"))) == 6
+    assert len(list((atomic_root / "stage3").glob("*_request.json"))) == 2
+    aggregate_screening = json.loads(
+        (session / "llm_stage1_request.json").read_text(encoding="utf-8")
+    )
+    aggregate_verification = json.loads(
+        (session / "llm_stage3_request.json").read_text(encoding="utf-8")
+    )
+    for aggregate in (aggregate_screening, aggregate_verification):
+        assert aggregate["sent"] == {
+            "header": "LOCAL AGGREGATE ONLY - NOT SENT TO A MODEL",
+            "context": "",
+            "image_count": 0,
+            "images": [],
+        }
+        assert aggregate["prompt"]["label"] == "Local atomic merge record"
+        assert "No aggregate prompt was sent" in aggregate["prompt"]["text"]
+
+    failed_calls = []
+
+    def call_with_failed_diagnosis(
+        request_package, backend_name, model_name, stage, header,
+    ):
+        failed_calls.append(stage.name)
+        if stage.name.startswith("verification_"):
+            raise RuntimeError("Synthetic atomic diagnosis failure.")
+        return call(request_package, backend_name, model_name, stage, header)
+
+    failed_record = backend.run_analysis(
+        session, backend="openai", call=call_with_failed_diagnosis, package=base,
+    )
+
+    assert failed_record.state == astore.STATE_FAILED
+    assert "diagnosis_gate_failed:all_card_requests_failed" in failed_record.error
+    assert prompts.STAGE_VERIFICATION not in failed_calls
+
+
+@pytest.mark.parametrize("failure_mode", ["anatomy_gate", "grouped_screening"])
+def test_atomic_gate_failure_stops_without_legacy_fallback(
+    session, monkeypatch, failure_mode,
+):
+    from modules.ai_imaging.eagle_eye_lumbar import (
+        anatomy_cards, atomic_pipeline, focus_evidence, screening_evidence,
+    )
+
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_EVIDENCE_MODE", "focused-v5-level-cards")
+    monkeypatch.setenv("AIPACS_EAGLE_EYE_ATOMIC_STRUCTURE_PIPELINE", "1")
+    base = pkg.build_package(session)
+    atlas_images = []
+    pages = []
+    for index, (role, source) in enumerate(zip(
+        ("sagittal_t2", "sagittal_t1", "axial_t2"), base.images[:3]
+    ), start=1):
+        atlas_images.append(pkg.PackagedImage(
+            source.path, f"{role} atlas", f"screening-{role}", index,
+            evidence_mode="correlated-screening-atlas",
+        ))
+        pages.append({"image_index": index, "role": role, "tiles": []})
+    atlas = pkg.AnalysisPackage(
+        base.session_dir, base.session_id, base.protocol_id, base.analysis,
+        "atlas header", atlas_images,
+        study_instance_uid=base.study_instance_uid,
+        source_series=base.source_series,
+        evidence_audit={
+            "coordinate_space": "tile_content_0_1000",
+            "pages": pages,
+            "schema_version": "1.0.0",
+        },
+    )
+    anatomy_package = pkg.AnalysisPackage(
+        atlas.session_dir, atlas.session_id, atlas.protocol_id, atlas.analysis,
+        "anatomy header", atlas.images,
+        evidence_audit={
+            **atlas.evidence_audit,
+            "anatomy_map": {
+                "schema_version": "1.0.0",
+                "axial_levels": [{"level": "L4-L5", "axial_frames": [1, 2]}],
+            },
+            "cards": [],
+        },
+    )
+    monkeypatch.setattr(
+        screening_evidence, "prepare_screening_package", lambda _package: atlas,
+    )
+    def prepare_anatomy_cards(_package, _structured):
+        if failure_mode == "anatomy_gate":
+            raise anatomy_cards.AnatomyCardError(
+                "test_anatomy_map_invalid", "Synthetic invalid anatomy map."
+            )
+        return anatomy_package
+
+    monkeypatch.setattr(anatomy_cards, "prepare_anatomy_cards", prepare_anatomy_cards)
+    monkeypatch.setattr(
+        anatomy_cards, "screening_package_for",
+        lambda _package, request_key: atomic_pipeline.screening_package_for(
+            atlas,
+            next(item for item in atomic_pipeline.SCREENING_REQUESTS if item.key == request_key),
+        ),
+    )
+    monkeypatch.setattr(
+        focus_evidence, "prepare_verification_package",
+        lambda *_args, **_kwargs: base,
+    )
+
+    calls = []
+
+    def call(_package, _backend_name, _model, stage, _header):
+        calls.append(stage.name)
+        if stage.name == "anatomy_mapping":
+            return {
+                "content": json.dumps({"schema_version": "1.0.0"}),
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        if (
+            failure_mode == "grouped_screening"
+            and stage.name == "screening_disc"
+        ):
+            return {
+                "content": '{"schema_version":"3.0.0","findings":[',
+                "usage": {"prompt_tokens": 10, "completion_tokens": 23996},
+            }
+        if stage.name.startswith("screening_"):
+            request_group = stage.name.removeprefix("screening_")
+            document = {
+                    "schema_version": atomic_pipeline.ATOMIC_SCREENING_SCHEMA_VERSION,
+                    "screening_request": request_group,
+                    "level_map": [{"level": "L4-L5", "axial_frames": [1, 2]}],
+                    "findings": [],
+            }
+            if request_group == "canal_neural":
+                document["central_canal_observations"] = [{
+                    "level": "L4-L5", "axial_group_id": "",
+                    "assessment": "normal", "caliber": "preserved",
+                    "csf_visibility": "preserved",
+                    "visual_basis": "preserved_caliber",
+                    "myelographic_correlation": "not_available",
+                    "axial_tile_ids": ["synthetic-axial"],
+                    "reason": "Overall thecal sac caliber is preserved.",
+                }]
+            if request_group in {"canal_neural", "foraminal"}:
+                from test_eagle_eye_neural_contract import compartment_rows
+                document["compartment_observations"] = compartment_rows(request_group)
+            return {
+                "content": json.dumps(document),
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        if stage.name == prompts.STAGE_SCREENING:
+            return {
+                "content": _SCREENING_ANSWER,
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        if stage.name == prompts.STAGE_CLINICAL_CONTEXT:
+            return {
+                "content": json.dumps({"document_status": "no_clinical_document"}),
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        if stage.name == prompts.STAGE_VERIFICATION:
+            return {
+                "content": _VERIFICATION_ANSWER,
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        raise AssertionError(f"unexpected model call: {stage.name}")
+
+    record = backend.run_analysis(
+        session, backend="openai", call=call, package=base,
+    )
+
+    assert record.state == astore.STATE_FAILED
+    assert prompts.STAGE_SCREENING not in calls
+    assert prompts.STAGE_VERIFICATION not in calls
+    if failure_mode == "anatomy_gate":
+        assert "anatomy_gate_failed:test_anatomy_map_invalid" in record.error
+        assert not any(name.startswith("screening_") for name in calls)
+    else:
+        assert "atomic_screening_failed" in record.error
+        assert "disc:truncated_response" in record.error
+        assert (
+            session / ".atomic_analysis" / "stage1"
+            / "screening_disc_request.json"
+        ).is_file()
+
+
 def test_an_unparseable_candidate_block_degrades_instead_of_failing(session):
-    """A stage whose JSON will not parse must still feed the next pass - the
-    prose names abnormalities, and losing them costs the whole verification."""
+    """Malformed screening is visible as unavailable; raw labels cannot leak."""
     prose = "I think there is a bulge at L4-L5 and facet hypertrophy at L5-S1."
     seen = []
 
@@ -1228,8 +1960,9 @@ def test_an_unparseable_candidate_block_degrades_instead_of_failing(session):
     record = backend.run_analysis(session, backend="openai", call=call)
 
     assert record.state == astore.STATE_COMPLETE
-    assert "facet hypertrophy at L5-S1" in seen[1]
-    assert "did not return a parseable candidate block" in seen[1]
+    assert "facet hypertrophy at L5-S1" not in seen[1]
+    assert '"status": "unavailable"' in seen[1]
+    assert "screening_attention_unavailable" in record.document["warnings"]
 
     s1 = json.loads((session / "llm_stage1_structured.json").read_text(encoding="utf-8"))
     assert s1["parsed"] is False and s1["data"] is None
@@ -1309,7 +2042,9 @@ def test_the_content_builder_puts_each_caption_before_its_image(session):
     for i, image in enumerate(package.images):
         caption, payload = content[1 + 2 * i], content[2 + 2 * i]
         assert caption["type"] == "text"
-        assert caption["text"] == image.caption
+        assert caption["text"] == (
+            f"IMAGE {i + 1} OF {package.image_count}\n{image.caption}"
+        )
         assert payload["type"] == "image_url"
 
 
@@ -1603,9 +2338,10 @@ def test_screening_and_clinical_context_run_in_parallel_before_verification(
     assert call_map == {
         "screening": ("gemini-3.1-pro-preview", 7),
         "clinical_context": ("gemini-3.1-pro-preview", 1),
-        "verification": ("gpt-5.6-sol", 7),
+        "verification": ("gemini-3.1-pro-preview", 7),
     }
-    assert "broad_based_disc_bulge" in verification_headers[0]
+    assert "broad_based_disc_bulge" not in verification_headers[0]
+    assert '"structure": "disc"' in verification_headers[0]
     assert "chronic low back pain" in verification_headers[0]
     assert "Prior L4-L5 disc protrusion" in verification_headers[0]
     assert "Dominant L4-L5 discogenic focus" in verification_headers[0]
@@ -1614,6 +2350,9 @@ def test_screening_and_clinical_context_run_in_parallel_before_verification(
     assert (session / "llm_stage1_request.json").is_file()
     assert (session / "llm_stage2_request.json").is_file()
     assert (session / "llm_stage3_request.json").is_file()
+    stage_three = json.loads((session / "llm_stage3_request.json").read_text("utf-8"))
+    assert stage_three["sent"]["header"] == verification_headers[0]
+    assert "chronic low back pain" in stage_three["sent"]["header"]
     stage_two = json.loads((session / "llm_stage2_structured.json").read_text("utf-8"))
     assert stage_two["stage"] == "clinical_context"
 
@@ -1722,7 +2461,8 @@ def test_context_prompt_extracts_general_and_level_specific_attention_foci():
     verification = prompts.LUMBAR_VERIFICATION.text
     verification_one_line = " ".join(verification.split())
     assert "CONTEXT-DIRECTED ATTENTION FOCI" in verification
-    assert "Every regional or level-specific context attention focus" in verification_one_line
+    assert "may expand the differential only when it maps to an existing bound diagnostic card" in verification_one_line
+    assert "Context cannot create a diagnostic card" in verification_one_line
     assert '"input_source": "screening_candidate"' in verification
     assert "screening_candidate_and_context_focus" in verification
 
@@ -1851,6 +2591,45 @@ def test_context_normalizer_preserves_bounded_attention_foci_for_verification():
     assert "Dominant focal discogenic process" in forwarded
     assert "unsupported_source" not in forwarded
     assert "Ignore the MRI" not in forwarded
+
+
+def test_context_mri_overview_cannot_inject_a_level_specific_diagnosis():
+    raw = {
+        "document_status": "no_clinical_document",
+        "global_imaging_context": {
+            "degenerative_burden": "mild",
+            "postoperative_change": "absent",
+            "broad_patterns": [
+                "Prominent disc extrusion at L4-L5 with severe root compression."
+            ],
+        },
+        "context_attention_foci": [
+            {
+                "scope": "level_specific",
+                "anatomic_focus": "L4-L5",
+                "context_type": "discogenic",
+                "hypothesis": "Large L4-L5 disc extrusion",
+                "confidence": "high",
+                "evidence_sources": ["paired_sagittal_t1_t2"],
+                "verification_questions": [
+                    "Confirm the L4-L5 extrusion and grade its root compression."
+                ],
+            }
+        ],
+    }
+
+    normalized = backend._normalize_clinical_context(raw)
+    assert normalized["global_imaging_context"]["broad_patterns"] == []
+    focus = normalized["context_attention_foci"][0]
+    assert focus["anatomic_focus"] == "L4-L5"
+    assert focus["context_type"] == "discogenic"
+    assert focus["hypothesis"] == "MRI-overview attention focus; diagnosis unassigned"
+    assert focus["verification_questions"] == [
+        "Independently assess this level on its bound diagnostic card."
+    ]
+    forwarded = backend._clinical_context_for_verification("", raw)
+    assert "extrusion" not in forwarded.lower()
+    assert "root compression" not in forwarded.lower()
 
 
 def test_invalid_study_uid_still_allows_captured_sagittal_context(

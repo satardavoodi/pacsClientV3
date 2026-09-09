@@ -353,8 +353,8 @@ def _validate_lazy_geometry(metadata: dict) -> tuple:
 
 def _decode_dependency_hint() -> str:
     return (
-        "Install runtime decoders: pydicom + pylibjpeg, pylibjpeg-libjpeg, "
-        "pylibjpeg-openjpeg, pylibjpeg-rle (optional fallback: python-gdcm)."
+        "Install runtime decoders: pydicom, python-gdcm, pyjpegls, pylibjpeg, "
+        "pylibjpeg-openjpeg, and pylibjpeg-rle."
     )
 
 
@@ -362,9 +362,10 @@ def _missing_decoder_packages() -> list:
     required = [
         "pydicom",
         "pylibjpeg",
-        "pylibjpeg-libjpeg",
         "pylibjpeg-openjpeg",
         "pylibjpeg-rle",
+        "python-gdcm",
+        "pyjpegls",
     ]
     missing = []
     for pkg in required:

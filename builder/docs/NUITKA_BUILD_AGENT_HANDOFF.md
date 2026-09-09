@@ -1,5 +1,9 @@
 # Nuitka Build Plan (Agent Handoff)
 
+> **Scope and precedence:** this is a historical backend handoff. Current work
+> starts at [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md)
+> and follows root `RELEASE.md` and `BUILD.md`.
+
 Status: Active and validated
 Updated: April 26, 2026
 

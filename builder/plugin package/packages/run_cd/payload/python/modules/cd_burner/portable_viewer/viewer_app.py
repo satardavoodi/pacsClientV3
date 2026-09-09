@@ -1457,13 +1457,42 @@ def run_selftest() -> int:
         report.append(f"pydicom: {pydicom.__version__}")
         import importlib.util as _ilu
 
-        for codec in ("pylibjpeg", "openjpeg", "rle", "libjpeg"):
+        missing_codecs: List[str] = []
+        for codec in ("pylibjpeg", "openjpeg", "rle", "gdcm", "jpeg_ls", "_gdcm"):
             try:
+                available = _ilu.find_spec(codec) is not None
                 report.append(
-                    f"codec {codec}: {'ok' if _ilu.find_spec(codec) is not None else 'MISSING'}"
+                    f"codec {codec}: {'ok' if available else 'MISSING'}"
                 )
+                if not available:
+                    missing_codecs.append(codec)
             except Exception as exc:
                 report.append(f"codec {codec}: MISSING ({exc})")
+                missing_codecs.append(codec)
+        assert not missing_codecs, "required codecs missing: " + ", ".join(missing_codecs)
+
+        required_syntaxes = {
+            "1.2.840.10008.1.2.4.50",
+            "1.2.840.10008.1.2.4.51",
+            "1.2.840.10008.1.2.4.70",
+            "1.2.840.10008.1.2.4.80",
+            "1.2.840.10008.1.2.4.90",
+            "1.2.840.10008.1.2.4.91",
+            "1.2.840.10008.1.2.5",
+        }
+        covered_syntaxes: set[str] = set()
+        for handler in pydicom.config.pixel_data_handlers:
+            if not handler.is_available():
+                continue
+            covered_syntaxes.update(
+                uid for uid in required_syntaxes if handler.supports_transfer_syntax(uid)
+            )
+        missing_syntaxes = sorted(required_syntaxes - covered_syntaxes)
+        assert not missing_syntaxes, (
+            "required transfer syntaxes have no available handler: "
+            + ", ".join(missing_syntaxes)
+        )
+        report.append(f"transfer syntaxes: {len(covered_syntaxes)}/{len(required_syntaxes)}")
 
         print("SELFTEST OK — " + " | ".join(report))
         return 0

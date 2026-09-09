@@ -22,6 +22,119 @@ logger = logging.getLogger(__name__)
 class _VCCacheMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
 
+    def _schedule_activation_study_check(self) -> None:
+        """Classify pre-downloaded state without walking storage on the GUI thread."""
+        generation = int(getattr(self, "_activation_study_check_generation", 0)) + 1
+        self._activation_study_check_generation = generation
+        study_uid = str(getattr(self.parent_widget, "study_uid", "") or "")
+        if not study_uid:
+            return
+
+        def _worker() -> None:
+            check_result = False
+            folder_count = 0
+            expected = 0
+            try:
+                from PacsClient.pacs.patient_tab.utils.utils import (
+                    check_study_complete,
+                    count_subfolders_with_dicom,
+                )
+                from PacsClient.utils.config import SOURCE_PATH
+                from PacsClient.utils.db_manager import get_study_by_study_uid
+
+                study_path = SOURCE_PATH / study_uid
+                if study_path.exists():
+                    folder_count = count_subfolders_with_dicom(study_path)
+                study_data = get_study_by_study_uid(study_uid)
+                expected = int((study_data or {}).get("number_of_series", 0) or 0)
+                check_result = bool(check_study_complete(study_uid))
+            except Exception:
+                logger.debug(
+                    "activation study classification failed study=%s",
+                    study_uid,
+                    exc_info=True,
+                )
+
+            try:
+                self._ui_invoker.invoke(
+                    lambda: self._apply_activation_study_check(
+                        generation,
+                        study_uid,
+                        check_result,
+                        folder_count,
+                        expected,
+                    )
+                )
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_worker,
+            name="tab-study-state",
+            daemon=True,
+        ).start()
+
+    def _apply_activation_study_check(
+        self,
+        generation: int,
+        study_uid: str,
+        check_result: bool,
+        folder_count: int,
+        expected: int,
+    ) -> None:
+        """Apply a current worker result on the GUI thread; stale results are ignored."""
+        if generation != getattr(self, "_activation_study_check_generation", 0):
+            return
+        if not getattr(self, "_tab_active", False):
+            return
+
+        downloads_active = self._global_downloads_active()
+        action = "skip"
+        if self.pipeline.state == PipelineState.IDLE and check_result:
+            self.pipeline.mark_pre_downloaded()
+            action = "mark_pre_downloaded"
+
+        logger.info(
+            "[H7-P2] study=%s pipeline_state=%s check_study_complete=%s "
+            "folder_count=%d expected=%d dm_active=%s action=%s",
+            study_uid,
+            self.pipeline.state.name if hasattr(self.pipeline.state, "name") else self.pipeline.state,
+            check_result,
+            folder_count,
+            expected,
+            downloads_active,
+            action,
+        )
+
+        if self.pipeline.state in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
+            self.zeta_boost.set_study_download_complete(not downloads_active)
+            self.zeta_boost.set_download_active(downloads_active)
+        elif self.pipeline.state == PipelineState.DOWNLOADING:
+            self.zeta_boost.set_study_download_complete(False)
+            self.zeta_boost.set_download_active(True)
+            self.zeta_boost.set_image_boost_mode(True)
+
+        try:
+            logger.info(
+                "[H7-P9] study=%s zeta_study_download_complete=%s "
+                "zeta_download_active=%s pipeline_state=%s global_downloads_active=%s",
+                study_uid,
+                getattr(self.zeta_boost, "_study_download_complete", None),
+                getattr(self.zeta_boost, "_download_active", None),
+                self.pipeline.state.name if hasattr(self.pipeline.state, "name") else self.pipeline.state,
+                downloads_active,
+            )
+        except Exception:
+            pass
+
+        if not downloads_active:
+            QTimer.singleShot(900, self._start_open_tab_warmup)
+        else:
+            logger.info(
+                "[WARMUP] activation deferred; global downloads active count=%d",
+                int(getattr(ZetaBoostEngine, "_global_active_download_count", 0) or 0),
+            )
+
     def _replay_deferred_series_loads_after_activation(self):
         """Replay series-complete loads that arrived while the tab was inactive."""
         try:
@@ -97,89 +210,17 @@ class _VCCacheMixin:
         # Manual-only layout policy: tab activation must not auto-insert a
         # locally available series into a viewer.
         self._replay_deferred_series_loads_after_activation()
-        # Start warmup shortly after tab-open bootstrap to avoid competing with first render.
-        try:
-            # Mode A detection: only if all series are pre-downloaded (study complete)
-            from PacsClient.pacs.patient_tab.utils.utils import check_study_complete, count_subfolders_with_dicom
-            study_uid = getattr(self.parent_widget, 'study_uid', None)
-
-            # [H7-P2] Study classification decision
-            _h7_check_result = False
-            _h7_folder_count = 0
-            _h7_expected = 0
-            _h7_dm_active = self._global_downloads_active()
-            if study_uid:
-                try:
-                    from PacsClient.utils.config import SOURCE_PATH as _h7_src
-                    from PacsClient.utils.db_manager import get_study_by_study_uid as _h7_get_study
-                    _h7_study_path = _h7_src / study_uid
-                    if _h7_study_path.exists():
-                        _h7_folder_count = count_subfolders_with_dicom(_h7_study_path)
-                    _h7_sdata = _h7_get_study(study_uid)
-                    _h7_expected = int((_h7_sdata or {}).get('number_of_series', 0))
-                except Exception:
-                    pass
-                _h7_check_result = check_study_complete(study_uid)
-
-            _h7_action = 'skip'
-            if self.pipeline.state == PipelineState.IDLE and study_uid and _h7_check_result:
-                self.pipeline.mark_pre_downloaded()
-                _h7_action = 'mark_pre_downloaded'
-
-            logger.info(
-                "[H7-P2] study=%s pipeline_state=%s check_study_complete=%s "
-                "folder_count=%d expected=%d dm_active=%s action=%s",
-                study_uid, self.pipeline.state.name if hasattr(self.pipeline.state, 'name') else self.pipeline.state,
-                _h7_check_result, _h7_folder_count, _h7_expected, _h7_dm_active, _h7_action,
-            )
-            # Force-sync ZetaBoost engine flags with current pipeline state on every
-            # activation.  Handles the case where download started while the tab was
-            # inactive (engine was deactivated by _on_pipeline_state_changed).
-            if self.pipeline.state in (PipelineState.POST_DOWNLOAD, PipelineState.READY):
-                if not self._global_downloads_active():
-                    self.zeta_boost.set_study_download_complete(True)
-                    self.zeta_boost.set_download_active(False)
-                else:
-                    self.zeta_boost.set_study_download_complete(False)
-                    self.zeta_boost.set_download_active(True)
-            elif self.pipeline.state == PipelineState.DOWNLOADING:
-                # Tab is being activated while a download is still in progress.
-                # Sync engine flags so it knows warmup is blocked.  Workers are
-                # alive again (activate() was called above) but gated by download_active.
-                self.zeta_boost.set_study_download_complete(False)
-                self.zeta_boost.set_download_active(True)
-                self.zeta_boost.set_image_boost_mode(True)
-
-            # [H7-P9] ZetaBoost/cache state after flag sync
-            try:
-                _h7_zb_complete = getattr(self.zeta_boost, '_study_download_complete', None)
-                _h7_zb_dl_active = getattr(self.zeta_boost, '_download_active', None)
-                logger.info(
-                    "[H7-P9] study=%s zeta_study_download_complete=%s zeta_download_active=%s "
-                    "pipeline_state=%s global_downloads_active=%s",
-                    study_uid,
-                    _h7_zb_complete, _h7_zb_dl_active,
-                    self.pipeline.state.name if hasattr(self.pipeline.state, 'name') else self.pipeline.state,
-                    self._global_downloads_active(),
-                )
-            except Exception:
-                pass
-
-            # Schedule warmup check.  _start_open_tab_warmup guards itself with
-            # pipeline.is_warmup_allowed, so this is a no-op if downloading.
-            if not self._global_downloads_active():
-                QTimer.singleShot(900, self._start_open_tab_warmup)
-            else:
-                print(
-                    f"[WARMUP] Activation warmup deferred â€” global downloads active "
-                    f"count={int(getattr(ZetaBoostEngine, '_global_active_download_count', 0) or 0)}"
-                )
-        except Exception:
-            pass
+        # The manifest authority includes the pixel-less-stub correctness check,
+        # but may walk every series directory on a cache miss. Keep the invariant
+        # and move only its placement off the GUI thread.
+        self._schedule_activation_study_check()
 
     def on_tab_deactivated(self):
         """Mark this patient tab as inactive and stop heavy background work."""
         self._tab_active = False
+        self._activation_study_check_generation = int(
+            getattr(self, "_activation_study_check_generation", 0)
+        ) + 1
         self._open_warmup_retry_count = 0
         self._warmup_gather_running = False
         self._zeta_boost_failed_series.clear()

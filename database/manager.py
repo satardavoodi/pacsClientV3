@@ -1029,9 +1029,10 @@ def is_study_printed(study_uid: str) -> bool:
 # ============================================================================
 
 def ensure_visit_status_column():
-    """
-    اطمینان از وجود ستون visit_status در جدول studies.
-    اگر وجود نداشته باشد، اضافه می‌شود.
+    """Idempotent compatibility migration for legacy direct callers.
+
+    Normal application startup owns this migration in ``dicom_db.init_database``.
+    It is intentionally not called from the patient-open write path.
     """
     with database.get_db_connection() as conn:
         cur = conn.cursor()
@@ -1088,8 +1089,6 @@ def set_visit_status(study_uid: str, status: str) -> bool:
     with database.get_db_connection() as conn:
         cur = conn.cursor()
         try:
-            ensure_visit_status_column()
-            
             cur.execute(
                 "UPDATE studies SET visit_status = ? WHERE study_uid = ?",
                 (status, study_uid)

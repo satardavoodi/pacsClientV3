@@ -1,22 +1,27 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.6.3 (2026-08-23)
+> **Current project version:** v3.6.5. Production acceptance is recorded separately
+> from the project version and must not be inferred from this heading.
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
 ## Quick Start for AI Agents
 
-**Brand-new to this repo?** Read these four documents in order:
+**Brand-new to this repo?** Read these five documents in order:
 
 1. [**For Future Agents (onboarding)**](for-future-agents/README.md) — framework discipline + critical knowledge
-2. [**Audit Overview (2026-05-28)**](AUDIT_2026-05-28_OVERVIEW.md) — every stage report + cumulative numbers
-3. [**Index by Subsystem**](INDEX_BY_SUBSYSTEM.md) — given a subsystem, which docs and tests apply
-4. [**Test Inventory by Guard**](../tests/INDEX_BY_GUARD.md) — given a test name, what it protects
+2. [**Release and Build Documentation Map**](release-and-build/README.md) — mandatory route for Git publication and packaging tasks
+3. [**Audit Overview (2026-05-28)**](AUDIT_2026-05-28_OVERVIEW.md) — every stage report + cumulative numbers
+4. [**Index by Subsystem**](INDEX_BY_SUBSYSTEM.md) — given a subsystem, which docs and tests apply
+5. [**Test Inventory by Guard**](../tests/INDEX_BY_GUARD.md) — given a test name, what it protects
 
 Once oriented, the existing per-task table below still applies.
 
 | I need to... | Go to |
 |-------------|-------|
+| Find the authoritative Git/build documentation route | [Release and build documentation hub](release-and-build/README.md) |
+| Commit, tag, and push a versioned release | [Canonical Git release workflow](../RELEASE.md) |
+| Build the six Windows installers | [Canonical build workflow](../BUILD.md) |
 | Start viewer investigations (FAST + ADVANCED) | [Viewer Docs Hub](viewer/README.md) |
 | Understand the overall architecture | [Architecture Overview](architecture/overview.md) |
 | Find a specific file/class/function | `.github/copilot-instructions.md` â†’ "Complete file map" and "Function lookup" |
@@ -26,6 +31,7 @@ Once oriented, the existing per-task table below still applies.
 | Debug a download issue | `.github/copilot-instructions.md` â†’ "Common debugging patterns" |
 | Understand the download pipeline | [Download Pipeline](pipelines/download-pipeline.md) |
 | Understand the viewer pipeline | [Viewer Pipeline](pipelines/viewer-pipeline.md) |
+| Understand the official Eagle Eye MRI pipeline | [Eagle Eye MRI Canonical Pipeline](pipelines/eagle-eye-mri.md) |
 | Find config for a specific module | [Module Catalog](modules/README.md) â†’ "Module Configuration Reference" |
 | Find where a signal is emitted/handled | [Module Connections](architecture/module-connections.md) â†’ "Inter-Module Signal Connections" |
 | Check rules before changing timers | `.github/copilot-instructions.md` â†’ "Critical rules" and "Pipeline latency budget" |
@@ -46,6 +52,7 @@ Once oriented, the existing per-task table below still applies.
 - [Image Pipeline Reference](pipelines/IMAGE_PIPELINE_REFERENCE.md) â€” DICOMâ†’ITKâ†’VTK coordinate transforms (essential)
 - [Download Pipeline](pipelines/download-pipeline.md) â€” Socketâ†’gRPCâ†’Executorâ†’DBâ†’Disk flow
 - [Viewer Pipeline](pipelines/viewer-pipeline.md) â€” DBâ†’ImageIOâ†’ITK filtersâ†’VTKâ†’Display flow
+- [Eagle Eye MRI Canonical Pipeline](pipelines/eagle-eye-mri.md) — geometry, anatomy, task-specific screening cards, diagnostic cards, classification, and the central template registry
 - [Viewer Docs Hub](viewer/README.md) â€” Canonical FAST vs ADVANCED architecture/debug map
 - [FAST Mammography Regression Playbook](viewer/FAST_MAMMOGRAPHY_REGRESSION_PLAYBOOK_2026-05-19.md) â€” Recovery checklist and non-regression rules for FAST MG display issues
 - [FAST vs ADVANCED Architecture](viewer/FAST_vs_ADVANCED_ARCHITECTURE.md) â€” Render-owner truth and code-backed split
@@ -108,6 +115,12 @@ Once oriented, the existing per-task table below still applies.
 - [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) â€” Earlier stable release snapshot
 
 ### Build & Deployment
+- [Canonical Build and Installer Runbook](../BUILD.md) — Single entry point for humans and AI agents; build lanes, official six-file command, outputs, size/content checks, recovery limits, and release blockers
+
+  The backend command lists below are diagnostic and historical references. Do
+  not use them to cut the current six-installer release matrix; return to the
+  canonical runbook for every release candidate.
+
 - [Build Systems Index](../builder/docs/README.md) â€" Canonical split between the PyInstaller builder and the staged Nuitka builder
 - [Advanced MPR Build/Runtime Integration](../builder/docs/ADVANCED_MPR_BUILD_RUNTIME_INTEGRATION.md) â€" Canonical anti-regression guide for packaging and launching Advanced MPR
 - [Windows Release Flow](../builder/docs/WINDOWS_RELEASE_FLOW.md) â€" Build, stage, and install workflow for shipping to another PC

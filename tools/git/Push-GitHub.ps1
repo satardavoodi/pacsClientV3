@@ -109,6 +109,10 @@ if (-not $Branch) {
     throw "Could not detect the current branch."
 }
 
+if (-not $CheckOnly -and -not $DryRun -and $Branch -in @("main", "beta-version")) {
+    throw "Live release-branch pushes must use tools/git/release_manager.py and RELEASE.md so every required remote, branch, and tag is verified."
+}
+
 $remoteUrl = (& git remote get-url --push $Remote).Trim()
 if (-not $remoteUrl) {
     throw "Could not resolve the push URL for remote '$Remote'."

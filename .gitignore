@@ -144,3 +144,17 @@ tools/build/**/*.pyc
 *.bak_prestable
 *.bak
 /consult_edu_*.png
+
+# Offline model preparation artifacts and synthetic verification data (not source).
+/generated-files/offline-lumbar/
+/generated-files/offline-lumbar-research/
+/generated-files/distribution-assets/
+/generated-files/brain-volumetry/
+/generated-files/release-git/
+# Local clinical/AI captures, credentials, retired reference payloads, and Slicer probes.
+# These directories are runtime or investigation state, never release source.
+/generated-files/eagle-eye/
+/generated-files/gapgpt/
+/generated-files/retired-brain-references-*/
+/generated-files/slicer-control-probe/
+/generated-files/slicer-extension-research/

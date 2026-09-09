@@ -538,6 +538,11 @@ def build_slicer_command(
     # Always skip splash screens for faster startup (both application and launcher)
     cmd.append("--no-splash")
     cmd.append("--launcher-no-splash")
+
+    # Source and installed Python payloads carry the same Slicer extension.
+    offline_module_path = Path(__file__).resolve().parents[1] / "slicer_modules"
+    if (offline_module_path / "AIPacsOfflineLumbar.py").is_file():
+        cmd.extend(["--additional-module-path", str(offline_module_path)])
     
     # Add testing mode to reduce GPU requirements
     if software_rendering:
@@ -625,6 +630,17 @@ def get_slicer_env(
         dict of environment variables to set
     """
     env = os.environ.copy()
+
+    if slicer_exe:
+        # Never point embedded Slicer Python at the separate model site-packages.
+        offline_root = slicer_exe.parent / "offline_lumbar"
+        if not offline_root.is_dir():
+            # Development-only fallback; installed packages always use their own bundle.
+            for ancestor in Path(__file__).resolve().parents:
+                if (ancestor / ".git").exists():
+                    offline_root = ancestor / "generated-files/offline-lumbar/bundle"
+                    break
+        env["AIPACS_OFFLINE_LUMBAR_ROOT"] = str(offline_root)
     
     # Add Slicer bin directory to PATH for DLL loading
     if slicer_exe:

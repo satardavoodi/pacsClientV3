@@ -5,8 +5,8 @@ Background — 2026-05-28 (Stage 2 audit)
 The catch-all ``app.log`` handler that landed earlier in the day made
 every previously-invisible application record visible. The Stage 2 audit
 found that ``_hp_search.py`` had nine ``print()`` calls — five of them
-on error paths (default search, socket-row add, download-status check
-inner + outer, socket-thumbnail error). ``print()`` only reaches stderr,
+on error paths (default search, socket-row add, the former download-status
+check inner + outer, socket-thumbnail error). ``print()`` only reaches stderr,
 so the new catch-all handler couldn't surface failures from those
 paths. The fix replaced those five with ``_logger.error`` /
 ``_logger.warning`` so a per-row failure leaves a stack-trace record in
@@ -24,6 +24,7 @@ allowed because they're informational, not error-path.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -89,18 +90,38 @@ def test_socket_thumbnail_error_uses_logger(src: str) -> None:
     )
 
 
-def test_download_status_check_errors_use_logger(src: str) -> None:
-    """Both download-status error paths must log via _logger (warning + error)."""
-    assert 'print(f"[WARN] Error in download status check' not in src, (
-        "Download status inner-except reverted to print(). That hides "
-        "DB-lock and storage-layer issues that mark every row not_downloaded."
+def test_patient_row_forwarder_has_no_download_status_probe(src: str) -> None:
+    """Initial search-row construction must not perform local disk I/O.
+
+    The old error paths disappeared with the unused synchronous
+    ``get_study_download_status`` call. Reintroducing that call would recreate
+    the measured per-row GUI freeze; it is not an observability improvement.
+    """
+    tree = ast.parse(src)
+    method = next(
+        (
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "add_data2patient_list_table"
+        ),
+        None,
     )
-    assert 'print(f"Error checking download status' not in src, (
-        "Download status outer-except reverted to print()."
+    assert method is not None, "add_data2patient_list_table() removed?"
+    called_names = {
+        node.func.id
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "get_study_download_status" not in called_names, (
+        "Patient rows must paint before local download state is resolved; "
+        "the existing Status worker owns that filesystem work."
     )
-    # Both error messages should still appear, now via logger.
-    assert "Error in download status check" in src
-    assert "Error checking download status" in src
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_patient_data"
+        for node in ast.walk(method)
+    )
 
 
 def test_cancel_search_prints_allowed(src: str) -> None:

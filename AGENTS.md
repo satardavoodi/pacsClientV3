@@ -22,7 +22,7 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 - Product: Windows desktop DICOM workstation built with Python, PySide6, VTK, SimpleITK,
   pydicom, SQLite, and packaged plugin payloads.
 - Source entry point: `main.py`.
-- Canonical current version: `3.6.4` in `pyproject.toml`, `main.py`, and release docs.
+- Canonical current version: `3.6.5` in `pyproject.toml`, `main.py`, and release docs.
 - Supported interpreter in this checkout: Python `3.13.5` from `.venv`.
 - The public AI-PACS website is a separate project. Read `WORKSPACE.md` before adding a
   website endpoint, shared identity/licensing work, Case-of-the-Day publishing, or ATI work.
@@ -30,12 +30,15 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 ## Read before editing
 
 1. `CLAUDE.md` for runtime, testing, and subsystem invariants.
-2. `docs/for-future-agents/README.md` for the repository discipline.
-3. `docs/INDEX_BY_SUBSYSTEM.md` to locate the subsystem-specific design and tests.
-4. `tests/INDEX_BY_GUARD.md` to understand the existing regression guards.
-5. `docs/architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md` for the verified startup,
+2. `docs/release-and-build/README.md` for the Git/build documentation map.
+3. `RELEASE.md` before any versioned commit, tag, push, or full release build.
+4. `BUILD.md` before any packaging or installer work.
+5. `docs/for-future-agents/README.md` for the repository discipline.
+6. `docs/INDEX_BY_SUBSYSTEM.md` to locate the subsystem-specific design and tests.
+7. `tests/INDEX_BY_GUARD.md` to understand the existing regression guards.
+8. `docs/architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md` for the verified startup,
    subsystem, network, storage, packaging, skill, and MCP connection map.
-6. `docs/reports/CODEX_REPOSITORY_READINESS_2026-08-27.md` for the latest verified baseline
+9. `docs/reports/CODEX_REPOSITORY_READINESS_2026-08-27.md` for the latest verified baseline
    and unresolved repository-level blockers.
 
 For optimization, stability, or reliability work, also read
@@ -66,6 +69,12 @@ item rather than creating a disconnected plan.
 
 ## Mirrors, packaging, and release parity
 
+- `RELEASE.md` is the only supported multi-remote release route. A full build
+  requires its fresh Git synchronization receipt for the exact clean commit.
+- `BUILD.md` is the single authoritative build entry point for humans and AI agents.
+  A final three-edition PyInstaller plus Nuitka candidate must use the isolated
+  `tools/build/build_local_candidate.py` workflow documented there. Backend-specific
+  scripts and older runbooks are diagnostic/detail paths, not alternate release entry points.
 - Several runtime trees have packaged mirrors under `builder/plugin package/packages/*/payload`.
   When a mirrored source changes, use `tools/dev/sync_plugin_mirrors.py`, verify with
   `tools/dev/verify_plugin_mirrors.py`, and run the relevant builder parity guards.

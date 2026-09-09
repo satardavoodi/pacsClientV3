@@ -150,7 +150,24 @@ class ClinicalContextPackage:
         backend: str = "",
         context: str = "",
     ) -> dict:
-        """Return reproducible provenance without identity, paths, or filenames."""
+        """Return reproducible provenance without identity or external paths.
+
+        Session-local derived images may carry a relative ``audit_file`` so the
+        clinician can inspect the exact stored input without exposing a source
+        DICOM, attachment directory, or machine-specific absolute path.
+        """
+        try:
+            resolved_session = self.session_dir.resolve()
+        except OSError:
+            resolved_session = self.session_dir
+
+        def audit_file(image: ClinicalDocumentImage) -> str | None:
+            """Persist only safe session-local references for the audit gallery."""
+            try:
+                return image.path.resolve().relative_to(resolved_session).as_posix()
+            except (OSError, ValueError):
+                return None
+
         return {
             "prompt": dict(stage.as_dict(), text=stage.text),
             "model": str(model or ""),
@@ -165,6 +182,11 @@ class ClinicalContextPackage:
                         "position": index,
                         "mime": image.mime,
                         "source_kind": image.source_kind,
+                        **(
+                            {"audit_file": local_file}
+                            if (local_file := audit_file(image))
+                            else {}
+                        ),
                     }
                     for index, image in enumerate(self.images, start=1)
                 ],

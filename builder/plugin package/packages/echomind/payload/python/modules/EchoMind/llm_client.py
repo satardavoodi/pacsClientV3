@@ -89,7 +89,8 @@ def is_active_backend_configured() -> bool:
     """
     backend = _active_backend()
     if backend == "openai":
-        return bool(str(get_openai_settings().get("api_key") or "").strip())
+        cfg = get_openai_settings()
+        return all(str(cfg.get(key) or "").strip() for key in ("api_key", "base_url"))
     from modules.EchoMind.entitlement import company_entitled
     return company_entitled()
 
@@ -151,9 +152,9 @@ def _resolve_openai_backend(api_key_override: str | None = None) -> BackendSessi
             "No OpenAI API key is configured. Open Settings -> EchoMind -> OpenAI."
         )
 
-    base_url = str(cfg.get("base_url") or "https://api.openai.com/v1").strip()
+    base_url = str(cfg.get("base_url") or "").strip()
     if not base_url:
-        base_url = "https://api.openai.com/v1"
+        raise LLMError("Enter your provider Base URL in EchoMind OpenAI settings.")
 
     return BackendSession(
         provider="openai",
@@ -166,7 +167,7 @@ def _resolve_openai_backend(api_key_override: str | None = None) -> BackendSessi
 
 
 def _resolve_active_backend(api_key_override: str | None = None) -> BackendSession:
-    if _active_backend() == "openai" or api_key_override:
+    if _active_backend() == "openai":
         return _resolve_openai_backend(api_key_override=api_key_override)
     return _resolve_company_backend()
 
@@ -495,7 +496,7 @@ def gapgpt_chat(
 def test_openai_connection(
     *,
     api_key: str,
-    base_url: str = "https://api.openai.com/v1",
+    base_url: str = "",
     organization: str = "",
     project: str = "",
     timeout: int = 15,
@@ -504,7 +505,9 @@ def test_openai_connection(
     if not resolved_api_key:
         raise LLMNoKeyError("No OpenAI API key is configured.")
 
-    resolved_base_url = str(base_url or "https://api.openai.com/v1").strip().rstrip("/") or "https://api.openai.com/v1"
+    resolved_base_url = str(base_url or "").strip().rstrip("/")
+    if not resolved_base_url:
+        raise LLMError("Enter your provider Base URL in EchoMind OpenAI settings.")
     proxies = _get_requests_proxies()
     _ensure_socks_proxy_support(proxies)
 

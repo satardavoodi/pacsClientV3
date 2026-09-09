@@ -82,7 +82,7 @@ def _run_download_in_process(
 
     Messages written to *result_queue* follow this schema:
         {'type': 'progress',   'study_uid': str, 'event_type': str,
-         'series_number': str, 'progress_pct': float,
+         'series_uid': str,    'series_number': str, 'progress_pct': float,
          'downloaded': int,    'total': int}
 
         {'type': 'completed',  'study_uid': str, 'success': bool,
@@ -322,7 +322,7 @@ def _run_download_in_process(
             return cancel_event.is_set()
 
         def _progress_cb(
-            event_type, series_number, progress_pct, downloaded, total, **_
+            event_type, series_number, progress_pct, downloaded, total, **metadata
         ):
             if cancel_event.is_set():
                 # Re-use the same DownloadCancelled exception so executor
@@ -341,20 +341,30 @@ def _run_download_in_process(
                     _progress_count[0], series_number,
                     progress_pct, downloaded, total, event_type,
                 )
+            message = {
+                "type": "progress",
+                "study_uid": study_uid,
+                "event_type": str(event_type),
+                "series_uid": str(metadata.get("series_uid") or ""),
+                "series_number": str(series_number),
+                "progress_pct": float(progress_pct),
+                "downloaded": int(downloaded),
+                "total": int(total),
+            }
             try:
-                result_queue.put_nowait(
-                    {
-                        "type": "progress",
-                        "study_uid": study_uid,
-                        "event_type": str(event_type),
-                        "series_number": str(series_number),
-                        "progress_pct": float(progress_pct),
-                        "downloaded": int(downloaded),
-                        "total": int(total),
-                    }
-                )
+                # The one-time manifest and terminal series updates are the
+                # authoritative handoffs for the study-level accumulator. Their
+                # bounded delivery happens in the subprocess, never on the Qt
+                # GUI thread.
+                if (
+                    event_type == "study_manifest"
+                    or (int(total) > 0 and int(downloaded) >= int(total))
+                ):
+                    result_queue.put(message, timeout=1.0)
+                else:
+                    result_queue.put_nowait(message)
             except Exception:
-                pass  # Queue full — drop this progress heartbeat
+                pass  # Parent is stopping or a non-terminal heartbeat was full.
 
         # ── 6. Run ────────────────────────────────────────────────────────────
         logger.warning(

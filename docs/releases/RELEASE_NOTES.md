@@ -1,9 +1,35 @@
 # AIPacs Release Notes (Consolidated)
 
+**Next build target:** v3.6.5 (2026-09-03), preparation in progress; not released.
+
 **Current Stable Version:** v3.6.4 (2026-08-29)
 **Previous Stable:** v3.6.3 (2026-08-23)
 **Release Date:** 2026-08-29
 **Branch:** beta-version
+
+---
+
+## v3.6.5 (unreleased) - Mammography integration and current workstation updates
+
+Requested outputs: Python/PyInstaller and Nuitka installers. Source version and
+application metadata now target 3.6.5. Existing installers and build checkpoints
+must not be relabeled or resumed as evidence of a new build.
+
+The working candidate contains the native mammography Intelligent AI Analyze
+integration, shared EchoMind provider selection, and the correction that resolves
+stale mammography result paths against immutable local viewer source identities.
+Ambiguous matches and cross-study inputs are rejected. MRI/spine analysis remains
+a separate workflow. The wider uncommitted workstation changes require a reviewed,
+isolated source snapshot before compilation; this entry does not approve them all
+for release or claim clinical validation.
+
+Preparation and verification: [VERSION_3.6.5_BUILD.md](VERSION_3.6.5_BUILD.md).
+The canonical source-publication route is now `RELEASE.md`: it requires one
+reviewed release commit, an annotated version tag, explicit atomic pushes of the
+same SHA to `main` and `beta-version` in all three declared repositories, and a
+post-push read-back receipt. The full candidate runner rejects a missing, stale,
+wrong-version, wrong-commit, incomplete, or post-edit receipt. The current 3.6.5
+release record remains blocked until its mixed worktree is reviewed and frozen.
 
 ---
 

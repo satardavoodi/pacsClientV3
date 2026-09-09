@@ -44,7 +44,7 @@ echo "    libs: $(ls "$VLIB" 2>/dev/null | grep -ciE 'EGL|portaudio') shared obj
 echo "==> [2/5] Installing light + medium pip packages ..."
 python3 -m pip install $PKG -q \
   pynetdicom==2.1.1 "pydicom>=2.4.0" \
-  pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle \
+  pylibjpeg pylibjpeg-openjpeg pylibjpeg-rle python-gdcm pyjpegls \
   grpcio "google==3.0.0" "google-api-python-client==2.168.0" \
   "google-auth>=2.29.0" "google-auth-oauthlib>=1.2.0" \
   natsort==8.4.0 qasync QtAwesome "openai==1.97.0" "requests[socks]>=2.31.0" \

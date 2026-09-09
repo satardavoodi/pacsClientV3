@@ -14,7 +14,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-SCORER_VERSION = "1.1.0"
+from modules.ai_imaging.eagle_eye_lumbar.evidence_request import REPORT_LEVELS
+
+SCORER_VERSION = "1.2.0"
 LEVELS: Tuple[str, ...] = ("T12-L1", "L1-L2", "L2-L3", "L3-L4", "L4-L5", "L5-S1")
 
 MORPHOLOGY_ORDER: Tuple[str, ...] = (
@@ -24,7 +26,7 @@ SEVERITY_ORDER: Tuple[str, ...] = ("none", "mild", "moderate", "severe")
 ROOT_EFFECT_ORDER: Tuple[str, ...] = ("none", "contact", "deviation", "compression")
 
 _LEVEL_LINE = re.compile(
-    r"^\s{1,8}(T12-L1|L[1-5]-(?:L[1-5]|S1))\s*[:–-]\s*(.+?)\s*$", re.IGNORECASE
+    r"^\s{0,8}(T\d{1,2}-(?:T\d{1,2}|L1)|L[1-5]-(?:L[1-5]|S1))\s*[:–-]\s*(.+?)\s*$", re.IGNORECASE
 )
 _SECTION = re.compile(r"^\s*([A-Z][A-Z /-]{3,})\s*$")
 
@@ -160,9 +162,9 @@ _ROOT_MENTION = re.compile(
     re.IGNORECASE,
 )
 _ROOT_EFFECT_TOKEN = re.compile(
-    r"\b(?P<compression>compress(?:ion|ed|es|ive)?)\b|"
-    r"\b(?P<deviation>deviat(?:ion|ed|es|e)|displac(?:ement|ed|es|e))\b|"
-    r"\b(?P<contact>contact(?:s|ed)?|abut(?:s|ted|ment)?)\b",
+    r"\b(?P<compression>compress(?:ion|ed|es|ive|ing)?)\b|"
+    r"\b(?P<deviation>deviat(?:ion|ed|es|e|ing)|displac(?:ement|ed|es|e|ing))\b|"
+    r"\b(?P<contact>contact(?:s|ed|ing)?|abut(?:s|ted|ment|ting)?)\b",
     re.IGNORECASE,
 )
 _ROOT_SCOPE_BOUNDARY = re.compile(
@@ -326,10 +328,27 @@ def parse_level_prose(level: str, text: str) -> LevelFinding:
         finding.modic = {"1": "i", "2": "ii", "3": "iii"}.get(token, token)
 
     for name, pattern in _CONSEQUENCE_PATTERNS.items():
-        offsets = _hits(low, pattern)
-        if not offsets:
+        mentions = list(re.finditer(pattern, low, re.I))
+        clauses = []
+        # A structure owns its local clause, not the first grade in the level.
+        boundaries = list(re.finditer(
+            r"[,;.]\s*|\b(?:with|but|however)\s+|(?=\bwithout\b)|"
+            r"\band\s+(?=(?:severe|moderate|mild|no|marked|high-grade)\b)", low, re.I,
+        ))
+        for mention in mentions:
+            left = max([0, *[b.end() for b in boundaries if b.end() <= mention.start()]])
+            right = min([len(low), *[b.start() for b in boundaries if b.start() >= mention.end()]])
+            clause = low[left:right]
+            # A subarticular disc location is not itself a recess consequence.
+            # Do not let that earlier location hide a later explicit grade.
+            if mention.group().lower() == "subarticular" and not re.search(
+                    r"stenosis|narrowing|compromise|crowding|effacement|compress", clause, re.I):
+                continue
+            if not _negated(clause, mention.start() - left):
+                clauses.append(clause)
+        if not clauses:
             continue
-        sentence = _sentence_at(low, offsets[0])
+        sentence = clauses[0]
         finding.consequences[name] = {
             "side": _side_in(sentence),
             "severity": _severity_in(sentence),
@@ -382,7 +401,7 @@ def parse_report(text: str) -> ParsedReport:
     for level, parts in pending.items():
         report.findings[level] = parse_level_prose(level, " ".join(parts))
 
-    mapped = [lvl for lvl in LEVELS if lvl in report.level_map]
+    mapped = [lvl for lvl in REPORT_LEVELS if lvl in report.level_map]
     starts = [report.level_map[lvl][0] for lvl in mapped]
     report.level_map_monotonic = starts == sorted(starts)
     if not report.level_map_monotonic:
@@ -441,6 +460,7 @@ class RunScore:
     claims: List[ClaimResult] = field(default_factory=list)
     false_positives: List[Dict[str, Any]] = field(default_factory=list)
     parse_notes: List[str] = field(default_factory=list)
+    level_assignment_audit: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def critical_misses(self) -> List[ClaimResult]:
@@ -463,6 +483,7 @@ class RunScore:
             "claims": [c.as_dict() for c in self.claims],
             "false_positives": list(self.false_positives),
             "parse_notes": list(self.parse_notes),
+            "level_assignment_audit": self.level_assignment_audit,
         }
 
 

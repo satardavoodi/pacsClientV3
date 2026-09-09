@@ -11,6 +11,7 @@ times". Fix: drain _audio_q into _audio_frames on stop, before saving (+ logging
 """
 import ast
 import queue
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,11 @@ VOICE = REPO / "PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/voice_
 
 
 def _make_fake_self(wav_path, q, frames):
+    import soundfile as sf
+
+    def dispatch(data, _drained):
+        sf.write(str(wav_path), data, 16000)
+
     return SimpleNamespace(
         _is_recording=True, _stream=None, _is_paused=False, _player_offset_ms=0,
         _stop_stream=lambda: None,
@@ -29,6 +35,7 @@ def _make_fake_self(wav_path, q, frames):
         _audio_frames=frames,
         _file_path=wav_path,
         _sample_rate=16000,
+        _dispatch_wav_write=dispatch,
         method_update_audio_counter=lambda: None,
         _update_record_pause_label=lambda: None,
         _refresh_buttons=lambda: None,
@@ -96,6 +103,36 @@ def test_drain_precedes_save_in_source():
     assert fn is not None
     body = ast.get_source_segment(src, fn)
     drain_idx = body.index("_audio_q.get_nowait()")
-    save_idx = body.index("sf.write(")
-    assert drain_idx < save_idx, "queue must be drained BEFORE sf.write"
-    assert "logger.info" in body and "[VOICE]" in body
+    dispatch_idx = body.index("_dispatch_wav_write(")
+    assert drain_idx < dispatch_idx, "queue must be drained BEFORE the async WAV dispatch"
+    assert "[VOICE]" in body
+
+
+def test_cancel_wins_even_if_requested_during_atomic_publish(tmp_path, monkeypatch):
+    """Explicit delete must not lose a race between the pre-check and replace."""
+    import os
+    from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import voice_tool_ui
+
+    target = tmp_path / "REC_cancelled.wav"
+    cancel = threading.Event()
+    real_replace = os.replace
+
+    def fake_write(path, _data, _sample_rate, **_kwargs):
+        Path(path).write_bytes(b"wav")
+
+    def replace_then_cancel(source, destination):
+        real_replace(source, destination)
+        cancel.set()
+
+    monkeypatch.setattr(voice_tool_ui.sf, "write", fake_write)
+    monkeypatch.setattr(voice_tool_ui.os, "replace", replace_then_cancel)
+
+    published = voice_tool_ui._write_wav_atomic(
+        target,
+        np.zeros((1, 1), dtype=np.float32),
+        16000,
+        cancel,
+    )
+
+    assert published is False
+    assert not target.exists()

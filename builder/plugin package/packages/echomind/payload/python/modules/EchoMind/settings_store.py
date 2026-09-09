@@ -20,7 +20,7 @@ def _defaults() -> Dict[str, Any]:
         "api_key": "",
         "llm_backend": "company",  # company | openai
         "openai_api_key": "",
-        "openai_base_url": "https://api.openai.com/v1",
+        "openai_base_url": "",
         "openai_org_id": "",
         "openai_project_id": "",
         "openai_text_model": "gpt-5-mini",
@@ -35,8 +35,8 @@ def _defaults() -> Dict[str, Any]:
         # screening pass casts wide over ~31 frames; the verification pass has
         # to hold a strict threshold and reject. They are separately swappable
         # so one can be A/B-tested without disturbing the other.
-        "openai_eagle_eye_model": "gpt-5.6-sol",
-        "openai_eagle_eye_screening_model": "gemini-3.1-pro-preview",
+        "openai_eagle_eye_model": "",
+        "openai_eagle_eye_screening_model": "",
         "openai_transcription_model": "gpt-4o-transcribe",
         "openai_secretary_model": "gpt-5-mini",
         "openai_reasoning_effort": "",
@@ -168,8 +168,12 @@ def set_echomind_api_key(api_key: str) -> Dict[str, Any]:
 
 
 def get_llm_backend() -> str:
-    backend = str(load_settings().get("llm_backend") or "company").strip().lower()
-    return "openai" if backend == "openai" else "company"
+    settings = load_settings()
+    backend = str(settings.get("llm_backend") or "company").strip().lower()
+    # A key alone, or an incomplete legacy selection, cannot opt into direct AI.
+    configured = all(str(settings.get(key) or "").strip()
+                     for key in ("openai_api_key", "openai_base_url"))
+    return "openai" if backend == "openai" and configured else "company"
 
 
 def set_llm_backend(backend: str) -> Dict[str, Any]:
@@ -197,16 +201,14 @@ def get_openai_settings() -> Dict[str, Any]:
 
     return {
         "api_key": _as_str("openai_api_key"),
-        "base_url": _as_str("openai_base_url", "https://api.openai.com/v1") or "https://api.openai.com/v1",
+        "base_url": _as_str("openai_base_url"),
         "organization": _as_str("openai_org_id"),
         "project": _as_str("openai_project_id"),
         "text_model": _as_str("openai_text_model", "gpt-5-mini") or "gpt-5-mini",
         "report_model": _as_str("openai_report_model", "gpt-5.6-terra") or "gpt-5.6-terra",
         "vision_model": _as_str("openai_vision_model", "gpt-5.4") or "gpt-5.4",
-        "eagle_eye_model": _as_str("openai_eagle_eye_model", "gpt-5.6-sol") or "gpt-5.6-sol",
-        "eagle_eye_screening_model": (
-            _as_str("openai_eagle_eye_screening_model", "gemini-3.1-pro-preview")
-            or "gemini-3.1-pro-preview"),
+        "eagle_eye_model": _as_str("openai_eagle_eye_model"),
+        "eagle_eye_screening_model": _as_str("openai_eagle_eye_screening_model"),
         "transcription_model": _as_str("openai_transcription_model", "gpt-4o-transcribe") or "gpt-4o-transcribe",
         "secretary_model": _as_str("openai_secretary_model", "gpt-5-mini") or "gpt-5-mini",
         "reasoning_effort": _as_str("openai_reasoning_effort"),
@@ -244,6 +246,13 @@ def get_openai_model_for_feature(feature: str, default: str = "") -> str:
         "transcription": "transcription_model",
     }
     key = mapping.get(normalized, "text_model")
+    if normalized in ("eagle_eye", "eagle_eye_screening", "eagle_eye_verification"):
+        selected = str(cfg.get(key) or "").strip()
+        if not selected:
+            raise ValueError(
+                "Choose the Eagle Eye screening and diagnosis models in EchoMind "
+                "OpenAI settings, or select the AI PACS company backend.")
+        return selected
     fallback = str(default or cfg.get("text_model") or "gpt-5-mini").strip() or "gpt-5-mini"
     return str(cfg.get(key) or fallback).strip() or fallback
 
@@ -251,14 +260,14 @@ def get_openai_model_for_feature(feature: str, default: str = "") -> str:
 def save_openai_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     normalized = {
         "openai_api_key": str((patch or {}).get("api_key") or "").strip(),
-        "openai_base_url": str((patch or {}).get("base_url") or "https://api.openai.com/v1").strip() or "https://api.openai.com/v1",
+        "openai_base_url": str((patch or {}).get("base_url") or "").strip(),
         "openai_org_id": str((patch or {}).get("organization") or "").strip(),
         "openai_project_id": str((patch or {}).get("project") or "").strip(),
         "openai_text_model": str((patch or {}).get("text_model") or "gpt-5-mini").strip() or "gpt-5-mini",
         "openai_report_model": str((patch or {}).get("report_model") or "gpt-5.6-terra").strip() or "gpt-5.6-terra",
         "openai_vision_model": str((patch or {}).get("vision_model") or "gpt-5.4").strip() or "gpt-5.4",
-        "openai_eagle_eye_model": str((patch or {}).get("eagle_eye_model") or "gpt-5.6-sol").strip() or "gpt-5.6-sol",
-        "openai_eagle_eye_screening_model": str((patch or {}).get("eagle_eye_screening_model") or "gemini-3.1-pro-preview").strip() or "gemini-3.1-pro-preview",
+        "openai_eagle_eye_model": str((patch or {}).get("eagle_eye_model") or "").strip(),
+        "openai_eagle_eye_screening_model": str((patch or {}).get("eagle_eye_screening_model") or "").strip(),
         "openai_transcription_model": str((patch or {}).get("transcription_model") or "gpt-4o-transcribe").strip() or "gpt-4o-transcribe",
         "openai_secretary_model": str((patch or {}).get("secretary_model") or "gpt-5-mini").strip() or "gpt-5-mini",
         "openai_reasoning_effort": str((patch or {}).get("reasoning_effort") or "").strip(),
@@ -266,6 +275,9 @@ def save_openai_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
         "openai_max_output_tokens": int((patch or {}).get("max_output_tokens", 4096) or 4096),
         "openai_timeout_seconds": int((patch or {}).get("timeout_seconds", 180) or 180),
     }
+    for field in ("eagle_eye_model", "eagle_eye_screening_model"):
+        if field not in (patch or {}):
+            normalized.pop("openai_" + field)
     return save_settings(normalized)
 
 

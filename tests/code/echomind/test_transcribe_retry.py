@@ -34,6 +34,46 @@ def _pages_src():
     return io.open(_PAGES, encoding="utf-8-sig").read()
 
 
+@pytest.mark.parametrize("payload,selected,retry,requested,expected", [
+    ({}, "clear", False, "clear", "clear"),
+    ({"quality_mode": "noisy"}, "clear", False, "clear", "noisy"),
+    ({}, "noisy", False, "clear", "noisy"),
+    ({"quality_mode": "clear"}, "noisy", False, "clear", "clear"),
+    ({"quality_mode": "invalid"}, "clear", False, "clear", "clear"),
+    ({"quality_mode": "clear"}, "clear", True, "noisy", "noisy"),
+    ({"quality_mode": "noisy"}, "noisy", True, "clear", "clear"),
+])
+def test_immediate_transcription_honors_selection_without_overriding_retry(
+    payload, selected, retry, requested, expected,
+):
+    """Execute the real slot until its first UI operation, without app/DB startup."""
+    import ast
+    from types import SimpleNamespace
+
+    tree = ast.parse(_pages_src())
+    slot = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == "_transcribe_now")
+    prefix = []
+    for statement in slot.body:
+        if (isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Call)
+                and isinstance(statement.value.func, ast.Attribute)
+                and statement.value.func.attr == "_prefetch_reception"):
+            break
+        prefix.append(statement)
+    else:
+        pytest.fail("Cannot locate the slot's first UI operation")
+    slot.body = prefix + [ast.Return(value=ast.Name(id="quality_mode", ctx=ast.Load()))]
+    module = ast.fix_missing_locations(ast.Module(body=[slot], type_ignores=[]))
+    namespace = {}
+    exec(compile(module, _PAGES, "exec"), namespace)
+    page = SimpleNamespace(composer=SimpleNamespace(_transcribe_quality_mode=selected))
+    actual = namespace["_transcribe_now"](
+        page, payload, quality_mode=requested, _is_retry=retry,
+    )
+    assert actual == expected
+
+
 # ── the capability flag ──────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("provider,expected", [

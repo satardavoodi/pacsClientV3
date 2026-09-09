@@ -1,5 +1,13 @@
 # Windows Release Flow
 
+> Documentation map: [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md).
+>
+> **Current precedence (2026-09-06):** use [`../../BUILD.md`](../../BUILD.md) for
+> the supported isolated PyInstaller + Nuitka release matrix. This historical
+> PyInstaller flow is retained for implementation detail and diagnosis only.
+> Versioned commit, tag, and multi-remote synchronization must first use
+> [`../../RELEASE.md`](../../RELEASE.md); the old commands below are not a release route.
+
 Current release target: `v2.4.7` (`2026-04-28`)
 
 This document is for the **PyInstaller-based build chain in `builder/`**. It does not describe the staged Nuitka builder in `builder nuitka/`; use `NUITKA_BUILD_PLAN.md` for that flow.

@@ -2,9 +2,53 @@
 
 Verified: 2026-08-31. Scope: the existing source-linked AI-PACS Advanced Viewer runtime.
 
+Current application integration: [resident startup and headless computation](ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md)
+documents hidden warmup, the authenticated private command protocol, same-process
+promotion, separate AI execution, and failure/ownership policy. The lower-level
+audit recipes below are not the production command server.
+
+Model integration follow-up: [offline lumbar MR segmentation](ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md)
+describes the dedicated asynchronous Slicer API and portable CPU bundle. Its model
+environment is separate from the embedded-package inventory recorded below.
+
 **The current runtime can be controlled through Python and a bounded local command bridge. Core image loading, threshold segmentation, parameter readback, output saving/reloading, and measurements have been executed successfully. An LLM-facing MCP adapter has not been implemented or tested.**
 
 Use this document for repeatable control recipes. Use the [extension guide](SLICER_EXTENSIONS_INSTALL_AND_CONTROL_GUIDE.md) for downloads, dependencies, third-party APIs, and the separately observed extension GUI failure. Historical evidence is in the [runtime audit](../reports/SLICER_RUNTIME_CONTROL_AUDIT_2026-08-31.md) and [Eagle Eye feasibility assessment](../reports/EAGLE_EYE_SLICER_TOOL_AUGMENTATION_FEASIBILITY_2026-08-31.md).
+
+### Current live status and first lumbar-model demonstration
+
+On 2026-08-31 the user confirmed that the source-run Advanced Analysis window
+opens and responds after two fixes: stale registered Qt buttons no longer abort
+launch, and promotion restores auxiliary windows so invisible modal dialogs do
+not block input. See the resident guide for fail-before/pass-after evidence,
+70 focused passing tests and 462 synchronized Python mirror pairs.
+
+For a local vertebral segmentation demonstration, use the current source series
+in **Segmentation > AI-PACS Offline Lumbar**, validate the MR input selection, and
+run **Segment vertebrae offline (CPU)**. The existing asynchronous
+`AIPacsOfflineLumbarLogic.start(selected_mr_volume_node, callback)` is the
+computation API behind that UI. The callback returns the new segmentation node
+only after source identity and geometry checks. Display/review it in Slicer;
+keep all masks, voxel arrays, DICOM identities and image previews local.
+
+Distinguish three claims: an assistant can operate the existing UI; a controlled
+local Python caller can invoke the extension API; an Eagle Eye LLM can dispatch a
+production MCP tool. Only the first two execution paths currently exist. The
+diagnostic LLM pipeline does not automatically request or consume these masks.
+The LLM selects an approved operation; TotalSegmentator computes the voxels.
+Do not expose arbitrary Python or transfer images to external LLMs for this demo.
+Record actual completion, runtime, source/output geometry and visible result
+before claiming a successful patient-case segmentation.
+
+**Observed operator trial:** the same local backend subsequently completed on the
+exact handed-off MR series in **566.803 s**, returned a nonempty mask and passed
+saved-label voxel/origin/spacing/direction checks. A fixed-slice source/overlay
+preview and `.seg.nrrd` were saved locally. Desktop automation could open the
+viewer but could not reliably reach the module controls, so this was a direct
+trusted-operator `run_snapshot` call, not a live Slicer-widget or MCP dispatch.
+The preview was offered in the local Codex file panel; live MRML import and
+expert review have not been verified. See the [verification follow-up](../reports/OFFLINE_LUMBAR_IMPLEMENTATION_VERIFICATION_2026-08-31.md#local-mr-operator-follow-up)
+for the substantial preparation delay and evidence boundaries.
 
 ## 1. Runtime identity and boundaries
 
@@ -28,7 +72,7 @@ Do not infer compatibility from the folder name alone. Record application versio
 
 This executable is the custom Slicer component, not the installed AI-PACS workstation executable. The source and installed Advanced Viewer payload had matching hashes for four inspected files; that was not a complete payload parity audit.
 
-The existing AI-PACS launcher/startup socket on loopback port 47891 only accepts image-loading operations (`load_dicom`, `load_series`). Its acknowledgement means scheduled, not necessarily loaded. It is not the segmentation bridge described here and does not provide the probe's token protection.
+The legacy AI-PACS launcher/startup socket on loopback port 47891 only accepts image-loading operations (`load_dicom`, `load_series`). Its acknowledgement means scheduled, not necessarily loaded. The default resident path instead uses the authenticated ephemeral-port protocol in the resident guide; it does not start this legacy receiver. Neither is an implemented LLM-facing MCP server.
 
 ## 2. What each control mechanism does
 

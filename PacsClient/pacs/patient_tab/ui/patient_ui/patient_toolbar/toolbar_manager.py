@@ -9014,36 +9014,44 @@ class ToolbarManager:
             return False
 
     def _on_ai_analysis_clicked(self):
-        from modules.ai_imaging.eagle_eye_function_catalog import (
-            FUNCTION_LEGION_CONSULT,
-            FUNCTION_NATIVE_ANALYSIS,
-        )
         from modules.ai_imaging.eagle_eye_function_dialog import (
             active_viewer_context,
-            choose_eagle_eye_function,
         )
 
         context = active_viewer_context(self.patient_widget)
-        choice = choose_eagle_eye_function(
-            context.get("modality", ""),
-            parent=self.patient_widget,
-        )
-        if choice is None:
-            return
+        modality = str(context.get("modality", "") or "").upper()
 
-        if choice == FUNCTION_LEGION_CONSULT:
-            from modules.ai_imaging.legion_consult.workflow import LegionConsultCoordinator
+        # Brain has its own segmentation/lesion chooser in the native flow.
+        # Preserve the existing Legion picker for other MRI examinations.
+        if modality == "MR" and context.get("eagle_eye_mode") != "brain_mri":
+            from modules.ai_imaging.eagle_eye_function_catalog import (
+                FUNCTION_LEGION_CONSULT,
+                FUNCTION_NATIVE_ANALYSIS,
+            )
+            from modules.ai_imaging.eagle_eye_function_dialog import (
+                choose_eagle_eye_function,
+            )
 
-            coordinator = getattr(self.patient_widget, "_legion_consult_coordinator", None)
-            if coordinator is None:
-                coordinator = LegionConsultCoordinator(self.patient_widget)
-                self.patient_widget._legion_consult_coordinator = coordinator
-            coordinator.start()
-            return
+            choice = choose_eagle_eye_function(
+                modality,
+                parent=self.patient_widget,
+            )
+            if choice is None:
+                return
 
-        if choice != FUNCTION_NATIVE_ANALYSIS:
-            logger.warning("Unknown Eagle Eye function selection")
-            return
+            if choice == FUNCTION_LEGION_CONSULT:
+                from modules.ai_imaging.legion_consult.workflow import LegionConsultCoordinator
+
+                coordinator = getattr(self.patient_widget, "_legion_consult_coordinator", None)
+                if coordinator is None:
+                    coordinator = LegionConsultCoordinator(self.patient_widget)
+                    self.patient_widget._legion_consult_coordinator = coordinator
+                coordinator.start()
+                return
+
+            if choice != FUNCTION_NATIVE_ANALYSIS:
+                logger.warning("Unknown Eagle Eye function selection")
+                return
 
         pipeline_started = self._trigger_eagle_eye_analysis_pipeline()
 
@@ -9052,7 +9060,7 @@ class ToolbarManager:
             QMessageBox.warning(
                 self.patient_widget,
                 "Eagle Eye",
-                "Eagle Eye analysis could not start. Please ensure an MG, DX or lumbar MR series is loaded and selected."
+                "Eagle Eye analysis could not start. Please ensure an MG, DX, brain MR or lumbar MR series is loaded and selected."
             )
 
     def _on_upload_menu_clicked(self, _checked=False, *, button=None):

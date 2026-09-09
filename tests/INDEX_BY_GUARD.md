@@ -1,5 +1,106 @@
 # AI-PACS Test Inventory — Index by Guard
 
+## Printing workflow and transport (2026-09-09)
+
+- `code/printing/test_printing_workflow.py`: study isolation, empty selection, multi-page deletion, persistent adjustments, fresh exports, pending-timer teardown, zero window level, fail-closed preview, read-only saved-page viewing, persisted header controls, composed DICOM pixels, immediate selection, background submission identity, landscape, 1x1 Scout, missing-printer status, and a synthetic Scout reference-line pixel check.
+- `code/printing/test_printer_transport.py`: Calling AE, Meta SOP dispatch, returned Image Box identities, malformed-status handling, and physical OS page size. Transport and printer device are fakes; no network or print job is issued.
+- `code/printing/conftest.py`: temporary DICOM/attachment/database paths plus a connection assertion preventing live SQLite access.
+- Existing `code/printing/test_printing_series_repository.py` remains in the focused suite.
+
+
+## Eagle Eye spatial packet geometry (2026-09-08)
+
+`code/ai_imaging/test_eagle_eye_spatial_packet.py`: seven synthetic guards for
+physical order, complete membership, shared frames, separate groups, finite-field
+plane intersections, pixel preservation, irregular sampling, and oblique/cropped
+anisotropic geometry. All seven pass. Scope: independent benchmark utility.
+
+
+## Eagle Eye Gemini company route (2026-09-08)
+
+`code/ai_imaging/test_eagle_eye_gemini_route.py`: five fail-before guards for
+Gemini at every base/atomic dispatch, sampling inheritance and call-time global
+model pins with stage-specific precedence. All five pass after correction.
+
+
+## Canonical Git release route (2026-09-07)
+
+`code/git/test_release_manager.py` protects the fixed three-repository/two-branch
+target matrix, clean reviewed release commits, version and release-record parity,
+fast-forward-only publication, path-only secret reporting, annotated tag identity,
+explicit full-SHA execution confirmation, and complete synchronization receipts.
+`code/builder/test_release_candidate_packaging.py::test_canonical_candidate_cli_requires_git_sync_receipt`
+prevents a full installer matrix from starting before the exact clean commit is
+published and read back. `code/builder/test_canonical_build_runbook.py` keeps
+`RELEASE.md` and `BUILD.md` as the only human/agent entry points. The focused
+release/build boundary passes 38 tests.
+
+## Canonical build route (2026-09-06)
+
+`code/builder/test_canonical_build_runbook.py` keeps `BUILD.md` as the single
+human/AI entry point for the six-installer matrix. It requires every prominent
+agent and backend build document to route there, pins the two canonical output
+folders and six edition filenames, distinguishes source/internal/full lanes, and
+rejects the known unsafe speed shortcuts: parallel full-core builds, removing
+Slicer to reduce size, stale artifact reuse/renaming, and automatic executable launch.
+The documented pre-build selection passes 114 tests. Its narrower canonical
+runbook/profile/candidate/legal boundary passes 46 tests. The combined builder
+plus Git release directory passes 159 tests with one known generated-stage parity failure:
+the development checkout's `builder/output/stage` predates current sanitized
+`echomind_settings.json` and `patient_table_sort.json`. Do not edit that generated
+stage as source; a fresh isolated candidate must regenerate it.
+
+## Release candidate staging capacity (2026-09-06)
+
+`code/builder/test_distribution_profiles.py::test_compact_stage_never_copies_excluded_offline_model_bytes`
+ensures Standard and ARM64-emulated staging omit the Eagle Eye offline lumbar
+model before filesystem copying begins. `code/builder/test_release_candidate_packaging.py::test_candidate_stops_before_nuitka_when_required_python_backend_fails`
+also records and verifies that local candidate packaging uses the candidate
+workspace drive rather than the smaller canonical installer-output drive.
+
+## Eagle Eye physical side and neural coverage (2026-09-05)
+
+`code/ai_imaging/test_eagle_eye_neural_contract.py`: 16 guards for canonical axial
+display, immutable sagittal source membership/midline during side correction,
+complete bilateral recess/root/foramen observations, finding consistency, same-level
+and same-side evidence, not-assessable review, and actual-card header authority.
+The atomic dispatch integration guard also verifies persisted seven-compartment
+coverage and the separate recess diagnostic handoff. Full AI Imaging: 1,063 passed,
+8 optional skips and 8 existing xfails; direct exit code 0, reruns disabled.
+
+## Eagle Eye Brain foundation (2026-09-05)
+
+DICOM report organization: `code/ai_imaging/test_eagle_eye_brain_patient_report.py`
+covers age-at-exam and DICOM precedence, consistent/mixed series identity, institution
+and patient fields, and repeated brand/ID/page count/review footer on every PDF page.
+
+Medial temporal report follow-up: 65 tests pass across the three Brain test files.
+`code/ai_imaging/test_eagle_eye_brain_medial_temporal.py` verifies missing-side
+semantics, asymmetry sign, absence of inferred MTA/diagnosis and immutable local
+hippocampal image evidence selected by label names.
+
+Age/sex reference and report follow-up: 63 guards pass across the original file
+and `code/ai_imaging/test_eagle_eye_brain_reference.py`. Protects unspecified or
+invalid demographics, unavailable candidate scores, asymmetry sign/units/zero
+denominator, local PNG/oblique geometry and immutable completed-job report export.
+
+Protocol follow-up: 42 guards pass. Explicit T2/FLAIR-as-T1 and T1-as-FLAIR
+metadata contradictions are rejected; correctly identified FLAIR remains accepted.
+The two T1 mismatch guards failed on the preceding implementation. Missing metadata
+does not establish sequence identity and still requires operator review.
+
+Follow-up: 38 guards pass, including Qt table unit-header repetition and long
+parcel-name layout. The installed SynthSeg 2 standard-profile synthetic service
+probe passed through headless Slicer; this is execution evidence, not clinical QC.
+
+`code/ai_imaging/test_eagle_eye_brain.py`: 37 synthetic guards for bounded model
+settings, independent geometry/units, malformed model CSV, unavailable normative
+scores, metadata removal, cancellation, atomic completion, lazy UI and real PDF
+rendering/text. `tools/dev/run_brain_volumetry_probe.py` separately verified the
+dedicated Slicer adapter with known oblique masks. See
+[`Eagle Eye Brain status`](../docs/modules/EAGLE_EYE_BRAIN_VOLUMETRY.md) for model
+provisioning, clinical and release limitations.
+
 Every guard test in `tests/code/system/` is paired with one row of `docs/plans/architecture/REGRESSION_CATALOG.md`. This index tells you, for each test file: **what it protects, what bug it would re-introduce if removed, and where to read the audit report**.
 
 For an alphabetical layout map (where tests live), see [`README.md`](README.md). For the 5-minute onboarding, see [`QUICKSTART.md`](QUICKSTART.md).
@@ -7,6 +108,47 @@ For an alphabetical layout map (where tests live), see [`README.md`](README.md).
 ---
 
 ## How to use this index
+
+Release candidates: `code/builder/test_release_candidate_packaging.py` protects
+curated resources, mandatory backend edition parity, no automatic workstation
+launch, current-source version coherence, codec entry points, and isolated source
+snapshots. See `../docs/releases/VERSION_3.6.5_BUILD.md`.
+
+`code/builder/test_distribution_profiles.py` requires Standard and ARM to retain
+the complete standard Advanced MPR/Slicer runtime while physically excluding only
+the Eagle Eye offline-lumbar model and its Slicer module. It also pins independent
+Inno runtime/model availability macros and a version-bearing setup title.
+`code/test_home_info_panel.py` requires every Information edition version line to
+follow the running Qt application version and the fallback to match
+`pyproject.toml`; the former stale-version quarantine entry was removed.
+`code/cd_burner/test_lite_viewer_autobuild.py` and
+`code/builder/test_windows_qt_icu_hygiene.py` keep foreign app-local ICU DLLs
+out of both PyInstaller runtimes so they cannot shadow Windows ICU and break
+`PySide6.QtCore`; Qt WebEngine's separate `icudtl.dat` remains present.
+The distribution-profile guards also require an isolated candidate to receive
+an explicit backend-specific canonical installer destination; a lookalike path
+with the same folder suffix is rejected.
+The asset-cache guard keeps SHA-256 verification deterministic for the 4 GiB
+release cache when Windows rejects `hashlib.file_digest()` for a large file;
+it uses bounded reads without weakening the manifest size or digest checks.
+
+Recovery guards in the same file cover Inno path-budget staging, bounded Nuitka
+memory settings, fatal compiler output, owned-child timeouts, and source-identity
+validation before reusing an already compiled core. They also require the
+four-hour heavyweight-build idle boundary, Stage 6 MSVC `/Od` override, exact
+timeout cache boundary, partial-distribution cleanup, and resume from the recorded
+failed release stage. The local candidate is fail-fast across required backends:
+a Python failure marks Nuitka skipped instead of starting a multi-hour compile.
+See the 2026-09-05 OPT-53 recovery rows in the regression catalog.
+
+`code/builder/test_codec_bundling.py` protects the non-GPL compressed-DICOM
+decoder contract: GDCM and pyjpegls replace pylibjpeg-libjpeg, OpenJPEG/RLE
+entry-point metadata remains present, GDCM XML/native resources are declared,
+and the release gate covers every required transfer syntax. The real compressed
+round-trip boundary is in `code/test_import_pipeline_dicom.py`.
+`code/builder/test_installer_legal_notices.py` requires both the EULA and the
+3.6.5 third-party inventory to be installed under `Legal`. See
+`../docs/reports/V3.6.5_FINAL_RELEASE_READINESS_2026-09-05.md`.
 
 When you touch a subsystem:
 
@@ -41,14 +183,26 @@ When you ship a fix:
 | `test_max_patient_tabs_message_guard.py` | **3** | "Maximum Patient Tabs Reached" message in `_hp_modules.py` interpolates `MAX_PATIENT_TABS` (no hardcoded digit); constant is imported; `add_patient_tab` docstring doesn't pin a stale numeric literal |
 | `test_right_panel_reserved_height_guard.py` | **2** | `RightPanelWidget.THUMBNAIL_BOX_HEIGHT` is coupled to `ThumbnailManager.create_thumbnail_widget`'s real card height (215) by source-parse; constant has a comment pointing at thumbnail_manager.py as source-of-truth |
 | `test_patient_click_double_click_guard.py` | **4** | `_on_patient_clicked` does NOT call the redundant `highlight_selected_row(row)` that broke double-click detection; `itemClicked` + `itemDoubleClicked` signals stay wired to their handlers; table keeps `SelectRows` behaviour so Qt's native selection still fires |
+| `test_ui_stall_boundaries_2026_09_02.py` | **8** | Measured UI-stall boundaries: no eager retired gRPC import, no completed-tree root stylesheet, asynchronous Agent Gateway startup, off-thread patient completeness and Zeta schema work, asynchronous WAV flush, lazy Eagle Eye secondary tabs, and off-thread DICOM probing. |
+| `test_import_registration_layout_crash_guard.py` | **4** | Large Local import registration stays on the managed worker boundary, preserves per-study results and exact DICOM bytes while writing only an isolated local index, never accesses the server, and viewport layout construction cannot pump a nested Qt event loop. |
 | `test_right_panel_min_width_guard.py` | **2** | `RightPanelWidget.setMinimumWidth(N)` is large enough that at the floor there's ≥22 px gap between the 190 px card right edge and the AlwaysOn 12 px vertical scrollbar (so the dotted border can't visually clip into the scrollbar); constant has a geometry comment so future agents don't lower it |
 | `test_system_stress.py` | (env-gated) | Multi-process stress patterns (skips in sandbox) |
 
-**Subtotal: 73 system-level guards across 14 active files.**
+**Subtotal: 81 system-level guards across 15 active files.**
 
 ---
 
 ## EchoMind / Command Layer (`tests/code/echomind/`)
+
+Adjacent Eagle Eye coverage guard (2026-09-05):
+`tests/code/ai_imaging/test_eagle_eye_extended_coverage.py` protects seven-group
+mapping, complete context membership, unchanged lumbar numbering, context-only
+diagnostic exclusion and explicit review notices (12 guards).
+
+`test_explicit_provider_selection.py` (2026-09-05): 21 synthetic guards for default
+company routing, explicit direct opt-in, no invented endpoint, no key-override route
+switch, explicit Eagle Eye models, retryable preflight failure, and Settings form/save
+behavior. Full affected selection: 205 passed, 1 existing xfail.
 
 | Test file | What it protects |
 |---|---|
@@ -157,14 +311,23 @@ system table above. Each pairs with a 2026-08 row in the regression catalog.
 | `code/viewer/test_disk_pixel_cache_async_init.py` | **10** | `initialize()` stays synchronous for direct callers; only the singleton goes background. Includes a threaded writer-vs-scan race and the LRU-order-after-merge invariant (the index's ORDER is the eviction order). |
 | `code/viewer/test_viewer_import_warm.py` | **8** | The import warm creates **no Qt object** (it runs off the GUI thread) and fails loudly if the windowing path stops using the numpy calls it warms. |
 | `code/viewer/test_dicom_import_preview.py` | **5** | Import groups by immutable study/series UID, assigns duplicate raw numbers through the shared collision resolver, and distinguishes copied DICOM object count from pixel-bearing image count. Metadata-only SR/vendor objects remain importable but must report zero displayable images. |
+| `code/dicom_media/test_dicom_vm_normalization.py` | **5** | Restores only standard textual VM>1 elements collapsed into Python-list strings; preserves clean/unreadable payload bytes, private and VM=1 text, transfer syntax, pixels and all identity UIDs; proves socket normalization precedes the atomic write and DICOMDIR export repairs only its copy. Same-study flow validation is recorded in `FLOW_CVI42_SAME_STUDY_VM_COLLAPSE_2026-09-01.md`. |
 | `code/viewer/test_disk_pixel_cache_persistence.py` | **20** | The L2 cache SURVIVES shutdown (before this it was `rmtree`'d every exit and had never served a cross-session hit). Pins: persistence is the default; `AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1` really restores the wipe; **`clear()` itself stays unconditional** so an explicit user clear always clears; the shutdown path calls `clear_on_exit()` not `clear()` (AST pin — a comment naming `.clear()` cannot fool it); and eviction still bounds a *persisted* cache, with LRU order surviving a restart. |
 | `code/ui_services/test_thumbnail_active_state_and_strip.py` | **20** | **Behavioural, on real Qt widgets.** The download bar is not buried by the re-parenting `addWidget`; the red active line is stacked above it; A→B→A returns a series to the active state. A source-string pin cannot see a z-order bug — that is exactly how the buried bar survived `test_thumbnail_panel_ui_fixes.py`. |
+| `code/ui_services/test_thumbnail_panel_ui_fixes.py::test_thumbnail_card_root_style_is_scoped_and_applied_before_child_tree` | **1** | The thumbnail card root style stays object-scoped and is applied before Qt children, graphics effects, and event filters exist. This guards the exact main-thread site of the 2026-09-01 Windows heap-corruption termination. |
+| `code/system/test_windows_multiprocessing_visibility.py` | **7** | The bootstrap remains before `freeze_support`; direct Python may select a direct `pythonw` sibling, but supported virtual-environment source runs never select the `pythonw` redirector. A real Windows spawn child must read a shared cancellation Event without WinError 5. Frozen/non-Windows/missing-interpreter and installed-application executables remain untouched. |
+| `code/viewer/test_viewport_drop_replacement.py::test_retired_fast_viewer_child_never_becomes_a_top_level_window` + `test_fast_viewer_replacement_never_detaches_layout_children` | **2** | A retired FAST preview/full-series child is hidden but remains parented until deferred deletion, and both bridge-install paths use the shared retirement authority. Prevents `setParent(None)` from turning a visible embedded viewer into a millisecond Windows top-level window during Preview -> Complete promotion. |
 | `code/ui_services/test_main_footer_bar_removed.py` | **6** | The empty main-page footer stays hidden and its widgets stay alive (so `apply_theme` keeps working); fails if anyone starts writing to its labels or introduces a real `QSizeGrip`. |
 | `code/ui_services/test_clear_table_crash_guard.py` | **16** | Patient-table item and widget teardown stays outside Qt model mutation: each order cell is created once, safe row/full clears use `takeItem` before `removeRow`/`setRowCount(0)`, producers respect the rebuild guard, and Local Server search does not pump a nested event loop. Includes a real offscreen Qt/Shiboken ownership check. |
-| `code/ui_services/test_local_offline_contract.py` | **20** | LocalDatabase defaults to no remote resync; single-click reconcile, right-panel cache miss, grouped preview, viewer thumbnail cache miss, existing-tab focus, and local patient open return through DB/disk paths before any PACS socket access. Multi-study Local open must aggregate every study's SQLite/disk series metadata. Duplicate-SeriesNumber imports preserve exact `series_path`/`folder_key` but use a digit-only UI handle; missing PNGs rebuild from the exact folder off the GUI thread; metadata-only DICOM groups are excluded; cine cards show total frames without changing file-completeness counts; and count persistence targets `SeriesInstanceUID`. Local startup must not render collision storage stems as drag handles before authoritative projection, and the FAST parser must reject them rather than reinterpret underscores as numeric separators. |
+| `code/ui_services/test_local_offline_contract.py` | **21** | LocalDatabase defaults to no remote resync; single-click reconcile, right-panel cache miss, grouped preview, viewer thumbnail cache miss, existing-tab focus, and local patient open return through DB/disk paths before any PACS socket access. Multi-study Local open must aggregate every study's SQLite/disk series metadata. Duplicate-SeriesNumber imports preserve exact `series_path`/`folder_key` but use a digit-only UI handle; missing PNGs rebuild from the exact folder off the GUI thread; metadata-only DICOM groups are excluded; cine cards show total frames without changing file-completeness counts; and count persistence targets `SeriesInstanceUID`. Local startup must not render collision storage stems as drag handles before authoritative projection; a new single-study Import must start that projection even when cached PNGs already exist; and the FAST parser must reject storage stems rather than reinterpret underscores as numeric separators. |
+| `code/ui_services/test_visit_status_write_off_ui.py` | **2** | Patient-open colour remains immediate while the ordered SQLite write runs off the GUI thread; the `visit_status` column is owned by startup schema migration rather than an ALTER/commit inside the open handler. |
+| `code/ai_imaging/test_eagle_eye_probe_enumeration.py` | **3** | Each series folder is enumerated once; the worker receives a small immutable snapshot with no patient widget, VTK object, or private metadata; live Qt state is never dereferenced by the DICOM probe worker. |
+| `code/ai_imaging/test_mammography_intelligent_analysis.py` | **12** | Mammography Intelligent AI Analyze accepts only explicitly identified same-study MG objects, uniquely rebinds stale remote CSV paths through an immutable local-viewer snapshot, preserves the original detection/classification association after rebinding, rejects ambiguous identity, excludes Qt/VTK objects from worker input, confines result discovery to the attachments root, rejects unsafe source dimensions before decode, masks corrupt decoder details, builds a bounded de-identified self-cleaning evidence package, performs decode/package/network work outside the GUI thread, delegates UI behavior to a dedicated controller, and routes MG directly without changing the MRI-only Legion Consult branch. |
+| `code/system/test_voice_queue_drain_on_stop.py` | **5** | Stop drains every queued audio frame before asynchronous publication; empty takes are visible; explicit delete wins even if cancellation arrives in the narrow interval during atomic replace, so a cancelled WAV cannot reappear. |
+| `code/download_manager/test_overall_progress_accumulator.py` | **9** | The queue row and right-side Overall Progress remain monotonic across series, retries, delayed terminal state, and complete-on-disk resume. SeriesInstanceUID distinguishes duplicate SeriesNumber values; the authoritative downloader manifest replaces an unknown/stale queue denominator without resetting the numerator; reset starts a new generation; manifest/terminal IPC is bounded/reliable off the GUI thread; aggregate-only events do not fan out per-series viewer updates. |
 | `code/ui_services/test_patient_study_set.py` | **27** | Pure patient/study/series authority, including deterministic digit-only display aliases for duplicate raw SeriesNumber values while preserving the raw number and collision folder. |
 | `code/viewer/test_dicom_color_decode.py` | **12** | DICOM colour conversion plus the FAST metadata-recovery regression: an RGB/YBR single frame remains `Rows x Columns x 3` when DB metadata omits colour facts. |
-| `code/viewer/test_fast_multiframe.py` | **20** | Multi-frame decode, cache, geometry and metadata expansion, including several cine DICOM objects whose DB rows omit NumberOfFrames. |
+| `code/viewer/test_fast_multiframe.py` | **22** | Multi-frame decode, cache, geometry and metadata expansion, including several cine objects whose DB rows omit NumberOfFrames and Enhanced MR series mixed with Raw Data Storage in either metadata order. Metadata-only objects stay preserved but never become image slices. |
 | `code/viewer/test_series_ref_authority.py` | **29** | Immutable display/study/series authority; a numeric collision alias retains the original DICOM number but loads the exact suffixed storage folder. |
 | `code/ui_services/test_advanced_search_routing.py` + `code/database/test_local_advanced_search.py` | **8 + 3** | Advanced Search follows the active source and preserves bounded multi-ID, normalized acquisition/import date, multi-valued modality, body part, DICOM age, and persisted physician filters in Local SQLite. Valid online physician hydration is persisted for later offline reuse; the database tests use an isolated patched `DATABASE_FILE` and cleared pool. |
 | `code/ui_services/test_local_incremental_and_import_date.py` | **13** | Imported Date means the immutable first entry into this computer's Local SQLite, never acquisition date or last refresh. Single-day/preset/range queries use full-day boundaries, NULL legacy timestamps do not match, import-date queries stay Local, and reversed custom ranges are normalized in both the dialog and repository. Also retains the incremental Local-list guards. |
@@ -222,8 +385,22 @@ and restore them in a `finally`.
 **2026-08-22** — same five folders, same order → **3841 passed**, 41 skipped,
 38 deselected, 55 xfailed, 5 xpassed, **6 failed — the same six as 2026-08-21 and
 nothing new**. New guard file:
-`tests/code/ui_services/test_gui_thread_disk_paths.py` (27 guards, **19 fail at
-HEAD** via `tools/analysis/oneoff/verify_gui_disk_guard_fails_prefix_2026_08_22.py`).
+`tests/code/ui_services/test_gui_thread_disk_paths.py` (29 guards: the original
+27 retain **19 fail at HEAD** via
+`tools/analysis/oneoff/verify_gui_disk_guard_fails_prefix_2026_08_22.py`; the
+2026-09-02 initial-row probe guard independently failed before its correction,
+while the explicit-state parity guard already passed).
+
+**2026-09-02 R1 follow-up** — initial Server Search row construction still
+called `get_study_download_status` synchronously after the 2026-08-22 scanner
+optimization. The result was not consumed by the row renderer, whose Status
+cell already uses `statusFlagsReady`. The new behavioral guards execute the real
+forwarder, forbid the probe, preserve all row metadata, and preserve explicit
+Local/Import download state without reinterpretation. Full guard file: 29
+passed. Adjacent search/status/clear/storage selection: 142 passed. A broader
+search/table selection passed 95 with two registered xfails and one known
+pre-existing fixed-window assertion from 2026-08-21; the changed production
+file is outside that failure.
 
 **2026-08-23** — `tests/code/system + runtime + utils + builder` → **580 passed**,
 5 deselected, 1 xfailed, **11 failed, 0 of them ours**. New guard files:
@@ -659,6 +836,23 @@ passed**; complete AI Imaging gate: **569 passed, 8 pre-existing xfailed**;
 default-build inclusion guard: **3 passed**; combined gate: **572 passed**.
 Live radiologist validation remains pending.
 
+**2026-08-31 (OPT-55 — level integrity, padding headroom, scorer 1.2.0)** —
+`test_eagle_eye_level_identity.py` passes **19** cases for uniform shift despite
+monotonicity, stable frame identity, invalid/missing/duplicate/overlapping maps,
+measured slab mismatch, malformed/truncated input, review-required persistence
+and panel presentation, and benchmark diagnostics without relabeling claims.
+`test_eagle_eye_parasagittal.py` passes **26** cases including exact pixel retention
+across seven aspect ratios and visible coverage failures. Scorer guards pass
+**35** cases, adding participles, structure-local grades, lower-thoracic rows,
+and subarticular-location versus recess-consequence separation. Initial suite:
+22 failed/43 passed; self-review reproduced five map-parser and two location-
+masking failures before correction. Final combined AI Imaging/core inclusion:
+**732 passed, 8 existing xfailed** (729 + 3); **462 mirror pairs** matched.
+Private offline replay preserved 60 originals, 5 base images, and 21 supplemental
+tile contents; pixels fell to 11,253,504 but image capacity remains 8/8.
+No model request, default promotion, or clinical accuracy claim. See Eagle Eye
+stage-two document section 31; full Phase 0 and controlled E1/E2 remain pending.
+
 **2026-08-31 (OPT-55 — opt-in bilateral sagittal supplements; root scorer 1.1.0)** —
 `test_eagle_eye_parasagittal.py`: **18 passed**, covering LPS sampling under
 reversed/oblique geometry, short/invalid coverage, exact V3 image/caption
@@ -744,6 +938,105 @@ request-state advancement without changing the saved ROI geometry.
 
 ---
 
+## Eagle Eye grading identity and frozen input (2026-08-31)
+
+`code/ai_imaging/test_eagle_eye_grading_contract.py` and updated assertions in
+`test_eagle_eye_llm_analysis.py` separate Bartynski recess compression criteria
+from root contact/deviation/compression observations. Six guards failed before
+the catalog/version correction; both files now pass 97 tests. Pipeline 4.7.0,
+grading catalog 2.0.0, root observations 1.0.0; context stays unchanged.
+
+`code/ai_imaging/test_eagle_eye_frozen_input.py` has 18 synthetic offline guards:
+historical prompt/settings and ordered image bytes, source preservation, path/link
+rejection, counts/limits, canonical-JSON size expansion, digest/order changes,
+partial writes and CLI failures without patient-bearing output. Initial 15 failed
+before implementation; the expansion guard failed during self-review before fix.
+The feature freezes/checks saved inputs only, not verification replay or clinical
+landmarks. Full AI Imaging/default-build gate: 753 passed, 8 existing xfailed;
+462 plugin mirror pairs match. See Eagle Eye stage-two document section 32.
+
+## Eagle Eye localization-only screening (2026-08-31)
+
+Related follow-up: `code/ai_imaging/test_eagle_eye_axial_locator.py` (2026-09-01)
+adds 32 synthetic guards for explicit plane identity in the spare supplement
+cell. The first availability guard failed before implementation. Shared-frame
+and every-source-plane affine checks prevent fabricated links; finite FOV,
+oblique/reversed/anisotropic cases, synthetic DICOM loading and pixel comparison
+protect correctness without changing the seven clean images or image/pixel
+budgets. Full AI Imaging/default-build gate: 810 passed, 8 existing xfailed,
+exit 0; 462 mirrors match. Stage-two section 35 records the offline check and
+the still-pending clinical model test.
+
+`code/ai_imaging/test_eagle_eye_screening_attention.py` has 18 synthetic guards
+for diagnostic-rubric/label exclusion, anatomy-only legacy adaptation, raw-text
+fallback removal, normal-focus exclusion, original-image frame/pane/box identity,
+cross-plane correspondence, non-layout box rejection, malformed numbers/rows,
+and retention of uncertain or unassessable anatomy. Seven initial guards failed
+before implementation. The injected parallel integration test in
+`test_eagle_eye_llm_analysis.py` verifies the planner and diagnostic reader receive
+the same sanitized attention while raw stage output is preserved. Adjacent
+Legion handoff remains unchanged. Pipeline 5.0.0; screening 2.0.0; verification
+4.0.0; context 2.1.0. Full AI Imaging/default-build gate: 772 passed, 8 existing
+xfailed; 462 mirror pairs match. See Eagle Eye stage-two document section 33.
+
+The anatomy-first refinement adds three fail-before prompt/example guards and
+one passing-before/after behavioral check for distinct disc/endplate/facet
+identities at the same level (22 cases in the localization file). The injected
+parallel handoff is now tested with each of those three structures. Pipeline
+5.1.0, screening 2.0.1, diagnostic 4.1.0; context and normalization schema
+unchanged. Full gate: 778 passed, 8 existing xfailed. Diagnostic output separates
+the supplied anatomical compartment from the one actually reviewed. This does
+not validate clinical conclusions or DICOM correspondence. See section 34.
+
+## Offline lumbar bundle and installer guards (2026-08-31)
+
+`code/mpr/test_slicer_window_promotion.py` covers the OPT-56 invisible-modal freeze:
+dialogs polished during warmup must display when opened later; an active suppressed
+modal must become visible without being dismissed; unused/deleted dialogs and
+foreign offscreen attributes remain safe. Three real-Qt cases failed before repair;
+the combined launch/lifecycle/builder gate passes 70 tests afterward. The user later confirmed live source-viewer responsiveness; this is distinct from
+the offscreen checks and does not establish clinical segmentation accuracy.
+
+`code/mpr/test_advanced_launch_safeguard.py` covers the live OPT-56 button failure:
+immediate/deferred deletion of registered Qt controls, stale registration batches,
+deletion during an operation and safe retry, disabled-state/duplicate protection,
+and the real Advanced MPR handler reaching deferred launch with synthetic identity.
+All five cases failed before the fix; the combined lifecycle/resident/builder gate
+passed 52 tests afterward. The user later confirmed that the source viewer opens and responds.
+
+`code/builder/test_distribution_profiles.py` verifies physical compact-payload
+exclusion and feed isolation, mandatory Eagle Eye assets, no stale-installer
+substitution, compact size failure, three-output/default selection, ARM emulation
+identity, required Slicer resource retention, cached-asset tamper detection, and
+the established per-backend `output/installer` contract. It asserts the exact
+three versioned filenames, release manifest, install notes and checksums and
+rejects the invented `output/distributions` delivery tree.
+`code/builder/test_release_candidate_packaging.py` also restricts isolated-build
+delivery to `builder/output/installer` and `builder nuitka/output/installer` in
+the selected repository while allowing short external compiler staging only.
+`tools/build/verify_distribution_installer.py` performs real compiler-only checks
+on synthetic files for all three variants, including missing-model rejection.
+
+`code/mpr/test_slicer_resident.py` covers OPT-56 actual readiness instead of import
+readiness, alive-without-ready timeout failure, no image-name process cleanup,
+coalesced background startup, role isolation, shutdown races, read-only input
+budgets, scene preservation after rejected/uncertain commands, true launcher
+lifetime, optional profile/prewarm switches and low-memory deferral. The source-only
+`tools/dev/run_slicer_resident_probe.py --inference` additionally checks hidden
+same-process promotion, exact DICOM selection, authentication, separate headless
+threshold/model execution and parent Qt responsiveness with synthetic data.
+See `docs/modules/ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md` for evidence and limits.
+
+`code/ai_imaging/test_offline_lumbar.py` checks bundle integrity, unsafe paths,
+fixed task/device policy, missing weights, denied DNS, owned-process cancellation,
+and input cleanup including process-start failure. That last guard failed before
+the cleanup correction. `code/builder/test_offline_lumbar_payload.py` checks
+fail-closed staging, canonical adapter refresh, retention of dependency resources,
+and combined Slicer/model materialization. The dedicated Slicer synthetic probe
+also checks GUI, cropped/rotated geometry, changed-source rejection and optional
+real model inference; it is not a patient or accuracy test. See
+`docs/modules/ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md` for commands and limits.
+
 ## Cumulative count (2026-08-18)
 
 Counted directly by `tools/analysis/oneoff/count_test_files_2026_08_18.py`,
@@ -780,3 +1073,377 @@ Counted directly, not from the dashboard:
 - **KPI registered keys: 42 across 13 workflows**
 
 These numbers come from `python tools/kpi_dashboard.py` and `pytest tests/code/echomind tests/code/system`. They are the long-term measurement surface — every PR that lands a fix should make the catalog and test counts grow together.
+
+## Eagle Eye source-grounded correlated screening (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_correlated_screening.py` protects the focused V4
+contract: bounded DICOM atlas identity, no path/UID leakage in its manifest,
+tile-content box conversion to patient LPS, deterministic multiplanar
+validation, rejection of foreign tile identities, propagation of attention IDs
+and the lesion anchor, and focus cropping around that anchor instead of the
+axial slice centre. The file failed at import before implementation and passes
+four synthetic cases afterward, including fail-closed missing Frame of
+Reference. These guards validate software geometry, not
+clinical localization or diagnosis.
+
+## Eagle Eye canonical screening handoff (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_screening_attention.py` and
+`code/ai_imaging/test_eagle_eye_correlated_screening.py` now protect pipeline
+5.3.0's diagnosis-free canonical handoff. The guards require same-site repeated
+rows to merge with their cross-plane locations, normal/abnormal contradictions
+to resolve once with reduced confidence, left/right duplicates to become one
+bilateral focus, and spatially distant patient-space anchors to remain separate
+foci. The public GPT context excludes normal counters and internal parser noise
+while retaining bounded material quality issues. Six assertions failed before
+their corresponding corrections; self-review also caught and guarded an
+intermediate false promotion from unavailable geometry to verified single-plane
+geometry. Final focused screening/correlation/version
+gate: 35 passed; full AI Imaging gate: 817 passed, 8 existing xfailed; default
+build inclusion: 3 passed; plugin mirrors: 462/462. These are software-contract
+guards, not clinical sensitivity or specificity validation.
+
+## Eagle Eye canonical evidence and rollback policy (2026-09-01)
+
+Mode-policy guards in `code/ai_imaging/test_eagle_eye_evidence_bundle.py`,
+`test_eagle_eye_focused_v3.py`, and `test_eagle_eye_parasagittal.py` require
+the canonical evidence mode for an ordinary source or packaged run even when a
+stale legacy evidence variable remains in the environment. That mode was V4 in
+pipeline 5.4 and is V5 level cards in pipeline 5.6. Retired layout/V1/V2/V3/V4
+composers are reachable only when the separate engineering gate is explicitly
+enabled; unsupported values still fail clearly. Four assertions failed before
+the original gate existed, and the current default assertion is pinned to V5.
+Historical composers remain testable for rollback and benchmark reproduction;
+they are not exposed as normal application versions.
+
+## Eagle Eye sagittal screening sampling and capacity (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_correlated_screening.py` protects pipeline
+5.4.0's role-specific screening renderer. Synthetic 11-slice sagittal T2/T1
+series must retain every source identity across 6+5 pages, use `320 x 555`
+diagnostic tiles at no worse than `0.47 mm/px` for the representative source,
+and leave axial `256 x 256` rendering unchanged. Manifest 1.1.0 must record
+per-tile fitted content, effective sampling, summarized ranges and the actual
+request budget; the session result retains only the compact summary. Explicit
+budget, quality and render failures must raise the typed fallback contract.
+Pipeline provenance is pinned to 5.4.0. Eight guards failed before the relevant
+changes. Focused screening/orchestration passed 135; full AI Imaging passed 825
+with 8 existing xfails and 3 dependency warnings; default-build inclusion passed
+3 and all 462 plugin mirror pairs matched. These guards establish evidence
+sampling and boundedness, not improved clinical detection.
+
+## Eagle Eye salience-aware screening retention (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_screening_attention.py` protects pipeline 5.5.0,
+screening contract 2.3.0 and evidence-plan schema 1.2.0. The first reader must
+remain diagnosis-free while emitting bounded visual salience, within-study
+priority, adjacent-slice persistence and allowlisted observable features. The
+normalizer must remove untrusted keys and expose an incomplete 2.3.0 routing
+contract as degraded. The planner must retain a marked/dominant caudal focus
+ahead of subtle cranial foci and must emit specific capacity warnings rather
+than silently truncating marked/dominant evidence demand. Selected-focus
+manifests must also retain the routing values. Six guards failed before
+implementation. The changed boundary passed 235 tests; complete AI
+Imaging passed 830 with 8 existing xfails and 3 existing SWIG warnings, exit 0.
+These guards prove deterministic handoff retention, not clinical detection or
+diagnostic accuracy. See Eagle Eye stage-two document section 40.
+
+## Eagle Eye self-contained diagnostic level cards (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_focused_v3.py`,
+`test_eagle_eye_llm_analysis.py`, `test_eagle_eye_screening_attention.py`, and
+the mode-policy tests protect pipeline 5.6.0 and canonical
+`focused-v5-level-cards`. Each selected anatomical level must produce one image
+containing one targeted sagittal T2 tile, one matched sagittal T1 tile when
+available, and at most four contiguous axial T2 frames confined to the measured
+slab. The card manifest and request header must bind its global image number,
+focus, attention IDs, subject level and allowed axial frames; the shared
+EchoMind/GapGPT content builder must expose the same `IMAGE n OF N` identity.
+The diagnostic prompt may use only the bound card, MRI-overview context cannot
+inject a level-specific diagnosis, and missing screening tile identity remains
+material degradation. A structured verification citation outside the bound
+axial frame set must make the report review-required without automatic
+relabelling. The primary guards failed before implementation and the focused
+boundary passes 173 tests afterward. Complete AI Imaging passes 837 with 8
+pre-existing xfails and 3 pre-existing SWIG warnings; default-build inclusion
+plus mirror parity passes 4 tests, and 462 mirror pairs match. These tests prove
+package identity and scope enforcement, not anatomical-numbering truth or
+diagnostic accuracy. See Eagle Eye stage-two document section 41.
+
+## Eagle Eye fixed anatomical level-card template (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_correlated_screening.py`,
+`test_eagle_eye_focused_v3.py`, and `test_eagle_eye_llm_analysis.py` protect
+pipeline 5.7.0, screening contract 2.4.0, evidence-plan schema 1.3.0,
+verification prompt 4.5.0 and V5 manifest 2.1.0. Gemini may propose only exact
+source-atlas identities for nine predefined slots. The local normalizer rejects
+a tile from the wrong sequence, the renderer constrains axial selections to the
+subject slab, and every card uses the same three sagittal T2, three sagittal T1
+and three axial T2 positions. The prompt distinguishes axial anatomical zones
+from craniocaudal migration levels. Six principal guards failed before the
+production boundary existed, including patient-LPS sagittal order and public
+degradation propagation. The changed boundary passes 166 tests and complete
+AI Imaging passes 842 with 8 pre-existing xfails and 3 pre-existing SWIG
+warnings. These tests prove bounded source identity and deterministic layout,
+not clinical accuracy or a validated anatomical midline. See Eagle Eye
+stage-two document section 42.
+
+## Eagle Eye geometry-owned card assembly and metadata (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_correlated_screening.py`,
+`test_eagle_eye_screening_attention.py`, and
+`test_eagle_eye_focused_v3.py` protect pipeline 5.8.0, screening contract 2.5.0,
+verification prompt 4.6.0, evidence-plan schema 1.4.0, card-template schema 1.1.0
+and V5 manifest 2.2.0. The guards require bounded per-tile conspicuity and
+same-level attention bindings, prevent context-only cards, preserve unclear but
+source-bound abnormal attention in one additional-findings card, synchronize T1
+to the selected T2 patient planes, prevent one axial frame from occupying three
+semantic slots, keep model-facing card JSON compact, and permit only edge ticks
+rather than an anatomy-crossing locator line. Six primary assertions failed on
+the preceding implementation. The changed boundary passes 67 tests and the full
+AI Imaging suite passes 848 with 8 pre-existing xfails and 3 pre-existing SWIG
+warnings. These are evidence identity, boundedness and transport guards; they do
+not validate clinical detection, morphology classification or severity. See
+Eagle Eye stage-two document section 43.
+
+## Eagle Eye same-plane sagittal-pair card layout (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_focused_v3.py`,
+`test_eagle_eye_grading_contract.py`, and `test_eagle_eye_llm_analysis.py`
+protect pipeline 5.9.0, verification prompt 4.7.0, card-template schema 1.2.0
+and V5 manifest 2.3.0. Each patient-right, midline and patient-left sagittal
+column must place T2 directly above the geometry-matched T1 plane and must be
+read top to bottom before moving to the next column. The level-bound axial T2
+sequence remains three tiles below a neutral divider and reads left to right.
+The manifest must expose exact visual groups, pairwise slot order, 384 x 256
+sagittal cells, 384 x 384 axial cells and a sequence-border legend whose
+`diagnostic_meaning` is false. The request header, image caption and prompt must
+state the same order and must not imply that color encodes abnormality,
+laterality, severity or confidence. The card/layout assertion and two version
+guards failed before implementation. The changed boundary passes 172 tests and
+the full AI Imaging suite passes 848 with 8 pre-existing xfails and 3
+pre-existing SWIG warnings. These tests establish deterministic visual
+correlation and bounded image size, not diagnostic accuracy. See Eagle Eye
+stage-two document section 44.
+
+## Eagle Eye five-plane sagittal diagnostic cards (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_focused_v3.py`,
+`test_eagle_eye_correlated_screening.py`, `test_eagle_eye_llm_analysis.py`, and
+`test_eagle_eye_grading_contract.py` protect pipeline 6.0.0, screening contract
+2.6.0, evidence-plan schema 1.5.0, verification prompt 4.8.0, card-template
+schema 1.3.0 and V5 manifest 2.4.0. Every named card must contain five distinct
+patient-space sagittal T2 planes in right-foraminal, right-paracentral,
+midline, left-paracentral and left-foraminal order, with a geometry-matched T1
+tile immediately below each plane. Three distinct level-bound axial T2 tiles
+remain below the divider. The card must be 1600 x 1050 with 320 x 224 sagittal
+cells and 384 x 384 axial cells, keeping six cards at 10,080,000 pixels under
+the twelve-megapixel request ceiling. Representative card-size, five-plane
+fallback and screening-schema guards failed before implementation. The changed
+boundary passes 173 tests and complete AI Imaging passes 849 with 8 pre-existing
+xfails and 3 pre-existing SWIG warnings. These tests establish coverage,
+patient-space ordering, cross-sequence pairing and bounded transport, not
+clinical accuracy. See Eagle Eye stage-two document section 45.
+
+## Eagle Eye anatomy-first spaced sagittal sampling (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_focused_v3.py`,
+`test_eagle_eye_correlated_screening.py`, `test_eagle_eye_llm_analysis.py`, and
+`test_eagle_eye_grading_contract.py` protect pipeline 6.1.0, screening contract
+2.7.0, evidence-plan schema 1.6.0, verification prompt 4.9.0, card-template
+schema 1.4.0 and V5 manifest 2.5.0. The sagittal fallback must ignore a lesion's
+lateral coordinate, use a bounded anatomical/acquisition midline, and ordinarily
+select source offsets -4, -2, 0, +2 and +4 before patient-LPS ordering. A full
+Gemini proposal may be asymmetric only when it remains ordered, distinct and
+keeps the paracentral planes at least two source intervals from midline; five
+consecutive planes are rejected. T1 remains geometry-matched to T2, and `VOL`
+labels must be identified as source-volume indexes rather than DICOM instance
+numbers. Six requirements failed before correction. The changed boundary passes
+174 tests and complete AI Imaging passes 850 with 8 pre-existing xfails and 3
+pre-existing SWIG warnings. These tests establish deterministic sampling and
+identity, not anatomical ground truth or diagnostic accuracy. See Eagle Eye
+stage-two document section 46.
+
+## Eagle Eye explicit per-card JSON transport (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_focused_v3.py` and
+`test_eagle_eye_llm_analysis.py` protect pipeline 6.2.0, verification prompt
+5.0.0 and V5 manifest 2.6.0. Every named-level or additional-findings card must
+write one sibling `.card.json` file whose image index, filename and card
+metadata match the PNG, focus record and manifest binding. The saved request
+must preserve the same ordered payload once per card, and the shared
+EchoMind/GapGPT content builder must place exactly one compact JSON block
+immediately before that image. Ordinary screenshots remain payload-free. The
+four principal assertions failed before implementation. Offline reconstruction
+of the latest saved source session produced two cards, two sidecars, two
+bindings and two model-facing payloads with exact decoded equality. These are
+identity and audit guards; they do not establish diagnostic accuracy. The
+changed boundary passes 126 tests, complete AI Imaging passes 852 with 8
+pre-existing xfails and 3 pre-existing SWIG warnings, builder package checks
+pass 4 tests with 4 intentionally deselected, and all 462 plugin mirror pairs
+match. See Eagle Eye stage-two document section 47.
+
+## Eagle Eye card-first diagnostic prompt (2026-09-01)
+
+`code/ai_imaging/test_eagle_eye_screening_attention.py`,
+`test_eagle_eye_llm_analysis.py`, and `test_eagle_eye_grading_contract.py`
+protect pipeline 6.3.0 and verification prompt 5.1.0. The default diagnostic
+reader must bind every PNG to the immediately preceding `CARD_METADATA_JSON`,
+record card identity in every audit row, resolve each bound attention exactly
+once, prevent unmatched context or a whole-package safety sweep from creating
+unbound findings, preserve the named card as task scope, and use a neutral
+output template without a seeded level-specific diagnosis. Identity conflict
+must be `INDETERMINATE`, not a silent transfer to an adjacent card. The four
+principal assertions failed before implementation. The prompt-focused gate
+passes 145 tests and complete AI Imaging passes 855 with 8 pre-existing xfails
+and 3 pre-existing SWIG warnings. These guards establish prompt/transport
+consistency, not diagnostic accuracy. See Eagle Eye stage-two document section
+48.
+
+## Eagle Eye atomic anatomy pipeline (2026-09-02)
+
+`code/ai_imaging/test_eagle_eye_atomic_structure_pipeline.py`,
+`test_eagle_eye_focused_v3.py`, `test_eagle_eye_llm_analysis.py`, and
+`test_eagle_eye_anatomy_gate.py` protect pipeline 8.2.0 and atomic contract
+2.3.0. `test_eagle_eye_card_template_registry.py` additionally protects the
+official cross-MRI card registry and its lumbar runtime projection. A separate
+temperature-0 Gemini gate must map anatomy without assessing
+normality or pathology. Before that call, the workstation assigns only neutral
+series plus sagittal- and axial-group identities from DICOM geometry. Sequence confidence is
+persisted; a semantic T1/T2 label is exposed only when operator-confirmed or
+high confidence. Gemini maps unresolved series to sequence roles, every neutral
+sagittal group to a regional role, and every neutral axial group to a lumbar
+level. Local validation rejects unknown or duplicate series, levels, groups and
+tiles. DICOM LPS X and Z record physical order for audit but must not rewrite
+sagittal regional roles or axial disc-level/subarticular/infrapedicular
+semantics. The validator also rejects distant T1/T2 pairs, changed group bounds,
+cross-group tiles, and out-of-group samples. The same immutable group IDs must
+survive screening slots, evidence planning, and diagnostic card JSON.
+Exactly five saved anatomy cards and JSON sidecars must bridge Gate 1 to Gate 2.
+Disc, canal/neural, neural-foramen, endplate/marrow, and facet/posterior-element
+screening must each receive exactly one matching card rather than raw atlas
+pages. Neural-foramen and posterior-element screening may not collapse back
+into one combined transport.
+Gate 1 atlas pages must render immutable sagittal and axial geometry groups as
+separate blocks and paginate only at group boundaries. Gate 1-to-2 cards retain
+every original member of each included group: Disc and Canal give every complete
+axial group its own row; Foramen gives complete right/left T2 and T1 lateral
+groups separate blocks; Posterior Elements gives complete right-lateral,
+central, and left-lateral groups separate blocks for both T2 and T1; Endplate
+uses complete central T1/T2 groups. The layout contract records block boxes and
+a minimum 32-pixel gap. Physical spacing is the primary cue, headers are
+secondary, and color is tertiary. Gate 2-to-3 cards may select task-specific
+members, but every selected slot records its persistent parent group ID and the
+complete original membership. `test_screening_cards_preserve_complete_geometry_group_membership`
+pins the complete screening handoff;
+`test_disc_card_uses_three_t2_sagittal_planes_and_three_axials` pins focused
+subset provenance; and
+`test_diagnostic_subset_rejects_a_member_outside_its_parent_group` pins the
+fail-closed boundary. Historical artifacts without the contract are explicitly
+`legacy_unavailable`, never silently validated.
+Each grouped request is JSON-only, temperature 0, and has a bounded
+24000-token response allowance after live 7.1.0 exhausted 5996/6000 in all three
+branches before complete JSON was emitted. Each one-card diagnostic request has
+a 12000-token allowance. The narrower tasks are still expected to use compact
+outputs; the ceilings provide reasoning and serialization headroom.
+Truncated or unstructured output must fail the active gate rather than becoming
+an empty handoff. Neither anatomy failure nor grouped-screening failure may
+invoke the historical monolithic screen. Diagnostic-card construction failure
+and an all-card diagnostic failure likewise may not invoke the old verifier.
+Positive findings at one level
+must split into independent structure cards with anatomy-specific sagittal and
+axial evidence. Every Sol request must contain exactly one card. Card ID, level,
+structure group, attention ID and status are validated before deterministic
+merge; conflicting or omitted decisions become `INDETERMINATE`. Atomic request
+and response artifacts must not overwrite sibling calls. The authoritative
+axial level map must remain machine-readable in the aggregate stage-one JSON so
+the audit gallery can display the anatomical gate without parsing report prose.
+The gallery must separately expose the anatomy-mapping atlas, all five
+intermediate anatomy cards, and the exact one-card input of each screen.
+Gate 2 must emit only abnormal structure, immutable level, confidence, visual
+abnormality magnitude, persistence, paired-structure laterality, and exact
+evidence locations. It may not emit morphology, zone, stenosis, grade, space
+effacement, neural contact/displacement/compression, or a companion checklist.
+Disc, canal, recess, root, foramen, facet, endplate, and marrow abnormalities
+must remain separate findings. Compact card metadata must not forward screening
+interpretations or companion questions. Each Sol request classifies exactly the
+structure bound to its card. Endplate rows require exact vertebral-surface
+identity, and ligamentum flavum confirmation requires adjacent-slice
+reproducibility plus objective thickness or direct stenotic effect. Both
+screening and diagnosis temperatures are pinned to 0.
+The new regression file failed before the module and structure grouping existed;
+the compact-group guard failed before the original three-request contract
+existed. The axial-order and four-request guards fail against 7.6.0. The
+registry guard fails at import before the shared package exists, and its runtime
+assertions fail while foramen/posterior screening remains combined. The
+geometry-order, seeded-ID, and no-legacy-fallback guards fail against 7.3.0.
+The historical 7.7 fail-before run produced 6 failures and 20 passes across the
+anatomy and atomic files; after correction those files passed 27. The 7.9.0
+neutral-geometry guards failed three focused boundaries before implementation
+and now cover confidence provenance, neutral series/group rendering, arbitrary
+group-to-level assignment, and physical-order audit without semantic relabeling. The 7.8.0
+registry/anatomy/atomic boundary passes 33. Pipeline 8.0.0 added three
+fail-before sagittal-group boundaries and an end-to-end diagnosis-card identity
+guard. Pipeline 8.1.0 added two fail-before physical-layout boundaries. Pipeline
+8.2.0 adds complete-group screening transport and parent-bound diagnostic
+subsets. Complete AI Imaging passes 921 tests with 8 expected xfails and 3
+existing SWIG warnings. Python compilation and mirror parity are verified
+separately; live source validation remains separate.
+These guards establish execution, identity, evidence selection and audit
+behavior, not diagnostic accuracy.
+
+`code/ai_imaging/test_eagle_eye_stage_audit.py` and
+`test_eagle_eye_ui_boundary.py` protect the read-only `View stage images`
+workflow. Only session-contained files may be presented. The gallery exposes
+the stored anatomy/slot map, exact images for each screening branch, parse and
+truncation state, session-local context images, every gated diagnostic card,
+and the image set recorded for diagnosis. Opening it never recaptures a viewer
+or follows an external attachment or source-DICOM path.
+
+## Eagle Eye central-canal specificity and MR-myelography context (2026-09-03)
+
+`code/ai_imaging/test_eagle_eye_canal_screening.py` protects pipeline 8.3.0,
+atomic contract 2.4.0, anatomy-card schema 1.8.0 and screening schema 3.3.0.
+It requires an auditable central-canal decision for every mapped axial group,
+same-group axial citations, preserved-caliber/minor-impression rejection, and
+independence from lateral-recess positives. Optional MR myelography is bounded
+to two explicitly identified and identity-validated MR series, excluded for a
+wrong study or burned-in annotation, and marked overview-only rather than an
+anatomy-localization source. Six guards failed before implementation. Nine now
+pass; the adjacent boundary passes 159 and complete AI Imaging passes 930 with
+8 expected xfails and 3 existing SWIG warnings.
+
+- Brain anatomical report grouping: `tests/code/ai_imaging/test_eagle_eye_brain_patient_report.py` verifies disjoint coverage of 34 cortical and 14 other paired labels, basal ganglia membership, unchanged measurement objects, regional PDF headings, future atlas label retention and repeated patient/page furniture.
+
+- Brain native FreeSurfer research scoring: `tests/code/ai_imaging/test_eagle_eye_brain_centilebrain.py` covers demographic bounds, exact Aseg/eTIV features, changed reference model rejection, source image mismatch, local WSL paths, version pinning and research report separation. `AIPACS_TEST_REFERENCE_RUNTIME=1` enables actual pinned R model acceptance with synthetic data.
+
+- Adjacent Brain reference ranges: `test_eagle_eye_brain_centilebrain.py` checks the requested 90% band formula, mm3-to-cm3 conversion and missing/nonphysical limits; `test_eagle_eye_brain_patient_report.py` verifies normal-range availability columns across anatomical report pages and retains DICOM scanner covariates.
+- Potvin adult regional reference: `test_eagle_eye_brain_potvin.py` checks supported ages/scanners, incompatible estimator rejection, candidate-only UI status, and (with `AIPACS_TEST_REFERENCE_RUNTIME=1`) all 26 published models, P5/P95 inversion, log-volume intervals, source Z_OP/T arithmetic and adjacent report values.
+
+- Brain study workflow: test_eagle_eye_brain_study_workflow.py verifies MRI routing, patient/study storage isolation, source identity rejection, explicit Qt sequence selection, disabled lesion analysis, and complete atomic PDF export without accessing the live clinical database.
+
+- Brain launcher: the same file executes the real toolbar handler with synthetic active-viewer metadata; brain bypasses the lumbar picker, other MR retains its picker/cancel path, and MG/DX continue directly. The brain case failed before the 2026-09-05 live-test fix.
+
+- Brain published interval integrity, side-specific ranges, age domain and stale-score rejection: `tests/code/ai_imaging/test_eagle_eye_brain_volbrain.py`.
+
+- Brain cortical group summary: `tests/code/ai_imaging/test_eagle_eye_brain_lobar_summary.py` checks native parcel sums without parent double counting, incomplete coverage and explicit unmeasured lobar WM/thickness; PDF integration remains covered by `test_eagle_eye_brain_patient_report.py`.
+
+
+EchoMind STT quality (2026-09-07): `code/echomind/test_transcribe_retry.py` guards clear default, manual noisy selection for microphone/file requests, invalid selection fallback, and preservation of retry mode.
+
+## Paired locator clean-panel guards (2026-09-08)
+
+`code/ai_imaging/test_eagle_eye_spatial_packet.py` now has nine passing guards.
+The two paired-card additions verify complete physical order, measured spacing,
+one locator line per card, exact clean-panel crop/resize pixels and rejection of
+incomplete groups before writing. No real patient fixture is committed.
+
+Printing background extension (2026-09-09): `test_printing_workflow.py` covers dark/white/transparent gaps, unchanged image pixels, persisted background selection and DICOM alpha compositing without black margins.
+
+Printing mouse extension (2026-09-09): ten synthetic Qt event cases in `test_printing_workflow.py` cover ten-image Shift group preservation across tools/drags, Ctrl selection-only gestures, empty selection, right/middle buttons, selection replacement and overlay hit testing.
+
+Printing Ctrl/Shift extension (2026-09-09): `test_printing_workflow.py` verifies Ctrl selection of only images 1/3/5, no edits to intervening images, single-item deselection, and repeated Shift extension/contraction from the original anchor. Three cases, two fail-before.
+
+- Printing sheet removal: `tests/code/printing/test_printing_workflow.py::test_delete_current_page_removes_only_that_sheet` and `test_clear_or_delete_last_sheet_stays_empty_until_regenerated` cover page scope, navigation, clear-all, and explicit regeneration.
+
+Printing fidelity and transport: `tests/code/printing/test_print_fidelity.py` covers absolute gray, uniform values, crop, YBR color and width-one threshold. `test_printer_transport.py` covers default transfer syntax, warning detail, invalid settings/payload and Windows end/error/abort results.

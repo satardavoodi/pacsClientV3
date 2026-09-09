@@ -48,6 +48,26 @@ from PacsClient.utils.runtime_correlation import (
 logger = logging.getLogger(__name__)
 
 
+def _retire_embedded_viewer_widget(widget) -> None:
+    """Hide and defer-delete an embedded viewer without making it top-level.
+
+    ``setParent(None)`` is unsafe here: when a FAST preview is replaced by the
+    complete series, Windows can briefly present the detached native widget as
+    its own window before ``deleteLater()`` is delivered.  Keeping the container
+    as parent preserves Qt ownership while the hidden widget awaits deletion.
+    """
+    if widget is None:
+        return
+    try:
+        widget.hide()
+    except RuntimeError:
+        return
+    try:
+        widget.deleteLater()
+    except RuntimeError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Null-object helpers
 # ---------------------------------------------------------------------------
@@ -392,8 +412,7 @@ class QtFastContainer(QWidget):
                 item = self._container_layout.takeAt(0)
                 _old_w = item.widget() if item else None
                 if _old_w is not None:
-                    _old_w.setParent(None)
-                    _old_w.deleteLater()
+                    _retire_embedded_viewer_widget(_old_w)
             
             # Add the QtSliceViewer to the layout
             qt_viewer.setParent(self)  # Ensure proper parent
@@ -721,8 +740,7 @@ class QtFastContainer(QWidget):
             item = self._container_layout.takeAt(0)
             _old_w = item.widget() if item else None
             if _old_w is not None:
-                _old_w.setParent(None)
-                _old_w.deleteLater()
+                _retire_embedded_viewer_widget(_old_w)
 
         # Embed QtSliceViewer in the layout so it fills the cell
         qt_viewer.setParent(self)

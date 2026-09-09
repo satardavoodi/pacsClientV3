@@ -53,18 +53,27 @@ def _dicom_files(folder: Path) -> List[Path]:
         return []
 
 
-def _series_folders(study_path: Path) -> List[Path]:
-    """Series folders of a study, supporting the flat single-series layout."""
-    folders: List[Path] = []
-    if _dicom_files(study_path):
-        folders.append(study_path)
+def _series_file_groups(study_path: Path) -> List[tuple[Path, List[Path]]]:
+    """Return each series folder together with its single enumerated file list."""
+    groups: List[tuple[Path, List[Path]]] = []
+    root_files = _dicom_files(study_path)
+    if root_files:
+        groups.append((study_path, root_files))
     try:
         for child in sorted(study_path.iterdir()):
-            if child.is_dir() and _dicom_files(child):
-                folders.append(child)
+            if not child.is_dir():
+                continue
+            files = _dicom_files(child)
+            if files:
+                groups.append((child, files))
     except OSError:
         pass
-    return folders
+    return groups
+
+
+def _series_folders(study_path: Path) -> List[Path]:
+    """Series folders of a study, supporting the flat single-series layout."""
+    return [folder for folder, _files in _series_file_groups(study_path)]
 
 
 def _read_header(path: Path):
@@ -128,10 +137,7 @@ def probe_study_series(study_path: Any) -> List[SeriesCandidate]:
         return []
 
     candidates: List[SeriesCandidate] = []
-    for folder in _series_folders(root):
-        files = _dicom_files(folder)
-        if not files:
-            continue
+    for folder, files in _series_file_groups(root):
         dataset = _read_header(files[0])
         if dataset is None:
             continue
@@ -199,14 +205,88 @@ def attach_thumbnail_indices(
                     candidate.plane = plane
 
 
+def snapshot_widget_probe_inputs(patient_widget: Any) -> Dict[str, Any]:
+    """Copy the small, immutable probe input while still on the Qt thread.
+
+    The worker must never dereference ``patient_widget`` or its mutable
+    thumbnail model.  Only identity and the two geometry fields used by the
+    classifier cross the thread boundary; VTK objects and full metadata stay
+    owned by the patient tab.
+    """
+    thumbnails: List[Dict[str, Any]] = []
+
+    def _immutable_sequence(value: Any) -> tuple:
+        if value is None:
+            return ()
+        try:
+            return tuple(value)
+        except (TypeError, ValueError):
+            return ()
+
+    for entry in list(getattr(patient_widget, "lst_thumbnails_data", []) or []):
+        try:
+            metadata = entry.get("metadata") or {}
+            series = metadata.get("series") or {}
+            instances = []
+            for instance in list(metadata.get("instances") or []):
+                instances.append(
+                    {
+                        "image_position_patient": _immutable_sequence(
+                            instance.get("image_position_patient")
+                        ),
+                        "image_orientation_patient": _immutable_sequence(
+                            instance.get("image_orientation_patient")
+                        ),
+                    }
+                )
+            thumbnails.append(
+                {
+                    "metadata": {
+                        "series": {"series_number": series.get("series_number", "")},
+                        "instances": tuple(instances),
+                    }
+                }
+            )
+        except Exception:
+            continue
+    return {
+        "study_uid": str(getattr(patient_widget, "study_uid", "") or ""),
+        "import_folder_path": str(
+            getattr(patient_widget, "import_folder_path", "") or ""
+        ),
+        "thumbnails_data": tuple(thumbnails),
+    }
+
+
+def build_candidates_from_snapshot(snapshot: Dict[str, Any]) -> List[SeriesCandidate]:
+    """Build candidates on a worker from a Qt-independent input snapshot."""
+    candidates = probe_study_series(
+        resolve_study_path_values(
+            snapshot.get("study_uid"),
+            snapshot.get("import_folder_path"),
+        )
+    )
+    attach_thumbnail_indices(candidates, snapshot.get("thumbnails_data") or ())
+    return candidates
+
+
 def build_candidates_for_widget(patient_widget: Any) -> List[SeriesCandidate]:
     """Candidates for the study currently open in ``patient_widget``."""
-    candidates = probe_study_series(resolve_study_path(patient_widget))
-    try:
-        attach_thumbnail_indices(candidates, list(getattr(patient_widget, "lst_thumbnails_data", []) or []))
-    except Exception as exc:
-        logger.warning("eagle_eye_lumbar: could not map candidates to thumbnails: %s", exc)
-    return candidates
+    return build_candidates_from_snapshot(snapshot_widget_probe_inputs(patient_widget))
+
+
+def resolve_study_path_values(study_uid: Any, import_folder_path: Any) -> Any:
+    """Resolve a study path without touching a live widget."""
+    study_uid = str(study_uid or "")
+    if study_uid:
+        try:
+            from PacsClient.utils.config import SOURCE_PATH
+            candidate = Path(SOURCE_PATH) / study_uid
+            if candidate.is_dir():
+                return candidate
+        except Exception:
+            pass
+    return import_folder_path or None
 
 
 def resolve_study_path(patient_widget: Any) -> Any:
@@ -216,16 +296,10 @@ def resolve_study_path(patient_widget: Any) -> Any:
     multi-study tab the import path points at the tab's PRIMARY study, which is
     not necessarily the study the user is looking at.
     """
-    study_uid = str(getattr(patient_widget, "study_uid", "") or "")
-    if study_uid:
-        try:
-            from PacsClient.utils.config import SOURCE_PATH
-            candidate = Path(SOURCE_PATH) / study_uid
-            if candidate.is_dir():
-                return candidate
-        except Exception:
-            pass
-    return getattr(patient_widget, "import_folder_path", None)
+    return resolve_study_path_values(
+        getattr(patient_widget, "study_uid", ""),
+        getattr(patient_widget, "import_folder_path", None),
+    )
 
 
 # ---------------------------------------------------------------------------

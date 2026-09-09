@@ -125,6 +125,27 @@ live) and returns on the first hit. Semantics are unchanged: "at least one
 
 Kill switch: `AIPACS_DICOM_SCAN_FAST=0` restores the `rglob` walk verbatim.
 
+### 2026-09-02 follow-up — remove the residual UI call
+
+A later live run recorded 5653 ms of row population after the server had already
+returned 51 rows in 555 ms. The same stack remained, now spending roughly 110 ms
+per row in the faster scanner on the GUI thread. The scanner optimization had
+landed correctly; the uncovered seam was initial row construction itself.
+
+`add_data2patient_list_table` synthesized `download_status` and `is_downloaded`,
+then forwarded them to `PatientTableWidget.add_patient_data`, whose renderer did
+not consume either value. The Status cell already paints immediately and resolves
+its disk-backed flags through the generation-guarded `statusFlagsReady` worker.
+The safest correction was therefore to remove the redundant per-row probe rather
+than add another executor, cache, or invalidation path. Explicit state supplied by
+Local/Import callers is forwarded unchanged.
+
+The behavioral fail-before guard recorded one probe per synthetic server row.
+After correction, the same 51-row simulation forwarded all 51 rows with zero
+probes (532.14 ms to 0.06 ms with a controlled 10 ms probe). This synthetic timing
+demonstrates call elimination, not a field latency claim. Source-build live
+verification remains required.
+
 ---
 
 ## C — storage cleanup: 183 seconds frozen
@@ -164,7 +185,7 @@ Kill switch: `AIPACS_STORAGE_CLEANUP_OFFTHREAD=0`.
 
 ## Guards
 
-`tests/code/ui_services/test_gui_thread_disk_paths.py` — 27 tests.
+`tests/code/ui_services/test_gui_thread_disk_paths.py` — 29 tests.
 **19 of 27 fail against the HEAD sources**
 (`tools/analysis/oneoff/verify_gui_disk_guard_fails_prefix_2026_08_22.py`, which
 swaps in `git show HEAD:` copies and restores them in a `finally`). The 8 that
@@ -183,6 +204,11 @@ Load-bearing:
   check, a stale worker result repaints a row of a table that has moved on.
 * `test_cleanup_worker_reports_failure_instead_of_raising` — an exception on a
   QThread with no handler terminates the run silently.
+* `test_initial_search_row_never_probes_disk_before_paint` — executes the real
+  row-forwarding method with a forbidden probe and proves initial Server Search
+  paints without local filesystem I/O.
+* `test_explicit_download_state_is_forwarded_without_reinterpretation` — protects
+  Local/Import caller metadata while the redundant derived-state path stays gone.
 
 ## Known-unfixed / follow-ups
 

@@ -20,6 +20,7 @@ import pytest
 import aipacs_runtime as runtime
 from builder import build_release
 from builder.plugin_package_registry import plugin_package_definition_map
+from tests.code.ai_imaging.test_offline_lumbar import bundle
 
 pytestmark = pytest.mark.build
 
@@ -50,7 +51,9 @@ def test_build_module_packages_stages_portable_plugin_package_metadata(monkeypat
     assert feed["packages"][0]["archive_name"].endswith(".zip")
 
 
-def test_build_module_packages_runtime_payload_keeps_testing_dirs(monkeypatch, tmp_path):
+def test_build_module_packages_runtime_payload_keeps_testing_dirs(monkeypatch, tmp_path, bundle):
+    from builder import offline_lumbar_payload
+    monkeypatch.setattr(offline_lumbar_payload, "bundle_source", lambda: bundle)
     monkeypatch.setattr(build_release, "PACKAGE_OUTPUT_DIR", tmp_path / "packages")
     monkeypatch.setattr(build_release, "STAGED_PLUGIN_PACKAGE_DIR", tmp_path / "stage" / "plugin_packages")
     monkeypatch.setattr(

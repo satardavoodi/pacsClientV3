@@ -59,6 +59,7 @@ class AgentGatewayService:
         # device_id -> SecureChannel (session state; see _channel_for)
         self._channels: Dict[str, Any] = {}
         self._channels_lock = threading.RLock()
+        self._startup_thread: Optional[threading.Thread] = None
 
     # ── end-to-end key material (P4) ──────────────────────────────────
     def _channel_key_path(self):
@@ -159,6 +160,42 @@ class AgentGatewayService:
             return False
         return self.start()
 
+    def start_if_enabled_async(self) -> bool:
+        """Prepare the Qt dispatcher now and perform discovery/TLS/bind off-thread.
+
+        ``psutil.net_if_addrs`` and first-touch TLS identity work are allowed to
+        take seconds on Windows. They do not own widgets and must not delay the
+        main-window paint. The dispatcher is the only Qt-owned object and is
+        deliberately constructed by the caller before the daemon starts.
+        """
+        from .feature_flags import agent_gateway_enabled
+
+        if not agent_gateway_enabled():
+            logger.info("[AGENT_GATEWAY] disabled; not starting")
+            return False
+        if self._running:
+            return True
+        if self._startup_thread is not None and self._startup_thread.is_alive():
+            return True
+        try:
+            if self._dispatcher is None:
+                from .gui_dispatch import make_gui_dispatcher
+                self._dispatcher = make_gui_dispatcher(self._get_bus)
+
+            def _start_background() -> None:
+                self.start()
+
+            self._startup_thread = threading.Thread(
+                target=_start_background,
+                name="agent-gateway-startup",
+                daemon=True,
+            )
+            self._startup_thread.start()
+            return True
+        except Exception:
+            logger.exception("[AGENT_GATEWAY] asynchronous start dispatch failed")
+            return False
+
     def start(self) -> bool:
         if self._running:
             return True
@@ -176,8 +213,11 @@ class AgentGatewayService:
             settings = load_settings()
             transport = normalize_transport(settings.get("transport"))
 
-            # GUI-thread command dispatcher (must be built on the GUI thread).
-            self._dispatcher = make_gui_dispatcher(self._get_bus)
+            # The async startup path prepares this Qt-owned dispatcher on the
+            # GUI thread before entering this worker. Direct Settings starts
+            # still build it here on the GUI thread for backward compatibility.
+            if self._dispatcher is None:
+                self._dispatcher = make_gui_dispatcher(self._get_bus)
 
             def _run_command(action, entities, agent_mode, confirmed):
                 return self._dispatcher.run_command(action, entities, agent_mode, confirmed)

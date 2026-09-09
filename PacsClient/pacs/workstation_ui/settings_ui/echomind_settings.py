@@ -502,8 +502,8 @@ class EchoMindSettingsWidget(QWidget):
         grid.addWidget(self.openai_api_key_input, 0, 1, 1, 3)
 
         self.openai_base_url_input = QLineEdit()
-        self.openai_base_url_input.setPlaceholderText("https://api.openai.com/v1")
-        grid.addWidget(QLabel("Base URL (Optional)"), 1, 0)
+        self.openai_base_url_input.setPlaceholderText("Enter your provider's API base URL")
+        grid.addWidget(QLabel("Base URL *"), 1, 0)
         grid.addWidget(self.openai_base_url_input, 1, 1, 1, 3)
 
         self.openai_org_input = QLineEdit()
@@ -567,14 +567,23 @@ class EchoMindSettingsWidget(QWidget):
         grid.addWidget(QLabel("Timeout (sec) (Optional)"), 7, 0)
         grid.addWidget(self.openai_timeout_spin, 7, 1)
 
+        self.openai_eagle_screening_input = QLineEdit()
+        self.openai_eagle_screening_input.setPlaceholderText("Model ID from your provider")
+        self.openai_eagle_diagnosis_input = QLineEdit()
+        self.openai_eagle_diagnosis_input.setPlaceholderText("Model ID from your provider")
+        grid.addWidget(QLabel("Eagle Eye Screening Model"), 8, 0)
+        grid.addWidget(self.openai_eagle_screening_input, 8, 1)
+        grid.addWidget(QLabel("Eagle Eye Diagnosis Model"), 8, 2)
+        grid.addWidget(self.openai_eagle_diagnosis_input, 8, 3)
+
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
         layout.addLayout(grid)
 
         requirement_note = self._note_label(
-            "* Required for connection. All other OpenAI fields are optional because this page provides default "
-            "models and default connection values. OpenAI currently recommends GPT-5.4 for highest capability "
-            "and GPT-5-mini for lower cost and latency. Reasoning effort support depends on the selected model."
+            "* Your own API key and Base URL are required for direct mode. "
+            "Choose both Eagle Eye models before using Eagle Eye with this provider. "
+            "AI PACS company mode uses its own service and model configuration."
         )
         layout.addWidget(requirement_note)
 
@@ -905,7 +914,9 @@ class EchoMindSettingsWidget(QWidget):
     def _load_openai_state(self):
         cfg = get_openai_settings()
         self.openai_api_key_input.setText(str(cfg.get("api_key") or ""))
-        self.openai_base_url_input.setText(str(cfg.get("base_url") or "https://api.openai.com/v1"))
+        self.openai_base_url_input.setText(str(cfg.get("base_url") or ""))
+        self.openai_eagle_screening_input.setText(str(cfg.get("eagle_eye_screening_model") or ""))
+        self.openai_eagle_diagnosis_input.setText(str(cfg.get("eagle_eye_model") or ""))
         self.openai_org_input.setText(str(cfg.get("organization") or ""))
         self.openai_project_input.setText(str(cfg.get("project") or ""))
         self._set_combo_value(self.openai_text_model_input, str(cfg.get("text_model") or "gpt-5-mini"))
@@ -937,6 +948,8 @@ class EchoMindSettingsWidget(QWidget):
         return {
             "api_key": (self.openai_api_key_input.text() or "").strip(),
             "base_url": (self.openai_base_url_input.text() or "").strip(),
+            "eagle_eye_screening_model": self.openai_eagle_screening_input.text().strip(),
+            "eagle_eye_model": self.openai_eagle_diagnosis_input.text().strip(),
             "organization": (self.openai_org_input.text() or "").strip(),
             "project": (self.openai_project_input.text() or "").strip(),
             "text_model": (self.openai_text_model_input.currentText() or "").strip(),
@@ -982,10 +995,11 @@ class EchoMindSettingsWidget(QWidget):
     def _update_backend_status(self):
         backend = str(self.backend_combo.currentData() or "company")
         if backend == "openai":
-            if (self.openai_api_key_input.text() or "").strip():
+            cfg = get_openai_settings()
+            if all(str(cfg.get(key) or "").strip() for key in ("api_key", "base_url")):
                 self.backend_status.setText("OpenAI direct backend is selected and configured.")
             else:
-                self.backend_status.setText("OpenAI direct backend is selected but no API key is saved.")
+                self.backend_status.setText("Save your API key and Base URL before enabling direct mode.")
             return
 
         manager = APIKeyManager.instance()
@@ -1025,6 +1039,11 @@ class EchoMindSettingsWidget(QWidget):
 
     def _on_save_backend_clicked(self):
         backend = str(self.backend_combo.currentData() or "company")
+        if backend == "openai":
+            cfg = get_openai_settings()
+            if not all(str(cfg.get(key) or "").strip() for key in ("api_key", "base_url")):
+                QMessageBox.warning(self, "OpenAI", "Save your API key and Base URL first.")
+                return
         set_llm_backend(backend)
         self._update_backend_status()
         self._refresh_usage_for_active_backend()
@@ -1193,10 +1212,14 @@ class EchoMindSettingsWidget(QWidget):
             QMessageBox.warning(self, "OpenAI", "Please enter an OpenAI API key first.")
             return
 
+        if not str(patch.get("base_url") or "").strip():
+            QMessageBox.warning(self, "OpenAI", "Please enter your provider Base URL first.")
+            return
+
         def _work():
             return test_openai_connection(
                 api_key=api_key,
-                base_url=str(patch.get("base_url") or "https://api.openai.com/v1"),
+                base_url=str(patch.get("base_url") or ""),
                 organization=str(patch.get("organization") or ""),
                 project=str(patch.get("project") or ""),
                 timeout=int(patch.get("timeout_seconds") or 60),

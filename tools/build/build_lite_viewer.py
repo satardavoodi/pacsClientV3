@@ -14,17 +14,17 @@ Builders:
 
 Output (either builder):
     modules/cd_burner/lightViewer_dist/AIPacsLiteViewer/AIPacsLiteViewer.exe
-    (+ bundled Qt/pydicom/numpy/pylibjpeg runtime, viewer_info.json)
+    (+ bundled Qt/pydicom/numpy/DICOM codec runtime, viewer_info.json)
 
 The CD burner (modules/cd_burner/viewer_locator.py) picks this bundle up as
 the DEFAULT viewer automatically once it exists. The bundle is a ONEDIR
 build on purpose: onefile unpacks to %TEMP% on the patient's PC which is
 slow and fragile when launched from read-only CD/DVD media.
 
-Codecs: pylibjpeg + its plugins (rle / openjpeg / libjpeg) are bundled so
+Codecs: pylibjpeg OpenJPEG/RLE plus GDCM and pyjpegls are bundled so
 compressed DICOM (JPEG, J2K, RLE) renders on any PC. GOTCHA (see project
 memory / import-pipeline 2026-06-06): the plugin packages import as ``rle``
-/ ``openjpeg`` / ``libjpeg`` (NOT ``pylibjpeg_*``) and are discovered via
+ / ``openjpeg`` (NOT ``pylibjpeg_*``) and are discovered via
 importlib.metadata entry points — the import names AND the distribution
 metadata must BOTH be included or the frozen viewer decodes nothing:
 PyInstaller → --hidden-import + --copy-metadata; Nuitka →
@@ -52,15 +52,19 @@ TARGET_DIR = REPO_ROOT / "modules" / "cd_burner" / "lightViewer_dist" / "AIPacsL
 EXE_NAME = "AIPacsLiteViewer.exe"
 APP_NAME = "AIPacsLiteViewer"
 
-# Compressed-DICOM codec plugins (import/package name → distribution name).
+# Compressed-DICOM codec packages (import/package name -> distribution name).
 CODEC_PACKAGES = {
     "pylibjpeg": "pylibjpeg",
     "rle": "pylibjpeg-rle",
     "openjpeg": "pylibjpeg-openjpeg",
-    "libjpeg": "pylibjpeg-libjpeg",
+    "jpeg_ls": "pyjpegls",
+    "_gdcm": "python-gdcm",
 }
+CODEC_EXTRA_IMPORTS = ("gdcm", "_gdcm.gdcmswig")
 
 EXCLUDED_MODULES = [
+    # GPL-3.0 codec intentionally replaced by GDCM/pyjpegls.
+    "libjpeg",
     "PIL",
     "matplotlib",
     "scipy",
@@ -81,12 +85,23 @@ EXCLUDED_MODULES = [
     "idna",
 ]
 
+FORBIDDEN_CODEC_PATTERNS = ("**/_libjpeg*.pyd", "**/pylibjpeg_libjpeg-*.dist-info")
+
 # Post-build prune: Qt payload the viewer never uses (pure QWidget raster
 # app — no QML/Quick, no network, no SVG/PDF, no image-format plugins; the
 # window icon is an exe resource and DICOM pixels arrive via QImage raw
 # buffers). qwindows/qoffscreen platforms and styles stay. The completeness
 # assertion + --selftest run AFTER pruning and gate the result.
 PRUNE_PATTERNS = (
+    # Qt 6.10 on Windows resolves the operating-system ICU compatibility DLL.
+    # If a foreign native-tool directory is present on PATH while PyInstaller
+    # analyzes Qt6Core.dll, PyInstaller can copy that tool's unversioned ICU
+    # DLLs into the bundle. The app-local copy wins DLL resolution and can
+    # make PySide6.QtCore fail with "The specified procedure could not be
+    # found". PySide6 does not ship these files; keep them out of the bundle.
+    "_internal/icuuc.dll",
+    "_internal/icuin.dll",
+    "_internal/icudt*.dll",
     "_internal/PySide6/translations",
     "_internal/PySide6/opengl32sw.dll",
     "_internal/opengl32sw.dll",
@@ -300,6 +315,15 @@ def _publish(dist_dir: Path, version: str, bundled_codecs: list[str], builder: s
         print(f"ERROR: build output missing: {exe_path}")
         return 3
 
+    forbidden = sorted(
+        {path for pattern in FORBIDDEN_CODEC_PATTERNS for path in dist_dir.glob(pattern)}
+    )
+    if forbidden:
+        print("ERROR: forbidden GPL codec payload detected — refusing to publish:")
+        for path in forbidden:
+            print(f"  - {path.relative_to(dist_dir)}")
+        return 6
+
     if builder.startswith("pyinstaller"):
         freed_mb = _prune_bundle(dist_dir)
         if freed_mb:
@@ -398,6 +422,16 @@ def build_pyinstaller(version: str) -> int:
             bundled_codecs.append(dist)
         else:
             print(f"[codecs] {dist} not installed — building without it")
+    for module in CODEC_EXTRA_IMPORTS:
+        cmd += ["--hidden-import", module]
+    try:
+        import _gdcm
+
+        gdcm_xml = Path(_gdcm.__file__).resolve().parent / "XML"
+        if gdcm_xml.is_dir():
+            cmd += ["--add-data", f"{gdcm_xml};_gdcm/XML"]
+    except Exception:
+        pass
 
     if icon_path is not None:
         cmd += ["--icon", str(icon_path)]
@@ -448,7 +482,7 @@ def build_nuitka(version: str) -> int:
     for module in EXCLUDED_MODULES:
         cmd.append(f"--nofollow-import-to={module}")
     # The codec plugins ship their test suites importing pytest — keep them out.
-    for tests_pkg in ("libjpeg.tests", "rle.tests", "openjpeg.tests", "pylibjpeg.tests"):
+    for tests_pkg in ("rle.tests", "openjpeg.tests", "pylibjpeg.tests"):
         cmd.append(f"--nofollow-import-to={tests_pkg}")
 
     bundled_codecs = []
@@ -459,6 +493,16 @@ def build_nuitka(version: str) -> int:
             bundled_codecs.append(dist)
         else:
             print(f"[codecs] {dist} not installed — building without it")
+    for module in CODEC_EXTRA_IMPORTS:
+        cmd.append(f"--include-module={module}")
+    try:
+        import _gdcm
+
+        gdcm_xml = Path(_gdcm.__file__).resolve().parent / "XML"
+        if gdcm_xml.is_dir():
+            cmd.append(f"--include-data-dir={gdcm_xml}=_gdcm/XML")
+    except Exception:
+        pass
 
     if icon_path is not None:
         cmd.append(f"--windows-icon-from-ico={icon_path}")

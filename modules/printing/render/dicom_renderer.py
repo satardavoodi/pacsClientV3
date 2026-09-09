@@ -13,6 +13,7 @@ try:
     from pydicom.pixels import apply_voi_lut
 except Exception:  # fallback for older pydicom
     from pydicom.pixel_data_handlers.util import apply_voi_lut
+from pydicom.pixel_data_handlers.util import apply_modality_lut, convert_color_space
 from PySide6.QtGui import QImage, QPixmap
 
 from modules.printing.core.models import ViewportState
@@ -203,11 +204,14 @@ def compute_scout_reference_lines(
 
 def _apply_window_level(pixel_array: np.ndarray, window_width: float, window_level: float) -> np.ndarray:
     if window_width is None or window_level is None:
-        return pixel_array
-    lower = window_level - (window_width / 2.0)
-    upper = window_level + (window_width / 2.0)
-    clipped = np.clip(pixel_array, lower, upper)
-    return clipped
+        return _normalize_to_uint8(pixel_array)
+    if not np.isfinite(window_width) or not np.isfinite(window_level) or window_width < 1:
+        raise ValueError("Invalid DICOM window")
+    arr = np.asarray(pixel_array, dtype=np.float64)
+    if window_width == 1:
+        return np.where(arr <= window_level - 0.5, 0, 255).astype(np.uint8)
+    mapped = ((arr - (window_level - 0.5)) / (window_width - 1) + 0.5) * 255
+    return np.clip(mapped, 0, 255).astype(np.uint8)
 
 
 def _parse_window_value(value) -> Optional[float]:
@@ -233,14 +237,14 @@ def get_dicom_window_level(path: str) -> Tuple[Optional[float], Optional[float]]
         if window_width is not None and window_level is not None:
             return window_width, window_level
 
-        pixel_array = dcm.pixel_array
+        pixel_array = apply_modality_lut(dcm.pixel_array, dcm)
         if pixel_array.ndim > 2:
             pixel_array = pixel_array[0]
 
         min_val = float(np.min(pixel_array))
         max_val = float(np.max(pixel_array))
-        window_width = max_val - min_val
-        window_level = (max_val + min_val) / 2.0
+        window_width = max_val - min_val + 1
+        window_level = (max_val + min_val + 1) / 2.0
         return window_width, window_level
     except Exception:
         return None, None
@@ -254,30 +258,27 @@ def _normalize_to_uint8(pixel_array: np.ndarray) -> np.ndarray:
     return (arr * 255.0).astype(np.uint8)
 
 
+def viewport_crop_bounds(width: int, height: int, viewport: Optional[ViewportState]):
+    """Use the same integer crop for pixels and reference-line coordinates."""
+    viewport = viewport or ViewportState()
+    zoom = max(viewport.zoom, 1.0)
+    crop_w, crop_h = max(1, int(width / zoom)), max(1, int(height / zoom))
+    pan_x, pan_y = viewport.pan
+    x0 = width // 2 + int(pan_x * crop_w // 2) - crop_w // 2
+    y0 = height // 2 + int(pan_y * crop_h // 2) - crop_h // 2
+    return x0, y0, crop_w, crop_h
+
+
 def _apply_viewport(arr: np.ndarray, viewport: ViewportState) -> np.ndarray:
     if viewport is None:
         return arr
-    zoom = max(viewport.zoom, 1.0)
-    pan_x, pan_y = viewport.pan
-    height, width = arr.shape
-
-    crop_w = int(width / zoom)
-    crop_h = int(height / zoom)
-
-    # Uniform pan translation: pan values move viewport in normalized [-1, 1] range
-    # Do not clamp to image bounds; allow pan beyond the viewport (fills with black)
-
-    # Calculate crop origin based on normalized pan translation
-    center_x = width // 2 + int(pan_x * crop_w // 2)
-    center_y = height // 2 + int(pan_y * crop_h // 2)
-
-    x0 = center_x - crop_w // 2
-    y0 = center_y - crop_h // 2
+    height, width = arr.shape[:2]
+    x0, y0, crop_w, crop_h = viewport_crop_bounds(width, height, viewport)
     x1 = x0 + crop_w
     y1 = y0 + crop_h
 
     # Create output canvas and copy overlapping region
-    output = np.zeros((crop_h, crop_w), dtype=arr.dtype)
+    output = np.zeros((crop_h, crop_w) + arr.shape[2:], dtype=arr.dtype)
 
     src_x0 = max(0, x0)
     src_y0 = max(0, y0)
@@ -321,12 +322,8 @@ def load_dicom_as_pixmap(path: str, viewport: Optional[ViewportState] = None) ->
         if pixel_array.ndim > 2 and not (is_rgb and pixel_array.ndim == 3):
             pixel_array = pixel_array[0]
 
-        if hasattr(dcm, "RescaleSlope") or hasattr(dcm, "RescaleIntercept"):
-            slope = float(getattr(dcm, "RescaleSlope", 1.0))
-            intercept = float(getattr(dcm, "RescaleIntercept", 0.0))
-            pixel_array = pixel_array * slope + intercept
-
-        use_manual_window = viewport and (viewport.window_width is not None or viewport.window_level is not None)
+        if not is_rgb:
+            pixel_array = apply_modality_lut(pixel_array, dcm)
 
         window_width = _parse_window_value(getattr(dcm, "WindowWidth", None))
         window_level = _parse_window_value(getattr(dcm, "WindowCenter", None))
@@ -339,6 +336,9 @@ def load_dicom_as_pixmap(path: str, viewport: Optional[ViewportState] = None) ->
             window_level = viewport.window_level
 
         if is_rgb:
+            if photometric in {"YBR_FULL", "YBR_FULL_422"}:
+                pixel_array = convert_color_space(pixel_array, photometric, "RGB")
+            pixel_array = _apply_viewport(pixel_array, viewport)
             if pixel_array.dtype != np.uint8:
                 pixel_array = _normalize_to_uint8(pixel_array)
             if pixel_array.ndim == 2:
@@ -354,17 +354,11 @@ def load_dicom_as_pixmap(path: str, viewport: Optional[ViewportState] = None) ->
                 _cache_put(cache_key, rendered_rgb)
             return rendered_rgb
 
-        if not is_rgb:
-            if use_manual_window:
-                pixel_array = _apply_window_level(pixel_array, window_width, window_level)
-            else:
-                # Use DICOM default WL/WW instead of VOI LUT to avoid uniform outputs
-                pixel_array = _apply_window_level(pixel_array, window_width, window_level)
-        pixel_array = _apply_viewport(pixel_array, viewport)
-
-        image_8bit = _normalize_to_uint8(pixel_array)
+        image_8bit = _apply_window_level(pixel_array, window_width, window_level)
         if photometric == "MONOCHROME1":
             image_8bit = 255 - image_8bit
+        # Crop after display mapping so pan padding is black and contrast stays fixed.
+        image_8bit = _apply_viewport(image_8bit, viewport)
 
         image_8bit = np.ascontiguousarray(image_8bit)
         height, width = image_8bit.shape
