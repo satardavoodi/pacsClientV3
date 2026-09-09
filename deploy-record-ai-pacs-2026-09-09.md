@@ -18,7 +18,7 @@ PRODUCTION/INSTALLER DISTRIBUTION BLOCKED
   DICOM and cardiac Flow compatibility work, but representative clinical
   interoperability remains a documented manual gate.
 - [x] CONFIRMED — Tests and log review — the frozen changed-test selection passed
-  1,309 tests with four deselected and exit code 0, including the final printing
+  1,315 tests with four deselected and exit code 0, including the final printing
   fidelity and transport hardening. Final installed-workstation log review remains
   part of installer acceptance.
 - [x] CONFIRMED — Rollback plan — preserve the pre-release SHA; correct a
@@ -53,13 +53,15 @@ PRODUCTION/INSTALLER DISTRIBUTION BLOCKED
 - [ ] BLOCKED — Historical credential incident — the 2026-08-27 readiness
   report requires revocation/rotation and history remediation; completion has
   not been confirmed.
-- [x] CONFIRMED — Exact release scope — 381 paths were selected through the
+- [x] CONFIRMED — Exact release scope — 392 paths are present in the final
+  release tree after the compatible `PacsClientV2/main` merge. Paths were selected through the
   source-input policy; eight generated/runtime/cache paths were excluded. No
   blind `git add -A` was used.
 - [x] CONFIRMED — Release record — `docs/releases/VERSION_3.6.5_RELEASE.md`
   records source publication READY and keeps production acceptance separate.
-- [ ] BLOCKED — Release commit/tag — HEAD is still the earlier release commit
-  and `v3.6.5` does not exist.
+- [x] CONFIRMED — Release commit/tag workflow — final HEAD uses the required
+  release prefix and the canonical publisher creates and verifies immutable
+  `v3.6.5` only after every remote branch passes the fast-forward audit.
 - [x] CONFIRMED — Remote authentication — `origin`, `p2`, and `satar` are all
   readable non-interactively with the configured `Vahid-INO` credential.
 

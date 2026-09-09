@@ -29,6 +29,10 @@ from modules.ai_imaging.eagle_eye_lumbar.workflow_coordinator import EagleEyeWor
 from modules.ai_imaging.mammography_ai_analyze.controller import (
     MammographyAnalysisController,
 )
+from modules.ai_imaging.dx_wrist_ai_analyze.controller import (
+    DXWristAnalysisController,
+)
+from modules.ai_imaging.intelligent_analysis_router import IntelligentAnalysisRouter
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -612,6 +616,12 @@ class ImagingToolsTab(AbstractTab):
         self.current_sidebar = None
         self._eagle_eye_workflow = EagleEyeWorkflowCoordinator(self)
         self._mammography_analysis = MammographyAnalysisController(self)
+        self._dx_wrist_analysis = DXWristAnalysisController(self)
+        self._intelligent_analysis_router = IntelligentAnalysisRouter(
+            self,
+            mammography=self._mammography_analysis,
+            dx_wrist=self._dx_wrist_analysis,
+        )
         self.mg_runs_loaded = False  # ÙÙ„Ú¯ Ø¬Ø¯ÛŒØ¯ Ø¨Ø±Ø§ÛŒ Ù…Ø¯ÛŒØ±ÛŒØª Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ MG runs
 
         # ---- init MG widgets FIRST (important)
@@ -794,6 +804,10 @@ class ImagingToolsTab(AbstractTab):
             pass
         try:
             self._mammography_analysis.teardown()
+        except Exception:
+            pass
+        try:
+            self._dx_wrist_analysis.teardown()
         except Exception:
             pass
         try:
@@ -1573,10 +1587,12 @@ class ImagingToolsTab(AbstractTab):
         )
         self._mammography_ai_btn = _add_btn(
             'Intelligent AI Analyze', 'fa5s.brain',
-            'Correlate mammography images with the active AI detection result',
+            'Review mammography evidence or DX wrist images with the configured AI service',
             None,
         )
-        self._mammography_analysis.bind_button(self._mammography_ai_btn)
+        self._mammography_analysis.bind_button(self._mammography_ai_btn, connect=False)
+        self._dx_wrist_analysis.bind_button(self._mammography_ai_btn, connect=False)
+        self._intelligent_analysis_router.bind_button(self._mammography_ai_btn)
 
         # --- 3D Cursor findings selector (multiple corresponding lesions) ------
         # Lives in the TOOLBAR next to Ruler — NOT inside the VTK viewport, which

@@ -1,8 +1,9 @@
-"""Thin Qt controller for the mammography analysis and physician handoff."""
+"""Thin Qt controller for DX wrist analysis and physician handoff."""
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QFont
@@ -17,19 +18,18 @@ from PySide6.QtWidgets import (
 
 from PacsClient.utils.config import ATTACHMENT_PATH
 
-from .analysis_runner import MammographyAnalysisRunner
-from .source_snapshot import snapshot_mammography_source_hints
+from .analysis_runner import DXWristAnalysisRunner
 
 logger = logging.getLogger(__name__)
 
 
-class MammographyAnalysisController(QObject):
-    """Keep mammography request and review logic out of the imaging tab."""
+class DXWristAnalysisController(QObject):
+    """Keep DX wrist request and review logic outside the imaging tab."""
 
     _WAIT_MESSAGES = (
-        "Preparing mammography evidence...",
-        "Reviewing all available views...",
-        "Correlating AI detections...",
+        "Preparing wrist radiographs...",
+        "Reviewing the available views...",
+        "Estimating skeletal maturity...",
         "Still working...",
     )
 
@@ -48,28 +48,32 @@ class MammographyAnalysisController(QObject):
         self._button = button
         if connect:
             button.clicked.connect(self.start)
-        button.setVisible(getattr(self._owner, "eagle_eye_mode", "") == "mammography")
+        button.setVisible(getattr(self._owner, "eagle_eye_mode", "") == "bone_age")
 
     def start(self) -> None:
         from PacsClient.pacs.patient_tab.utils import show_message
 
-        if str(self._owner.detect_modality() or "").upper() != "MG":
-            show_message("Intelligent AI Analyze is only available for mammography studies.")
+        if str(self._owner.detect_modality() or "").upper() != "DX":
+            show_message("DX wrist analysis is only available for bone-age studies.")
             return
         if self._state == "analyzing":
-            show_message("Mammography analysis is already in progress.")
+            show_message("DX wrist analysis is already in progress.")
             return
         if self._runner is not None:
             self._runner.detach()
 
+        source_dir = self._current_source_dir()
+        study_uid = str(getattr(self._owner, "study_uid", "") or "").strip()
+        if not study_uid or not source_dir:
+            show_message("The DX wrist DICOM source could not be resolved.")
+            return
+
         self._set_state("analyzing")
-        local_source_hints = snapshot_mammography_source_hints(
-            getattr(self._owner, "patient_widget", None)
-        )
-        runner = MammographyAnalysisRunner(
-            study_uid=str(getattr(self._owner, "study_uid", "") or ""),
-            attachments_root=ATTACHMENT_PATH,
-            local_source_hints=local_source_hints,
+        output_dir = ATTACHMENT_PATH / study_uid / "dx_wrist_ai_analyze"
+        runner = DXWristAnalysisRunner(
+            study_uid=study_uid,
+            source_dir=source_dir,
+            output_dir=str(output_dir),
             parent=self,
         )
         runner.progress.connect(self._on_progress)
@@ -78,7 +82,7 @@ class MammographyAnalysisController(QObject):
         self._runner = runner
         if not runner.start():
             self._runner = None
-            self._set_state("error", "Mammography analysis could not start")
+            self._set_state("error", "DX wrist analysis could not start")
 
     def teardown(self) -> None:
         self._timer.stop()
@@ -86,7 +90,19 @@ class MammographyAnalysisController(QObject):
         if runner is not None:
             runner.detach()
 
-    def _on_progress(self, stage: str, message: str) -> None:
+    def _current_source_dir(self) -> str:
+        patient_widget = getattr(self._owner, "patient_widget", None)
+        selected = getattr(patient_widget, "selected_widget", None)
+        vtk_widget = getattr(selected, "vtk_widget", selected)
+        image_viewer = getattr(vtk_widget, "image_viewer", None)
+        metadata = getattr(image_viewer, "metadata", None)
+        series = metadata.get("series", {}) if isinstance(metadata, dict) else {}
+        source = series.get("series_path") or getattr(
+            patient_widget, "import_folder_path", ""
+        )
+        return str(source or "").strip()
+
+    def _on_progress(self, _stage: str, _message: str) -> None:
         if not self._timer.isActive():
             self._wait_index = 0
             self._timer.start()
@@ -101,22 +117,22 @@ class MammographyAnalysisController(QObject):
         self._timer.stop()
         reviewed = self._review_findings(findings)
         if reviewed is None:
-            self._set_state("idle", "Mammography analysis review cancelled")
+            self._set_state("idle", "DX wrist analysis review cancelled")
             return
         try:
             self._handoff_to_echomind(reviewed)
         except Exception:
-            logger.exception("[MAMMOGRAPHY-AI] EchoMind report handoff failed")
+            logger.exception("[DX_WRIST_AI] EchoMind report handoff failed")
             self._set_state("error", "Analysis complete; EchoMind handoff failed")
             self._show_result_fallback(reviewed)
             return
-        self._set_state("ready", "Mammography findings opened in EchoMind Report")
+        self._set_state("ready", "DX wrist findings opened in EchoMind Report")
 
     def _on_failed(self, reason: str) -> None:
         from PacsClient.pacs.patient_tab.utils import show_message
 
         self._runner = None
-        self._set_state("error", "Mammography analysis failed")
+        self._set_state("error", "DX wrist analysis failed")
         show_message(f"Intelligent AI Analyze failed:\n{reason}")
 
     def _set_state(self, state: str, status: str = "") -> None:
@@ -133,7 +149,7 @@ class MammographyAnalysisController(QObject):
 
     def _review_findings(self, findings: str) -> str | None:
         dialog = QDialog(self._owner)
-        dialog.setWindowTitle("Mammography AI - Physician Review")
+        dialog.setWindowTitle("DX Wrist AI - Physician Review")
         dialog.setMinimumSize(680, 540)
         layout = QVBoxLayout(dialog)
         title = QLabel("Review and edit the AI-assisted findings before handoff.")
@@ -178,7 +194,7 @@ class MammographyAnalysisController(QObject):
 
     def _show_result_fallback(self, findings: str) -> None:
         dialog = QDialog(self._owner)
-        dialog.setWindowTitle("Mammography AI - Findings")
+        dialog.setWindowTitle("DX Wrist AI - Findings")
         dialog.setMinimumSize(680, 540)
         layout = QVBoxLayout(dialog)
         body = QPlainTextEdit(dialog)

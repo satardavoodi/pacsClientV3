@@ -23,7 +23,7 @@ class AbstractTab(QWidget):
         # create toolbar window (up of vtk_widgets)
         toolbar_window = self.__create_toolbar_window()
         self.__vertical_layout = QVBoxLayout()  # it's the right layout on the window
-        self.__vertical_layout.addLayout(toolbar_window, stretch=1)
+        self.__vertical_layout.addLayout(toolbar_window, stretch=0)
         self.__main_layout.addLayout(self.__vertical_layout)
 
     def get_sidebar_layout(self):
@@ -31,6 +31,9 @@ class AbstractTab(QWidget):
 
     def get_center_layout_vertical(self):
         return self.__vertical_layout
+
+    def get_stacked_layout(self):
+        return self.__stacked_layout
 
     def __on_button_click(self, button):
         id = self.__button_group.id(button)

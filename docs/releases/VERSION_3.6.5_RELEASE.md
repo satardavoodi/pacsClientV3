@@ -13,9 +13,10 @@ candidate includes the mammography Intelligent AI Analyze integration, current
 Eagle Eye lumbar and brain work, explicit EchoMind provider selection, DICOM
 compatibility changes including cardiac Flow VM normalization, viewer and import
 stability work, Advanced MPR/Slicer resident-runtime work, three distribution
-editions, and PyInstaller/Nuitka packaging corrections.
+editions, PyInstaller/Nuitka packaging corrections, and the compatible DX wrist
+analysis work from `PacsClientV2/main`.
 
-The final source scope contains 381 reviewed source, documentation, test,
+The final source scope contains 392 reviewed source, documentation, test,
 configuration-default, tooling, and packaged-mirror paths. Generated build
 output, runtime state, bytecode, clinical/AI captures, credentials, caches, and
 local investigation payloads are excluded. The repository owner explicitly
@@ -27,11 +28,12 @@ grant installer distribution or production acceptance.
 
 - `pyproject.toml`, `main.py`, and the Information panel currently identify
   version 3.6.5.
-- No `v3.6.5` tag exists in the inspected local repository.
-- The current HEAD remains the earlier 3.6.4 publication commit and is not the
-  3.6.5 release commit.
-- The development checkout contains a large mixed tracked/untracked change set.
-  It must not be committed wholesale without path-by-path review.
+- The final release commit is a descendant of all six target branch tips,
+  including the prior `PacsClientV2/main` Intelligent Analyze merge.
+- The publication command creates the annotated `v3.6.5` tag only after the
+  clean-tree, version, secret, release-record, and fast-forward audit passes.
+- The reviewed source snapshot is isolated from local generated/runtime state;
+  no blind whole-worktree staging is used.
 - A local six-installer 3.6.5 matrix has been produced and verified as described
   in `VERSION_3.6.5_BUILD.md` and the 2026-09-06 deployment record. Those binaries
   were built before the canonical multi-remote receipt gate and are not evidence
@@ -59,14 +61,14 @@ PyInstaller plus Nuitka coordinator in `BUILD.md`.
 | Canonical Git workflow guards | Focused release/build contract tests | PASS |
 | Documentation navigation | Source entrypoints route through `docs/release-and-build/README.md`; focused guards pass | PASS |
 | Backend build authority | PyInstaller and release-capable Nuitka stages require an approved snapshot manifest | PASS |
-| Exact release diff review | 381 release-source paths staged; eight generated/runtime/cache paths excluded | PASS |
-| Release commit convention | Created after this record is finalized and verified before publication | PENDING COMMIT |
+| Exact release diff review | 392 release-source paths in the final tree; eight generated/runtime/cache paths excluded | PASS |
+| Release commit convention | Final HEAD uses the required `release(v3.6.5):` prefix | PASS |
 | Multi-remote freshness | All three remotes authenticated/readable as `Vahid-INO`; final fast-forward audit follows commit | PASS PRECHECK |
 | Current-tree secret scan | No high-confidence credential pattern found in the release-source tree; historical remediation remains separate | PASS CURRENT TREE |
 | Developer Run | Earlier acceptance recorded; owner explicitly directed source publication after later-risk disclosure | OWNER OVERRIDE FOR SOURCE ONLY |
-| Automated subsystem tests | Frozen changed-test selection: 1,309 passed, 4 deselected, exit 0 | PASS |
+| Automated subsystem tests | Frozen changed-test selection: 1,315 passed, 4 deselected, exit 0 | PASS |
 | Plugin mirror parity | 462 matching pairs; zero plugin-only files | PASS |
-| Git synchronization receipt | Cannot exist before final commit and publication | BLOCKED |
+| Git synchronization receipt | Created and read back by the canonical publish command; ignored locally | PUBLICATION OUTPUT |
 | Six-installer build | Existing local matrix is unsigned and predates the new receipt gate | NOT REUSABLE AS FINAL RELEASE |
 | Clean install / upgrade / rollback | Isolated Windows evidence not complete | BLOCKED |
 

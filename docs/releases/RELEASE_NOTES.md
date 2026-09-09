@@ -1,6 +1,6 @@
 # AIPacs Release Notes (Consolidated)
 
-**Next build target:** v3.6.5 (2026-09-03), preparation in progress; not released.
+**Next build target:** v3.6.5 (2026-09-09), source release ready; installers pending.
 
 **Current Stable Version:** v3.6.4 (2026-08-29)
 **Previous Stable:** v3.6.3 (2026-08-23)
@@ -9,7 +9,7 @@
 
 ---
 
-## v3.6.5 (unreleased) - Mammography integration and current workstation updates
+## v3.6.5 (source release 2026-09-09; installers pending) - Imaging integration and workstation updates
 
 Requested outputs: Python/PyInstaller and Nuitka installers. Source version and
 application metadata now target 3.6.5. Existing installers and build checkpoints
@@ -19,17 +19,19 @@ The working candidate contains the native mammography Intelligent AI Analyze
 integration, shared EchoMind provider selection, and the correction that resolves
 stale mammography result paths against immutable local viewer source identities.
 Ambiguous matches and cross-study inputs are rejected. MRI/spine analysis remains
-a separate workflow. The wider uncommitted workstation changes require a reviewed,
-isolated source snapshot before compilation; this entry does not approve them all
-for release or claim clinical validation.
+a separate workflow. The compatible portion of `PacsClientV2/main` is merged
+without rewriting its history, including isolated DX wrist analysis routed through
+its own controller and the configured EchoMind provider. Generated runtime state
+and repository-tool metadata from that branch are excluded.
 
 Preparation and verification: [VERSION_3.6.5_BUILD.md](VERSION_3.6.5_BUILD.md).
 The canonical source-publication route is now `RELEASE.md`: it requires one
 reviewed release commit, an annotated version tag, explicit atomic pushes of the
 same SHA to `main` and `beta-version` in all three declared repositories, and a
 post-push read-back receipt. The full candidate runner rejects a missing, stale,
-wrong-version, wrong-commit, incomplete, or post-edit receipt. The current 3.6.5
-release record remains blocked until its mixed worktree is reviewed and frozen.
+wrong-version, wrong-commit, incomplete, or post-edit receipt. Source publication
+is approved; signed installer distribution and clinical acceptance remain separate
+gates.
 
 ---
 

@@ -249,6 +249,8 @@ _CONNECT_PHASE_MARKERS = (
     "winerror 10061",
     "no route to host",
     "network is unreachable",
+    "sslwantwriteerror",
+    "the operation did not complete (write)",
 )
 
 
