@@ -441,3 +441,9 @@ hippocampal evidence. Combined Brain selection: 65 passed.
 |---|---|---|
 | Printing pixel transforms | Preserve absolute DICOM LINEAR gray values, threshold width one, crop after mapping; convert YBR and apply color crop. | tests/code/printing/test_print_fidelity.py (six fail-before cases) |
 | DICOM / Windows transport | Offer default transfer syntax, retain operation/status, reject invalid settings/pixels, and check Windows painter completion/state. | tests/code/printing/test_printer_transport.py (ten additional fail-before cases plus protective status/default cases) |
+
+## Default enlarged scout (2026-09-09)
+
+| Boundary | Requirement | Guard |
+|---|---|---|
+| Printing geometry/config | 150% scout box in both available dimensions, no overlap, correct separators, preview/export equality and persistent size | tests/code/printing/test_scout_size.py; scout size/default/separator cases in test_printing_workflow.py (eight fail-before cases) |

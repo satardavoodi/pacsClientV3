@@ -33,6 +33,13 @@ wrong-version, wrong-commit, incomplete, or post-edit receipt. Source publicatio
 is approved; signed installer distribution and clinical acceptance remain separate
 gates.
 
+Post-tag source follow-up: after the immutable `v3.6.5` tag was synchronized, the
+development branches received the first proportional-scout stage for printing.
+It adds a persisted 100/125/150% scout size (150% default) and shared preview/export
+geometry with regression coverage. The published tag and its receipt remain fixed
+at commit `0720586d61fb`; this follow-up must receive a later release identity before
+it can be used for a distributable installer.
+
 ---
 
 ## v3.6.4 (2026-08-29) - Minor release: Eagle Eye lumbar-spine AI, Legion Consult, two native-crash fixes, strict-offline Local mode

@@ -19,6 +19,7 @@ def load_printing_config(path: Path | None = None) -> Dict[str, Any]:
     config_path = path or _default_config_path()
     defaults = {
         "printers": [],
+        "scout_scale": 1.5,
         "default_film_sizes": [
             {"name": "14x17", "width_in": 14.0, "height_in": 17.0},
             {"name": "11x14", "width_in": 11.0, "height_in": 14.0},

@@ -104,3 +104,15 @@ never moved and shared branches are never reset or force-pushed.
 
 Source publication approved by: Repository owner, 2026-09-09
 Installer distribution approved by: NOT YET GIVEN
+
+## Immutable-tag boundary and post-tag branch follow-up
+
+The synchronized `v3.6.5` tag resolves to commit
+`0720586d61fb86fefdc59cb07f07b83dd6b92d8e` on every configured remote. It is
+immutable and is not moved.
+
+After tag publication, the development branches received a reviewed printing
+follow-up that adds persisted proportional scout sizing and shared preview/export
+geometry. This follow-up is intentionally not represented by the `v3.6.5` tag or
+its synchronization receipt. Before building or distributing that later branch
+state, assign it a new release identity and generate a new canonical receipt.

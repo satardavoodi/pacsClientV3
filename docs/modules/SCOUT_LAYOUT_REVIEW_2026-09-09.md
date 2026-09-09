@@ -1,8 +1,9 @@
 # Scout layout review and implementation design
 
 Latest design direction: the center-owned preset and proportional scout section
-below supersedes the earlier fixed two-row scout proposal. This remains a design
-review; runtime implementation has not been applied.
+below supersedes the earlier fixed two-row scout proposal. The first proportional
+scout stage is now implemented as documented at the end of this record; center-owned
+presets and free-rectangle packing remain design work.
 
 ## Scope
 
@@ -12,7 +13,7 @@ review. No patient data or physical printer was used. Suggested presets below
 are engineering starting points, not clinical acquisition protocols or certified
 vendor defaults. The proportion of local examinations they cover was not measured.
 
-## Current implementation
+## Baseline implementation at the time of review
 
 - `ui/printing_widget.py::_open_layout_dialog` offers row/column presets and custom
   values. `_layout_icon` draws equal boxes. `_update_page_display` subtracts one
@@ -277,3 +278,29 @@ geometry at multiple aspects, paper switching, page deletion, save/import versio
 handling and preview/export equality. Source/mirror parity and synthetic rendering
 review apply when implementation begins. Center-specific clinical readability and
 real film quality remain distinct from automated geometry tests.
+
+## Implemented first stage: default scout size
+
+Scout boxes now default to 150% of the former regular-cell width and height
+when an actual scout is present. Layout offers 100%, 125% and 150%; selection
+persists in printing configuration and saved-page metadata. The config default
+also provides 150% on first use. A reopened-widget guard verifies persistence.
+
+This first stage uses a larger first column and first row, redistributing the
+remaining widths/heights across the other cells. Diagnostic capacity/order stay
+unchanged; other cells get smaller (especially in 2x2). It is not the future
+free-rectangle packing/preset engine. No-scout layouts remain regular. A single
+row or column cannot enlarge along the already full-sheet dimension; 1x1 retains
+the existing diagnostic-only behavior. All image fitting preserves aspect ratio.
+
+Preview, export, reference clipping and separator positions use the same cells.
+Nine new cases cover enlarged geometry across six shapes, persistence/reopen,
+preview/export layout parity and absence of a separator through the scout.
+Eight cases failed before implementation. A synthetic 14x17 render was visually
+inspected: enlarged scout and nonoverlapping cells confirmed; offscreen fonts
+rendered as missing glyphs, so this is not a live typography check.
+
+The full printing suite passed 82 tests; the combined printing and plugin-package
+parity selection passed 86 tests with 4 release-candidate cases deselected
+(6 pre-existing SWIG warnings). All 462 mirror pairs matched. No physical
+print or live source UI run occurred. Presets remain a separate next stage.

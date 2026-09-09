@@ -207,7 +207,7 @@ def _draw_grid_lines(
     # Vertical grid lines (including left/right borders)
     x_positions_in = [0.0]
     for col in range(1, layout.cols):
-        x_positions_in.append(col * cell_w + (col - 1) * line_in)
+        x_positions_in.append(cells[col].x - line_in)
     x_positions_in.append(max(0.0, film_size.width_in - line_in))
 
     for x_in in x_positions_in:
@@ -217,7 +217,7 @@ def _draw_grid_lines(
     # Horizontal grid lines (including top/bottom borders)
     y_positions_in = [0.0]
     for row in range(1, layout.rows):
-        y_positions_in.append(row * cell_h + (row - 1) * line_in)
+        y_positions_in.append(cells[row * layout.cols].y - line_in)
     y_positions_in.append(max(0.0, film_size.height_in - line_in))
 
     for y_in in y_positions_in:

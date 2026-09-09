@@ -85,3 +85,11 @@ Manual source-publication request given by: Repository owner, 2026-09-09
 Credential-incident closure confirmed by: NOT YET GIVEN
 Final Developer Run/clinical acceptance given by: NOT YET GIVEN
 Production installer-distribution approval given by: NOT YET GIVEN
+
+## Post-tag branch synchronization
+
+The immutable `v3.6.5` tag remains at
+`0720586d61fb86fefdc59cb07f07b83dd6b92d8e`. A later reviewed source-only
+follow-up adds proportional printing-scout geometry to both development branches
+without moving the tag. It is covered by focused automated tests and mirror parity,
+but it is not approved as a replacement 3.6.5 installer candidate.

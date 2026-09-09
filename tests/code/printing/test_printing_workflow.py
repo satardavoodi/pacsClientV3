@@ -75,6 +75,49 @@ def test_delete_keeps_other_pages(ui, monkeypatch):
     assert ui.widget._total_pages == 3
 
 
+def test_scout_defaults_to_larger_preview_and_export_geometry(ui, monkeypatch):
+    from modules.printing.layout.grid import GridLayoutEngine
+    generate(ui, monkeypatch)
+    preview = ui.widget.preview_widget
+    preview.set_scout_path("synthetic-scout")
+    assert preview._layout.scout_scale == 1.5
+    captured = {}
+    monkeypatch.setattr(ui.preview, "render_film", lambda *args, **kw: captured.update(layout=args[2]) or QPixmap(2,2))
+    preview.export_film_pixmap()
+    assert captured["layout"].scout_scale == 1.5
+    preview.set_scout_path(None)
+    assert preview._layout.scout_scale == 1.0
+
+
+def test_scout_size_setting_is_saved(ui, monkeypatch):
+    saved = []
+    monkeypatch.setattr(ui.mod, "save_printing_config", saved.append)
+    ui.widget._set_scout_scale(1.25)
+    assert saved[-1]["scout_scale"] == 1.25
+    monkeypatch.setattr(ui.mod, "load_printing_config", lambda: saved[-1])
+    reopened = ui.mod.PrintingWidget()
+    try:
+        assert reopened._scout_scale == 1.25
+    finally:
+        reopened.close()
+        reopened.deleteLater()
+
+
+def test_enlarged_scout_has_no_old_grid_line_through_it(ui, monkeypatch):
+    from modules.printing.core.models import FilmSize, FilmLayout
+    from modules.printing.render.film_renderer import render_film
+    from PySide6.QtGui import QColor
+    pix = QPixmap(100,100)
+    pix.fill(QColor("red"))
+    rendered = ui.render.RenderedImage(pix,100,100,1)
+    film = render_film([rendered], FilmSize("synthetic",4,4/0.9),
+                       FilmLayout(4,4,scout_scale=1.5), dpi=100,
+                       overlay_info={"background_mode":"dark"})
+    # The old first-column separator at about x=100 is inside the new scout.
+    assert film.toImage().pixelColor(100,120).red() > 240
+    assert film.toImage().pixelColor(100,120).green() < 10
+
+
 @pytest.mark.parametrize("page", [0, 1, 2])
 def test_delete_current_page_removes_only_that_sheet(ui, monkeypatch, page):
     paths = generate(ui, monkeypatch)

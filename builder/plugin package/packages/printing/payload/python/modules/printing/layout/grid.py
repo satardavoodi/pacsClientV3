@@ -45,13 +45,23 @@ class GridLayoutEngine:
         cell_width = available_width / layout.cols
         cell_height = available_height / layout.rows
 
+        scale = max(1.0, min(1.5, layout.scout_scale))
+        widths = [cell_width] * layout.cols
+        heights = [cell_height] * layout.rows
+        if layout.cols > 1:
+            widths[0] = cell_width * scale
+            widths[1:] = [(available_width - widths[0]) / (layout.cols - 1)] * (layout.cols - 1)
+        if layout.rows > 1:
+            heights[0] = cell_height * scale
+            heights[1:] = [(available_height - heights[0]) / (layout.rows - 1)] * (layout.rows - 1)
         cells: List[GridCell] = []
-        for row in range(layout.rows):
-            for col in range(layout.cols):
-                # Position: no margin, cells are adjacent with grid lines between
-                x = col * (cell_width + self.GRID_LINE_WIDTH_IN)
-                y = row * (cell_height + self.GRID_LINE_WIDTH_IN)
-                cells.append(GridCell(x=x, y=y, width=cell_width, height=cell_height))
+        y = 0.0
+        for height in heights:
+            x = 0.0
+            for width in widths:
+                cells.append(GridCell(x=x, y=y, width=width, height=height))
+                x += width + self.GRID_LINE_WIDTH_IN
+            y += height + self.GRID_LINE_WIDTH_IN
         return cells
 
     def map_image_to_cell(

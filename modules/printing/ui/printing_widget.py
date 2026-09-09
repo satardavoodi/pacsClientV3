@@ -93,6 +93,10 @@ class PrintingWidget(QWidget):
         self._print_worker = None
         self._selection_dirty = True
         self._preview_study_uid = None
+        try:
+            self._scout_scale = max(1.0, min(1.5, float(load_printing_config().get("scout_scale", 1.5))))
+        except (TypeError, ValueError):
+            self._scout_scale = 1.5
         self._background_mode = load_printing_config().get("background_mode", "dark")
         if self._background_mode not in ("white", "dark", "none"):
             self._background_mode = "dark"
@@ -500,6 +504,14 @@ class PrintingWidget(QWidget):
 
         main_layout = QVBoxLayout(dialog)
         main_layout.setSpacing(12)
+
+        scout_size = QComboBox()
+        for percent in (100, 125, 150):
+            scout_size.addItem(f"Scout: {percent}% width and height", percent / 100)
+        scout_size.setCurrentIndex(scout_size.findData(self._scout_scale))
+        scout_size.setToolTip("Enlarge the scout box while preserving image aspect. Other cells become smaller; single-row or single-column layouts are limited by the sheet.")
+        scout_size.currentIndexChanged.connect(lambda _: self._set_scout_scale(scout_size.currentData()))
+        main_layout.addWidget(scout_size)
 
         # Preset quick picks (common PACS print layouts)
         presets_row = QHBoxLayout()
@@ -1304,6 +1316,18 @@ class PrintingWidget(QWidget):
     def _invalidate_export(self):
         self._film_pixmap = None
 
+    def _set_scout_scale(self, scale):
+        self._scout_scale = max(1.0, min(1.5, float(scale)))
+        self._invalidate_export()
+        try:
+            cfg = load_printing_config()
+            cfg["scout_scale"] = self._scout_scale
+            save_printing_config(cfg)
+        except Exception:
+            QMessageBox.warning(self, "Scout Size", "Setting applies for this session but could not be saved.")
+        if self._selected_paths:
+            self._update_page_display()
+
     def _on_background_changed(self, index):
         self._background_mode = self.background_combo.currentData()
         self._invalidate_export()
@@ -1373,6 +1397,7 @@ class PrintingWidget(QWidget):
         overlay_info = self._build_overlay_info()
         overlay_info["background_mode"] = self._background_mode
         overlay_info["sequence_start"] = start_idx + 1
+        overlay_info["scout_scale"] = self._scout_scale
         self.preview_widget.set_tiles(film_size, layout, page_paths, overlay_info=overlay_info)
         # IMPORTANT: do NOT regenerate the full 150-DPI film pixmap here on
         # every page change. ``set_tiles`` already decoded each DICOM at
@@ -1931,6 +1956,7 @@ class PrintingWidget(QWidget):
             "film_size": film_size.name if film_size else "unknown",
             "timestamp": datetime.now().isoformat(),
             "background_mode": self._background_mode,
+            "scout_scale": self._scout_scale,
         }
         
         # Save the page

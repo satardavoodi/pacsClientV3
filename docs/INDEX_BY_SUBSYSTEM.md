@@ -636,4 +636,4 @@ Printing transport audit (2026-09-09): [DICOM and Windows print fidelity, protoc
 
 Printing audit correction: `docs/modules/PRINT_TRANSPORT_AUDIT_2026-09-09.md` includes the authorized fidelity/transport follow-up, 89-test validation, and remaining device/profile limitations.
 
-Printing scout/layout review: [shared merged-cell design, paper-aware geometry, MR brain/lumbar preset scope and reference-line identity gaps](modules/SCOUT_LAYOUT_REVIEW_2026-09-09.md). Investigation only; implementation is not yet applied.
+Printing scout/layout review: [proportional 150% scout implementation, shared geometry, paper-aware design, MR brain/lumbar preset scope and reference-line identity gaps](modules/SCOUT_LAYOUT_REVIEW_2026-09-09.md). The first proportional-scout stage is implemented; center-owned presets remain pending.

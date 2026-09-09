@@ -23,6 +23,7 @@ class FilmLayout:
     cols: int
     margin_in: float = 0.25
     gutter_in: float = 0.05
+    scout_scale: float = 1.0
 
 
 @dataclass(frozen=True)

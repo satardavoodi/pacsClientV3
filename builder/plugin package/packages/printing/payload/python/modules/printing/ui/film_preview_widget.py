@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, QPointF, QTimer, QEvent, Signal
@@ -126,6 +126,7 @@ class FilmPreviewWidget(QGraphicsView):
         self._tiles = []
         self._ref_line_items = []  # scene.clear() already removed them
         self._film_size = film_size
+        layout = replace(layout, scout_scale=float((overlay_info or {}).get("scout_scale", 1.5)) if self._scout_path else 1.0)
         self._layout = layout
         self._overlay_info = overlay_info
         self._background_mode = (overlay_info or {}).get("background_mode", "dark")
@@ -363,7 +364,7 @@ class FilmPreviewWidget(QGraphicsView):
         # Vertical lines (including left/right borders)
         x_positions_in = [0.0]
         for col in range(1, layout.cols):
-            x_positions_in.append(col * cell_w + (col - 1) * line_in)
+            x_positions_in.append(cells[col].x - line_in)
         x_positions_in.append(max(0.0, film_area.width_in - line_in))
 
         for x_in in x_positions_in:
@@ -373,7 +374,7 @@ class FilmPreviewWidget(QGraphicsView):
         # Horizontal lines (including top/bottom borders)
         y_positions_in = [0.0]
         for row in range(1, layout.rows):
-            y_positions_in.append(row * cell_h + (row - 1) * line_in)
+            y_positions_in.append(cells[row * layout.cols].y - line_in)
         y_positions_in.append(max(0.0, film_area.height_in - line_in))
 
         for y_in in y_positions_in:
