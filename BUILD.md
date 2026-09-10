@@ -46,6 +46,22 @@ The diagnostic defaults to Standard PyInstaller. `--backend nuitka` or
 `--edition eagle-eye` / `--edition arm` selects another explicit diagnostic target.
 Its isolated output is deliberately non-promotable.
 
+### Local six-installer install QA
+
+When the owner explicitly requests installable local artifacts before Git or legal
+distribution approval, use the same six-output matrix in local install-QA mode:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
+  --local-install-qa
+```
+
+This mode builds PyInstaller and Nuitka for Eagle Eye, Standard, and ARM64-emulated
+and writes them to the same two canonical repository folders. It validates the
+technical Brain payload but does not claim redistribution approval, publication,
+signing, or production acceptance. Its installers are for local installation QA
+only until the remaining release gates pass.
+
 Versioned Git publication is governed by `RELEASE.md`. A full release candidate
 cannot start until the exact clean source commit is synchronized to every required
 remote branch and its fresh receipt is available.

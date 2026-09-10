@@ -269,6 +269,63 @@ def test_brain_release_preflight_fails_before_expensive_payload_validation(tmp_p
     assert calls == []
 
 
+def test_local_install_qa_builds_both_backends_all_editions_to_canonical_folders(
+    tmp_path, monkeypatch
+):
+    from tools.build import build_local_candidate as candidate
+
+    workspace = tmp_path / "candidate"
+    source = workspace / "source"
+    source.mkdir(parents=True)
+    (source / "build_source_manifest.json").write_text(
+        json.dumps({
+            "source_sha256": "stable",
+            "version": "3.6.6",
+            "github_freshness_verified": False,
+            "release_sync": None,
+        }),
+        encoding="utf-8",
+    )
+    final_repo = tmp_path / "final"
+    calls = []
+    monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
+    monkeypatch.setattr(
+        candidate,
+        "canonical_installer_dirs",
+        lambda _root, _version: {
+            "python": final_repo / "builder/output/installer",
+            "nuitka": final_repo / "builder nuitka/output/installer",
+        },
+    )
+    monkeypatch.setattr(
+        candidate,
+        "run_logged_build",
+        lambda command, **kwargs: calls.append((command, kwargs)) or 0,
+    )
+
+    assert candidate.run_builds(
+        workspace,
+        tmp_path / "assets",
+        "3.6.6",
+        final_repo=final_repo,
+        local_install_qa=True,
+    ) == 0
+    assert len(calls) == 3  # PyInstaller, Nuitka, then coherence.
+    for command, invocation in calls[:2]:
+        assert "--internal-build" in command
+        assert command[command.index("--edition") + 1] == "all"
+        assert invocation["env"]["AIPACS_PY_INSTALLER_OUTPUT_DIR"] == str(
+            final_repo / "builder/output/installer"
+        )
+        assert invocation["env"]["AIPACS_NUITKA_INSTALLER_OUTPUT_DIR"] == str(
+            final_repo / "builder nuitka/output/installer"
+        )
+    status = json.loads((workspace / "build_status.json").read_text(encoding="utf-8"))
+    assert status["lane"] == "local-install-qa"
+    assert status["distribution_approved"] is False
+    assert status["published"] is False
+
+
 def test_internal_standard_one_command_uses_safe_defaults(tmp_path, monkeypatch):
     from tools.build import build_local_candidate as candidate
 

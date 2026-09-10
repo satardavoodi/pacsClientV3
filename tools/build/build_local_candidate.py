@@ -169,10 +169,14 @@ def expected_release_installers(final_repo: Path, version: str) -> dict[str, lis
 
 
 def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source: Path | None = None,
-               final_repo: Path = REPO, brain_source: Path | None = None) -> int:
+               final_repo: Path = REPO, brain_source: Path | None = None,
+               local_install_qa: bool = False) -> int:
     root = workspace / "source"
     identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
-    if not identity.get("github_freshness_verified") or not identity.get("release_sync"):
+    if local_install_qa:
+        if identity.get("github_freshness_verified") or identity.get("release_sync"):
+            raise ValueError("Local install-QA builds require a non-promotable internal snapshot")
+    elif not identity.get("github_freshness_verified") or not identity.get("release_sync"):
         raise ValueError(
             "Canonical release builds require a verified multi-remote Git synchronization receipt"
         )
@@ -182,7 +186,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     status_path = workspace / "build_status.json"
     if status_path.exists():
         raise ValueError("This build workspace already has a run; preserve it and prepare a fresh candidate")
-    status = {"version": version, "status": "running", "pid": os.getpid(), "published": False,
+    status = {"version": version, "status": "running", "pid": os.getpid(),
+              "lane": "local-install-qa" if local_install_qa else "release-candidate",
+              "published": False, "distribution_approved": not local_install_qa,
               "production_accepted": False,
               "expected_release_installers": expected_release_installers(final_repo, version),
               "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
@@ -218,6 +224,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         "nuitka": [sys.executable, "-u", "builder nuitka/build_nuitka_release.py", "--release",
                    "--compiler", "msvc", "--edition", "all", "--asset-root", str(assets)],
     }
+    if local_install_qa:
+        commands["python"].insert(3, "--internal-build")
+        commands["nuitka"].insert(3, "--internal-build")
     if reuse_python_source is not None:
         commands["python"] = [sys.executable, "-u", "tools/build/repackage_candidate.py",
                               "--previous-source", str(reuse_python_source.resolve()), "--version", version]
@@ -401,6 +410,14 @@ def main():
             "or update canonical installer folders"
         ),
     )
+    parser.add_argument(
+        "--local-install-qa",
+        action="store_true",
+        help=(
+            "Build all six installable artifacts into the two canonical repository folders "
+            "for local QA without asserting Git publication or redistribution approval"
+        ),
+    )
     parser.add_argument("--backend", choices=("python", "nuitka"), default="python",
                         help="Internal lane only; default: python")
     parser.add_argument("--edition", choices=("standard", "eagle-eye", "arm"), default="standard",
@@ -412,13 +429,20 @@ def main():
                         help="Repository whose existing builder output/installer folders receive final files")
     args = parser.parse_args()
     version = args.version or current_version(REPO)
-    workspace = (args.workspace or default_workspace(version, internal=args.internal)).resolve()
+    workspace = (
+        args.workspace
+        or default_workspace(version, internal=args.internal or args.local_install_qa)
+    ).resolve()
     assets = (args.asset_root or REPO / "generated-files/distribution-assets").resolve()
     if args.prepare_only and args.run_prepared:
         parser.error("Choose prepare-only or run-prepared")
+    if args.internal and args.local_install_qa:
+        parser.error("Choose --internal or --local-install-qa")
     if args.internal and args.git_sync_receipt:
         parser.error("Internal snapshots do not use a release synchronization receipt")
-    if not args.internal and not args.git_sync_receipt:
+    if args.local_install_qa and args.git_sync_receipt:
+        parser.error("Local install-QA builds do not use a release synchronization receipt")
+    if not args.internal and not args.local_install_qa and not args.git_sync_receipt:
         parser.error("Canonical release builds require --git-sync-receipt")
     release_sync = None
     if args.git_sync_receipt:
@@ -426,7 +450,10 @@ def main():
     brain_source = None
     if not args.internal or args.edition == "eagle-eye":
         brain_source = resolve_brain_source(args.brain_source, REPO)
-        preflight_brain_payload(brain_source, for_distribution=not args.internal)
+        preflight_brain_payload(
+            brain_source,
+            for_distribution=not (args.internal or args.local_install_qa),
+        )
     if not args.run_prepared:
         if workspace.exists():
             raise ValueError("Build workspace already exists; use a fresh directory")
@@ -450,6 +477,7 @@ def main():
         args.reuse_python_source,
         args.final_repo.resolve(),
         brain_source,
+        local_install_qa=args.local_install_qa,
     )
 
 

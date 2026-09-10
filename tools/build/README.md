@@ -20,6 +20,9 @@ The official lane takes only `--git-sync-receipt <path>` in the common case. It
 fails missing Eagle Eye Brain redistribution evidence before expensive compilation.
 `C:\b` is only the short-path compilation workspace. Final installers are written
 only to `builder/output/installer/` and `builder nuitka/output/installer/`.
+For an explicitly requested local six-installer package before publication or
+redistribution approval, use `--local-install-qa`; it writes all six installable
+artifacts to those same canonical folders while marking the run non-promotable.
 
 Other scripts in this folder are helpers and gates used by the canonical
 coordinator. Their presence does not create another supported release workflow.

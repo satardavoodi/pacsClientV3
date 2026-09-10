@@ -30,6 +30,7 @@ def test_canonical_runbook_defines_the_complete_release_contract():
         "--git-sync-receipt",
         "Canonical six-installer command",
         "build_local_candidate.py --internal",
+        "--local-install-qa",
         "not a third output hierarchy",
         "request is complete only when the six versioned files",
         "Never do these",
