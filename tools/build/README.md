@@ -9,15 +9,17 @@ creates an isolated source snapshot, requires a fresh Git synchronization receip
 runs PyInstaller and Nuitka sequentially, writes final files only to the two
 established installer folders, and records cross-backend coherence evidence.
 
-`build_local_candidate.py --internal` is the one-command Developer Run packaging
-path. It defaults to one Standard PyInstaller output, automatically selects the
-current version, asset cache, and a new short workspace, and marks the result
-non-promotable. `--backend nuitka` and `--edition ...` select a focused alternative.
-Backend scripts remain implementation details and reject direct release-capable
-execution from the mutable developer checkout.
+An unqualified request to "make a build" always means the official six-installer
+matrix. `build_local_candidate.py --internal` is only an explicitly requested
+single-package diagnostic. Its output remains in temporary compiler scratch space,
+is non-promotable, and never counts as a completed build. Backend scripts remain
+implementation details and reject direct release-capable execution from the
+mutable developer checkout.
 
 The official lane takes only `--git-sync-receipt <path>` in the common case. It
 fails missing Eagle Eye Brain redistribution evidence before expensive compilation.
+`C:\b` is only the short-path compilation workspace. Final installers are written
+only to `builder/output/installer/` and `builder nuitka/output/installer/`.
 
 Other scripts in this folder are helpers and gates used by the canonical
 coordinator. Their presence does not create another supported release workflow.

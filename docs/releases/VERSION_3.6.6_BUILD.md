@@ -1,6 +1,6 @@
 # AI-PACS 3.6.6 build record
 
-Status: INTERNAL STANDARD PASSED; OFFICIAL MATRIX BLOCKED
+Status: INTERNAL DIAGNOSTIC PASSED; CANONICAL SIX-INSTALLER MATRIX BLOCKED
 Date: 2026-09-10
 
 ## Requested matrix
@@ -49,7 +49,7 @@ then exposed a stale post-stage assumption that every edition required offline
 Lumbar even after Standard correctly omitted Eagle Eye assets. The gate is now
 edition-aware; the stopped internal workspace remains failed diagnostic evidence.
 
-The corrected one-command run completed at
+The corrected single-package diagnostic completed at
 `C:\b\aipacs-internal-3.6.6-20260910-111348`. It built the latest accepted
 Developer Run source as a non-promotable PyInstaller Standard installer in about
 20 minutes. `build_status.json` records exit code 0 and `status: completed`.
@@ -68,6 +68,25 @@ The x64 binary scan retained its documented warning for the third-party
 `speech_recognition/flac-win32.exe`; it did not introduce a new failure. The
 installer was not launched, installed, copied to the repository release folders,
 signed, uploaded, or promoted.
+
+## Output-routing correction
+
+The successful file under `C:\b` is not a completed version 3.6.6 build. `C:\b`
+is short-path compiler scratch space only; it is not a third installer hierarchy.
+The earlier run was incorrectly reported as build completion even though it
+produced only one non-promotable diagnostic file.
+
+An unqualified owner request to make a build now means both backends and all three
+editions. The coordinator records all six expected destination paths before it
+starts compilation and writes final artifacts only to:
+
+- `builder/output/installer`: PyInstaller Eagle Eye, Standard, and ARM64-emulated.
+- `builder nuitka/output/installer`: Nuitka Eagle Eye, Standard, and ARM64-emulated.
+
+The 2026-09-10 folder audit found no current PyInstaller installer in the first
+folder. The Nuitka folder contains only the three historical version 3.6.5
+installers and their metadata. Therefore no canonical version 3.6.6 matrix exists,
+and none of those files may be renamed or represented as version 3.6.6.
 
 ## Remaining acceptance gates
 

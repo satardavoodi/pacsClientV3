@@ -238,6 +238,17 @@ def test_candidate_stops_before_nuitka_when_required_python_backend_fails(tmp_pa
     assert status["status"] == "failed"
     expected_stage_root = Path(workspace.resolve().anchor) / "ap-stage"
     assert Path(status["packaging_stage_root"]) == expected_stage_root
+    expected_names = {
+        "ai-pacs eagle-eye v3.6.5.exe",
+        "ai-pacs standard v3.6.5.exe",
+        "ai-pacs arm64-emulated v3.6.5.exe",
+    }
+    for backend, installer_paths in status["expected_release_installers"].items():
+        expected_parent = final_repo / (
+            "builder/output/installer" if backend == "python" else "builder nuitka/output/installer"
+        )
+        assert {Path(path).name for path in installer_paths} == expected_names
+        assert all(Path(path).parent == expected_parent for path in installer_paths)
 
 
 def test_brain_release_preflight_fails_before_expensive_payload_validation(tmp_path, monkeypatch):

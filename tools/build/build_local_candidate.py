@@ -154,6 +154,20 @@ def canonical_installer_dirs(final_repo: Path, version: str) -> dict[str, Path]:
     return result
 
 
+def expected_release_installers(final_repo: Path, version: str) -> dict[str, list[str]]:
+    """Return the six canonical deliverables; compiler workspaces are never outputs."""
+    directories = canonical_installer_dirs(final_repo, version)
+    filenames = (
+        f"ai-pacs eagle-eye v{version}.exe",
+        f"ai-pacs standard v{version}.exe",
+        f"ai-pacs arm64-emulated v{version}.exe",
+    )
+    return {
+        backend: [str(directory / filename) for filename in filenames]
+        for backend, directory in directories.items()
+    }
+
+
 def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source: Path | None = None,
                final_repo: Path = REPO, brain_source: Path | None = None) -> int:
     root = workspace / "source"
@@ -169,7 +183,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     if status_path.exists():
         raise ValueError("This build workspace already has a run; preserve it and prepare a fresh candidate")
     status = {"version": version, "status": "running", "pid": os.getpid(), "published": False,
-              "production_accepted": False, "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
+              "production_accepted": False,
+              "expected_release_installers": expected_release_installers(final_repo, version),
+              "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
 
     def save_status():
         temporary = status_path.with_suffix(".tmp")
@@ -270,6 +286,11 @@ def run_internal_build(
     brain_source: Path | None = None,
 ) -> int:
     """Run one non-promotable packaging check entirely inside its snapshot."""
+    print(
+        "DIAGNOSTIC ONLY: this run does not satisfy a full build request and will not "
+        "update the repository installer folders.",
+        flush=True,
+    )
     root = workspace / "source"
     status_path = workspace / "build_status.json"
     if status_path.exists():
@@ -375,7 +396,10 @@ def main():
     parser.add_argument(
         "--internal",
         action="store_true",
-        help="Build a non-promotable snapshot from the latest Developer Run source",
+        help=(
+            "Explicit single-package diagnostic only; does not satisfy a full build request "
+            "or update canonical installer folders"
+        ),
     )
     parser.add_argument("--backend", choices=("python", "nuitka"), default="python",
                         help="Internal lane only; default: python")

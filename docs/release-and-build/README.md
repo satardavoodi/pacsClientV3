@@ -26,10 +26,10 @@ continues.
 | Need | Start here | Result |
 |---|---|---|
 | Test a source change | `BUILD.md` → Source validation | Tests and Developer Run evidence; no installer |
-| Convert the latest Developer Run to one EXE | `BUILD.md` → Quick start | One-command, explicitly non-promotable snapshot output |
-| Check another installer/profile | `BUILD.md` → Internal packaging validation | One backend/edition selected through the same coordinator |
+| Create a requested build | `RELEASE.md`, then `BUILD.md` → Canonical six-installer command | Three PyInstaller and three Nuitka installers in the two existing repository output folders |
+| Check one installer/profile when explicitly requested | `BUILD.md` → Optional single-package diagnostic | One non-promotable backend/edition inside temporary compiler scratch space |
 | Publish a release source revision | `RELEASE.md` | One verified SHA/tag on all required remotes plus a receipt |
-| Create all six candidate installers | `RELEASE.md`, then `BUILD.md` | Three PyInstaller and three Nuitka installers |
+| Verify all six candidate installers | `BUILD.md` → Acceptance | Version, hashes, contents, size, install lifecycle, and platform evidence |
 | Diagnose PyInstaller internals | `builder/docs/README.md` | Backend-specific evidence only |
 | Diagnose Nuitka stages | `builder nuitka/README_NUITKA_BUILD.md` | Stage/checkpoint evidence only |
 | Review what shipped | `docs/releases/README.md` | Version record and release notes |

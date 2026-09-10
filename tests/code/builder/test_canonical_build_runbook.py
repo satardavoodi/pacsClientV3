@@ -28,8 +28,10 @@ def test_canonical_runbook_defines_the_complete_release_contract():
         "coherence_exit_code",
         "RELEASE.md",
         "--git-sync-receipt",
-        "Quick start",
+        "Canonical six-installer command",
         "build_local_candidate.py --internal",
+        "not a third output hierarchy",
+        "request is complete only when the six versioned files",
         "Never do these",
     )
     for value in required_contract:

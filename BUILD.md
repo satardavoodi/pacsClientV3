@@ -10,23 +10,11 @@ documents explain implementation details and historical recovery, but they do no
 replace this procedure. If another build document conflicts with this file, stop
 and update the conflicting document before building.
 
-## Quick start
+## Canonical six-installer command
 
-Create a disposable Standard PyInstaller executable from the latest accepted
-Developer Run source with one command:
-
-```powershell
-& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py --internal
-```
-
-The coordinator reads the version from `pyproject.toml`, uses the repository asset
-cache, creates a new short timestamped workspace under `C:\b`, and keeps the
-installer inside that isolated snapshot. Use `--backend nuitka` to exercise Nuitka,
-or `--edition eagle-eye` / `--edition arm` only when that specific internal package
-must be checked. Internal output is deliberately non-promotable.
-
-After `RELEASE.md` has produced a fresh synchronization receipt, create the official
-six-installer candidate with one build command:
+When the owner asks to "make a build", this is the required workflow. After
+`RELEASE.md` has produced a fresh synchronization receipt, create the complete
+candidate with one command:
 
 ```powershell
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
@@ -37,6 +25,26 @@ The official lane always builds both backends and all three editions. It writes
 final files only to the established backend installer folders. Missing Eagle Eye
 Brain approval is checked before the snapshot, asset-cache verification, Lite
 Viewer build, or application compilation begins.
+
+The short timestamped directory under `C:\b` is compiler scratch space only. It
+exists to avoid Windows path-length failures and preserve reproducible logs. It is
+not a third output hierarchy, and no installer may be delivered from it. A build
+request is complete only when the six versioned files and their metadata are in
+`builder/output/installer/` and `builder nuitka/output/installer/`.
+
+### Optional single-package diagnostic
+
+Use the following only when the owner explicitly requests an internal packaging
+diagnostic for one backend/edition. It does not satisfy a request to "make a
+build" and it never updates the two canonical installer folders:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py --internal
+```
+
+The diagnostic defaults to Standard PyInstaller. `--backend nuitka` or
+`--edition eagle-eye` / `--edition arm` selects another explicit diagnostic target.
+Its isolated output is deliberately non-promotable.
 
 Versioned Git publication is governed by `RELEASE.md`. A full release candidate
 cannot start until the exact clean source commit is synchronized to every required
