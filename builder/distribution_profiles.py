@@ -294,6 +294,7 @@ def compile_editions(builder, version, selection="all", *, stage_only=False,
             builder.run_command([str(compiler), f"/DMyAppVersion={version}", f"/DStageDir={stage}",
                                  f"/DInstallerOutputDir={compiler_output}", f"/DInstallerBaseName={name}",
                                  f"/DDistributionEdition={edition.name}",
+                                 f"/DRequireDistributionApproval={int(for_distribution)}",
                                  f"/DIncludeAdvancedMpr={int(edition.include_slicer)}",
                                  f"/DIncludeOfflineLumbar={int(edition.include_offline_lumbar)}", str(installer)],
                                 cwd=builder.BUILDER_DIR / "installer")

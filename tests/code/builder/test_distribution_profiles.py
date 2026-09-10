@@ -159,6 +159,9 @@ def test_installer_separates_slicer_runtime_from_eagle_eye_model_and_shows_versi
     assert "SetupWindowTitle={#MyAppName} {#MyAppVersion} Setup" in source
     assert "AppVersion={#MyAppVersion}" in source
     assert "VersionInfoVersion={#MyAppVersion}" in source
+    assert "RequireDistributionApproval" in source
+    assert "EagleEyeBrainRuntimeAvailable" in source
+    assert 'DistributionEdition == "eagle-eye" && !EagleEyeBrainRuntimeAvailable' in source
 
 
 def test_individual_standard_and_arm_builds_stage_slicer_sources():
@@ -264,6 +267,61 @@ def test_internal_eagle_eye_stage_does_not_require_distribution_receipt(
     )
 
     assert (staged / "plugin_packages/advanced_mpr/payload/eagle_eye/brain/model/manifest.json").is_file()
+
+
+def test_internal_installer_compile_explicitly_disables_distribution_receipt_gate(
+    tmp_path, bundle, brain_payload
+):
+    import shutil
+    from builder.build_release import ADVANCED_MPR_REQUIRED_RUNTIME_FILES
+
+    source = source_stage(tmp_path)
+    payload_root = source / "plugin_packages/advanced_mpr/payload"
+    for relative in ADVANCED_MPR_REQUIRED_RUNTIME_FILES:
+        file = payload_root / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(b"synthetic fixture")
+    module_path = payload_root / "python/modules/mpr/advanced_3d_slicer/slicer_modules"
+    module_path.mkdir(parents=True)
+    for name in ("AIPacsBackgroundRuntime.py", "AIPacsOfflineLumbar.py"):
+        (module_path / name).write_text("# Synthetic integration fixture\n")
+    shutil.copytree(bundle, payload_root / "offline_lumbar")
+    shutil.copytree(brain_payload, payload_root / "eagle_eye/brain")
+    (payload_root / "eagle_eye/brain/distribution-approval.json").unlink()
+    commands = []
+
+    def compile_fixture(command, **kwargs):
+        commands.append(command)
+        values = dict(arg[2:].split("=", 1) for arg in command if arg.startswith("/D"))
+        (Path(values["InstallerOutputDir"]) / (values["InstallerBaseName"] + ".exe")).write_bytes(
+            b"synthetic installer"
+        )
+
+    installer_dir = tmp_path / "installer"
+    builder = SimpleNamespace(
+        OUTPUT_DIR=tmp_path,
+        INSTALLER_OUTPUT_DIR=installer_dir,
+        STAGE_DIR=source,
+        BUILDER_DIR=tmp_path,
+        INSTALLER_SCRIPT=Path("standard.iss"),
+        INSTALLER_SCRIPT_WOA=Path("arm.iss"),
+        find_iscc=lambda: Path("iscc.exe"),
+        run_command=compile_fixture,
+    )
+
+    profiles.compile_editions(
+        builder,
+        "9.9.9",
+        "eagle-eye",
+        for_distribution=False,
+    )
+
+    definitions = {
+        arg[2:].split("=", 1)[0]: arg[2:].split("=", 1)[1]
+        for arg in commands[0]
+        if arg.startswith("/D")
+    }
+    assert definitions["RequireDistributionApproval"] == "0"
 
 
 def test_new_build_defaults_to_all_three_editions(monkeypatch):

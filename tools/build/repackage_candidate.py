@@ -41,6 +41,18 @@ def verify_matching_inputs(previous, candidate, version):
     return manifests[0]
 
 
+def requires_distribution_approval(candidate):
+    """Return true only for a receipt-backed, published release snapshot."""
+    manifest = json.loads(
+        (Path(candidate) / "build_source_manifest.json").read_text(encoding="utf-8")
+    )
+    return bool(
+        manifest.get("github_freshness_verified")
+        and manifest.get("source_published")
+        and manifest.get("release_sync")
+    )
+
+
 def main():
     from builder import build_release, release_gate
     from builder.distribution_profiles import compile_editions
@@ -52,6 +64,7 @@ def main():
     if previous == ROOT.resolve():
         raise ValueError("Recovery must use a separate candidate workspace")
     provenance = verify_matching_inputs(previous, ROOT, args.version)
+    for_distribution = requires_distribution_approval(ROOT)
     stage = previous / "builder/output/stage"
     release = json.loads((stage / "manifest/release_manifest.json").read_text(encoding="utf-8"))
     if release.get("version") != args.version:
@@ -67,7 +80,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     identity = {"version": args.version, "previous_source": str(previous),
                 "previous_candidate_commit": provenance["candidate_commit"],
-                "core_sha256": core_hash, "source_inputs_match": True, "published": False}
+                "core_sha256": core_hash, "source_inputs_match": True,
+                "distribution_approved": for_distribution, "published": False}
     (output / "repackage_provenance.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
     def run(command, *, cwd):
         subprocess.run(command, cwd=cwd, check=True)
@@ -76,7 +90,12 @@ def main():
                               INSTALLER_SCRIPT=build_release.INSTALLER_SCRIPT,
                               INSTALLER_SCRIPT_WOA=build_release.INSTALLER_SCRIPT_WOA,
                               find_iscc=build_release.find_iscc, run_command=run, BACKEND="python")
-    compile_editions(adapter, args.version, "all")
+    compile_editions(
+        adapter,
+        args.version,
+        "all",
+        for_distribution=for_distribution,
+    )
     if file_hash(exe) != core_hash:
         raise RuntimeError("Previous core changed during repackaging")
     return 0

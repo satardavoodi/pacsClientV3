@@ -22,15 +22,23 @@
   ; pass this define explicitly for their model policy.
   #define IncludeOfflineLumbar "1"
 #endif
+#ifndef RequireDistributionApproval
+  ; Release builds keep this enabled. Local install-QA builds explicitly set 0.
+  #define RequireDistributionApproval "1"
+#endif
 #define AdvancedMprPayloadExe StageDir + "\plugin_packages\advanced_mpr\payload\AIPacsAdvancedViewer.exe"
 #define AdvancedMprOfflineManifest StageDir + "\plugin_packages\advanced_mpr\payload\offline_lumbar\manifest.json"
 #define AdvancedMprOfflinePython StageDir + "\plugin_packages\advanced_mpr\payload\offline_lumbar\python\python.exe"
 #define AdvancedMprRuntimeAvailable (IncludeAdvancedMpr != "0" && FileExists(AdvancedMprPayloadExe))
 #define OfflineLumbarAvailable (IncludeOfflineLumbar != "0" && FileExists(AdvancedMprOfflineManifest) && FileExists(AdvancedMprOfflinePython))
 #define EagleEyeBrainRoot StageDir + "\plugin_packages\advanced_mpr\payload\eagle_eye\brain"
-#define EagleEyeBrainAvailable (FileExists(EagleEyeBrainRoot + "\model\manifest.json") && FileExists(EagleEyeBrainRoot + "\model\python\python.exe") && FileExists(EagleEyeBrainRoot + "\distribution-approval.json"))
-#if DistributionEdition == "eagle-eye" && !EagleEyeBrainAvailable
-  #error Eagle Eye requires the complete portable Brain payload and distribution evidence.
+#define EagleEyeBrainRuntimeAvailable (FileExists(EagleEyeBrainRoot + "\model\manifest.json") && FileExists(EagleEyeBrainRoot + "\model\python\python.exe"))
+#define EagleEyeBrainDistributionApproved FileExists(EagleEyeBrainRoot + "\distribution-approval.json")
+#if DistributionEdition == "eagle-eye" && !EagleEyeBrainRuntimeAvailable
+  #error Eagle Eye requires the complete portable Brain runtime payload.
+#endif
+#if DistributionEdition == "eagle-eye" && RequireDistributionApproval != "0" && !EagleEyeBrainDistributionApproved
+  #error Eagle Eye release requires distribution evidence.
 #endif
 #if DistributionEdition == "eagle-eye" && (!AdvancedMprRuntimeAvailable || !OfflineLumbarAvailable)
   #error Eagle Eye requires Slicer, the offline Python environment and model manifest.
@@ -163,7 +171,7 @@ Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\
 ; Copy the model environment without pruning package resources needed at runtime.
 Source: "{#StageDir}\plugin_packages\advanced_mpr\payload\offline_lumbar\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\offline_lumbar"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
-#if DistributionEdition == "eagle-eye" && EagleEyeBrainAvailable
+#if DistributionEdition == "eagle-eye" && EagleEyeBrainRuntimeAvailable
 Source: "{#EagleEyeBrainRoot}\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\eagle_eye\brain"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPacs\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist

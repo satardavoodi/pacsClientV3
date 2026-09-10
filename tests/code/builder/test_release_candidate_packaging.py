@@ -394,6 +394,26 @@ def test_repackage_rejects_changed_or_added_runtime_input(tmp_path):
         verify_matching_inputs(*roots, "3.6.5")
 
 
+def test_repackage_requires_distribution_approval_only_for_published_snapshot(tmp_path):
+    from tools.build.repackage_candidate import requires_distribution_approval
+
+    manifest = {
+        "github_freshness_verified": False,
+        "source_published": False,
+        "release_sync": None,
+    }
+    (tmp_path / "build_source_manifest.json").write_text(json.dumps(manifest))
+    assert requires_distribution_approval(tmp_path) is False
+
+    manifest.update(
+        github_freshness_verified=True,
+        source_published=True,
+        release_sync={"version": "3.6.6", "commit": "a" * 40},
+    )
+    (tmp_path / "build_source_manifest.json").write_text(json.dumps(manifest))
+    assert requires_distribution_approval(tmp_path) is True
+
+
 def test_oversized_compiler_source_path_fails_before_compilation(tmp_path):
     from builder.distribution_profiles import validate_compiler_paths
     source = tmp_path / "source"
