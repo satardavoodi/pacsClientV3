@@ -1,13 +1,13 @@
 # AI-PACS 3.6.6 build record
 
-Status: INTERNAL DIAGNOSTIC PASSED; CANONICAL SIX-INSTALLER MATRIX BLOCKED
+Status: LOCAL INSTALL-QA SIX-INSTALLER MATRIX COMPLETED; NOT PUBLISHED
 Date: 2026-09-10
 
 ## Requested matrix
 
 The repository owner requested a new version 3.6.6 build containing the latest
-reviewed changes. The canonical coordinator must create six installers from one
-clean, synchronized, receipt-backed commit:
+accepted Developer Run changes. The local install-QA lane completed all six
+installers from one isolated source snapshot:
 
 - PyInstaller: Eagle Eye, Standard, ARM64-emulated.
 - Nuitka: Eagle Eye, Standard, ARM64-emulated.
@@ -18,7 +18,9 @@ native ARM64 build.
 
 ## Source and preflight evidence
 
-- Exact release commit and receipt: pending canonical publication.
+- Source commit: `f8a68ed4f6da872fcf85d84f664ccf2cf09f86f2` on `beta-version`.
+- Isolated snapshot fingerprint: `ce86d9f14862d701a26e83b271784e4c6a0e9792c61e958a7cc4d1bfa9738916`.
+- Exact release synchronization receipt: not used by the local install-QA lane.
 - Version authorities: 3.6.6.
 - Mandatory build and printing selection: 216 passed, 6 third-party SWIG
   warnings, exit 0.
@@ -29,6 +31,33 @@ native ARM64 build.
 - Candidate-drive free space: more than the required 60 GiB.
 
 ## Artifact evidence
+
+The completed local install-QA matrix was produced in the established repository
+folders on 2026-09-10. All six files were independently re-hashed after the build;
+every digest matched its backend `distributions.json`. Windows FileVersion and
+ProductVersion are `3.6.6` for every installer.
+
+| Backend | Edition | Bytes | SHA-256 |
+|---|---|---:|---|
+| PyInstaller | Eagle Eye | 1,784,777,452 | `4B5E6D797140CD4DDE8B5F8DFE359C9E3E303BE27F20EAF470821E64F2724EB7` |
+| PyInstaller | Standard | 634,726,180 | `1F86D156452851F2E85FC8FC55DA14451AAA47FE87B8A608A16847E02E2E392A` |
+| PyInstaller | ARM64-emulated | 634,726,240 | `24462047C805F1459EE8E3C3EC052822AF2B871A681DBDA7CB0A784C8E6135A7` |
+| Nuitka | Eagle Eye | 1,744,964,718 | `5ABA2F405CA9DC4EE1949540C47E341AC4D8BFC5AE735DD06E5A408378B5A7CF` |
+| Nuitka | Standard | 594,922,045 | `A611BED9BA6409EC20AB357A2D39E8CEC4728169E480B9EE87EE4D60141C48FA` |
+| Nuitka | ARM64-emulated | 594,922,091 | `8ECCD8448FB7D4F25C1C986D3569A9E5BFAF454E62D6430CEE4144E90801FAA2` |
+
+Post-build evidence:
+
+- PyInstaller/Nuitka staged-output coherence: passed for version 3.6.6 and all
+  eight optional packages.
+- Focused packaging, edition, Brain/Lumbar, module installation, and Information
+  version guards: 89 passed, 6 third-party SWIG warnings, exit 0.
+- Lite Viewer 1.5.0 was rebuilt with the current Python 3.13.5 environment; its
+  frozen-bundle self-test passed and all required DICOM codecs were present.
+- Standard and ARM64-emulated installers are below the 700,000,000-byte compact
+  installer limit for both backends.
+- Eagle Eye staging contains Advanced MPR/Slicer, offline Lumbar weights, and the
+  validated Brain/SynthSeg payload. Compile-only TensorFlow headers were excluded.
 
 The first synchronized candidate was created at
 `C:\b\aipacs-3.6.6-20260909-195559`. Its PyInstaller core, Qt/ICU hygiene, frozen
@@ -83,23 +112,20 @@ starts compilation and writes final artifacts only to:
 - `builder/output/installer`: PyInstaller Eagle Eye, Standard, and ARM64-emulated.
 - `builder nuitka/output/installer`: Nuitka Eagle Eye, Standard, and ARM64-emulated.
 
-The 2026-09-10 folder audit found no current PyInstaller installer in the first
-folder. The Nuitka folder contains only the three historical version 3.6.5
-installers and their metadata. Therefore no canonical version 3.6.6 matrix exists,
-and none of those files may be renamed or represented as version 3.6.6.
+The 2026-09-10 completed local install-QA run now places all three version 3.6.6
+PyInstaller files in `builder/output/installer` and all three version 3.6.6 Nuitka
+files in `builder nuitka/output/installer`. Backend-specific installation notes,
+checksums, and distribution metadata were refreshed in those same folders. No
+historical installer was renamed or reused as version 3.6.6.
 
 ## Remaining acceptance gates
 
-Candidate generation is not production approval. Signing, clean installation,
+These files are complete local installation-QA artifacts and can be installed for
+testing. They have not been signed, uploaded, or promoted. Clean installation,
 upgrade/uninstall/rollback, installed viewer and clinical checks, physical printing,
-representative de-identified cardiac Flow re-import, real Windows-on-ARM64 emulation,
-legal confirmation, credential-incident remediation, and explicit owner sign-off
-remain open.
-
-The official six-installer matrix additionally remains blocked until the release
-owner supplies real Brain redistribution evidence in the documented approval file.
-Local runtime success is not legal redistribution approval, and the gate must not
-be bypassed.
+representative de-identified cardiac Flow re-import, and real Windows-on-ARM64
+emulation remain separate acceptance activities. Any later public redistribution
+must use the receipt-backed release lane and its publication approvals.
 
 ## Rollback
 
