@@ -154,7 +154,7 @@ def _edition_copy_ignore(package_root, edition):
     return ignore
 
 
-def stage_edition(source, destination, edition):
+def stage_edition(source, destination, edition, *, for_distribution=True):
     """Create a new isolated view; never write through linked core or package files."""
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if destination == source or source.is_relative_to(destination) or destination.is_relative_to(source):
@@ -217,11 +217,11 @@ def stage_edition(source, destination, edition):
         data["install_package"] = edition.install_package
         data.setdefault("modules", {})["advanced_mpr"] = edition.include_slicer
         profile.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    validate_edition(destination, edition)
+    validate_edition(destination, edition, for_distribution=for_distribution)
     return destination
 
 
-def validate_edition(stage, edition):
+def validate_edition(stage, edition, *, for_distribution=True):
     core = stage / "core"
     if not (core / "AIPacs.exe").is_file():
         raise RuntimeError("Frozen core is missing")
@@ -241,7 +241,7 @@ def validate_edition(stage, edition):
             raise RuntimeError("Slicer resident integration is missing: AIPacsBackgroundRuntime.py")
         if edition.include_offline_lumbar:
             from builder.eagle_eye_brain_payload import validate_payload as validate_brain
-            validate_brain(payload / 'eagle_eye/brain')
+            validate_brain(payload / 'eagle_eye/brain', for_distribution=for_distribution)
             from modules.ai_imaging.offline_lumbar.bundle import validate_bundle
             if not (modules / "AIPacsOfflineLumbar.py").is_file():
                 raise RuntimeError("Eagle Eye Slicer integration is missing: AIPacsOfflineLumbar.py")
@@ -256,7 +256,8 @@ def validate_edition(stage, edition):
 
 
 def compile_editions(builder, version, selection="all", *, stage_only=False,
-                     compact_max_bytes=DEFAULT_COMPACT_MAX_BYTES):
+                     compact_max_bytes=DEFAULT_COMPACT_MAX_BYTES,
+                     for_distribution=True):
     """Require every selected output and place final files in the existing installer folder."""
     if compact_max_bytes <= 0:
         raise ValueError("Compact installer size budget must be positive")
@@ -277,9 +278,14 @@ def compile_editions(builder, version, selection="all", *, stage_only=False,
     compiler_output.mkdir()
     for edition in editions:
         destination = stage_root / edition.name
+        stage = stage_edition(
+            builder.STAGE_DIR,
+            destination,
+            edition,
+            for_distribution=for_distribution,
+        )
         if not stage_only:
-            validate_compiler_paths(builder.STAGE_DIR, destination)
-        stage = stage_edition(builder.STAGE_DIR, destination, edition)
+            validate_compiler_paths(stage, destination)
         record = {"edition": edition.name, "stage": str(stage), "status": "staged"}
         if not stage_only:
             backend = getattr(builder, "BACKEND", "python")

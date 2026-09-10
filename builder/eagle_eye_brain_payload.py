@@ -10,6 +10,7 @@ from modules.ai_imaging.eagle_eye_brain.runtime import validate_bundle, sha256
 from modules.ai_imaging.eagle_eye_brain.volbrain_reference import HASHES, REVISION
 
 REPO = Path(__file__).resolve().parents[1]
+COMPILE_ONLY_MODEL_PREFIXES = ('python/Lib/site-packages/tensorflow/include/',)
 
 
 def bundle_source():
@@ -53,15 +54,31 @@ def stage_eagle_eye_brain(payload, source=None, *, for_distribution=True):
     if destination.exists() or destination.resolve() == source.resolve():
         raise ValueError('Brain payload staging requires a fresh destination')
     # Copy only manifest-listed model files and explicit reference/provenance files.
+    model_files = dict(model['sha256'])
+    if not for_distribution:
+        model_files = {
+            name: digest for name, digest in model_files.items()
+            if not name.startswith(COMPILE_ONLY_MODEL_PREFIXES)
+        }
     names = ['model/manifest.json', 'runtime-probe.json']
     if for_distribution:
         names.append('distribution-approval.json')
-    names.extend('model/' + name for name in model['sha256'])
+    names.extend('model/' + name for name in model_files)
     names.extend('references/volbrain/bounds_' + sex + '.csv' for sex in ('male', 'female', 'general'))
     names.extend(['references/volbrain/README.md', 'references/volbrain/license.txt'])
     for relative in names:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / relative, target)
+    if not for_distribution and model_files != model['sha256']:
+        staged_manifest = dict(model)
+        staged_manifest['sha256'] = model_files
+        manifest_path = destination / 'model/manifest.json'
+        manifest_path.write_text(json.dumps(staged_manifest, indent=2), encoding='utf-8')
+        probe_path = destination / 'runtime-probe.json'
+        probe = json.loads(probe_path.read_text(encoding='utf-8'))
+        probe['model_manifest_sha256'] = sha256(manifest_path)
+        probe['packaging_exclusions'] = list(COMPILE_ONLY_MODEL_PREFIXES)
+        probe_path.write_text(json.dumps(probe, indent=2), encoding='utf-8')
     validate_payload(destination, for_distribution=for_distribution)
     return destination

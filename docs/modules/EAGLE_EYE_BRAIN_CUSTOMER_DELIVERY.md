@@ -67,6 +67,9 @@ This does not test clinical accuracy or an installer on another computer.
 Supply `--python-home` explicitly. The current candidate uses Python 3.10.11
 embedded x64 from python.org and `tools/slicer/brain_windows_requirements.in`.
 `dependencies.json` records resolved versions and the manifest hashes their files.
+The preparation step removes TensorFlow C/C++ headers under `tensorflow/include`;
+they are compile-time SDK material, are never loaded by inference, add no runtime
+capability, and otherwise exceed the safe Inno Setup source-path budget.
 Do not reuse the retired TensorFlow 2.2 environment. For a prepared Python already
 at `<output>/model/python`, the tool can finalize that fresh Python-only tree in
 place; it refuses to overwrite an existing model manifest or reference payload.

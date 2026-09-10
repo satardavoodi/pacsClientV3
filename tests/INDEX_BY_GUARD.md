@@ -128,6 +128,11 @@ out of both PyInstaller runtimes so they cannot shadow Windows ICU and break
 The distribution-profile guards also require an isolated candidate to receive
 an explicit backend-specific canonical installer destination; a lookalike path
 with the same folder suffix is rejected.
+`code/builder/test_eagle_eye_brain_payload.py` and the internal Eagle Eye case in
+`test_distribution_profiles.py` require portable packaging to omit TensorFlow
+compile-only headers and allow local install-QA staging without falsely requiring
+or copying a redistribution receipt. Release-mode receipt validation remains
+fail-closed.
 The asset-cache guard keeps SHA-256 verification deterministic for the 4 GiB
 release cache when Windows rejects `hashlib.file_digest()` for a large file;
 it uses bounded reads without weakening the manifest size or digest checks.

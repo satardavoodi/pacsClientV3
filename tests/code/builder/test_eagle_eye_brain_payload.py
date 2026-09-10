@@ -99,3 +99,21 @@ def test_standard_excludes_brain_before_copy(tmp_path):
     root = tmp_path / 'advanced_mpr'
     ignore = profiles._edition_copy_ignore(root, profiles.EDITIONS['standard'])
     assert 'eagle_eye' in ignore(root / 'payload', ['eagle_eye', 'offline_lumbar'])
+
+
+def test_portable_brain_preparation_removes_compile_only_tensorflow_headers(tmp_path):
+    from tools.slicer import prepare_portable_brain
+
+    python_home = tmp_path / 'python'
+    header = python_home / 'Lib/site-packages/tensorflow/include/deep/header.h'
+    runtime = python_home / 'Lib/site-packages/tensorflow/python/runtime.py'
+    header.parent.mkdir(parents=True)
+    runtime.parent.mkdir(parents=True)
+    header.write_text('SYNTHETIC COMPILE HEADER')
+    runtime.write_text('SYNTHETIC RUNTIME')
+
+    removed = prepare_portable_brain.remove_compile_only_runtime_files(python_home)
+
+    assert removed == ('Lib/site-packages/tensorflow/include',)
+    assert not header.exists()
+    assert runtime.is_file()

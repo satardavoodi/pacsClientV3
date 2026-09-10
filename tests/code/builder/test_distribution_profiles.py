@@ -236,6 +236,36 @@ def test_three_output_contract_and_arm_identity(tmp_path, bundle, brain_payload)
     assert commands[-1][-1] == "arm.iss"
 
 
+def test_internal_eagle_eye_stage_does_not_require_distribution_receipt(
+    tmp_path, bundle, brain_payload
+):
+    import shutil
+    from builder.build_release import ADVANCED_MPR_REQUIRED_RUNTIME_FILES
+
+    source = source_stage(tmp_path)
+    payload_root = source / "plugin_packages/advanced_mpr/payload"
+    for relative in ADVANCED_MPR_REQUIRED_RUNTIME_FILES:
+        file = payload_root / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(b"synthetic fixture")
+    module_path = payload_root / "python/modules/mpr/advanced_3d_slicer/slicer_modules"
+    module_path.mkdir(parents=True)
+    for name in ("AIPacsBackgroundRuntime.py", "AIPacsOfflineLumbar.py"):
+        (module_path / name).write_text("# Synthetic integration fixture\n")
+    shutil.copytree(bundle, payload_root / "offline_lumbar")
+    shutil.copytree(brain_payload, payload_root / "eagle_eye/brain")
+    (payload_root / "eagle_eye/brain/distribution-approval.json").unlink()
+
+    staged = profiles.stage_edition(
+        source,
+        tmp_path / "eagle-eye",
+        profiles.EDITIONS["eagle-eye"],
+        for_distribution=False,
+    )
+
+    assert (staged / "plugin_packages/advanced_mpr/payload/eagle_eye/brain/model/manifest.json").is_file()
+
+
 def test_new_build_defaults_to_all_three_editions(monkeypatch):
     import sys
     from builder.build_release import parse_args

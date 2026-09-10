@@ -15,6 +15,23 @@ from modules.ai_imaging.eagle_eye_brain.runtime import validate_bundle, sha256, 
 from modules.ai_imaging.eagle_eye_brain.volbrain_reference import data_root, HASHES
 
 
+COMPILE_ONLY_RUNTIME_DIRS = ('Lib/site-packages/tensorflow/include',)
+
+
+def remove_compile_only_runtime_files(python_home):
+    """Remove headers that TensorFlow inference never loads at runtime."""
+    python_home = Path(python_home).resolve()
+    removed = []
+    for relative in COMPILE_ONLY_RUNTIME_DIRS:
+        target = (python_home / relative).resolve()
+        if not target.is_relative_to(python_home):
+            raise ValueError('Compile-only runtime exclusion escaped the portable Python root')
+        if target.exists():
+            shutil.rmtree(target)
+            removed.append(relative)
+    return tuple(removed)
+
+
 def prepare(source, destination, python_home=None):
     if python_home is None:
         raise ValueError('Supply a prepared standalone Windows Python; the old virtual environment is retired')
@@ -40,6 +57,7 @@ def prepare(source, destination, python_home=None):
     vc_runtime = source / 'python-base/vcruntime140_1.dll'
     if vc_runtime.is_file() and not (model / 'python/vcruntime140_1.dll').exists():
         shutil.copy2(vc_runtime, model / 'python/vcruntime140_1.dll')
+    remove_compile_only_runtime_files(model / 'python')
     with (model / 'dependencies.json').open('w', encoding='utf-8') as inventory:
         subprocess.run([str(model / 'python/python.exe'), '-I', '-B', '-c',
             'import json,importlib.metadata as m; print(json.dumps(sorted((d.metadata["Name"],d.version) for d in m.distributions())))'],

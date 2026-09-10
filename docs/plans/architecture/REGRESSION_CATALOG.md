@@ -473,3 +473,9 @@ hippocampal evidence. Combined Brain selection: 65 passed.
 | Boundary | Correction | Guard |
 |---|---|---|
 | Preview/export grid | White/transparent modes preserve black borders; dark retains white. Transparent page interiors remain unpainted. | test_grid_stays_visible_in_preview_and_export_for_all_backgrounds (two fail-before cases) |
+
+## Eagle Eye local installer path and approval separation (2026-09-10)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Brain portable runtime / installer staging | Compile-only TensorFlow headers created paths beyond the safe Inno budget, and internal Eagle Eye stage validation incorrectly required a redistribution receipt. Preparation and internal staging now omit the headers, refresh internal integrity metadata, and keep redistribution validation exclusive to release builds. | `test_portable_brain_preparation_removes_compile_only_tensorflow_headers`; `test_internal_eagle_eye_stage_does_not_require_distribution_receipt` |

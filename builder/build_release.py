@@ -1751,7 +1751,8 @@ def main() -> int:
             from builder.distribution_profiles import compile_editions
             compile_editions(sys.modules[__name__], version, args.edition,
                              stage_only=args.skip_installer_compile,
-                             compact_max_bytes=args.compact_max_mb * 1_000_000)
+                             compact_max_bytes=args.compact_max_mb * 1_000_000,
+                             for_distribution=not args.internal_build)
             # A local three-output build must not select/publish an arbitrary edition
             # to the existing single-installer update feed.
             return 0

@@ -30,7 +30,8 @@ def test_build_script_uses_shared_editions_and_x64_validation():
     assert '"--edition"' in src
     assert 'INSTALLER_SCRIPT=BUILDER_ROOT / "installer/AIPacs_Setup.iss"' in src
     assert 'INSTALLER_SCRIPT_WOA=BUILDER_ROOT / "installer/AIPacs_Setup_WoA.iss"' in src
-    assert "compile_editions(adapter, ctx.version, ctx.args.edition)" in src
+    assert "inventory = compile_editions(" in src
+    assert 'for_distribution=not getattr(ctx.args, "internal_build", False)' in src
 
 
 def test_required_arm_output_is_not_best_effort():

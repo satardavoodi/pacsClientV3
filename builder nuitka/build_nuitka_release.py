@@ -1382,7 +1382,7 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
         include_runtime_payloads=include_slicer,
         build_lite_viewer=True,
         include_eagle_eye_assets=ctx.args.edition in {"all", "eagle-eye"},
-        for_distribution=not ctx.args.internal_build,
+        for_distribution=not getattr(ctx.args, "internal_build", False),
     )
     plugin_stage = STAGE_DIR / "plugin_packages"
     if plugin_stage.exists():
@@ -1501,7 +1501,12 @@ def stage_10_inno_setup(ctx: BuildContext, stage: Stage, log_path: Path) -> Stag
         INSTALLER_SCRIPT_WOA=BUILDER_ROOT / "installer/AIPacs_Setup_WoA.iss",
         find_iscc=find_iscc, run_command=compile_command, BACKEND="nuitka",
     )
-    inventory = compile_editions(adapter, ctx.version, ctx.args.edition)
+    inventory = compile_editions(
+        adapter,
+        ctx.version,
+        ctx.args.edition,
+        for_distribution=not getattr(ctx.args, "internal_build", False),
+    )
     return StageResult(
         output_paths=[str(INSTALLER_OUTPUT_DIR)],
         artifact_paths=[row["installer"] for row in inventory["outputs"]],
