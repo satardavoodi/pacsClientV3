@@ -26,7 +26,8 @@ continues.
 | Need | Start here | Result |
 |---|---|---|
 | Test a source change | `BUILD.md` → Source validation | Tests and Developer Run evidence; no installer |
-| Check installer/profile behavior | `BUILD.md` → Internal packaging validation | Explicitly non-promotable snapshot output |
+| Convert the latest Developer Run to one EXE | `BUILD.md` → Quick start | One-command, explicitly non-promotable snapshot output |
+| Check another installer/profile | `BUILD.md` → Internal packaging validation | One backend/edition selected through the same coordinator |
 | Publish a release source revision | `RELEASE.md` | One verified SHA/tag on all required remotes plus a receipt |
 | Create all six candidate installers | `RELEASE.md`, then `BUILD.md` | Three PyInstaller and three Nuitka installers |
 | Diagnose PyInstaller internals | `builder/docs/README.md` | Backend-specific evidence only |
@@ -52,6 +53,8 @@ an official run requires a fresh Git receipt-backed snapshot, while an internal
 diagnostic run requires an explicitly prepared non-promotable snapshot.
 Candidate compilation also disables automatic remote update publication; signing,
 install QA, and any later distribution remain separate authorized operations.
+The coordinator supplies safe defaults for version, asset cache, and short workspace;
+it also rejects missing release-only Brain evidence before compiling either backend.
 
 ## Output ownership
 

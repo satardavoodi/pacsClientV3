@@ -320,6 +320,8 @@ def materialize_plugin_packages(
     *,
     include_runtime_payloads: bool = False,
     build_lite_viewer: bool = False,
+    include_eagle_eye_assets: bool = True,
+    for_distribution: bool = True,
 ) -> list[dict[str, object]]:
     version = load_version()
     PLUGIN_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -360,11 +362,14 @@ def materialize_plugin_packages(
                 )
                 _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
                 _validate_plugin_no_namespace_shadow(package_dir, module_id)
-                if module_id == "advanced_mpr":
+                if module_id == "advanced_mpr" and include_eagle_eye_assets:
                     from builder.offline_lumbar_payload import stage_offline_lumbar
                     stage_offline_lumbar(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
                     from builder.eagle_eye_brain_payload import stage_eagle_eye_brain
-                    stage_eagle_eye_brain(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
+                    stage_eagle_eye_brain(
+                        package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
+                        for_distribution=for_distribution,
+                    )
                 has_payload = True
             else:
                 _write_runtime_payload_placeholder(package_dir, definition)

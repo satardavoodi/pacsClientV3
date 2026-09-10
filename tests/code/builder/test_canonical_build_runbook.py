@@ -28,7 +28,8 @@ def test_canonical_runbook_defines_the_complete_release_contract():
         "coherence_exit_code",
         "RELEASE.md",
         "--git-sync-receipt",
-        "--internal --prepare-only",
+        "Quick start",
+        "build_local_candidate.py --internal",
         "Never do these",
     )
     for value in required_contract:

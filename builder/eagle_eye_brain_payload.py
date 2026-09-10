@@ -46,14 +46,16 @@ def validate_payload(source, *, for_distribution=True):
     return model
 
 
-def stage_eagle_eye_brain(payload, source=None):
+def stage_eagle_eye_brain(payload, source=None, *, for_distribution=True):
     source = Path(source) if source is not None else bundle_source()
-    model = validate_payload(source)
+    model = validate_payload(source, for_distribution=for_distribution)
     destination = Path(payload) / 'eagle_eye/brain'
     if destination.exists() or destination.resolve() == source.resolve():
         raise ValueError('Brain payload staging requires a fresh destination')
     # Copy only manifest-listed model files and explicit reference/provenance files.
-    names = ['model/manifest.json', 'runtime-probe.json', 'distribution-approval.json']
+    names = ['model/manifest.json', 'runtime-probe.json']
+    if for_distribution:
+        names.append('distribution-approval.json')
     names.extend('model/' + name for name in model['sha256'])
     names.extend('references/volbrain/bounds_' + sex + '.csv' for sex in ('male', 'female', 'general'))
     names.extend(['references/volbrain/README.md', 'references/volbrain/license.txt'])
@@ -61,5 +63,5 @@ def stage_eagle_eye_brain(payload, source=None):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / relative, target)
-    validate_payload(destination)
+    validate_payload(destination, for_distribution=for_distribution)
     return destination

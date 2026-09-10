@@ -10,6 +10,34 @@ documents explain implementation details and historical recovery, but they do no
 replace this procedure. If another build document conflicts with this file, stop
 and update the conflicting document before building.
 
+## Quick start
+
+Create a disposable Standard PyInstaller executable from the latest accepted
+Developer Run source with one command:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py --internal
+```
+
+The coordinator reads the version from `pyproject.toml`, uses the repository asset
+cache, creates a new short timestamped workspace under `C:\b`, and keeps the
+installer inside that isolated snapshot. Use `--backend nuitka` to exercise Nuitka,
+or `--edition eagle-eye` / `--edition arm` only when that specific internal package
+must be checked. Internal output is deliberately non-promotable.
+
+After `RELEASE.md` has produced a fresh synchronization receipt, create the official
+six-installer candidate with one build command:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
+  --git-sync-receipt <receipt-path>
+```
+
+The official lane always builds both backends and all three editions. It writes
+final files only to the established backend installer folders. Missing Eagle Eye
+Brain approval is checked before the snapshot, asset-cache verification, Lite
+Viewer build, or application compilation begins.
+
 Versioned Git publication is governed by `RELEASE.md`. A full release candidate
 cannot start until the exact clean source commit is synchronized to every required
 remote branch and its fresh receipt is available.
@@ -20,10 +48,10 @@ Eagle Eye asset update (2026-09-07): its payload now requires both Brain and
 Lumbar. Brain preparation, distribution-evidence requirements and remaining clean
 Windows acceptance are documented in
 [Eagle Eye Brain delivery](docs/modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md).
-The earlier lumbar-only asset cache does not satisfy this new contract. Set
-`AIPACS_EAGLE_EYE_BRAIN_SOURCE` to an approved immutable Brain payload when using
-an isolated source snapshot. Do not bypass the new payload validation to build
-an incomplete Eagle Eye installer. Standard and ARM exclude both Eagle Eye models.
+The earlier lumbar-only asset cache does not satisfy this new contract. The
+coordinator automatically uses `generated-files/eagle-eye/brain-tf212-py310` or an
+explicit `--brain-source`. Do not bypass the payload validation to build an
+incomplete Eagle Eye installer. Standard and ARM exclude both Eagle Eye models.
 
 A complete release candidate contains six standalone Windows installers. Both
 backends use one core build and then create three edition views.
@@ -165,24 +193,17 @@ values before invoking the real release gates.
 
 ## 4. Canonical full-matrix command
 
-Use a new short workspace on `C:`. Never reuse a workspace name. The command
+The coordinator creates a new short workspace on `C:` automatically. The command
 creates an isolated, sanitized, content-addressed snapshot, compiles both backends
 sequentially, writes the six final files only to the established repository
 installer folders, and runs cross-backend coherence. It never publishes or
 launches the workstation.
 
 ```powershell
-$repoRoot = (Get-Location).Path
 $version = & .\.venv_build\Scripts\python.exe -c "import pathlib,tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])"
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$candidateRoot = "C:\b\aipacs-$version-$stamp"
-$assetRoot = Join-Path $repoRoot "generated-files\distribution-assets"
 $releaseHead = git rev-parse HEAD
 $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12)).json"
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
-  --workspace $candidateRoot `
-  --version $version `
-  --asset-root $assetRoot `
   --git-sync-receipt $receipt
 ```
 
@@ -212,35 +233,20 @@ application core.
 ### 5.3 One isolated edition for internal QA
 
 If an install screen or one edition must be inspected before source freeze,
-prepare an isolated snapshot and build only the required edition inside it. The
-output remains inside the candidate snapshot and must never replace a canonical
-six-file set.
+run the same coordinator in its internal lane. It prepares the snapshot and runs
+only the requested backend/edition. The output remains inside the candidate
+snapshot and must never replace a canonical six-file set.
 
 ```powershell
-$repoRoot = (Get-Location).Path
-$version = & .\.venv_build\Scripts\python.exe -c "import pathlib,tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])"
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$candidateRoot = "C:\b\aipacs-internal-$version-$stamp"
-$assetRoot = Join-Path $repoRoot "generated-files\distribution-assets"
-& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
-  --workspace $candidateRoot --version $version --asset-root $assetRoot `
-  --internal --prepare-only
-Push-Location (Join-Path $candidateRoot "source")
-try {
-  & (Join-Path $repoRoot ".venv_build\Scripts\python.exe") `
-    builder\build_release.py --internal-build --edition standard --asset-root $assetRoot
-} finally {
-  Pop-Location
-}
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py --internal
 ```
 
-Replace `standard` with `eagle-eye` or `arm` only when that exact edition is the
-test target. For a Nuitka-specific internal check, replace the command inside the
-snapshot with:
+Add `--edition eagle-eye` or `--edition arm` only when that exact edition is the
+test target. For a Nuitka-specific internal check, use:
 
 ```powershell
-& (Join-Path $repoRoot ".venv_build\Scripts\python.exe") `
-  "builder nuitka\build_nuitka_release.py" --internal-build --release --edition standard --asset-root $assetRoot
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
+  --internal --backend nuitka
 ```
 
 These single-edition outputs are diagnostic. They do not pass the six-artifact

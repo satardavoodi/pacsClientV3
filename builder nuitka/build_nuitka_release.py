@@ -1378,7 +1378,12 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
     # build_lite_viewer=True → always build a fresh portable viewer so the
     # run_cd payload ships it (skip via AIPACS_SKIP_LITE_VIEWER_BUILD=1).
     include_slicer = True
-    materialize_plugin_packages(include_runtime_payloads=include_slicer, build_lite_viewer=True)
+    materialize_plugin_packages(
+        include_runtime_payloads=include_slicer,
+        build_lite_viewer=True,
+        include_eagle_eye_assets=ctx.args.edition in {"all", "eagle-eye"},
+        for_distribution=not ctx.args.internal_build,
+    )
     plugin_stage = STAGE_DIR / "plugin_packages"
     if plugin_stage.exists():
         shutil.rmtree(plugin_stage, ignore_errors=True)

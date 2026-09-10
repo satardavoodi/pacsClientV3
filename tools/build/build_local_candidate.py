@@ -1,4 +1,4 @@
-"""Build both local installer backends from one isolated, content-addressed snapshot.
+"""Build AI-PACS installers from one isolated, content-addressed snapshot.
 
 Never publishes, modifies the development checkout, or launches a workstation.
 Status and logs live beside the snapshot, not inside its source tree.
@@ -26,6 +26,44 @@ from tools.git.release_manager import validate_sync_receipt
 def git(root, *args):
     return subprocess.run(["git", "-C", str(root), *args], check=True,
                           capture_output=True, text=True).stdout.strip()
+
+
+def current_version(root: Path = REPO) -> str:
+    return str(
+        tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    )
+
+
+def default_workspace(version: str, *, internal: bool) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    lane = "internal" if internal else "release"
+    return Path("C:/b") / f"aipacs-{lane}-{version}-{stamp}"
+
+
+def resolve_brain_source(configured: Path | None, root: Path = REPO) -> Path:
+    if configured is not None:
+        return configured.resolve()
+    environment = os.environ.get("AIPACS_EAGLE_EYE_BRAIN_SOURCE", "").strip()
+    if environment:
+        return Path(environment).resolve()
+    return (root / "generated-files/eagle-eye/brain-tf212-py310").resolve()
+
+
+def preflight_brain_payload(source: Path, *, for_distribution: bool) -> None:
+    """Fail before any core compilation when the requested Brain payload cannot ship."""
+    source = source.resolve()
+    if not source.is_dir():
+        raise ValueError(f"Eagle Eye Brain payload is missing: {source}")
+    approval = source / "distribution-approval.json"
+    if for_distribution and not approval.is_file():
+        raise ValueError(
+            "Eagle Eye Brain release approval is missing. No compilation was started. "
+            f"Expected: {approval}. Complete the evidence described in "
+            "docs/modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md; do not bypass this gate."
+        )
+    from builder.eagle_eye_brain_payload import validate_payload
+
+    validate_payload(source, for_distribution=for_distribution)
 
 
 def create_snapshot(
@@ -117,7 +155,7 @@ def canonical_installer_dirs(final_repo: Path, version: str) -> dict[str, Path]:
 
 
 def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source: Path | None = None,
-               final_repo: Path = REPO) -> int:
+               final_repo: Path = REPO, brain_source: Path | None = None) -> int:
     root = workspace / "source"
     identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
     if not identity.get("github_freshness_verified") or not identity.get("release_sync"):
@@ -146,6 +184,8 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     # Candidate compilation never uploads application updates. Publication is a
     # separate, explicitly authorized operation after signing and install QA.
     env["AIPACS_UPDATE_REMOTE_PUBLISH"] = "0"
+    if brain_source is not None:
+        env["AIPACS_EAGLE_EYE_BRAIN_SOURCE"] = str(brain_source.resolve())
     workspace_anchor = Path(workspace.resolve().anchor)
     packaging_stage_root = (workspace_anchor / "ap-stage" if workspace_anchor
                             else workspace.resolve().parent / "ap-stage")
@@ -220,11 +260,111 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     return 0 if status["status"] == "completed" else 1
 
 
+def run_internal_build(
+    workspace: Path,
+    assets: Path,
+    version: str,
+    *,
+    backend: str = "python",
+    edition: str = "standard",
+    brain_source: Path | None = None,
+) -> int:
+    """Run one non-promotable packaging check entirely inside its snapshot."""
+    root = workspace / "source"
+    status_path = workspace / "build_status.json"
+    if status_path.exists():
+        raise ValueError("This build workspace already has a run; preserve it and prepare a fresh candidate")
+    identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
+    if identity.get("version") != version or identity.get("github_freshness_verified"):
+        raise ValueError("Internal build requires a matching non-release snapshot")
+    if source_fingerprint(root) != identity.get("source_sha256"):
+        raise ValueError("Candidate source drift detected")
+
+    env = dict(
+        os.environ,
+        PYTHONUNBUFFERED="1",
+        PYTHONIOENCODING="utf-8",
+        PYTHONUTF8="1",
+        PYTHONPATH=str(root),
+        GCM_INTERACTIVE="Never",
+        GIT_TERMINAL_PROMPT="0",
+        QT_QPA_PLATFORM="offscreen",
+        AIPACS_UPDATE_REMOTE_PUBLISH="0",
+    )
+    for name in list(env):
+        if name.startswith("AIPACS_SKIP_") or name.startswith("AIPACS_ALLOW_"):
+            env.pop(name)
+    if brain_source is not None:
+        env["AIPACS_EAGLE_EYE_BRAIN_SOURCE"] = str(brain_source.resolve())
+
+    commands = {
+        "python": [
+            sys.executable,
+            "-u",
+            "builder/build_release.py",
+            "--internal-build",
+            "--clean-build",
+            "--edition",
+            edition,
+            "--asset-root",
+            str(assets),
+        ],
+        "nuitka": [
+            sys.executable,
+            "-u",
+            "builder nuitka/build_nuitka_release.py",
+            "--internal-build",
+            "--release",
+            "--compiler",
+            "msvc",
+            "--edition",
+            edition,
+            "--asset-root",
+            str(assets),
+        ],
+    }
+    command = commands[backend]
+    log_path = workspace / f"{backend}.log"
+    status = {
+        "version": version,
+        "lane": "internal",
+        "backend": backend,
+        "edition": edition,
+        "status": "running",
+        "published": False,
+        "production_accepted": False,
+        "source": str(root),
+        "installer_output": str(
+            root / ("builder/output/installer" if backend == "python" else "builder nuitka/output/installer")
+        ),
+        "log": str(log_path),
+        "command": command,
+    }
+
+    def save_status() -> None:
+        temporary = status_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        temporary.replace(status_path)
+
+    save_status()
+    try:
+        rc = run_logged_build(command, cwd=root, env=env, log_path=log_path)
+    except Exception as exc:
+        rc = 1
+        status["supervisor_error"] = type(exc).__name__
+    status["exit_code"] = rc
+    status["status"] = "completed" if rc == 0 else "failed"
+    status["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
+    save_status()
+    return rc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace", required=True, type=Path)
-    parser.add_argument("--version", default="3.6.6")
-    parser.add_argument("--asset-root", required=True, type=Path)
+    parser.add_argument("--workspace", type=Path, help="Defaults to a new timestamped C:\\b workspace")
+    parser.add_argument("--version", help="Defaults to the version in pyproject.toml")
+    parser.add_argument("--asset-root", type=Path,
+                        help="Defaults to generated-files/distribution-assets")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--run-prepared", action="store_true")
     parser.add_argument(
@@ -235,33 +375,58 @@ def main():
     parser.add_argument(
         "--internal",
         action="store_true",
-        help="Prepare a non-promotable internal snapshot; valid only with --prepare-only",
+        help="Build a non-promotable snapshot from the latest Developer Run source",
     )
+    parser.add_argument("--backend", choices=("python", "nuitka"), default="python",
+                        help="Internal lane only; default: python")
+    parser.add_argument("--edition", choices=("standard", "eagle-eye", "arm"), default="standard",
+                        help="Internal lane only; default: standard")
+    parser.add_argument("--brain-source", type=Path,
+                        help="Approved Eagle Eye Brain payload; auto-discovered when omitted")
     parser.add_argument("--reuse-python-source", type=Path, help="Repackage a matching, validated previous Python stage")
     parser.add_argument("--final-repo", type=Path, default=REPO,
                         help="Repository whose existing builder output/installer folders receive final files")
     args = parser.parse_args()
-    workspace = args.workspace.resolve()
+    version = args.version or current_version(REPO)
+    workspace = (args.workspace or default_workspace(version, internal=args.internal)).resolve()
+    assets = (args.asset_root or REPO / "generated-files/distribution-assets").resolve()
     if args.prepare_only and args.run_prepared:
         parser.error("Choose prepare-only or run-prepared")
-    if args.internal and not args.prepare_only:
-        parser.error("--internal is valid only with --prepare-only")
     if args.internal and args.git_sync_receipt:
         parser.error("Internal snapshots do not use a release synchronization receipt")
     if not args.internal and not args.git_sync_receipt:
         parser.error("Canonical release builds require --git-sync-receipt")
     release_sync = None
     if args.git_sync_receipt:
-        release_sync = validate_sync_receipt(args.git_sync_receipt.resolve(), REPO, args.version)
+        release_sync = validate_sync_receipt(args.git_sync_receipt.resolve(), REPO, version)
+    brain_source = None
+    if not args.internal or args.edition == "eagle-eye":
+        brain_source = resolve_brain_source(args.brain_source, REPO)
+        preflight_brain_payload(brain_source, for_distribution=not args.internal)
     if not args.run_prepared:
         if workspace.exists():
             raise ValueError("Build workspace already exists; use a fresh directory")
-        create_snapshot(REPO, workspace / "source", args.version, release_sync=release_sync)
+        create_snapshot(REPO, workspace / "source", version, release_sync=release_sync)
         print(f"Prepared isolated candidate: {workspace}")
     if args.prepare_only:
         return 0
-    return run_builds(workspace, args.asset_root.resolve(), args.version, args.reuse_python_source,
-                      args.final_repo.resolve())
+    if args.internal:
+        return run_internal_build(
+            workspace,
+            assets,
+            version,
+            backend=args.backend,
+            edition=args.edition,
+            brain_source=brain_source,
+        )
+    return run_builds(
+        workspace,
+        assets,
+        version,
+        args.reuse_python_source,
+        args.final_repo.resolve(),
+        brain_source,
+    )
 
 
 if __name__ == "__main__":

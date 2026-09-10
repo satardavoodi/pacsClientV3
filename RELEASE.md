@@ -127,13 +127,7 @@ for the exact current HEAD and version:
 $version = "3.6.6"
 $releaseHead = git rev-parse HEAD
 $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12)).json"
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$candidateRoot = "C:\b\aipacs-$version-$stamp"
-$assetRoot = Join-Path (Get-Location).Path "generated-files\distribution-assets"
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
-  --workspace $candidateRoot `
-  --version $version `
-  --asset-root $assetRoot `
   --git-sync-receipt $receipt
 ```
 
@@ -143,7 +137,7 @@ runner also requires a clean checkout. This prevents a full release build from
 silently using local work that was not committed and synchronized.
 
 For disposable single-edition packaging work before source freeze, use the
-documented `--internal --prepare-only` path in `BUILD.md`. Internal snapshots are
+documented one-command `--internal` path in `BUILD.md`. Internal snapshots are
 marked non-promotable and cannot run the canonical six-installer coordinator.
 
 ## 4. Failure and recovery rules

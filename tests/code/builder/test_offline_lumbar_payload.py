@@ -80,3 +80,63 @@ def test_release_staging_includes_model_for_fresh_and_reused_payload(bundle, tmp
     payload = staged / "advanced_mpr/payload"
     assert (payload / "AIPacsAdvancedViewer.exe").read_bytes() == b"synthetic runtime fixture"
     assert (payload / "offline_lumbar/manifest.json").exists()
+
+
+def test_standard_package_staging_skips_eagle_eye_assets(tmp_path, monkeypatch):
+    from builder import build_release, materialize_plugin_packages
+    from builder.plugin_package_registry import plugin_package_definition_map
+
+    monkeypatch.setattr(materialize_plugin_packages, "_ensure_lite_viewer_built", lambda: None)
+    monkeypatch.setattr(build_release, "PACKAGE_OUTPUT_DIR", tmp_path / "packages")
+    staged = tmp_path / "stage"
+    monkeypatch.setattr(build_release, "STAGED_PLUGIN_PACKAGE_DIR", staged)
+    monkeypatch.setattr(
+        build_release,
+        "load_plugin_package_definitions",
+        lambda **kw: [dict(plugin_package_definition_map()["advanced_mpr"], source_paths=[])],
+    )
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "AIPacsAdvancedViewer.exe").write_bytes(b"synthetic runtime fixture")
+
+    result = build_release.build_module_packages(
+        "9.9.9",
+        {"staged": True, "source": str(runtime)},
+        include_eagle_eye_assets=False,
+    )
+
+    payload_dir = staged / "advanced_mpr/payload"
+    assert result[0]["has_payload"] is True
+    assert (payload_dir / "AIPacsAdvancedViewer.exe").exists()
+    assert not (payload_dir / "offline_lumbar").exists()
+    assert not (payload_dir / "eagle_eye").exists()
+
+
+def test_standard_post_stage_gate_does_not_require_pruned_eagle_eye_assets(tmp_path, monkeypatch):
+    import aipacs_runtime as runtime
+    from builder import plugin_package_registry, release_gate
+
+    staged = tmp_path / "stage/plugin_packages/advanced_mpr"
+    staged.mkdir(parents=True)
+    (staged / runtime.MODULE_PACKAGE_MANIFEST_FILENAME).write_text("{}", encoding="utf-8")
+    (staged.parent / runtime.MODULE_PACKAGE_FEED_FILENAME).write_text(
+        json.dumps({"packages": [{"module_id": "advanced_mpr", "available": True}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        plugin_package_registry,
+        "plugin_package_definition_map",
+        lambda optional_only=True: {
+            "advanced_mpr": {"module_id": "advanced_mpr", "build_strategy": "runtime_payload"}
+        },
+    )
+
+    compact = release_gate.check_stage_plugin_packages(
+        tmp_path / "stage", require_eagle_eye_assets=False
+    )
+    eagle_eye = release_gate.check_stage_plugin_packages(
+        tmp_path / "stage", require_eagle_eye_assets=True
+    )
+    assert compact.ok
+    assert not eagle_eye.ok
+    assert "offline lumbar" in " ".join(eagle_eye.details).lower()

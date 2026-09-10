@@ -240,6 +240,60 @@ def test_candidate_stops_before_nuitka_when_required_python_backend_fails(tmp_pa
     assert Path(status["packaging_stage_root"]) == expected_stage_root
 
 
+def test_brain_release_preflight_fails_before_expensive_payload_validation(tmp_path, monkeypatch):
+    from tools.build import build_local_candidate as candidate
+    from builder import eagle_eye_brain_payload
+
+    source = tmp_path / "brain"
+    source.mkdir()
+    calls = []
+    monkeypatch.setattr(
+        eagle_eye_brain_payload,
+        "validate_payload",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    with pytest.raises(ValueError, match="No compilation was started"):
+        candidate.preflight_brain_payload(source, for_distribution=True)
+    assert calls == []
+
+
+def test_internal_standard_one_command_uses_safe_defaults(tmp_path, monkeypatch):
+    from tools.build import build_local_candidate as candidate
+
+    source = tmp_path / "candidate" / "source"
+    source.mkdir(parents=True)
+    (source / "build_source_manifest.json").write_text(
+        json.dumps({
+            "version": "3.6.6",
+            "github_freshness_verified": False,
+            "source_sha256": "stable",
+        }),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
+    monkeypatch.setattr(
+        candidate,
+        "run_logged_build",
+        lambda command, **kwargs: calls.append((command, kwargs)) or 0,
+    )
+
+    assert candidate.run_internal_build(
+        tmp_path / "candidate",
+        tmp_path / "assets",
+        "3.6.6",
+    ) == 0
+    command, invocation = calls[0]
+    assert "--internal-build" in command
+    assert command[command.index("--edition") + 1] == "standard"
+    assert "AIPACS_EAGLE_EYE_BRAIN_SOURCE" not in invocation["env"]
+    status = json.loads((tmp_path / "candidate/build_status.json").read_text(encoding="utf-8"))
+    assert status["lane"] == "internal"
+    assert status["published"] is False
+    assert status["production_accepted"] is False
+
+
 def test_canonical_candidate_cli_requires_git_sync_receipt(tmp_path, monkeypatch):
     from tools.build import build_local_candidate as candidate
     monkeypatch.setattr(sys, "argv", [

@@ -1080,6 +1080,17 @@ fast-compression internal profile, and measured bounded Inno parallelism. The
 documentation contract is pinned by
 `tests/code/builder/test_canonical_build_runbook.py`.
 
+The 2026-09-10 orchestration correction removes the manual multi-command internal
+packaging path. One `build_local_candidate.py --internal` invocation now derives
+the source version, immutable asset location and a new short workspace, then builds
+one Standard PyInstaller candidate by default; backend and edition overrides stay
+explicit and non-promotable. Standard/ARM focused builds no longer stage Eagle Eye
+models that their profiles remove. Official and internal Eagle Eye requests resolve
+one external Brain source deliberately, and the official lane rejects missing or
+stale redistribution evidence before source snapshotting or any expensive compile.
+This improves failure latency and operator repeatability without relaxing the
+six-artifact, serial Nuitka, source identity, legal, or install-acceptance gates.
+
 ### OPT-01 Printing follow-up - 2026-09-09
 
 DICOM network submission now runs in a bounded pool job holding captured settings, pixels and study identity. Association timeout is 10 s; DIMSE/network timeouts are 30 s; no automatic print retries. Before: synchronous network on the GUI thread. After: a held synthetic transport proves off-GUI execution, immediate return, and completion owned by the original study. No live latency percentile improvement is claimed.

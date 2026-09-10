@@ -44,6 +44,15 @@ def test_missing_distribution_evidence_blocks_staging(brain_payload, tmp_path):
     assert not (tmp_path / 'output/eagle_eye/brain').exists()
 
 
+def test_internal_staging_does_not_claim_or_copy_distribution_approval(brain_payload, tmp_path):
+    (brain_payload / 'distribution-approval.json').unlink()
+    staged = payload.stage_eagle_eye_brain(
+        tmp_path / 'output', brain_payload, for_distribution=False
+    )
+    assert not (staged / 'distribution-approval.json').exists()
+    assert payload.validate_payload(staged, for_distribution=False)['format_version'] == 2
+
+
 def test_cli_probe_alone_cannot_approve_distribution(brain_payload):
     path = brain_payload / 'runtime-probe.json'
     record = json.loads(path.read_text())

@@ -625,7 +625,11 @@ def check_stage_config_parity(stage_core: Path | None = None) -> GateCheck:
 # POST-STAGE: plugin package staging completeness (mechanism #2's payload side)
 # ---------------------------------------------------------------------------
 
-def check_stage_plugin_packages(stage_dir: Path | None = None) -> GateCheck:
+def check_stage_plugin_packages(
+    stage_dir: Path | None = None,
+    *,
+    require_eagle_eye_assets: bool = True,
+) -> GateCheck:
     name = "stage_plugin_packages"
     staged_root = (stage_dir or STAGE_DIR) / "plugin_packages"
     if not staged_root.is_dir():
@@ -674,7 +678,7 @@ def check_stage_plugin_packages(stage_dir: Path | None = None) -> GateCheck:
             continue
         if not manifest.exists():
             problems.append(f"{module_id}: {runtime.MODULE_PACKAGE_MANIFEST_FILENAME} missing in {package_dir}")
-        if module_id == "advanced_mpr":
+        if module_id == "advanced_mpr" and require_eagle_eye_assets:
             from modules.ai_imaging.offline_lumbar.bundle import validate_bundle, BundleError
             try:
                 validate_bundle(package_dir / "payload/offline_lumbar")
@@ -987,13 +991,20 @@ def run_pre_build_gate() -> list[GateCheck]:
     ]
 
 
-def run_post_stage_gate(stage_dir: Path | None = None) -> list[GateCheck]:
+def run_post_stage_gate(
+    stage_dir: Path | None = None,
+    *,
+    require_eagle_eye_assets: bool = True,
+) -> list[GateCheck]:
     stage = stage_dir or STAGE_DIR
     core = stage / "core"
     return [
         check_frozen_runtime(core),
         check_stage_config_parity(core),
-        check_stage_plugin_packages(stage),
+        check_stage_plugin_packages(
+            stage,
+            require_eagle_eye_assets=require_eagle_eye_assets,
+        ),
         check_stage_codec_metadata(core),
         check_education_payload_set(),
     ]

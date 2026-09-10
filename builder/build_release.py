@@ -759,6 +759,9 @@ def build_module_packages(
     version: str,
     advanced_payload: dict[str, object],
     reuse_staged_payload: bool = False,
+    *,
+    include_eagle_eye_assets: bool = True,
+    for_distribution: bool = True,
 ) -> list[dict[str, object]]:
     print_step("Building module packages")
     PACKAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -812,11 +815,14 @@ def build_module_packages(
             if module_id == "run_cd":
                 _validate_run_cd_lite_viewer(package_dir)
 
-        if module_id == "advanced_mpr" and has_payload:
+        if module_id == "advanced_mpr" and has_payload and include_eagle_eye_assets:
             from builder.offline_lumbar_payload import stage_offline_lumbar
             stage_offline_lumbar(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
             from builder.eagle_eye_brain_payload import stage_eagle_eye_brain
-            stage_eagle_eye_brain(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
+            stage_eagle_eye_brain(
+                package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
+                for_distribution=for_distribution,
+            )
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,
@@ -1501,12 +1507,18 @@ def run_release_gate_pre_build() -> None:
         )
 
 
-def run_release_gate_post_stage() -> None:
+def run_release_gate_post_stage(*, require_eagle_eye_assets: bool = True) -> None:
     """Release gate, post-stage phase: probe the staged frozen bundle before ISCC."""
     print_step("Release gate — post-stage checks")
     from builder import release_gate
 
-    if not release_gate.report(release_gate.run_post_stage_gate(STAGE_DIR), label="post-stage"):
+    if not release_gate.report(
+        release_gate.run_post_stage_gate(
+            STAGE_DIR,
+            require_eagle_eye_assets=require_eagle_eye_assets,
+        ),
+        label="post-stage",
+    ):
         raise SystemExit(
             "[RELEASE_GATE] Post-stage checks failed — the staged bundle would "
             "ship a stale/incomplete build. Rebuild (use --clean-build if the PYZ "
@@ -1703,6 +1715,8 @@ def main() -> int:
             version,
             advanced_payload,
             reuse_staged_payload=(incremental and args.skip_pyinstaller),
+            include_eagle_eye_assets=args.edition in {"all", "eagle-eye"},
+            for_distribution=not args.internal_build,
         )
         write_manifest(version, core_dir, advanced_payload, module_packages)
 
@@ -1713,7 +1727,9 @@ def main() -> int:
         if args.skip_release_gate:
             print("[WARN] --skip-release-gate: post-stage release gate SKIPPED (emergencies only).")
         else:
-            run_release_gate_post_stage()
+            run_release_gate_post_stage(
+                require_eagle_eye_assets=args.edition in {"all", "eagle-eye"}
+            )
             # ARM64 plan §7.3: no wrong-architecture binary may ship. Enforced
             # for arm64 (an x64 DLL in the native tree = broken install);
             # warn-only for x64 until a clean baseline is confirmed
