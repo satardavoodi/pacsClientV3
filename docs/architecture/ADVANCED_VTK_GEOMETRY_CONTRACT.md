@@ -175,6 +175,23 @@ Expected runtime line shape:
 
 ## Remaining Work
 
+### Diagnostic camera audit correction (2026-09-16)
+
+`ADVANCED_VTK_ORIENTATION_AUDIT schema=2` is explicitly a camera/DICOM basis diagnostic,
+not a clinical geometry validator. Expected screen-right=row and screen-up=-column imply
+the screen normal is `cross(row, -column)`, not `cross(row, column)`. The diagnostic now
+compares like-handed screen normals. Camera axes still have not been registered through
+the complete actor/reslice/display transforms into patient LPS: projected camera fields
+are named `*_unregistered`, `camera_iop_basis_match` is diagnostic only, and
+`orientation_valid=not_evaluated`. The previous failure classifier is a `legacy_failure_hint`.
+The report tool now labels its output a diagnostic table, never proof of geometry.
+
+Eight synthetic axial/sagittal/coronal/oblique cases reproduce the old 180-degree sign
+contradiction and check matching/opposite in-plane bases without changing camera/image
+MTime, position or view-up. A report guard prevents promotion of this diagnostic to proof.
+Actual affine, Y/X flips, camera fit, MPR planes, spacing and slice order are unchanged.
+Transform-aware pixel/phantom and human orientation validation remain required separately.
+
 The load authority is now unified. The remaining follow-up is operational validation on real patients for:
 
 - axial abdomen
@@ -183,3 +200,23 @@ The load authority is now unified. The remaining follow-up is operational valida
 - coronal series
 
 That runtime validation should confirm the emitted geometry-index logs and any downstream MPR/reference-line assumptions still tied to legacy metadata access.
+
+
+### Preview file/pixel alignment (2026-09-16)
+
+A preview is not a finalized SeriesGeometryIndex. Its metadata is read from exactly
+its bounded decode-file sequence, with real instance number, SOP, IOP/IPP and spacing.
+Never slice an unrelated DB ordering or repeat the first header across a volume.
+Unreadable headers, unsupported multiframe mapping or decoded-depth mismatch defer
+to full loading. Pixel order and all full-load geometry transforms remain unchanged.
+See `tests/code/viewer/test_advanced_preview_metadata.py` (six synthetic guards).
+
+
+## Preview prefix continuity (2026-09-20)
+
+Advanced previews use the full available series' cached SeriesGeometryIndex before decoding.
+`preview_geometry_prefix` retains its anatomical convention, normal and reversal decision,
+while restricting instance/path/SOP/IPP/IOP tuples and rebuilding subset hashes and inverse
+index mappings. It never recomputes a direction from a sparse prefix or attaches full-volume
+instance counts to eight decoded planes. Full loading reuses the same index authority.
+Native preview-to-full SOP continuity is guarded in `test_advanced_preview_metadata.py`.

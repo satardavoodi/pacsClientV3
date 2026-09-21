@@ -293,6 +293,7 @@ class EchoMindSettingsWidget(QWidget):
         self._build_company_auth_group()
         self._build_openai_group()
         self._build_prompt_group()
+        self._build_normal_templates_group()
         self._build_usage_group()
         self._build_stt_group()
         self._root.addStretch(1)
@@ -317,6 +318,31 @@ class EchoMindSettingsWidget(QWidget):
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #9ca3af; font-size: 14px; margin-bottom: 6px;")
         self._root.addWidget(subtitle)
+
+    def _build_normal_templates_group(self):
+        group = QGroupBox("Reception Normal Templates")
+        layout = QVBoxLayout(group)
+        layout.addWidget(self._note_label(
+            "Uses the Reception API configured in Server Settings and your current login. "
+            "Select templates by modality or personnel, then Optimize, Organize & Save. "
+            "Organization uses GPT-5.6 Sol through your saved EchoMind / GapGPT connection. "
+            "Review and edit saved drafts before adding them to your Normal Template library."))
+        button = QPushButton("Browse Reception templates…")
+        button.clicked.connect(self._open_reception_templates)
+        layout.addWidget(button)
+        review = QPushButton("Saved organized templates…")
+        review.clicked.connect(self._open_organized_templates)
+        layout.addWidget(review)
+        self._root.addWidget(group)
+
+    def _open_reception_templates(self):
+        from modules.EchoMind.viewer_chat.reception_template_dialog import ReceptionTemplateDialog
+        dialog = ReceptionTemplateDialog(self)
+        dialog.exec()
+
+    def _open_organized_templates(self):
+        from modules.EchoMind.viewer_chat.reception_template_dialog import OrganizedTemplateReviewDialog
+        OrganizedTemplateReviewDialog(self).exec()
 
     def _build_backend_group(self):
         self.backend_group = QGroupBox("AI Backend")

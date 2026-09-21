@@ -209,7 +209,7 @@ def test_search_server_checks_the_generation_before_clearing():
     body = _func_src(_SEARCH, "search_server")
     # The socket path begins at the enrich probe; the clear follows it.
     socket_path = body[body.index("_maybe_probe_enrich_cost"):]
-    clear_at = socket_path.index("home.patient_table_widget.clear_table()")
+    clear_at = socket_path.index("self._clear_search_results(_my_search_gen)")
     assert "home._search_generation != _my_search_gen" in socket_path[:clear_at], (
         "a superseded search must bail BEFORE clear_table() — two overlapping "
         "searches must never both tear the table down"
@@ -218,9 +218,13 @@ def test_search_server_checks_the_generation_before_clearing():
 
 def test_local_search_does_not_pump_nested_qt_events_after_clear():
     body = _func_src(_SEARCH, "search_local")
-    clear_at = body.index("home.patient_table_widget.clear_table()")
+    clear_at = body.index("self._clear_search_results()")
     first_await = body.index("await ", clear_at)
     assert "QApplication.processEvents()" not in body[clear_at:first_await], (
         "the coroutine already yields explicitly; pumping Qt events between "
         "clear and that yield can re-enter table producers synchronously"
     )
+    helper = _func_src(_SEARCH, "_clear_search_results")
+    assert "processEvents" not in helper
+    assert "await " not in helper
+    assert helper.index("home._search_generation != generation") < helper.index("patient_table.clear_table()")

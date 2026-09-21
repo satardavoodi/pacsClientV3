@@ -133,49 +133,36 @@ void qNewMPR2SlicerAppMainWindowPrivate::setupUi(QMainWindow * mainWindow)
   qDebug() << "[AIPACS_UI_CPP] [OK] PanelDockWidget logo removed (empty title bar)";
 
   // =========================================================================
-  // AI-PACS v1.1.1: GEOMETRY CONFIGURATION
-  // Set window size from environment variables (passed from main PACS app)
-  // This ensures the Advanced Viewer matches the viewport size from first frame
+  // Default to 70% of the destination screen's usable width and height.
+  // The PACS viewport selects the monitor, not the size. Maximize is user-owned.
   // =========================================================================
   bool okX = false, okY = false, okW = false, okH = false;
-  int viewerWidth = qEnvironmentVariableIntValue("NEWMPR2_VOR_WIDTH", &okW);
-  int viewerHeight = qEnvironmentVariableIntValue("NEWMPR2_VOR_HEIGHT", &okH);
-  int vorX = qEnvironmentVariableIntValue("NEWMPR2_VOR_X", &okX);
-  int vorY = qEnvironmentVariableIntValue("NEWMPR2_VOR_Y", &okY);
-
-  if (okX && okY && okW && okH && viewerWidth > 400 && viewerHeight > 300)
+  const int viewerWidth = qEnvironmentVariableIntValue("NEWMPR2_VOR_WIDTH", &okW);
+  const int viewerHeight = qEnvironmentVariableIntValue("NEWMPR2_VOR_HEIGHT", &okH);
+  const int vorX = qEnvironmentVariableIntValue("NEWMPR2_VOR_X", &okX);
+  const int vorY = qEnvironmentVariableIntValue("NEWMPR2_VOR_Y", &okY);
+  QScreen* destination = QGuiApplication::primaryScreen();
+  if (okX && okY && okW && okH && viewerWidth > 0 && viewerHeight > 0)
   {
-    // AI-PACS: Scale to 70 % of the PACS viewer area so the Slicer
-    // window does not cover the entire screen.
-    const double scale = 0.70;
-    int scaledW = static_cast<int>(viewerWidth  * scale);
-    int scaledH = static_cast<int>(viewerHeight * scale);
-
-    // Center the scaled window inside the original VOR rectangle
-    int offsetX = vorX + (viewerWidth  - scaledW) / 2;
-    int offsetY = vorY + (viewerHeight - scaledH) / 2;
-
-    mainWindow->setGeometry(offsetX, offsetY, scaledW, scaledH);
-    qDebug() << "[AIPACS_UI_CPP] VOR geometry applied (70%):" << offsetX << "," << offsetY
-             << "size" << scaledW << "x" << scaledH
-             << "(original VOR:" << vorX << "," << vorY << viewerWidth << "x" << viewerHeight << ")";
-  }
-  else
-  {
-    // Default size matching the screenshot layout
-    mainWindow->resize(940, 620);
-    qDebug() << "[AIPACS_UI_CPP] Window size set to 940x620 (VOR not available)";
-    
-    // Center window on screen (only when VOR is not used)
-    QScreen* screen = QGuiApplication::primaryScreen();
-    if (screen)
+    const QPoint center(vorX + viewerWidth / 2, vorY + viewerHeight / 2);
+    for (QScreen* candidate : QGuiApplication::screens())
     {
-      QRect screenGeometry = screen->availableGeometry();
-      int cx = (screenGeometry.width() - mainWindow->width()) / 2;
-      int cy = (screenGeometry.height() - mainWindow->height()) / 2;
-      mainWindow->move(cx, cy);
-      qDebug() << "[AIPACS_UI_CPP] Window centered at" << cx << "," << cy;
+      if (candidate->geometry().contains(center))
+      {
+        destination = candidate;
+        break;
+      }
     }
+  }
+  if (destination)
+  {
+    const QRect available = destination->availableGeometry();
+    const QSize size(static_cast<int>(available.width() * 0.70),
+                     static_cast<int>(available.height() * 0.70));
+    mainWindow->setWindowState(mainWindow->windowState() & ~Qt::WindowMaximized);
+    mainWindow->setGeometry(available.x() + (available.width() - size.width()) / 2,
+                            available.y() + (available.height() - size.height()) / 2,
+                            size.width(), size.height());
   }
 
   // =========================================================================

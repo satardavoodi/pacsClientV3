@@ -401,17 +401,15 @@ def test_imaging_tab_delegates_mammography_work_to_a_controller():
     assert "local_source_hints=local_source_hints" in start_source
 
 
-def test_main_toolbar_sends_mammography_directly_to_native_analysis():
+def test_main_toolbar_opens_workspace_before_mammography_analysis():
     source = Path(
         "PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py"
     ).read_text(encoding="utf-8")
     handler = source.split("    def _on_ai_analysis_clicked(self):", 1)[1].split(
         "    def _on_upload_menu_clicked", 1
     )[0]
-    assert 'if modality == "MR" and context.get("eagle_eye_mode") != "brain_mri":' in handler
-    assert handler.index('if modality == "MR"') < handler.index(
-        "choose_eagle_eye_function"
-    )
-    assert handler.index("choose_eagle_eye_function") < handler.index(
-        "_trigger_eagle_eye_analysis_pipeline"
-    )
+    assert "open_eagle_eye_workspace" in handler
+    assert "_trigger_eagle_eye_analysis_pipeline" not in handler
+    from modules.ai_imaging.eagle_eye_workspace import EagleEyeWorkspaceController
+    choose = inspect.getsource(EagleEyeWorkspaceController.choose_function)
+    assert choose.index("choose_eagle_eye_function") < choose.index("self._start_native(")

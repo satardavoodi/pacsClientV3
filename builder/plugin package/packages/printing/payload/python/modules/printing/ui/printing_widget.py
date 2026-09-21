@@ -1170,6 +1170,8 @@ class PrintingWidget(QWidget):
             }}
         """
 
+        from Qss.numeric_controls import numeric_control_style
+        spinbox_style += numeric_control_style()
         self._combo_style = combo_style
         self._button_style = button_style
         self._spinbox_style = spinbox_style

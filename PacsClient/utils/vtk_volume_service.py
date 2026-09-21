@@ -214,7 +214,8 @@ class VtkVolumeService:
 
     # -- production surface — PER-DOMAIN, delegates to that domain's coalescing cache ------- #
     def get_or_build(self, domain: Any, study_uid: Any, series_uid: Any,
-                     factory: Callable[[], Any], *, pin: bool = False, size: int = 0) -> Any:
+                     factory: Callable[[], Any], *, pin: bool = False,
+                     size: int | Callable[[Any], int] = 0) -> Any:
         """Return ``domain``'s cached volume for ``(study_uid, series_uid)``; build it via ``factory``
         exactly once even under concurrent callers (decode-coalescing). By default each VTK domain has
         its OWN cache (no cross-domain sharing); the cross-domain flag collapses them to one. ``factory``
@@ -395,7 +396,10 @@ def build_or_get_volume(domain: Any, study_uid: Any, series_uid: Any, builder: C
         return v
 
     try:
-        return get_vtk_volume_service().get_or_build(domain, study_uid, series_uid, _factory, pin=False)
+        return get_vtk_volume_service().get_or_build(
+            domain, study_uid, series_uid, _factory, pin=False,
+            size=lambda volume: max(0, int(volume.GetActualMemorySize())) * 1024
+            if hasattr(volume, "GetActualMemorySize") else 0)
     except Exception:
         return None
 

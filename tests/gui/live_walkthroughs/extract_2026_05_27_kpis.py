@@ -139,41 +139,16 @@ def kpi_bulk_download_prefetch(lines):
 
 
 def kpi_native_fault(path: Path, since: datetime | None):
-    """Issue 2: Eagle Eye drag-drop crash.
-
-    Count Windows fatal exceptions (especially 0x8001010d /
-    RPC_E_CANTCALLOUT_ININPUTSYNCCALL) in native_fault.log since the
-    cutoff timestamp.
-    """
-    if not path.exists():
-        return {"crashes_total": 0, "crashes_0x8001010d": 0, "file_exists": False}
-    total = 0
-    com_inhibit = 0
-    last_lines = []
-    text = path.read_text(encoding="utf-8", errors="replace")
-    if since is not None:
-        # native_fault.log doesn't always have timestamps per block; use file-level filter.
-        mtime = datetime.fromtimestamp(path.stat().st_mtime)
-        if mtime < since:
-            return {
-                "crashes_total": 0,
-                "crashes_0x8001010d": 0,
-                "file_exists": True,
-                "mtime": mtime.isoformat(),
-                "older_than_cutoff": True,
-            }
-    for line in text.splitlines():
-        if "Windows fatal exception" in line:
-            total += 1
-            if "0x8001010d" in line:
-                com_inhibit += 1
-            last_lines.append(line.strip())
-    return {
-        "crashes_total": total,
-        "crashes_0x8001010d": com_inhibit,
-        "file_exists": True,
-        "last_3_markers": last_lines[-3:],
-    }
+    """Legacy CLI: retain historical keys as unknown, expose an honest inventory."""
+    import sys
+    root = Path(__file__).resolve().parents[3]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from tools.diagnostics.native_fault_probe import native_fault_inventory
+    result = native_fault_inventory(path, 0)
+    return {"crashes_total": None, "crashes_0x8001010d": None,
+            "requested_since": since.isoformat() if since else None,
+            "requested_window_exact": False, "inventory": result}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -246,25 +221,18 @@ def main(argv=None):
     # 2. Eagle Eye native faults
     k2 = kpi_native_fault(nf_path, since)
     print("─── Issue 2: Eagle Eye drag-drop crashes ───")
-    if not k2["file_exists"]:
-        print(f"  native_fault.log not present at {nf_path}")
-    elif k2.get("older_than_cutoff"):
-        print(f"  native_fault.log mtime ({k2['mtime']}) is older than --since cutoff — no new crashes since.")
+    if not k2["inventory"]["ok"]:
+        print("  Native evidence unavailable; retrospective verdict inconclusive.")
     else:
-        print(f"  total fatal exceptions in file               : {k2['crashes_total']}")
-        print(f"  0x8001010d (COM-in-input-sync)               : {k2['crashes_0x8001010d']}  [target: 0 new since fix]")
-        if k2.get("last_3_markers"):
-            print("  most recent markers:")
-            for m in k2["last_3_markers"]:
-                print(f"    └ {m}")
+        print(f"  Historical native records: {k2['inventory']['data']['total']}")
+        print("  Untimed records cannot certify --since or terminal-crash counts.")
     print()
 
     print("=" * 72)
     print("Pass criteria summary:")
     print(f"  Issue 1: median right_panel round-trip < 400 ms  "
           f"→ {'PASS' if (k1['median_ms'] is not None and k1['median_ms'] < 400) else 'CHECK'}")
-    print(f"  Issue 2: no new 0x8001010d crashes since --since "
-          f"→ {'PASS' if k2.get('crashes_0x8001010d', 0) == 0 else 'CHECK'}")
+    print("  Issue 2: retrospective native-crash verdict → INCONCLUSIVE; use a byte-window baseline")
     print(f"  Issue 3: parallel prefetch event observed        "
           f"→ {'PASS' if k3['parallel_prefetch_events'] > 0 else 'CHECK'}")
     print("=" * 72)

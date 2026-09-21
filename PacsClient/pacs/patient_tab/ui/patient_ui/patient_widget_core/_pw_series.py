@@ -42,6 +42,10 @@ class _PWSeriesMixin:
 
         ✅ Always ensures viewers exist before attempting to display series
         """
+        self._home_series_selection_serial = getattr(self, '_home_series_selection_serial', 0) + 1
+        pending = getattr(self, '_home_series_action_pending', None)
+        if pending is not None:
+            pending.cancel()
         # Mark this series as "viewed" — it is being loaded into a viewport
         # (drag-drop or click both route through here). Session-scoped, in-memory;
         # see ThumbnailManager.mark_series_viewed. Isolated so a failure here can

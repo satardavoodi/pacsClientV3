@@ -18,6 +18,7 @@ import os
 import sys
 import time
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -39,6 +40,16 @@ if _ROOT not in sys.path:
 def qapp():
     app = QApplication.instance() or QApplication(sys.argv)
     yield app
+    from PacsClient.pacs.workstation_ui.settings_ui import storage_cleanup_panel as scp
+
+    deadline = time.monotonic() + 6.0
+    for thread in list(scp._ACTIVE_STORAGE_JOBS):
+        if thread.isRunning():
+            thread.quit()
+    while scp._ACTIVE_STORAGE_JOBS and time.monotonic() < deadline:
+        QCoreApplication.processEvents(QEventLoop.AllEvents, 50)
+        time.sleep(0.01)
+    assert not scp._ACTIVE_STORAGE_JOBS
 
 
 def _process_until(predicate, timeout_ms: int = 3000):
@@ -59,10 +70,14 @@ class _FakeManager:
         self.work_seconds = float(work_seconds)
         self.sizes = sizes or {"patients": 100, "education": 200, "cache": 300, "printing": 400}
         self.calls = []  # list of (thread_ident, force_refresh, t_start)
+        self.drive_calls = []
+        self.preview_calls = []
+        self.consistency_calls = []
         self._lock = threading.Lock()
 
     # -- subset of LocalStorageCleanupManager API used by the panel --
     def get_drive_usage_info(self):
+        self.drive_calls.append(threading.get_ident())
         return [{"drive": "C:\\", "used": 1000, "total": 2000, "free": 1000, "used_percent": 50.0}]
 
     def get_folder_usage_breakdown(self, force_refresh: bool = False):
@@ -78,6 +93,30 @@ class _FakeManager:
             "education": [],
             "cache": [],
             "printing": [],
+        }
+
+    def build_patient_cleanup_preview(self, strategy, value):
+        self.preview_calls.append(threading.get_ident())
+        return {
+            "strategy": strategy,
+            "value": value,
+            "total_patients": 3,
+            "selected_patients": 1,
+            "kept_patients": 2,
+            "unknown_date_patients": 0,
+            "estimated_bytes": 100,
+            "invalid_paths": 0,
+        }
+
+    def validate_storage_consistency(self):
+        self.consistency_calls.append(threading.get_ident())
+        return {
+            "counts": {
+                "db_studies": 1,
+                "db_studies_missing_files": 0,
+                "orphan_disk_studies": 0,
+                "thumbnails_missing_source": 0,
+            }
         }
 
     @staticmethod
@@ -136,6 +175,7 @@ def test_constructor_does_not_block_on_folder_walk(qapp):
         assert main_tid not in worker_tids, (
             f"get_folder_usage_breakdown ran on main thread {main_tid}; calls={fake.calls}"
         )
+        assert fake.drive_calls and main_tid not in set(fake.drive_calls)
     finally:
         panel.deleteLater()
         QCoreApplication.processEvents()
@@ -186,6 +226,108 @@ def test_defer_folder_sizes_false_runs_sync(qapp):
         assert latest_tid == main_tid, (
             f"defer=False should run sync on main; got tid {latest_tid} vs main {main_tid}"
         )
+    finally:
+        panel.deleteLater()
+        QCoreApplication.processEvents()
+
+
+def test_cleanup_completion_callback_is_marshaled_to_gui_thread(qapp):
+    fake = _FakeManager(work_seconds=0.0)
+    panel = _build_panel_with_fake_manager(qapp, fake)
+    try:
+        assert _process_until(lambda: panel._folder_size_thread is None, timeout_ms=3000)
+        main_tid = threading.get_ident()
+        callbacks = []
+        result = SimpleNamespace(success=True, warnings=[])
+
+        panel._run_cleanup_job(
+            panel,
+            lambda: result,
+            on_done=lambda _parent, value: callbacks.append(
+                (threading.get_ident(), value)
+            ),
+            on_fail=lambda _parent, message: callbacks.append(
+                (threading.get_ident(), message)
+            ),
+        )
+
+        assert _process_until(lambda: bool(callbacks), timeout_ms=3000)
+        assert callbacks == [(main_tid, result)]
+        assert _process_until(lambda: panel._cleanup_thread is None, timeout_ms=3000)
+    finally:
+        panel.deleteLater()
+        QCoreApplication.processEvents()
+
+
+def test_cleanup_thread_is_not_owned_by_transient_panel(qapp):
+    fake = _FakeManager(work_seconds=0.0)
+    panel = _build_panel_with_fake_manager(qapp, fake)
+    release = threading.Event()
+    try:
+        assert _process_until(lambda: panel._folder_size_thread is None, timeout_ms=3000)
+
+        panel._run_cleanup_job(
+            panel,
+            lambda: (release.wait(2.0), SimpleNamespace(success=True, warnings=[]))[1],
+            on_done=lambda *_args: None,
+            on_fail=lambda *_args: None,
+        )
+
+        assert _process_until(lambda: panel._cleanup_thread is not None, timeout_ms=1000)
+        assert panel._cleanup_thread.parent() is None
+    finally:
+        release.set()
+        _process_until(lambda: panel._cleanup_thread is None, timeout_ms=3000)
+        panel.deleteLater()
+        QCoreApplication.processEvents()
+
+
+def test_preview_and_consistency_disk_work_are_not_on_gui_thread(qapp, monkeypatch):
+    from PacsClient.pacs.workstation_ui.settings_ui import storage_cleanup_panel as scp
+
+    fake = _FakeManager(work_seconds=0.0)
+    panel = _build_panel_with_fake_manager(qapp, fake)
+    shown = []
+    monkeypatch.setattr(scp.QMessageBox, "information", lambda *args: shown.append(args))
+    try:
+        assert _process_until(lambda: panel._folder_size_thread is None, timeout_ms=3000)
+        main_tid = threading.get_ident()
+
+        panel._preview_patient_cleanup(1, 30, 10, panel)
+        assert _process_until(lambda: bool(fake.preview_calls) and bool(shown), timeout_ms=3000)
+        assert main_tid not in set(fake.preview_calls)
+
+        shown.clear()
+        panel._on_check_consistency_clicked()
+        assert _process_until(
+            lambda: bool(fake.consistency_calls) and bool(shown), timeout_ms=3000
+        )
+        assert main_tid not in set(fake.consistency_calls)
+    finally:
+        panel.deleteLater()
+        QCoreApplication.processEvents()
+
+
+def test_activity_probe_fails_closed_before_destructive_cleanup(qapp, monkeypatch):
+    from PacsClient.pacs.workstation_ui.settings_ui import storage_cleanup_panel as scp
+
+    fake = _FakeManager(work_seconds=0.0)
+    panel = _build_panel_with_fake_manager(qapp, fake)
+    warnings = []
+    monkeypatch.setattr(scp.QMessageBox, "warning", lambda *args: warnings.append(args))
+    try:
+        panel.set_activity_probe(lambda: ["a DICOM import is running"])
+        assert panel._can_start_destructive_cleanup(panel) is False
+        assert warnings
+
+        panel.set_activity_probe(lambda: [])
+        assert panel._can_start_destructive_cleanup(panel) is True
+
+        def _probe_failed():
+            raise RuntimeError("synthetic probe failure")
+
+        panel.set_activity_probe(_probe_failed)
+        assert panel._can_start_destructive_cleanup(panel) is False
     finally:
         panel.deleteLater()
         QCoreApplication.processEvents()

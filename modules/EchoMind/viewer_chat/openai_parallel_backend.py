@@ -181,6 +181,8 @@ def reporter(
             # LOUDLY instead of rendering partially. `_validate_report_json`
             # no-ops for anything outside `_VALIDATED_MODALITIES`.
             content = _validate_report_json(content, modality.lower())
+        from modules.EchoMind.normal_templates import remember_report_template
+        remember_report_template(content, normal_template)
         return {"content": content, "usage": result.get("usage", {})}
 
     return _legacy_reporter(
@@ -348,18 +350,26 @@ def translate_report(
     user_msg: str,
     CENTER_Key: Optional[str] = None,
     model: str | None = None,
+    *, template_reference: dict | None = None,
 ) -> dict[str, Any]:
-    return _call(
+    from modules.EchoMind import normal_templates as template_library
+    if template_reference is None:
+        template_reference = template_library.report_template_reference(user_msg)
+    result = _call(
         feature_name="report",
         system_prompt=(
             "Translate the radiology report from English to Persian and return only valid JSON with the same keys "
             "and the same structure as the input report."
+            + template_library.persian_template_translation_prompt(template_reference)
         ),
         user_content=user_msg,
         user_msg=user_msg,
         model=model,
         api_key_override=(CENTER_Key or None),
     )
+
+    result["content"] = template_library.reuse_persian_template_wording(user_msg, result.get("content", ""), template_reference)
+    return result
 
 
 def standard_assist_search(
@@ -422,7 +432,7 @@ def correction(
     # sentinel, which this backend never asked for).
     system_prompt = build_correction_system_prompt()
     payload = build_correction_user_content(user_report, correction_note, target_section)
-    return _call(
+    revised = _call(
         feature_name="correction",
         # A PREFIX, never an override: everything the shared correction prompt
         # says - including the output contract that gets parsed - still follows.
@@ -434,3 +444,5 @@ def correction(
         api_key_override=(CENTER_Key or None),
         temperature=0,
     )
+    from modules.EchoMind.normal_templates import inherit_report_template
+    return inherit_report_template(user_report, revised)

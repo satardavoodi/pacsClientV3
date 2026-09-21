@@ -225,8 +225,9 @@ class DownloadProcessWorker(QThread):
                     "action_session_id": self.action_session_id,
                 },
             )
-            # Register PID so the viewer can suspend active download processes
-            # during wheel-scroll bursts and eliminate CPU/memory-bus contention.
+            # Register PID for app-shutdown cleanup only. Viewport interaction
+            # must not suspend the child while it owns IPC, socket or DB work;
+            # the entry point retains its existing lower OS-priority request.
             try:
                 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
                     register_download_subprocess,

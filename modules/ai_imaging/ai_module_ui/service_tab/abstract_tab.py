@@ -63,7 +63,7 @@ class AbstractTab(QWidget):
         # layout.addStretch(1)
         return layout
 
-    def add_section(self, name, layout):
+    def add_section(self, name, layout, *, show_title=True):
         button = QPushButton(name)
         button.setCheckable(True)
         button.setMinimumHeight(30)
@@ -74,6 +74,6 @@ class AbstractTab(QWidget):
         self.__button_group.addButton(button, id=len(self.__lst_buttons) - 1)  # set behavior clicked btn
         self.__buttons_layout.addRow(button)
 
-        group_box = QGroupBox(name)
+        group_box = QGroupBox(name if show_title else "")
         group_box.setLayout(layout)
         self.__stacked_layout.addWidget(group_box)

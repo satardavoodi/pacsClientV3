@@ -1,5 +1,1721 @@
 # AI-PACS — Software Optimization, Stability & Reliability Master Plan
 
+## 2026-09-20: OPT-60 first-viewer graphics-profile I/O
+
+**State: fixed and code-verified; fresh-source KPI acceptance pending.** The latest
+source session contained a 413.6 ms GUI-thread stall in
+`resolve_gpu_boost_plan -> resolve_graphics_profile -> load_runtime_profile ->
+Path.read_text` during viewer construction. This was duplicate work: `main.py` had
+already read the profile, probed graphics support and persisted the result before Qt/VTK
+startup. Every later viewer independently repeated that process.
+
+The bootstrap graphics result is now primed into one process-owned snapshot in
+`modules.viewer.gpu_boost`. Fast and Advanced consume the same immutable policy without
+another runtime JSON read or graphics probe on the Qt thread. Repeated viewer creation
+reuses the snapshot. Saving the GPU preference invalidates both cached views immediately;
+the existing restart-required policy remains unchanged. No backend choice, decode,
+render, download, thumbnail, DICOM or packaging contract changed.
+
+The reuse and invalidation guards failed before implementation (2 failed / 6 passed).
+The final GPU-boost file passes 9 tests; the graphics/runtime/build/WoA boundary passes
+28 tests with one unrelated deselection, direct exit 0. Python compilation passes and
+all 468 source/payload mirror pairs match. Required live gate: fresh source launch,
+open the first and subsequent patient viewers in Fast and Advanced, verify identical
+backend/GPU status and require no GUI-thread runtime-profile read below
+`resolve_gpu_boost_plan`. This slice does not close the separate Advanced presentation
+first-image metric, GUI-thread DICOM header reads or native COM event.
+
+## 2026-09-20: OPT-60 shared viewport drag-hover activation
+
+**State: fixed and code-verified; fresh-source native drag acceptance pending.**
+Thumbnail drag traversal had two different input policies. The Advanced mixin already
+had a 120 ms / 8 px dwell state machine, but its internal series MIME bypassed that
+state and highlighted every viewport immediately. `QtFastContainer` had no dwell state
+at all. Crossing pane 1 on the way to pane 2 could therefore flash pane 1 as active.
+
+One UI-input-only `_DropHoverDwellMixin` now owns hover timing for both production
+viewport containers. Movement beyond the existing tolerance restarts the dwell; leave,
+drop and malformed payloads stop it. A deliberate quick drop is still accepted before
+the highlight arms, and each backend keeps its own drop dispatch, decode, cache and
+render path. The required `QTimer.singleShot(0, ...)` series-switch handoff remains
+unchanged, so no OLE/COM work was moved into the native drop callback. The quarantined
+legacy A/B viewer keeps behavior parity without becoming a new production authority.
+
+Two behavioral guards failed before the correction: Fast had no hover state and
+Advanced armed internal thumbnail MIME immediately. Final focused replacement/hover
+suite: **22 passed**. Adjacent progressive, coalescing, multi-series, no-abandon,
+stacking and split-viewer selection: **199 passed, 15 GUI-tier skipped, 1 quarantined
+xfail, 1 unrelated deselected**, exit 0. Python compilation passes. The broader run's
+one unrelated failure is the existing split-test spinner double lacking the newer
+`hide_loading_after` API; it is not counted as a hover pass or fixed here.
+
+Live gate: in a two-or-more-pane layout, drag a thumbnail across pane 1 into pane 2 at
+normal and slow speeds. Traversed panes must not flash active; pausing on the intended
+pane must show one stable highlight; a quick release must still load exactly the dropped
+series in that pane. Repeat in Fast and Advanced and check session-scoped logs for one
+drop apply, no duplicate switch, no transient top-level window and no stall/crash.
+This bounded correction does not advance the `U0`-`U5` execution ledger.
+
+## 2026-09-18: canonical Unify continuation queue and evidence baseline
+
+The current single execution order is the `U0`-`U5` ledger in
+[`UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md`](plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#current-execution-ledger---2026-09-18).
+It supersedes any older text that appears to authorize parallel shared-pipeline work.
+The active slice is **U0: accept or reject the already-landed ordered Local catalog
+owner and completed-load handoff**. Do not begin another thumbnail optimization,
+download-state cutover, invalidation implementation or branch retirement until U0 has
+a fresh source-GUI receipt. A failure is fixed inside the same owner; it is not bypassed
+with another producer, cache, callback or fallback.
+
+After U0, the mandatory order is: **U1 authoritative download completion -> U2 primary
+per-series state authority -> U3 one invalidation bus -> U4 shared chokepoint/path
+retirement -> U5 installed/restart/stress closure**. Fast, Advanced and every VTK tool
+retain private decode/cache/render/lifecycle implementations throughout this sequence.
+
+### Evidence-based progress statement
+
+- Validated UI-stall events above 100 ms fell from 711 to 218, a 69.3% reduction in
+  event count. The p95 rose from 562.1 to 706.4 ms because fewer small stalls left a
+  distribution dominated by the remaining large events; this is not uniform latency
+  improvement.
+- The named exercised GUI-blocking stacks disappeared from their tested workflows.
+  Fast Viewer handler time was already healthy (about 32 ms median / 70 ms p95) and is
+  not credited to Unify. Cold Local catalog completion remains open even when card apply
+  and the Qt event loop are responsive.
+- Cross-PC ERROR totals are classification evidence, not a before/after rate: 3,017 of
+  3,243 ERROR lines in the archived client window and 92 of 179 in the current developer
+  window belong to the socket-request family. The windows, workload and duration differ.
+  This shows that a large operational-error family is at the network/download boundary;
+  it does not prove server fault or Unify regression.
+- Recent developer native evidence contains 12 access-violation records correlated with
+  application shutdown and 27 non-terminal COM `0x8001010d` records, with no Fatal Python
+  marker. The exact native owner is still unproved. Treat shutdown/lifetime as a separate
+  stop condition, not as evidence that shared identity/catalog/download routing failed.
+
+The defensible conclusion is **substantial but incomplete improvement**: Unify removed
+many duplicate-authority, stale-callback and GUI-thread-I/O failures, but the remaining
+risk is distributed across cold first-touch I/O, download/network convergence, and
+native Qt/VTK/QObject teardown. There is no evidence for one unidentified global defect,
+and there is no basis for declaring the remaining ten percent closed. Each U0-U5 slice
+must retain separate states for code-verified, live-verified and installed/release-ready.
+
+## 2026-09-19: hidden Home work at patient-tab handoff (OPT-58 / OPT-60)
+
+**State: fixed and code-verified; fresh-source GUI/KPI pending.** The latest run
+contained two different delays. Historical Local studies with no producer index still
+performed their expected first verification. Separately, a fully indexed two-study
+case resolved 24 and 15 series in tens of milliseconds but its patient sidebar needed
+18.822 seconds. Its maximum GUI card apply was only 21.17 ms. During that interval the
+now-hidden Home right panel logged preparation of all 39 images over 15.030 seconds and
+consumed approximately one CPU core. The remaining warm delay was therefore lifecycle
+contention, not another catalog/index failure.
+
+The existing Home render generation now pauses when its panel is hidden: no new image
+read is admitted, the owned progressive timer stops, and a return to Home resumes the
+same generation. One in-flight worker read is allowed to complete because Python cannot
+safely cancel native file/decode work already running. Existing cards, exact action
+identity, ordering, render signature and prepared QImage data survive the suspension.
+This is a lifecycle correction inside the current owner, not a new cache, producer,
+fallback, executor or viewer path. Both immediate and progressive fail-before guards
+now pass; the four adjacent Home render/manager suites pass 68 cases and the broader
+Home/thumbnail/sidebar selection passes 163. Compilation and scoped diff checks pass.
+U0 remains open
+until a restarted source run proves that a large Home preview stops competing after
+patient-tab activation and that returning Home resumes cleanly without overlap, jump,
+wrong counts, error/native fault or lost double-click action.
+
+## 2026-09-19: legacy Local backfill live evidence (OPT-58 / OPT-60)
+
+Two cold Local batches in the latest normal-source session scanned all 18 and 13
+series in 9.175 s and 6.333 s. A read-only post-run audit found every row persisted as
+schema-1 `Verified`, with valid count relationships and exact current managed-directory
+revision (18/18 and 13/13). The same session's already indexed 24- and 15-series cases
+resolved in 39.70 ms and 23.74 ms. Therefore the remaining delay is the intentional
+one-time verification of historical/restored data, not a repeated-backfill defect.
+
+Do not add a startup/library-wide scanner or another catalog/cache path. Import and
+Download own new-generation publication; the existing Local worker owns legacy
+self-heal. A real close/reopen construction remains the only open gate for these two
+cases because the live control inventory has no tab-close action and the accepted
+open command only activated the existing tab. Require `indexed=<all> scanned=0`, exact
+identity/counts/pixels and clean scoped logs. See the canonical UI-stall receipt for
+the evidence and limitations.
+
+## 2026-09-19: U0 patient-open identity and pre-construction admission (OPT-35 / OPT-60)
+
+**State: fixed and code-verified; fresh-source GUI pending.** A Local patient row with
+an empty primary Study UID still resolved to an owner-filtered study set, but the open
+path continued with the empty primary. The cached-thumbnail helper consequently formed
+the thumbnail root itself, enumerated 2,635 unrelated study directories and returned no
+cards after 13.825 seconds. The correction is at the existing patient-study authority:
+one pure finalizer promotes the first resolved UID, preserves selected-first order and
+fails closed for absent or owner-inconsistent identity. The filesystem helper rejects an
+empty UID as defense in depth. This does not add a source, fallback, index or cache.
+
+A separate fifth-tab trace showed another admission-order defect. Home constructed a
+real `PatientWidget` and launched its pipeline before the tab manager rejected the
+four-tab capacity. The modal warning then created a nested Qt event loop while qasync
+tasks from the orphan widget were runnable, producing task re-entry errors and a
+22.823-second failed open. `HomeTabService` now owns a bounded reservation set, counts
+active tabs plus outstanding reservations, and admits before construction. Successful
+registration commits; all failure exits abort. The tab manager retains the final check
+as a defensive invariant rather than an alternate admission path. Capacity UI is posted
+only after the active coroutine returns.
+
+Eleven guards failed before the implementation (26 passed, exit 1). Final focused
+identity/admission verification passes 41 tests. Two adjacent selections pass 159 with
+one documented GUI-tier skip and 142 with one Windows symlink skip; compilation passes.
+No viewer decoder/render/cache, DICOM grouping, thumbnail producer, download transport,
+database schema or packaged mirror changed. Roll back this slice by reverting the
+finalizer/admission methods and their call sites together; no feature flag is added
+because keeping the invalid root lookup or orphan widget construction as a parallel path
+would preserve the defect. U0 remains open until a restarted source run verifies blank-
+primary Local open, cached and multi-study order/counts, four accepted tabs plus prompt
+fifth-tab rejection, no widget/pipeline creation on rejection, no qasync re-entry and a
+normal session exit.
+
+## 2026-09-18: U0 post-catalog orphan maintenance (OPT-58 / OPT-60)
+
+The fresh U0 source run remained responsive but failed thumbnail latency. Three Local
+opens recorded five worker-owned orphan reconciliations: 6,953/3,822 ms, 3,142/297 ms
+and 6,285 ms. In the 31-series single-study case, the authoritative producer-index
+inventory itself completed in 899 ms and GUI card application was normally 18-25 ms
+(52.67 ms maximum), but the first card arrived 6,318 ms after stream start because
+orphan maintenance still preceded the catalog. Two grouped catalogs similarly spent
+4,386 ms for 39 cards and 5,811 ms for 66 cards after admission. No main-thread stall,
+ERROR, CRITICAL, Shiboken failure or access violation occurred; the startup-only
+`0x8001010d` record was non-terminal. Whole-patient file warming overlapped these opens
+(376-596 MB over 9.8-24.5 s) and remains a measured I/O-pressure candidate, not the
+proven admission gate.
+
+The correction changes ordering, not authority. Exact pixel inventory remains the
+only catalog admission gate and already excludes missing/non-pixel series. Single-study
+Local publishes its bounded ordered cards and persists UID-scoped counts before the
+same worker runs destructive orphan self-heal. Grouped Local and Server publish their
+complete metadata before the existing background worker reconciles in `finally`, so
+failure paths retain maintenance without blocking successful publication. No new
+thread, producer, cache, timer, state authority, Viewer/VTK/decode behavior, download
+contract or database rule is introduced. The existing orphan function still owns all
+partial-study, stale-sample, pending, whole-study-eviction and offline-root safeguards.
+New aggregate `LOCAL_ORPHAN_RECONCILE` markers distinguish post-catalog maintenance.
+
+Behavioral guards failed before with first-publish seeing prune already complete and
+grouped publication seeing `prune -> push`. The corrected direct boundary passes 61;
+adjacent Local/catalog/offline/sidebar/metadata/file-warm/index tests pass 151.
+Compilation and diff checks pass. **U0 remains open** pending a restarted source run:
+require first-card before the post-catalog reconcile marker, exact single/multi-study
+identity/order/object/frame counts, no overlap/jump, no new GUI stall/error/native fault,
+and a normal process exit. Do not start U1 from code results alone.
+
+## 2026-09-17: OPT-58 / OPT-60 ordered Local inventory ownership
+
+Fresh source evidence separated the remaining delay from Qt and rendering. Two
+previously unopened Local patients required 2.717 s for 5 series / 280 files and
+15.158 s for 11 series / 1,172 files. The latter spent 11.525 s in cold pixel
+inventory while the independent file warmer simultaneously read the same 1,172
+files (307.2 MB in 14.637 s); grouped card application itself took 434.14 ms and
+the session recorded no GUI stall or error.
+
+The 22:12 live follow-up proved the intermediate fact-primer insufficient: three
+unverified catalogs still completed in 6.950-13.707 s because an independent primer
+and the sequential consumer interleaved through the single-flight. The corrected
+default therefore gives exact Local inventory one owner. Home and patient projections
+both consume `resolve_series_pixel_inventories`: series remain strictly ordered, while
+only files inside the current unverified series use one reusable bounded worker pool.
+The result is yielded only after the complete exact series inventory, preserving
+non-pixel exclusion, object/cine-frame separation, collision aliases, multi-study
+order, revision checks and batch DB backfill. No provisional or stale card is admitted.
+
+The patient-open warmer now skips known unverified Local series entirely, eliminating
+both duplicate enumeration and competing reads. Producer-indexed Local series and all
+Server/unknown fallback paths retain raw warming. `AIPACS_LOCAL_ORDERED_INVENTORY=0`
+restores the prior fact-primer path; `AIPACS_LOCAL_PIXEL_FACT_WARM=0` remains its
+narrow secondary rollback. Work stays off Qt. Viewer/VTK/decode, download, thumbnail
+layout, storage identity and GUI cadence are unchanged.
+
+New fail-before: 4 failed / 44 passed (missing ordered resolver and warm delegation).
+Final direct boundary: 50 passed. The Home/patient/offline/owner boundary passes 129.
+The wider UI/storage selection passes 1,295 with two skips and three quarantined
+xfails; two unrelated pre-existing assertions remain red in login-identity source
+spelling and status-sort source spelling. Compilation and diff checks pass. Fresh
+source GUI/KPI is **OPEN**: compare first-card and full-catalog time for previously
+unopened single- and multi-study patients, then reopen them to exercise producer-index
+admission. Require exact card order/counts, no overlap/jump, no GUI stall/error/native
+fault, `delegated_series>0`, and PHI-free `LOCAL_PIXEL_INVENTORY_BATCH` markers. Do not
+claim latency closure from code tests alone.
+
+## 2026-09-17: OPT-58 / OPT-60 Local open orphan-reconcile stall
+
+The first post-index source run did not validate Local latency. A two-study Local
+open needed 23.280 s to publish 33 series because its 2,264-file legacy catalog was
+still unverified. That scan completed the intended migration: a read-only post-run
+check found 1/1 and 32/32 series pixel summaries Verified. Card layout was not the
+dominant wait (23.13 ms reservation; 985.81 ms grouped delivery; 19.22 ms maximum
+card apply).
+
+The same run exposed a separate **6.925 s GUI freeze**. Repeated sampled stacks pin
+the UI coroutine in `prune_orphan_series_for_study -> _series_has_disk_files ->
+os.listdir`. The self-heal remains required, but it now runs only in existing workers:
+the patient inventory worker for single-study Local, and the existing patient-open
+background worker for grouped Local and Server. Healthy series first validate one
+known DB instance path; full directory enumeration remains the conservative fallback
+for a missing/stale sample, preserving partial-study orphan detection and whole-study
+eviction safety. No viewer, decode, geometry, download or card-layout behavior changed.
+
+Fail-before: 2/2 focused guards failed (GUI ownership and healthy-folder enumeration).
+After the fix: 67 directly affected tests pass; expanded Local/storage/multi-study
+selection passes 337 with one explicit Windows symlink skip. Compilation passes.
+Fresh source same-patient reopen/restart is OPEN: require per-study aggregate
+`source=producer_index owner=home_local` totals summing to 33 series, no
+`prune_orphan_series_for_study` GUI stack, exact 33-card
+identity/counts, and no new error/native fault. The legacy cold scan is not claimed
+eliminated before its one-time verified backfill.
+
+## 2026-09-17: OPT-58 / OPT-60 producer-verified Local catalog facts
+
+Deep review confirmed the previous worker/QImage correction but rejected further
+per-file cache tuning as the primary architecture. Cold Local admission remained
+O(total DICOM files): sampled 1,998-file single-study inventory took 17.974 s and
+2,142-file grouped inventory took 37.305 s, while GUI card application stayed
+bounded (29.72 ms median / 49.24 ms max in the sampled single-study stream).
+
+The existing series index record now carries an independent producer-verified pixel summary:
+pixel-bearing object count, display-frame count, schema and exact managed series-
+directory revision. Import publishes it only after the same generation copied and
+indexed every destination; Download Manager publishes it only after all headers and
+pixel probes succeeded in its subprocess. Home and patient Local projections accept
+the summary only for a complete pixel inventory under the managed two-level DICOM
+tree with an unchanged directory revision. A completed legacy scan backfills the
+summary in one DB transaction without claiming geometry-index completeness.
+Restored/external/partial/changed rows keep the existing worker header scan. Object,
+cine-frame and download-completeness truth
+remain separate; exact Series UID, raw number, `folder_key` and display-key allocation
+are unchanged. This extends the existing DB-first index; it is not a second catalog,
+renderer, downloader or viewer cache.
+
+Fail-before selection: 3 failed / 1 passed, exit 1 (missing schema/round-trip and
+Local fast-path behavior). Final exact contract selection: 76 passed. Expanded
+catalog/Local/storage/multi-study boundary: 319 passed / 1 explicit Windows symlink
+skip, exit 0. Import/download adjacent selection: 104 passed, exit 0. Compilation
+passes and 467 plugin mirror pairs match. A compare-and-persist revision guard also
+rejects a directory changed between legacy scan and DB commit. Fresh source cold/warm/restart GUI and
+installed acceptance remain OPEN; existing datasets backfill through the legacy
+scan rather than being silently trusted. See the canonical UI-stall receipt,
+thumbnail pipeline and regression catalog for rollback and acceptance scope.
+Release parity code checks pass 13/13; the excluded live-stage check remains the
+pre-existing stale five-template build-output blocker and was not rebuilt here.
+
+## 2026-09-17: OPT-58 / OPT-60 Local patient-stream image preparation
+
+The 10:49 normal-source run proved that Home image preparation was active but
+isolated the remaining Local patient-sidebar GUI read: a 413.0 ms sampled stack
+opened thumbnail bytes inside the 10 ms drain callback. The existing Local worker
+now prepares an immutable QImage with the exact study/folder storage identity;
+the bounded mailbox carries it to the GUI, which alone constructs QPixmap/cards.
+Ordering, stable aliases, grouped takeover, object/frame counts, persistence,
+download state, placeholder behavior and cancellation are unchanged. No Viewer,
+download, DB, cache-policy, protocol or packaging path changed.
+
+Fail-before worker-preparation guard: exit 1; final Local stream file: **37 passed**.
+Expanded Local/Home/sidebar/source selection: **212 passed, 1 explicit Windows
+symlink-privilege skip**, exit 0. Broader 29-file UI-services boundary: **456
+passed with the same 1 skip**, exit 0; 467 mirrors match. Fresh normal-source
+Local GUI and matched KPI remain OPEN; the expected gate is removal of the Local
+`read_bytes` GUI stack, not a synthetic wall-time threshold or a blanket crash claim. See the
+[canonical implementation, risks and rollback](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-17-local-patient-stream-image-preparation-opt-58--opt-60).
+
+## 2026-09-17: OPT-35 / OPT-60 completed-load tab handoff
+
+The 8/104 incident is reproduced across two owned boundaries: hiding during decode
+discarded successful delivery and leaked load ownership; Advanced metadata could grow
+without matching decoded pixels. Shared delivery now preserves the normalized pair,
+defers only rendering and resumes the original cancellation/token-bound completion in
+manual and automatic boost modes. Advanced cache integrity was corrected by its owner,
+not folded into a shared decoder. No server retry/cache flush workaround or geometry edit.
+Twenty-five new shared guards pass; initial corrected baseline was ten failures / one
+pass against clean HEAD methods. Source GUI remains pending on a fresh process.
+The final combined focused selection has 214 passes / six existing quarantined xfails;
+467 mirrors match. A separate release gate still fails on stale staged configuration
+(41 other checks pass, one deselected); do not call the release lane green.
+See [canonical evidence, regression matrix and rollback](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-17-completed-load-tab-handoff-opt-35--opt-60)
+and the paired Advanced-owner receipt linked there. Thumbnail cold-start latency,
+MPR setup latency, native stress and installed acceptance remain separate open gates.
+
+## 2026-09-17: OPT-58 / OPT-60 Local inventory persistence
+
+Latest source receipt (September 16, 23:40:15 main PID 739276): two Local
+two-study cases take 6.570 / 27.004 seconds to publish their complete metadata;
+2398 / 2412 files are reprobed with zero memory hits. Bounded card application
+maxima are 35.38 / 20.33 ms. PNG enumeration and stripe-lock wait do not explain
+the delay. This is partial evidence for the prior builder, not whole-GUI acceptance.
+
+Authorized next slice adds version-checked, positive-only persisted facts to
+the existing `dicom_displayability` worker service. Managed source files remain
+unchanged; artifacts live in bounded central cache storage, **not** thumbnail
+folders (an intermediate-placement regression guard caught a false presence hint).
+No DB-count shortcut, decoder/viewer/UI/download change or new config/module.
+First cold scan still required; full grouped catalog-first delivery is not closed.
+Final direct focused pytest: **425 passed, 1 deselected**, six existing SWIG warnings,
+exit 0 (44.32 s); **467 mirror pairs match**. No full-suite or installed claim.
+Code/limits/rollback and exact source metrics:
+[canonical receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-17-local-inventory-persistence-opt-58--opt-60).
+Fresh-source cold/reopen/restart GUI/KPI gate remains OPEN: responsive old PID
+739276 cannot accept a later edit. Existing native-crash and installed gates remain.
+
+## 2026-09-16: OPT-58 / OPT-60 bounded cached-sidebar application
+
+Measured 141-card cached and 142-card grouped synchronous bursts are now routed
+through the existing thumbnail batch/source services: detached worker I/O/QImage,
+GUI-only QPixmap/cards, complete fixed-size/header reservation, one card per
+yield, exact startup inventory count and generation/identity rejection. Preserve
+download-state replay and object-versus-frame counts. No Viewer branch change.
+Two real-Qt/qasync guards failed before implementation; a third then reproduced
+server-entry/cached-build overlap. Server entries now use the same scheduler after
+their existing count merge/persistence. Final direct focused suite: **304 passed,
+1 deselected**, exit 0; new guard file **21 cases**. Six existing SWIG warnings.
+467 plugin mirror pairs match (no mirrored
+runtime source was edited). New code is in existing core modules; no build/profile
+entry, dependency or new feature flag is required.
+
+Controlled 141-card offscreen comparison: legacy entry 1002.54 ms, bounded entry
+0.88 ms, reservation 25.21 ms, max card apply 11.12 ms, total bounded elapsed
+1905.42 ms. Do not present this as faster total loading or live improvement.
+Old source PID 1197880 answers MCP but predates the patch; fresh source GUI and
+same-workload KPI acceptance remain OPEN. Local admission/stream and explicit
+compatibility paths remain follow-ups; this does not close OPT-58/60 or native crashes.
+Rollback: existing `AIPACS_SIDEBAR_BUILD_CHUNKED=0` on process start restores the
+prior synchronous paths. Details, affected files/contracts and live matrix:
+[implementation receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-bounded-cached-sidebar-build-opt-58--opt-60).
+
+## 2026-09-16 22:47 source receipt: OPT-04 positive; OPT-58/60 latency still open
+
+Fresh PID 1197880 executes the retired-hard-suspension correction. The exact
+previously blocked study now reaches Completed 2262/2262 (32 series); its secondary
+task completes 2/2. Five tasks complete, 150 exact file-count checks pass. Read-only
+control remains responsive. This is positive user-workflow/log evidence, not the
+full visual/identity/pause/close/installed matrix or clinical completeness proof.
+
+Shared thumbnail bottlenecks persist: 3.908-second synchronous 141-card load and
+2.566-second 142-card grouped rebuild; Local grouped metadata remains late. Whole
+window has 111 threshold-selected F8 stalls, p95 1017 ms; no matched workload
+speedup claim. Existing OPT-58/60 next slice must preserve stable geometry while
+removing GUI store reads and bounding card application through the same owner.
+MPR/Advanced findings and one non-terminal COM event go to their respective owner
+records. See [the live receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-2247-fresh-source-download-and-kpi-receipt).
+No runtime change was made during this review.
+
+## 2026-09-16: OPT-04 / OPT-35 remote-download liveness diagnosis
+
+**Subsequent authorized correction:** shared download native suspension hooks are
+now compatibility no-ops in current/legacy routes; retain shutdown bookkeeping and
+the existing child OS-priority request. No rendering, decoding, scroll algorithm,
+queue/progress or transport edits. Sixteen new synthetic guards: 14 failures before,
+all pass afterward. Focused download/system: **142 pass**; package guards **9 pass**;
+**467 mirrors match**. Expanded Viewer selection: **288 pass / 1 pre-existing
+spinner-test-double failure**, reproduced with original download hooks in an
+isolated baseline process. No full-suite green claim. Details and rollback:
+[implementation receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-opt-04-download-liveness-independent-of-viewport-settling).
+Fresh-source actual download/scroll-overlap/close/priority GUI and KPI gates remain
+open; removal of hard suspension needs a matched contention check. The earlier
+diagnostic receipt below is historical, not the current implementation status.
+
+Fresh source session 21:27:14, main PID 1215900: remote thumbnails and two series
+drop intents succeed, but the adopted prewarmed download child remains Windows
+`Suspended` before job receipt. Live task stays `Downloading` with zero progress;
+secondary study is `Pending`. This is a local worker-execution blocker, not a
+demonstrated server-response failure or sidebar/header regression. Exact missed
+suspension release is not proven. No runtime change or forced recovery performed.
+
+Shared worker liveness/shutdown-vs-throttle ownership remains OPT-04; Advanced
+scroll/series-switch release belongs to its Viewer owner under OPT-35. Full
+evidence and the bounded joint verification request are in
+[Viewer handoff 02](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#unify-handoff-2026-09-16-02-suspended-download-process-after-advanced-interaction),
+with a backlink in the existing UI-stall owner report. This diagnostic handoff
+does not close download, live performance or prior crash acceptance.
+
+## 2026-09-16: OPT-58 / OPT-60 live follow-up and grouped-header reservation
+
+20:51:54 source run: user confirms materially smoother card loading/replacement;
+remaining first-Local grouped delay and header jump reviewed. First 39-card Local
+metadata arrives at +8.086 s, grouped render at +8.897 s; PNG enumeration is only
+7.99 ms. Warm-up alone is not established. A late-discovered study changes 11 primary
+cards into 12 grouped cards and remains a separate topology-handoff gate.
+
+Corrected hidden-header admission and width-dependent height reservation in the shared
+sidebar after fail-before real-Qt guards. **432 focused passes / 467 matching mirrors**;
+the running process predates this latest correction, so fresh GUI is pending. No
+Viewer/decode/filter/download change. Whole-session selected F8 max is 4.813 s;
+patient-work max 1.824 s, so full KPI/crash closure is not accepted. 23/23 file-count
+checks pass but are not clinical completeness. Next performance work targets measured
+Local grouped metadata preparation, not speculative extra warm-up. See
+[evidence, tests, limits and rollback](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-2051-source-review-and-study-header-geometry-correction).
+
+## 2026-09-16: shared Unify versus Viewer workstream ownership
+
+User reaffirmed one common coordination trunk feeding independent Fast and Advanced
+viewer backends; VTK modules retain independent execution domains. Unify owns common
+identity, catalog/thumbnail presentation, download/file/state coordination and cache
+invalidation contracts, not backend decode/filter/render or decoded-cache internals.
+Use the [canonical boundary and bidirectional handoff](plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#02-workstream-ownership-and-two-way-handoff-user-decision-2026-09-16).
+Advanced/VTK findings go to the [VTK owner report](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#inbound-handoff-from-unify-2026-09-16);
+shared findings return to the [Unify owner report](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-workstream-ownership-and-outgoing-viewer-handoff).
+The earlier Advanced mirror drift was handed off, not repaired by Unify. The owner's
+later receipt plus a fresh read-only check now show 467 matching pairs, exit 0.
+This is documentation-only scope coordination, with no changed runtime/defaults or
+new GUI acceptance. Existing OPT statuses and outstanding validation gates remain.
+
+## 2026-09-16: OPT-23 / OPT-35 preview-count clarity and audit accuracy
+
+Advanced now displays known total and ready count during preview (`1 / 80 | 8 ready`)
+without widening VTK/slider bounds. Geometry changes are restricted to the contradictory
+camera-audit normal calculation and diagnostic labeling; actual render geometry and all
+filters remain unchanged. Filter-chain maxima in sampled logs reach 10.3 s, so no latency
+improvement is claimed from this UI change. Sixteen new cases; expanded 257 passed /
+5 existing xfailed, exit 0; 467 mirrors match. Fresh source GUI and clinical geometry
+acceptance remain open. See the
+[receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#preview-count-presentation-and-diagnostic-correction-opt-23--opt-35-2026-09-16).
+
+## 2026-09-16: OPT-58 / OPT-60 sidebar presentation correction
+
+The 17:58:46 source session reproduces redundant 141-card single-study rendering
+before a 142-card grouped rebuild. Real-Qt guards also reproduce pre-layout painting,
+header-inclusive totals, terminal reordering and native-parent detachment. Corrected
+the shared card insertion boundary and Local/queued/grouped ownership in `_pw_panels.py`
+and `_pw_thumbnails.py`; retain explicit primary fallback on grouped failure. Mixed
+Local catalogs now publish an ordered prefix, not an out-of-order subset. No viewer,
+decode, download protocol or feature-default change. **428 focused tests pass, exit 0.**
+Initial 466-pair parity passed; final recheck found one unrelated Advanced Viewer
+source/payload drift (exit 1), left to its owner. Guards, tradeoffs and narrow rollback are recorded in the
+[receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-sidebar-presentation-boundary-correction-opt-58--opt-60).
+
+Status: code-verified; fresh source GUI requested, not accepted. The running process
+predates the patch. The transient central-window cause is unconfirmed. Grouped GUI
+PNG/readiness I/O and synchronous card construction remain, as does Local inventory
+contention. Keep visual stability and exact identity/counts as gates before optimizing
+those costs; no crash/KPI/release closure from offscreen passes.
+
+## 2026-09-16: OPT-23 / OPT-35 user acceptance and remaining VTK gates
+
+User confirms Advanced drag/drop background exposure is fixed and previously confirmed
+US color. In the 17:58:46 source session, complete binds match 30/30/88/80 frames and
+live readback reports 80 non-preview slices. Seven complete hot-cache reads match the
+same-series bind order/count; the separate shared-volume cache flags remain off.
+No application/viewer/download ERROR/CRITICAL in the inspected window. Remaining gates
+include the internally inconsistent orientation-audit handedness test, mixed-orientation
+and preview admission, and separate Eagle Eye/MPR/Advanced Analysis image-path passes.
+Long Qt/thumbnail gaps and recurring unclassified COM evidence were handed to owner
+documents. This is bounded acceptance, not closure of all VTK work. See the
+[consolidated receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#consolidated-acceptance-review-175846-source-session-2026-09-16).
+
+## 2026-09-16: OPT-58 / OPT-60 fresh-source evidence and stable-sidebar gate
+
+The 17:14:46 source launch supersedes the bootstrap blocker for the large-number
+follow-up. Two Local streams terminate with 31/20 cards and no prior-key rejection;
+this is partial log evidence, not exact-series/visual acceptance. Remaining evidence:
+18.55-second Local inter-card wait aligned with pixel inventory, and a distinct
+4.90-second grouped-sidebar GUI freeze during 39-card construction/cache reads.
+No new runtime change is made in this review.
+
+User-required acceptance now explicitly includes no overlap, visible reorder/flicker,
+or stale title/count oscillation; preserve history/study order, progress/selection,
+scroll and callback retirement. Add behavioral guards before the next bounded grouped
+cutover; timer-only scheduling is insufficient while callbacks retain disk I/O.
+Local completion-time repositioning and header-inclusive interim totals also need
+coverage before claiming stable incremental presentation. See the
+[evidence and ordered gate](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-fresh-session-review-and-sidebar-stability-gate)
+and [presentation contract](pipelines/thumbnail-pipeline.md#presentation-acceptance-contract-user-decision-2026-09-16).
+Crash closure, matched cold/warm KPI acceptance and packaged verification remain open.
+
+## 2026-09-16: OPT-23 Advanced drag/drop loading continuity
+
+Reproduced transparent native loading cover, missing repaint on branded-cover reuse,
+and stale completion dismissing the next load. Corrected with a native-only opaque
+backdrop, synchronous repaint and generation-scoped completion. No geometry or decode
+changes. Eight new cases including 3/30-image complete-stack checks; expanded **106
+passed, 15 opt-in GUI skipped, 1 existing xfailed**, exit 0; **466** mirrors match.
+User confirmed US RGB appearance. Fresh source native drag/drop/scroll acceptance
+remains open; control ping was unavailable. See the
+[receipt and rollback](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#advanced-dragdrop-loading-cover-and-full-stack-checks-opt-23-2026-09-16).
+
+## 2026-09-16: OPT-58 / OPT-60 large-number follow-up
+
+The 16:51 source run exposed a remaining identity failure: initial allocation allowed
+raw numbers >=1,000,000, while incremental validation correctly rejected those as local
+handles. The shared allocator now aliases these numbers without changing original DICOM
+number, UID or disk location. Mixed Local catalogs can publish their stable ordinary
+subset early; alias-requiring members still wait for full inventory. Owner-local startup
+deduplication prevents a second load after an early metadata-started load completes.
+
+Six fail-before cases plus a separate mixed-catalog latency failure; **344 final passes,
+exit 0**, including 76 cases in the three directly affected guard files. **466 mirrors
+match.** Code PASS, fresh-source live BLOCKED: ping/83-action discovery work, but the
+16:51 process predates this correction. Do not claim total I/O reduction, crash closure,
+packaged acceptance or live speedup. Scope, rollback, tests and next GUI/KPI matrix:
+[follow-up receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-large-number-identity-correction-and-startup-deduplication).
+
+## 2026-09-16: OPT-58 / OPT-60 Local incremental card delivery
+
+The confirmed Local whole-list barrier is corrected at the single-study startup and
+delivery boundary, not by skipping pixel checks. Unique canonical series deliver one
+verified card at a time through a bounded worker/GUI queue. Collision/legacy catalogs
+retain full-inventory key allocation; grouped Server/multi-study ownership, decoding,
+download semantics and the dormant Fast preparation primitive are unchanged.
+
+Code gate: four initial contract failures plus a separately reproduced Local startup
+branch failure before their corrections. Final focused selection: 212 passed, exit 0
+(26 stream guards plus 21 startup guards and adjacent identity/lifecycle/cine suites);
+466 mirror pairs match. Live remains BLOCKED pending human fresh source launch/sign-in
+(documented ping failed; no source main process at preflight). No measured production
+speedup or full crash/Unify closure is claimed. Details, affected files, test guards,
+rollback and the same-workload KPI matrix are in the
+[implementation receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-local-incremental-card-delivery-opt-58--opt-60).
+
+## 2026-09-16: OPT-35 Advanced nonspatial US compatibility
+
+The missing-US viewport defect is code-corrected with a separate display-only ordering
+plan, retaining strict spatial CT/MR geometry. Related reproduced stale-affine and RGB
+mapper-reuse defects are corrected; nonspatial US cannot enter the shared MPR route.
+17 synthetic guards; 245 expanded passes, 5 existing xfails, exit 0; 466 mirror pairs
+match. No measured speedup is claimed. Live acceptance remains pending: the reachable
+15:42:20 source process predates these edits. Scope, rollback and next workflow are in
+the [US correction receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#us-correction-opt-35-code-verified-live-pending).
+
+## 2026-09-16: OPT-23 Advanced VTK first-render measurement prerequisite
+
+The fresh source sample showed a 6102.8 ms GUI gap through Advanced construction and
+initial rendering. Phase timing is now added only to the completed `ImageViewer2D`
+constructor, one identity-free summary per build, with unchanged render/fit ordering
+and executable viewer behavior. Four guards, 257 expanded passes, 6 existing xfails,
+exit 0; 466 mirror pairs match. This is **instrumentation, not a latency fix**; a fresh
+source-GUI test is pending. See the [next-test receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+Generic KPI/Home/native findings remain with their owning documents per the user's scope.
+
+## 2026-09-16: VTK domain review under OPT-35 / OPT-48 / OPT-49 / OPT-56
+
+**Authorized cache prerequisite follow-up:** generation-scoped build invalidation and
+post-build VTK byte accounting are implemented. Four behavioral guards failed before;
+eight new cases pass afterward. Expanded selection: 398 passed, 5 xfailed, 1 xpassed,
+exit 0; 465 mirrors match. No flags or geometry changed. Existing source-app ping/actions
+work, but its 11:52:59 launch predates the patch: live acceptance remains BLOCKED pending
+fresh human source bootstrap. See the implementation receipt in the report below.
+
+The [VTK geometry and performance review](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md)
+covers Advanced Viewer, Eagle Eye, Standard/Zeta MPR and external Advanced Analysis.
+It records two synthetic cache reproductions (in-flight invalidation republishing stale
+results and zero byte accounting through the volume wrapper), existing optimizations,
+geometry constraints and ordered implementation slices. Cache primitives are prerequisites
+before activation; the service remains default-off. Preserve the real MPR X flip and
+explicit oblique planes; older OPT-48 proposals must not override the later geometry contract.
+Initial review verification: 418 passed, 6 existing xfailed, exit 0. The initial review
+had no runtime change; the follow-up above records the subsequent implementation.
+No live GUI/performance acceptance is claimed.
+
+## 2026-09-16: OPT-60 / OPT-35 catalog-first prerequisite
+
+**Fast preparation prerequisite implemented (OPT-58 / OPT-60):** worker-only
+data preparation, single-consumer identity/revision/config-checked adoption and
+optional prepared bridge initialization now have 37 synthetic guards. The follow-up
+prepares immutable image-tag snapshots through the same reader, validates incoming
+Study/Series/source at the bridge, and scopes their use to one synchronous initial
+presentation. Real annotations pass without GUI header/stat work in that scope;
+later mtime-aware demographic refresh remains intact. No runtime caller activates
+this path yet: bounded request scheduling and completed-switch semantics are still
+gates, not lag closure. Final focused runs: 335 passed, one existing xfailed and
+three missing-fixture skips, exit 0; 466 mirrors match. Source live acceptance of
+the new path is pending activation, not PASS. An explicitly requested restart is
+only baseline/bootstrap verification until that integration exists.
+See the [implementation receipt and next gates](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-fast-initial-display-preparation-primitive-opt-58--opt-60).
+
+**Fast lag pre-change review (OPT-58 / OPT-60):** confirmed synchronous switch
+consumers depend on an already-created bridge/count; a fire-and-forget conversion
+would break slider, progressive and loading semantics. Selected prepare/validate/
+GUI-commit direction, with worker-owned data, generation/revision/lifetime checks,
+bounded memory/work and preserved cine/WL behavior. Native drag is user-accepted;
+do not conflate it with startup decode latency. **186 baseline tests passed,
+1 existing quarantined xfailed**, both direct pytest runs exited 0. No runtime
+fix or new live/KPI acceptance. Full dependency matrix, rejected approaches and
+implementation gates: [Fast impact review](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-fast-initial-display-change-impact-review-opt-58--opt-60).
+
+**11:52:59 fresh-source sample:** existing MCP Local open/switch/scroll passed
+for distinct-UID same-number still/cine (25 images, two cine objects / 424 frames,
+independently header-verified) and two linked studies / five series. Exact Study/
+Series UIDs and handles remained stable; cine last-frame captures were nonblank.
+Native mouse drag, close/reopen, Server, late-arrival and heavy cold gates remain
+open. Performance is NOT accepted: 35 session stalls, max 4673.3 ms, with repeated
+Fast GUI `dcmread` stacks during cine startup; retain as a separate Fast-domain
+investigation. No scoped ERROR/CRITICAL or main access-violation mention; one
+non-terminal COM mention. See the fresh-source receipt in the report below.
+
+Architecture review selected cached, identity-keyed previews plus background
+verification, not a new viewer/downloader or blind DB/PNG rendering. Do not feed
+partial lists to the old sink: five fail-before cases proved alias theft, missing
+series and wrong-card metadata. The existing allocator/sink now reserves admitted
+study-local handles across subsets and late collisions, retains exact prior UID
+paths, and prevents foreign-study metadata fills. Fifteen final guards; 181 focused
+plus 107 adjacent passes, exit 0; 465 mirrors match. Count-authority policy, decode,
+Download Manager and rendering cadence are unchanged. This is a correctness
+prerequisite, **not a measured lag fix or incremental-display activation**.
+The initial 10:32 source process predated this patch; the later sampled receipt
+above provides partial GUI acceptance. Next: GUI-owned generation-scoped card upsert, then trusted
+catalog-first delivery and validated-summary reuse. Evidence, research, boundaries
+and narrow rollback: [catalog-first review](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-catalog-first-review-and-stable-handle-prerequisite-opt-60--opt-35).
+
+## 2026-09-16: OPT-60 / OPT-58 Local metadata gate
+
+**Second slice: shared pixel facts, GUI pending.** The fresh source test still
+took 31.8 seconds to hand off Local metadata despite finding PNGs around 0.7 s;
+the first routing correction was insufficient. The existing Local inventory now
+coalesces positive per-file probes with version-checked, bounded 30-second reuse
+and requests only needed header values. No projection/classification bypass.
+Six fail-before cases; 24 final new guards, 181 focused passes / three unavailable
+clinical-fixture skips, exit 0; 465 mirrors match, compilation/diff checks pass.
+Warm off-app repeat passes fell from ~1.9-2.0 s
+to ~0.16 s with all per-series counts unchanged; first uncached passes ~1.85 s.
+This is not measured GUI improvement. New aggregate instrumentation will separate
+probe work/wait from delivery on the next source run. Scope, bounded-cache limits,
+rollback and live gate: [inventory follow-up](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-local-pixel-inventory-reuse-follow-up-opt-60--opt-58).
+
+Removed the redundant manifest scan before selecting the existing Local DB metadata
+route in `_hp_series.py`; only the two `or` operands changed order. Server growth,
+download-completeness authority, offline routing and UID/count contracts are unchanged.
+The pre-fix source session recorded a 7,022 ms GUI gap with this manifest traversal
+on its stack; two larger Local metadata handoffs took about 25/36 seconds, not all
+attributable to this one gate. Five fail-before cases; 18 new guards and **77 focused
+passes**, exit 0; **465 mirror pairs match**. Fresh-source GUI and matched-workload
+timings remain OPEN. No measured post-fix latency or crash-prevention claim.
+Evidence, adjacent remaining scans, command and narrow rollback:
+[Local follow-up](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-local-metadata-route-follow-up-opt-60--opt-58).
+
+## 2026-09-15: crash closure -> Unify acceptance -> KPI acceptance
+
+**Fourth evidence slice (OPT-60 / OPT-21):** fixed reproduced nested/concurrent
+shutdown admission in the existing lifecycle manager. Added callback-versus-owner
+observations and a nonblocking consultation probe including retired owners; no drain
+barrier, Qt/VTK/GC reorder or download change. Corrected the finalization claim before
+log shutdown. Twelve fail-before cases; 105 focused passes, four build deselections,
+exit 0; 465 mirror pairs match. Fresh-source application exit remains pending,
+including the previous native-header hardening. Original crash prevention remains
+OPEN. Evidence, scope, rollback and live gate are in the fourth
+[closure-audit follow-up](reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+
+**Third evidence slice (OPT-60 / OPT-21):** process-exclusive native capture and
+coordinated reader cutover implemented. New files include PID plus a unique session
+token; legacy evidence remains readable/unattributed. External probes, filter,
+dashboard and native GUI guards discover both; the retired raw GUI counter explicitly
+redirects instead of reading files or returning false zero. Six initial failures plus
+three subsequent guards; 19 new isolation cases, **120 passes / 4 opt-in build deselections**,
+exit 0, and 465 mirror pairs match. User-authorized 22:05:08 source launch: Home/menu
+smoke, 77-action bridge and mixed-format health probes passed. Final header-publication
+ordering was hardened after this launch and still needs the next fresh-source gate.
+One startup COM record
+was non-terminal; no exit/crash-prevention claim. Actual shutdown owner completion is
+next, not a reason to alter Qt/VTK teardown speculatively. Full scope/rollback:
+[third closure-audit follow-up](reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+
+**Second evidence slice (OPT-60 / OPT-21):** fixed the external MCP scenario's
+no-op `assert_health` and removed its native-log reads from the GUI command bus.
+Use a bounded cumulative byte window, verify capture-start/current process identity,
+and fail closed on unavailable or rewritten evidence. A retrospective health
+snapshot is explicitly inconclusive, not a guessed last-N-minutes crash count.
+7 initial failures; 32 new guards, 93 focused passes, exit 0. A read-only live
+two-assertion smoke plus final check passed over approximately 0.45 seconds; no
+patient GUI or runtime crash closure is claimed. The legacy raw adapter, coordinated
+sink migration, shutdown owner completion and ignored download-wait test result
+remain open. See the second follow-up in the
+[closure audit](reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+
+**First corrective evidence slice (OPT-60 / OPT-21):** fixed the offline native
+filter's reversed header/stack association and input/output alias overwrite hazard.
+12 fail-before cases; 20 final new guards and 42 adjacent passes, exit 0. Existing
+native text round-trips exactly in memory; no clinical log export or runtime change.
+Per-process capture must migrate its readers together, then verify owner completion;
+do not confuse this diagnostic repair with crash prevention. See the first follow-up
+in the [closure audit](reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+
+**19:12-19:20 source follow-up:** 149 focused code passes; three patient tabs and
+downloads exercised. Independently validated 251 MR DICOM files (65/114/72) across
+21 series, unique SOPs and correct study/selected-series identities; three separate
+document tasks completed in the queue. Native thumbnail input, wheel, surviving-tab
+close/reopen and second-viewport/last-slice output passed. No fresh recorded crash;
+application exit was not tested. Keep Preview identity/status convergence, stale DM
+summary/details, and a 458 ms GUI metadata read OPEN. This is sampled acceptance,
+not completion of Unify or the shutdown gate. The [closure audit](reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md)
+records exact counts, tool fidelity, KPI limitations and remaining scenarios.
+
+User-confirmed patient-tab native drag works; the earlier unfinished automation is
+not an application bug. Rechecked **124 focused crash/ownership guards**, all pass;
+465 payload pairs match. No new Windows crash event was found after the 16:51 source
+launch, but the process was absent after the 17:40 log tail without a shutdown
+completion receipt. Exit intent is unconfirmed; native exit faults are not closed.
+The shared native log also requires process attribution, not last-header guessing.
+
+Continue existing OPT-60/OPT-35/OPT-04 in order: attributable shutdown/owner completion;
+UID/revision and durable download-completion convergence with the remaining live
+matrix; then matched KPI optimization. Latest 42 threshold-selected stalls include
+a 416.6 ms GUI DICOM cache miss; no broad performance acceptance or Unify completion
+is claimed. See [the evidence and ordered acceptance gates](reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+
+## 2026-09-15: OPT-04 file-count gate and retry destination ownership
+
+**Fresh-source sampled live update:** user-requested 16:51:38 launch and human
+sign-in; ping/action discovery, native Home-card double-click and wheel passed.
+Five MR series / 117 files matched independent disk counts and both terminal
+Overall Progress displays; count checks 0.97-2.55 ms including a separate document.
+Second viewport rendered the exact series through MCP. Native drag remained
+unfinished and was cancelled: not passed. Explicit pause/retry, in-flight progress,
+collision recovery and durable SOP-manifest proof stay open. Main process survived
+one startup non-terminal COM event; no crash closure. New 416.6 ms GUI DICOM-read
+trace belongs to the separate viewer cache-miss workstream. Full receipt below.
+
+Known-count socket series no longer report success below the existing resume-file
+count threshold; duplicate filenames no longer inflate progress. One final scan
+runs off the event loop. Consumer review also reproduced same-number series retry
+entering a sibling folder: reuse the first UID-scoped destination instead.
+12 initial socket failures and 2 coordinator failures before their corrections;
+23 new guards, **217 expanded passes including builder guards, exit 0**, 465 mirrors
+match. No UI redesign, encoding, scheduling or test-driven live DB mutation in the
+code phase. Source GUI is now partial as above; durable SOP/manifest completion remains OPEN, as do
+historical encoding/payload debt and GUI DICOM-read latency. See
+[scope, limits, verification and rollback](reports/DOWNLOAD_FILE_COUNT_GATE_2026-09-15.md).
+
+## 2026-09-15: OPT-04 bounded socket-response reliability slice
+
+Reproduced the ten-broadcast false failure, fragmented response-prefix parsing,
+and request/connect self-deadlock. Correct only the existing DM client and payload:
+exact prefix accumulation, elapsed broadcast wait budget with restored body timeout,
+invalid-stream retirement and an owner-reentrant serialization lock. UI/progress,
+priority, batch indexing, encoding, files and worker scheduling remain unchanged.
+This correctness slice is not download optimization or the lifecycle cutover.
+
+31 fail-before cases; 38 final wire cases including real local socket exchange.
+Expanded boundary: **189 passed**, builder: **5 passed**, exit 0; 465 mirrors match.
+Known baseline remains red: removed payload-key helper prevents collection; four
+tolerant-decode guards and an old count-limit guard fail before this slice. Git
+attributes the removals to July 25, not the current Unify changes. No test debt is
+hidden. Fresh source GUI, durable disk/manifest completion and final IPC/convergence
+remain open. See [scope, provenance, tests, live gate and rollback](reports/DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md).
+
+## 2026-09-15: OPT-22 user-initiated browser opening feedback
+
+The latest first browser open produced a 35,375.9 ms GUI stall and a temporally
+correlated Windows AppHangTransient event; the process recovered. The bounded
+correction adds a pre-import header status strip, indeterminate bar and temporary
+application-local input gate while preserving synchronous Widget-or-None callers.
+No nested event pumping, worker-side Qt construction or warmup re-enablement.
+This is wait feedback/reentry protection, **not removal of the native GUI block**.
+
+Four initial guard failures; 12 final real-Qt guards; 160 focused passes plus one
+mirror-parity pass, all exit 0. New helper added to the existing browser payload;
+465 mirrors match. Fresh-source native GUI acceptance remains pending because the
+running app predates this change. See [implementation, exact evidence, live gate
+and scoped rollback](reports/WEBENGINE_OPEN_WAIT_STATUS_2026-09-15.md).
+
+## 2026-09-15: OPT-60 consultation producer retirement
+
+Fixed a reproduced stop-contract gap: delayed startup survived stop, late results
+could still persist/notify, and completed or identity-replaced QThread owners were
+retained. Own/cancel both timers, invalidate scan generations, cooperatively stop
+between network stages, and release workers only after finished on the owner thread.
+The existing MainWindow lifecycle registry now requests Poller stop before DB cleanup;
+aboutToQuit is a fallback and autostart refuses new work during application close.
+
+Code: **367 passed, 3 warnings, exit 0**, including 15 new real-Qt lifecycle guards.
+Nine initial failures, three integration failures and one later batch-reentrancy
+failure were reproduced before their respective corrections. Two payloads synced;
+464 mirror pairs match. Source GUI remains blocked on the documented test-server
+connection. Native exit faults, complete worker drain, GC and global KPI acceptance
+remain open. No viewer/decode/download behavior change. Existing lifecycle-manager
+timeout wording corrected: it is post-return reporting, not an enforced deadline.
+See [scope, remaining architecture work, verification and rollback](reports/QT_POLLER_LIFECYCLE_2026-09-15.md).
+
+Next structural step: instrument/extend the existing lifecycle manager with explicit
+stop-request/completion phases and an event-driven drain gate; first prove it with
+blocked workers and close/reentry tests. Do not change hard exit or global GC in the
+same slice. Preserve Fast, Advanced and VTK ownership domains and qasync's distinct
+executor shutdown semantics.
+
+## 2026-09-15: OPT-60 signature import race; exit faults remain separate
+
+Two synthetic guards reproduced the installed PySide6 6.10.2 `Reloader.update`
+KeyError seen at 12:08:10. A version/binding-gated core snapshot adapter now preserves
+the existing mapper owner and parser entry point without changing credential
+selection or hiding exceptions. Native access violations at 10:57/11:04 followed
+normal application shutdown; they are not proven fixed by this adapter.
+Preparation traces now separate queue, scan and GUI delivery; no scheduling or
+download behavior change. See the [evidence, scope and rollback receipt](reports/QT_SIGNATURE_IMPORT_RACE_2026-09-15.md).
+
+Code: 72 focused passes, exit 0; 463 mirror pairs match. Expanded builder selection:
+85 passes / one staged-config parity failure (two unchanged staged templates).
+Fresh GUI is pending: existing 12:25 source predates this patch, and documented
+MCP client ping is unavailable. Do not advance native-crash/performance closure.
+
+## 2026-09-14: OPT-60 startup thumbnail enumeration preparation
+
+The observed 4.1-second `pipeline_manager -> show_exist_thumbnails -> iterdir` seam now prepares
+its listing with the existing asyncio/qasync executor, not on GUI. The exact immutable tuple is
+passed to the original startup count/render decision: pending preparation is not an empty cache
+and never initiates a fabricated cache-miss download/import. Layout is created once on GUI before
+the await, so an arriving first-series signal has a viewport; delivery never reconstructs it.
+Grouped Server startup keeps its original early-render skip and introduces no extra primary scan.
+Local/Import still uses its existing authoritative identity/frame-count projection, not PNG stems.
+
+One tracked task per owner coalesces duplicate starts. Study/path, terminal-close and native-owner
+checks reject obsolete preparation before layout and after await. Exit cancels preparation before
+viewer cleanup. The worker only owns immutable inputs and directory data; cancellation does not
+forcibly stop an in-flight filesystem read. Existing log trace records exclusive `scan_ms` and
+`prepare_wait_ms` (executor/scheduling plus read) separately. No dependencies/modules/flags added.
+
+Five startup guards failed before implementation; an additional adversarial test caught a viewport
+not ready during the await and led to the prepare-once layout correction. The final 18 new guards
+include real offscreen Qt/qasync heartbeat during a 150 ms synthetic scan, native owner deletion,
+close/cancel/identity invalidation, exact hit/miss routing, coalescing and teardown ordering.
+See the [audit and implementation receipt](reports/UNIFY_PATH_COST_AND_STALL_AUDIT_2026-09-14.md).
+
+An additional shutdown guard proved that cancellation on an already-closed event loop must not
+abort viewer cleanup; that RuntimeError is logged and terminal cleanup continues. The expanded
+selection includes the prior import/layout and overlay-reentrancy guards. The three changed
+mixins are core-only (no plugin mirrors); read-only parity verification: 462 pairs match.
+
+**Final code receipt:** 170 passed, 6 existing SWIG deprecation warnings, 21.09 s, exit 0,
+direct pytest with `-p no:debugging --reruns 0`. Includes all 18 new preparation cases and the
+affected Local/collision/multistudy/progress/lifecycle/import/overlay selections. Expanded
+verification first exposed a pre-existing progress fake missing `_disposed`; only that fake
+was initialized to the existing live-manager contract. No production progress change. Source
+syntax and scoped diff checks pass. This is not the full repository fast lane or a live pass.
+
+**Not whole-pipeline closure:** grouped availability `stat`, pixel loading/decoding, progressive
+refresh/Education/direct no-loop compatibility scans, row-status DB and GUI batch/deletion costs
+remain staged. No source KPI improvement, native-crash closure or installed acceptance is claimed.
+**Fresh sampled GUI receipt (recorded September 15):** human source launch September 14 23:16:05,
+PID 1123404, includes the final edits. Native Home double-click/visible pixels/wheel/normal close
+passed for a grouped eight-image series and Local non-first 25-image series; Local reopen preserved
+the count and selected series. MCP client was unavailable this launch, so exact UID inspection
+and the extended acceptance matrix remain open. Local scans: 3.90/2.26 ms; preparation waits:
+358.88/319.21 ms. The gap includes scheduling/delivery and is not yet exclusively attributed.
+Fixed window through 23:25:50: 64 F8 stalls, median 163.2 ms, p95 581.8 ms, max 1799.1 ms;
+remaining stacks include startup, backend filesystem/config reads and deferred close GC.
+No sampled GUI enumeration stack or new app ERROR through 23:25:47; no native access violation.
+This is a sampled correctness pass, not a matched speedup or no-lag claim. See the linked audit
+for evidence, native COM qualification and remaining cold/cine/close/Advanced/download gates.
+Do not reuse the older launch receipt as evidence for this slice. Roll back only its changes in the three core
+mixins if the fresh gate fails, preserving earlier lifecycle/identity and unrelated dirty work.
+
+## 2026-09-14: OPT-60 performance acceptance audit — not yet green
+
+Before further consolidation, see the [current cost/stall audit](reports/UNIFY_PATH_COST_AND_STALL_AUDIT_2026-09-14.md).
+No runtime changes in this audit. Re-reading all relevant rotations with live-writer sharing,
+exact PID and the existing 21:04:04–21:17:55 window finds **81 stalls, maximum 4116.3 ms**;
+four successive F11 samples remain in `show_exist_thumbnails -> get_image_files -> iterdir`.
+Grouped availability, preview metadata checks and row-status DB work also reach GUI I/O.
+The old scan is not a demonstrated regression from the new card-effect timers; it remains
+reachable around the unified path. The earlier sampled GUI pass below is a correctness receipt,
+not a latency pass. Absence of ERROR records never established absence of stalls.
+
+Five-repetition synthetic A/B: 200-card build medians 586.112/642.690 ms (HEAD classes/current),
+with variability on repeat; 200-card native deletion max 102.753 ms in the first run. Home's
+existing progressive renderer means this is not a measured synchronous Home freeze. Coalescing
+10,000 submissions into 200 latest entries is cheap but excludes paint/download work. Fresh
+focused lifetime suite: 31 passed, 6 SWIG warnings, exit 0. No new live acceptance lap.
+
+Next gate: instrument and guard the observed synchronous preparation/availability seams, use
+the existing worker projection and identity-scoped delivery, then budget GUI application and
+measure first/all-card latency plus event-loop delay. Keep status DB work separate. Establish
+authoritative completion before download optimization; require matched viewer-only/overlap,
+Fast/Advanced, cold/warm and close/retry resource/stress receipts before calling Unify optimized.
+
+## 2026-09-14: OPT-60 sampled source GUI receipt (21:04 launch)
+
+The user explicitly requested source launch; main PID 925068 started 21:04:04, after the
+20:57:47 card-effect edit. Human sign-in was completed before this lap. Existing local test
+client ping and action discovery passed; no installed build, hot reload, authentication
+automation or new control path was used. This removes the fresh-launch blocker below.
+
+**Sampled GUI PASS:** a server-linked two-study candidate showed 13 Home cards. Native Home
+card double-click opened the requested series with 8 slices; requested/rendered Series UID
+matched and rendered Study UID belonged to the exact candidate's distinct member set. Native
+wheel changed visible slice 5/8 to 6/8, preserving both identities. Native close returned the
+tab count from 5 to 4; an empty-result search cleared the table and Home cards to zero. Exact
+reselection restored 13 cards; native double-click reopened the same Study/Series with 8 slices
+and tab count 5. A surviving original tab still rendered its own first series (5 slices,
+Series UID matched) on native card click. No name-based patient joins or clinical fixtures.
+
+Two computer-control interruptions were not product defects: an expired screenshot handle
+required reobservation, and an unrelated foreground window intercepted one input. Fresh
+observation/activation and one retry succeeded. The failed/no-viewport command was not counted
+as a render pass. No native OLE drag was performed or inferred from downstream commands.
+
+**Logs, 21:04:04 through 21:17:55:** app has 2 ERROR records for one attachment worker failure
+at 21:06:26 (`GetStudyAttachments` non-success -> RuntimeError); viewer has 0 ERROR; download
+has 7 ERROR records at 21:08:47–21:09:03 for repeated `Response too large` failures and final
+series failure. These precede the agent lap; they are not an authentication failure, blanket
+server-cause diagnosis, or evidence of thumbnail timer regression. From 21:10 through the
+cutoff there are no new ERROR/CRITICAL records in the reviewed app/viewer/download logs.
+No deleted-Qt/QThread-destruction markers were found. Native log: 0 access violations, one
+startup non-terminal COM event; Windows Application 1000/1001/1002 review found no matching
+Python/AI-PACS crash/hang events. Do not infer absence of stalls from missing parsed metrics.
+
+**Still open:** real progress -> retry/Ready -> close, concurrent completion with a surviving
+tab, Advanced-panel independence, genuine changed-payload same-identity refresh and large
+progressive replacement, native drag, offline/cine/heavy-import/stress/installed acceptance.
+The 441-pass code receipt remains separate; no source code changed in this live-verification
+turn. The attachment and response-size incidents need separate bounded diagnosis under the
+existing network/download backlog; do not increase protocol size caps blindly or optimize
+downloads before establishing authoritative completion. Direct map-clear/worker-generation
+Unify work remains staged. This sample does not close all OPT-60 or historical crash gates.
+
+## 2026-09-14: OPT-60 card-owned effect retirement
+
+**Default-on; source GUI pending a fresh launch.** The next bounded slice preserves the
+purpose of card-local effects: 400 ms progress interpolation, 450 ms delayed presentation of
+Ready and its 2500 ms label interval. These are UI effects, not download-completion authority.
+Seven corrected baseline guards failed / one passed (exit 1): old Ready overwrote newer
+progress, an old hide concealed new progress, cleanup left animation running, terminal updates
+were accepted, manager reset/dispose did not retire card effects, and the animation lacked a
+native parent. The first test draft used an invalid instance enum; it was corrected and the
+baseline rerun before production changes. No native crash was reproduced by these guards.
+
+`CircularProgressborder` now owns two reusable single-shot timers and its progress animation.
+New state/progress cancels superseded effects; terminal cleanup rejects late effect setters,
+stops both timers and all direct-child property animations (including overlapping priority
+flashes), and leaves children/visible pixels parented until normal owner deletion. Manager
+reset/dispose calls this before dropping its map. Normal progressive rendering is not disposal.
+An adversarial transition check caught a stuck Ready label after timer cancellation; two
+additional fail-before guards now require pending/retry to remove that obsolete label.
+
+**Historical correction:** the constructor does have `theme_manager`; the old cleanup accessed
+the nonexistent card `_on_theme_changed`. Its outer catch therefore skipped animation cleanup.
+The prior claim that an absent guarded attribute prevented that abort was incorrect. No owner
+call to this cleanup was found in the audited paths, so this is a demonstrated method defect,
+not evidence that it caused the earlier clinical crash. The manager owns/disconnects its theme
+subscription; a card must not impersonate that receiver.
+
+Changed runtime: `PacsClient/pacs/patient_tab/utils/thumbnail_manager.py` only. Guard:
+`tests/code/ui_services/test_thumbnail_card_effect_lifetime.py` (14 real-Qt synthetic cases),
+including native parent deletion, independent live sibling, snapshot preservation and bounded
+timer count. Final code receipt is recorded in section 15. Core-only source; no dependency,
+mirror source, worker, filesystem/network/DB operation, decode/geometry/count/key/route change.
+Final expanded gate: **441 passed / 1 existing opt-in GUI KPI skip**, 6 existing SWIG warnings,
+31.14 s, direct pytest exit 0; **462 mirror pairs match**. Includes the 17 import/overlay-crash
+guards and adjacent Home, manager, multi-study identity, active/count and priority boundaries.
+No speedup, full-build, lint, installed-runtime or all-crashes-fixed claim.
+
+The documented client passed ping then action discovery. The running source main process
+started at 20:41:10, before this change: do not count it as live acceptance or hot reload it.
+After human source relaunch/sign-in, exercise real progress/Ready transitions, Home replacement
+and clear, native exact-series open, close/reopen with another tab alive, and the independent
+Advanced panel; verify rendered identity/counts and session-scoped logs. No fabricated download
+completion events. Code and GUI remain separate gates.
+
+Previous-slice log receipt (20:41 run, reviewed before this edit): no app/viewer ERROR, three
+normal closes, no access violation or deleted-Qt markers in the scoped review. Four download
+ERROR records comprise a broadcast-response-limit event (three records) and a cancellation;
+they are not an authentication failure or proof of a server-side cause. No definitive completion
+marker occurred. Startup stalls remain; these observations do not close GUI/stress acceptance.
+
+Next: audit direct legacy map clears and worker-image generation identity before changing those
+boundaries; retain Home drag/priority migration and authoritative completion as separate
+OPT-35/OPT-04 work. Rollback only this card effect/manager-hook slice and its guards together,
+preserving prior manager timers, signal relay, identity and paint-atomic swap changes.
+
+## 2026-09-14: OPT-60 manager-owned callback retirement
+
+**Default-on, code PASS; fresh-source GUI BLOCKED.** The next bounded lifecycle slice
+reproduced old pending progress being delivered after `reset_all_states()` and a retained old
+card selecting the same numeric key after reset/replacement. The original seven guards failed
+(exit 1): the two behavioral defects, missing terminal-disposal contract and missing patient-exit
+wiring. Two additional Home-owner guards failed before Home integration (2 failed / 10 passed).
+
+`ThumbnailManager` now owns its six delayed-work scheduling sites through parented single-shot
+timers and a generation-scoped callback registry. Reset cancels those timers and clears pending
+progress/throttling state before reusing the manager. Terminal `dispose()` is idempotent: it
+retires deferred work, disconnects its own theme/image receivers, releases the bound viewer
+callback and clears series/button maps. Late update/action entry points reject terminal owners;
+card click/retry/selection callbacks require their creation generation and current card mapping.
+Normal keys, count semantics, coalescing intervals and rendering policy remain unchanged.
+
+Patient exit retires the main and Advanced-panel managers independently before viewer teardown.
+Home uses a weak registry for both render schedules and disposes retired managers on clear,
+including keep-widgets clears. It does not delete/reparent native cards: existing deferred
+deletion and the paint-atomic replacement still own that work. Normal progressive completion
+does not dispose a live manager. No new worker, dependency, feature flag, disk/network/DB work,
+forced GC or cross-viewer mutable state was introduced.
+
+Files: `thumbnail_manager.py`, `_pw_lifecycle.py`, `right_panel_widget.py`; new guard
+`tests/code/ui_services/test_thumbnail_manager_retirement.py` (17 synthetic real-Qt tests).
+A final adversarial guard exposed disposal after native timer/manager destruction; validity
+checks now skip already-destroyed Qt resources while still releasing Python-owned state.
+Final adjacent selection: **424 passed / 1 existing GUI KPI skip**, 6 SWIG warnings, exit 0,
+including the existing 17 import/overlay-crash guards. Compile and scoped diff checks pass;
+**462 mirror pairs match** (all three runtime files are core-only, no mirror update required).
+No full-build, lint, installed-runtime or performance-improvement claim.
+
+The documented client ping failed at this handoff and the prior main PID was absent. No
+automatic launch/recovery/login was attempted; the human was asked for a fresh source launch
+with `AIPACS_TEST_SERVER=1`. The earlier 20:03 live receipt predates this patch. Acceptance:
+small/large Home replacement and empty clear, same-identity refresh, native exact-series open,
+progress followed by close/reopen, a remaining live tab and independent Advanced panel, then
+session-scoped log/resource review. Do not fabricate completion events or use clinical DB tests.
+
+Remaining lifecycle boundaries are explicit: `CircularProgressborder` owns separate ready-label
+timers/animations, including a historical misplaced cleanup disconnect; these were not changed.
+Already-running card animations, delete-without-explicit-owner-close reachability, direct legacy
+map-clearing callers and worker-image identity across a reusable reset require their own evidence.
+This is manager deferred-work/owner retirement, not closure of every widget resource or a proven
+fix for the earlier native crashes. Home drag/priority migration, completion convergence and
+UID-cache migration remain separate OPT-35/OPT-04 work. Rollback only this slice's manager,
+patient-exit and weak Home-registry hunks together; preserve previous relay/action/swap changes.
+
+## 2026-09-14: OPT-60 fresh-source sampled GUI acceptance (20:03 session)
+
+The user explicitly requested source launch; one source launch (main PID 1113400,
+20:03:33) contains the latest 19:17:26 runtime edit. Home was observed after human sign-in;
+no authentication was automated. The documented local client passed `ping` then `list_actions`.
+This supersedes the connectivity/old-process blocker below, not the remaining acceptance gates.
+
+**Sampled GUI PASS:** a server-linked two-study case displayed 13 Home series; an empty-result
+query cleared both table and preview to zero; restoring the exact current row restored 13 cards.
+Native Home-card double-click displayed the first series with 8 slices. Rendered Series UID
+matched the first series entry, and rendered Study UID belonged to the verified case membership.
+Native wheel input changed visible slice 5/8 to 6/8 with both identities preserved. Native tab
+close, reselect and native double-click reopened the same Study/Series with 8 slices; tab counts
+were 3 -> 2 -> 3. Pixels were observed, not inferred from command acknowledgements.
+
+**Still unverified live:** a genuine changed semantic payload for the same ordered identities
+through the small non-progressive swap; large/progressive -> immediate owner replacement;
+real priority/completion after close; extended identity/offline/cine and native-drag matrices.
+Reselection/opening alone does not prove no blank frame or wrapper collection. No completion
+event was fabricated. Previous code evidence remains 390 passes / 1 existing skip plus 17
+separate import/overlay guards; those suites were not rerun during this GUI-only lap.
+
+Session-scoped log review through 20:12:47 found no ERROR/CRITICAL, deleted-object/traceback
+markers or access violation in the reviewed app/viewer/download/DB/native logs. There were
+38 main-thread stalls, maximum 1909.1 ms, and one non-terminal startup COM `0x8001010d`
+in the main PID. Close exit was 34.7 ms; deferred GC was 154.5 ms. Zero real completion
+emission markers occurred. These are sampled observations, not a performance comparison,
+Windows-event-log audit, heavy-import crash closure or installed-build acceptance.
+
+**Control-tool fidelity finding:** `get_thumbnails_data` returned one row while native Home
+and patient sidebar showed 13 and `get_series_info` returned 13. Do not use that adapter's
+count as the displayed-card oracle. Its current implementation reads `lst_thumbnails_data`;
+the reason for the incomplete projection needs a separate guarded adapter investigation.
+Clinical responses stayed transient; no identifiers/images or raw payloads were added to docs.
+No runtime code changed in this lap.
+
+## 2026-09-14: OPT-60 bounded same-identity Home refresh swap
+
+**Implemented by default; code PASS, live BLOCKED.** The next independent scheduling seam fixes
+the documented clear-before-deferred-build gap. Three real-Qt guards failed before correction
+(3 failed / 8 passed, exit 1). This is a paint-continuity fix, not a native-crash diagnosis.
+
+`right_panel_widget.py` retains old cards only for a non-progressive request at or below the
+existing immediate threshold whose ordered immutable action identities exactly match the old
+signature and are all known. It retires callbacks/timers immediately, then removes old cards and
+builds replacements within the existing paint-disabled render turn, activating layout before
+re-enabling paint. The input-synchronous deferral and generation checks remain. Changed/unknown
+identity, changed membership/order, explicit clear, large sets and explicit progressive requests
+keep immediate clearing; no old patient preview is deliberately preserved across identity changes.
+Full signature coalescing remains. A preparation-failure guard caught retained stale cards in the
+first implementation; failure now clears the current pending replacement and allows a retry.
+
+Final `test_home_small_refresh_swap.py`: **16 guards**, including supersession, input retries,
+grouped repeated numbers/unnamed series, old-action rejection, preparation failure and unchanged
+large-set delegation. Expanded gate **390 passed / 1 existing GUI KPI skip**, 6 SWIG warnings,
+exit 0. Separate existing import-registration/overlay-crash guards: **17 passed**, exit 0.
+Compile/diff checks pass; **462 mirror pairs match**. One core-only runtime file changed; no
+new flag, dependency, decoder, downloader, database, native viewer or package definition.
+
+The existing MCP tool is not exposed; its documented local client `ping` failed. Observed
+Python `main.py` processes started at 18:29:49, before the latest edit at 19:17:26. Do not count
+that process or the older 17:57 live lap as acceptance. No relaunch/login/recovery was attempted.
+After human source restart/sign-in with the test server enabled, verify same-case metadata
+refresh without blanking, changed-patient/empty search clearing, repeated replacement, exact
+Home double-click output and session-scoped logs. This is paint-atomic replacement, not a
+transactional all-or-nothing guarantee for individual card-build failures or a benchmark.
+Rollback only this keep-widgets/removal-helper/swap/error-retirement slice and its guard.
+
+### Implementation and previous-crash status
+
+| Area | Evidence-backed status | Still required |
+|---|---|---|
+| Large local import / partial-layout Qt re-entry | September 5 worker-registration and no-nested-event-loop fixes remain in source; 17 import/overlay guards pass again | Fresh heavy-import/open/close replay and native/Windows log evidence; no blanket crash-closure claim |
+| Thumbnail heap corruption during stylesheet repolish | September 1 scoped early root-style correction exists; thumbnail guards remain in the expanded passing selection | Relevant source/installed stress acceptance; not re-diagnosed by this UI patch |
+| Home identity, search and queued render retirement | Code guarded; earlier sampled Server/Local and exact-series open live PASS | Extended offline/pins/cine/multi-study matrix |
+| Patient-tab outward signal lifetime | Code guarded; sampled close/reopen live PASS | Real priority/completion events with a closed tab |
+| Home owner retention and small refresh swap | Code guarded and default-on | Fresh-source live acceptance |
+| Generic manager timer/state disposal, native drag/stalls, priority migration, definitive download completion and later UID-cache work | Not closed by the completed slices | Independent guarded changes/measurement; OPT-04 before download-path optimization |
+
+## 2026-09-14: OPT-60 Home render owner retirement
+
+**Default behavior confirmed (user request, 2026-09-14):** the recent Home action/metadata,
+search/render retirement and patient-tab signal-lifetime corrections are unconditional normal
+runtime paths, not opt-in patches. No activation environment variable, configuration edit or
+new feature flag is required. Inspection found no default flip needed; no unrelated experimental
+flags were enabled or safety switches removed. The focused default-path recheck passed 90 tests,
+6 SWIG warnings, exit 0. This confirmation does not close pending fresh-source/live or installed
+acceptance gates, and does not change the running process until source restart.
+
+**Fixed and code-verified; fresh-source live gate pending.** A completed progressive Home render
+left `_progressive_manager` attached after `clear_content()`, retaining deleted card wrappers
+and the old action map even through a later immediate render. The Home action closure also
+strongly retained the panel; invoking it after native panel deletion raised a deleted-object
+RuntimeError while trying to schedule work. These are deterministic ownership findings, not
+attribution of a clinical crash or evidence that the theme signal itself leaks a manager.
+
+`right_panel_widget.py` now drops only the retired progressive-manager reference after stopping
+its timer. Card callbacks retain their manager until the existing deferred card destruction;
+there is no eager native deletion, state reset, forced collection or new disposal API. The shared
+Home action factory uses a weak panel reference and checks native validity plus the render token
+both before queueing and at delivery. It retains Qt-context zero-delay dispatch. A normal timer
+finish is NOT retirement: current cards, counts, identity and double-click remain usable.
+
+Guard `tests/code/ui_services/test_home_render_owner_lifetime.py`: **4 failed / 3 passed before**,
+exit 1; final **10 guards**. Expanded Home/search/thumbnail/multistudy/close/download boundary
+selection: **374 passed, 1 existing opt-in GUI KPI skip**, 6 SWIG warnings, exit 0. An initial
+expanded command used two incorrect close-test paths and collected no tests; the corrected run
+above is the acceptance evidence. Compile and diff checks pass; **462 mirror pairs match**.
+The sole runtime file is core-only. No change to generic ThumbnailManager or patient-viewer
+states, study/series keys, object/frame counts, render cadence, input-dispatch guards, download,
+decode, Fast/Advanced separation, dependencies or packaging.
+
+Existing source MCP `ping` responds, but main PID 1114928 started at 17:57:23, before this edit
+at 18:22:12. Do not reuse the earlier lap as acceptance. After human source restart/sign-in,
+exercise large/progressive selection -> empty search -> small/immediate selection, repeated
+replacement and exact-series double-click. The code guards prove wrapper reachability; live
+observation must not claim memory collection from disappearing cards alone. No restart/hot reload
+was attempted. Roll back only the reference-release and weak-action hunks with their guard.
+Full generic timer/state disposal, atomic small-set replacement, Home drag/priority migration,
+pixel-revision/cache phases and prior real completion/priority live gates remain open.
+
+## 2026-09-14: OPT-60 patient-tab external signal lifetime
+
+**Fixed and code-verified; sampled open/close/reopen live PASS; completion/priority live gate pending.** Continue the independent lifecycle
+work without claiming full ThumbnailManager disposal or changing priority/download routing.
+Creation in `_hp_modules.py` connected priority and app-lifetime download completion through
+closures capturing the patient widget (and Home for priority). Deterministic Qt tests prove
+delivery after close/deletion and retention of the deleted patient's Python wrapper.
+
+`HomeTabService.bind_patient_signals` now installs one patient-parented QObject relay, with weak
+Home/patient references and typed slots. It forwards the same raw series key and supplied Study
+UID to the existing priority handler; completion retains the existing primary Study UID filter.
+Priority binding still precedes lazy Download Manager lookup. Exit disposes only these connection
+handles before existing viewer teardown; repeated disposal is harmless. QObject destruction
+also disconnects for delete-without-close/rejected-tab paths, and queued deliveries check the
+retired/closing state. Rebinding retires the old receiver without disconnecting other subscribers.
+No new downloader, retry, cache policy, thread pool, timer, I/O, event pump or forced collection.
+The existing VTK/GC teardown and Fast/Advanced separation are unchanged. Worker-signal delivery
+is tested on the GUI thread; the old implementation is not claimed to have failed that guard.
+
+Guard `tests/code/ui_services/test_patient_tab_signal_lifetime.py` executes the production wiring
+block with synthetic Qt owners/publishers, avoiding the clinical DB/viewer construction graph.
+Before correction: **6 failed / 2 passed**, exit 1 (after correcting a test teardown double-delete).
+Final **16 guards** cover routing/filter/key preservation, close/delete, wrapper collection,
+worker/queued-close, explicit exit, rebind, sibling subscriptions, publisher/Home destruction,
+optional managers and creation order. Expanded Home/search/thumbnail/multistudy/close/download
+boundary gate: **364 passed, 1 existing GUI-only skip**, 6 SWIG warnings, exit 0. The skip is the
+pre-existing opt-in KPI walkthrough, not live acceptance. **462 mirror pairs match**, exit 0;
+all three changed runtime files are core-only, no mirror or package definition changed.
+
+**Fresh-source live receipt, 17:57:23-18:01:10:** main PID 1114928 (venv redirector 1110568),
+human sign-in; all three runtime edits predate launch. Bounded MCP selection of a two-study
+case showed 13 Home cards. Actual Home thumbnail double-click displayed the matching Series UID
+and case-member Study UID, 8 slices and visible pixels. Native patient-tab close removed that
+tab; Home cards remained and the bridge responded. Reselecting and double-clicking reopened
+the same Study/Series with visible pixels, 8 slices, and no duplicate tab (tab counts 3 -> 2 -> 3,
+including Home and Download Manager). The app was left open. Identities remained transient.
+
+Scoped logs: app 354, viewer 201, download 229, DB 181 records; zero ERROR/CRITICAL, traceback
+or deleted-object error markers. `exit_patient_widget` completed in 42.5 ms and deferred close
+GC in 195.9 ms. One startup main-process `0x8001010d` was non-terminal; no access violation
+record in this interval. 38 timer stalls, max 1773.8 ms, in mixed startup/automation/idle work:
+not a matched performance comparison or no-lag claim. Zero worker-completion/emission markers;
+real completion/priority behavior and absence of closed-tab refresh under those events remain
+unverified live. GUI close is not proof of wrapper collection (that has deterministic Qt evidence).
+No runtime changes, full build, release or clinical data edits during this live lap. The older
+16:35 process predates this patch and is not its acceptance evidence.
+Rollback only the relay/binding/exit-disposal hunks and guards; preserve earlier Home work.
+Remaining: full ThumbnailManager state/timer disposal, render-owned Home managers, atomic
+small-set replacement, Home drag/priority intent migration and later UID-cache phases.
+OPT-04 definitive completion remains prerequisite to download-path optimization.
+
+## 2026-09-14: OPT-60 search-owned Home preview retirement
+
+**Fixed and code-verified; sampled Server/Local live gate PASS, extended matrix pending.** This follow-up closes the caller
+gap observed in the 15:39 source lap below, not the full Unify plan. Search cleared rows without
+retiring selection/preview producers. An empty selection was also treated as permissive initial
+state by late-response guards. The service was unchanged against HEAD before this correction;
+do not classify the symptom as a regression introduced by queued-render retirement.
+
+**Fresh-source receipt, 16:35:43-16:41:32:** source main PID 1111380 (venv redirector 1111452),
+human sign-in; both changed runtime files predate launch. Bounded MCP Server query and unique
+current-row selection produced 13 Home cards for a two-study case. Empty query produced an empty
+table, no old cards and `0 series`; old-row selection was rejected. Valid reselection restored
+13 cards. Actual Home thumbnail double-click opened the patient tab and rendered the matching
+Series UID / case-member Study UID with 8 slices. A later double-click reused that tab without
+duplication or identity change. Local selection showed 6 cards for its selected study; another
+empty Local query cleared table/cards/count. Switching source alone was not used as proof.
+
+Logs scoped to that interval: app 405, viewer 142, download 243 and DB 158 records; zero
+ERROR/CRITICAL or thumbnail-cleanup errors. No access violation; one startup main-process
+`0x8001010d` at 16:35:43 was non-terminal. 41 timer stalls, maximum 2236.1 ms: mixed startup,
+automation and idle workload, not a matched performance comparison or a no-lag claim.
+Pins/row-shift timing, advanced-search overlap and Offline Cloud were not exercised live;
+their deterministic guards remain separate evidence. No runtime edits or extra app instance
+in this live lap. The launch-pending paragraph below records the earlier implementation handoff.
+
+`HomeSearchService._clear_search_results` is now the shared boundary for all five existing
+service clear sites: Local, Offline Cloud, normal Socket (empty/nonempty), and advanced Socket.
+It rejects cancelled/superseded clears; retires row-number debounce and orphaned selection,
+fetch ownership, render markers and panel generation; and displays `0 series`. An explicitly
+retired selection rejects late responses until a real selection is marked. A selected pinned
+row survives only when its Patient/Study identity matches before/after clear and the active
+preview. Its fetch is retained, with a pending thumbnail debounce rebound to the new row.
+The table remains the pin-retention authority; no change to its native-safe teardown.
+
+The same guard prevents advanced Socket's formerly unguarded pre-insert clear from erasing a
+newer search. Thumbnail task cleanup now treats cancellation normally and releases only its
+own current handle, never a newer task. Existing Local/Offline early-clear timing, Socket
+wait-before-clear, filters, ordering, grouped UID/count contracts and download paths remain.
+No added I/O, nested event pump, blocking wait, dependency or flag; only current row metadata
+is read in addition to existing clear work. This is not a performance measurement or a complete
+request-epoch/manager-disposal migration.
+
+Guard `tests/code/ui_services/test_home_search_preview_retirement.py`: **7 failed / 4 passed**
+before the main fix (after correcting one fake-import setup omission), exit 1. Two subsequent
+task-cleanup guards failed before their fix. Final **18 new guards**, including pin row movement,
+Local/Offline, nonempty replacement and stale queued render. Focused/adjacent **302 passed**,
+6 existing SWIG warnings, exit 0. **462 mirror pairs match**, exit 0; both runtime files are
+core-only, so no mirror payload changed. Two existing source guards now follow the shared clear
+boundary and additionally assert its generation ordering/no event pumping.
+
+Next live gate: human relaunch/sign-in once, then bounded MCP selection and native Home checks
+for empty search -> zero cards/count; subsequent selection and exact-series open; retained pins
+including row movement; Local/Offline where available. The running 15:39 process predates this
+patch and cannot validate it. No restart, build, release, patient-data deletion or installed test
+was performed in this slice. Rollback only this helper/call-site, explicit-retirement and
+task-cleanup hunks plus their guards; preserve prior render/identity and other dirty work.
+Full manager disposal, atomic small-set replacement, drag/priority routing and later UID-cache
+phases remain open. OPT-04 completion verification still precedes download optimization.
+
+## 2026-09-14: OPT-60 queued Home-render retirement
+
+**Historical live receipt; empty-search gap is now code-fixed above, live still pending.** At the user's request, continue independent
+Unify work while leaving native-drag and stall investigation open. This bounded lifecycle slice
+does not change Home drag/priority routing or bypass OPT-04 completion verification.
+
+`RightPanelWidget.clear_content()` stopped an existing timer but did not retire queued render
+starts/retries. A delayed callback could rebuild old cards or restart progression after a clear;
+context-free single shots also invoked callbacks after the Qt panel had been destroyed.
+The clear operation now owns generation invalidation. New requests capture that generation;
+direct renderer calls bind an omitted generation before deferring. All four render/retry single
+shots use the panel's Qt context, and the progressive timer is parented to the panel. Clears
+release pending row payloads and reset only the retired generation's input-deferral budget.
+
+Evidence: 9 failed / 4 passed before correction, exit 1. Sixteen final lifecycle guards include
+real Qt destruction, input retries, replacement/coalescing, re-request and timer ownership.
+Focused/adjacent Home, thumbnail, multistudy and control selection: **197 passed**, six existing
+SWIG warnings, exit 0. **462 mirror pairs match**, exit 0; changed runtime file is core-only.
+No new dependency, flag, module, I/O, nested event pump, forced collection or decoder change.
+Immediate/progressive cadence, large-set threshold, input-sync guard, UID/count contracts and
+download behavior are unchanged. No measured live-performance improvement is claimed.
+
+The user requested a new source launch at 15:39:22 and completed sign-in (main PID 1106292).
+Fresh-source sampling passed: 13-card and 17-card patients, five alternating selections at
+0.65-second client intervals, final 13-card selection and exact Series/Study UID open with
+8 slices. No selection alone opened a tab. This does not prove every timer interleaving or
+application-destruction case live; those remain covered by deterministic Qt guards only.
+
+**New observed integration gap, not a proven regression:** an empty server search clears the
+table but leaves the prior 13-card preview visible. Its double-click correctly opens no tab
+without a current row. `home_search_service.py::search_server` clears only the table in its
+empty branch; that service has no diff against HEAD. The earlier assertion that this branch
+already clears the right panel was wrong. Guard the current-search/selection retirement seam
+before changing it, including cancellation, pinned rows and late results; do not weaken the
+Home action identity guard. This gap is not evidence that generation invalidation failed.
+
+Review through 15:52:00: no ERROR/CRITICAL or new access violation; one non-terminal startup
+main-process COM event, 50 timer stalls (max 2222.2 ms). No matched performance claim or stall
+investigation; see the detailed provenance receipt. No runtime changes were made in the live lap.
+Full manager disposal/outward priority callback disconnection, atomic small-set replacement,
+Home drag/priority convergence and later UID-cache phases remain open. Rollback only the render
+retirement/context/timer-parent hunks and associated guards; preserve prior Home identity work.
+
+## 2026-09-14 next prerequisite: OPT-35 / OPT-60 current-row MCP selection
+
+**Fixed, code-verified and source-live verified for the sampled selection workflow.** The previous GUI lap exposed a test
+adapter gap: `select_patient` bypassed the Qt row selection and the command wrapper filled
+missing identity from accumulated server-search history. Home correctly refused the resulting
+incomplete selection. Fix this prerequisite without relaxing the production identity guard.
+
+`HomeWidgetAdapter.select_patient` now resolves exactly one visible current table result by
+Patient ID and optional member Study UID, selects that real row, revalidates after synchronous
+selection signals and queues the existing single-click timer. Grouped selection returns the
+canonical row Study UID; caller names cannot override current row data. Missing/ambiguous/hidden
+results, incomplete study identity, active searches and non-GUI calls are rejected. The command
+wrapper delegates resolution and reports `selection_state=queued`, not rendered completion.
+There is no new I/O, event pumping, timer, downloader, module, dependency or feature flag.
+
+Evidence: the initial 15 behavioral guards all failed before the fix (after correcting two
+test-harness setup errors); all pass afterward. Three additional guards cover missing canonical
+UID, synchronous result replacement, and no I/O/nested event pump. Final focused/adjacent Home
+selection: **99 passed**, six existing SWIG warnings, exit 0. Command/bus/permission/viewer/build
+boundary selection: **89 passed, 1 failed**, exit 1. That failure is the existing-stage config
+parity check: staged `echomind_settings.json` and `printing_config.json` differ from sanitized
+expectations. The test, release-gate source and canonical two configs have no diff against HEAD;
+this patch does not touch them or rebuild generated output. Do not call that lane green.
+
+Both changed runtime adapter files were synced to EchoMind payload mirrors; **462 pairs match**.
+The MCP wrapper docstring, control guide, test indexes and regression catalog were updated.
+Rollback is the two adapters and their mirrors plus associated contract/guard changes only;
+leave all previous Home identity and renderer work intact. No build/release was performed.
+
+The fresh 15:15:21 source launch (main PID 1106228, human sign-in) contains the correction.
+Live PASS: MCP selection without a compensating row click, native Home double-click creating
+a tab, then reuse for the same-number series from another study. Both rendered Series UIDs
+matched the destination metadata; Study UIDs were distinct, and each stack had 8 slices.
+Grouped-member reselection returned the canonical row; a nonexistent ID was rejected with
+`HOME_SELECT_FAILED` without adding a tab. Native wheel moved index 4 -> 5 with UID preserved.
+The same 99-test focused lane passed again, exit 0. No runtime code changed in this receipt.
+
+Session review through 15:26:01 found no ERROR/CRITICAL in the four regular logs, 37 timer
+stalls (maximum 2263.1 ms), no convergence-miss markers, one startup main-process
+`0x8001010d` and no new access violation. This is not a matched performance benchmark.
+Native sidebar drag remained INCONCLUSIVE: its drag image stayed active; Escape canceled it,
+the empty destination remained empty, and the bridge stayed responsive. Native Home drag,
+targeted same-path refresh, cine/offline/unnamed cases and installed acceptance remain open.
+See the [detailed receipt](plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md).
+Do not advance download/cache changes under cover of this prerequisite or claim Unify complete.
+
+## 2026-09-14 fresh-source GUI receipt: OPT-35 / OPT-60
+
+Source restarted at 13:22:08 at the user's explicit request; human sign-in completed before
+tests. `ping`/`list_actions` and the final ping passed. The final header and semantic-refresh
+code was present. No product code changed during this verification lap.
+
+- **PASS, sampled Home workflow:** native row selection followed by native Home thumbnail
+  double-click reused the existing tab and displayed the selected second-study series (11 slices,
+  exact Series UID match). Closing only that test tab, then double-clicking the first-study card
+  created a new tab and displayed its exact series (8 slices). Group headers stayed `Study 1/2`.
+- **PASS, sampled adjacent boundary:** two repeated-number series from distinct studies loaded
+  into separate viewports via the application bridge, with exact UID matches and 9/11 slices.
+  Native wheel changed left index 4 -> 5; bridge navigation set right index to 0; UIDs stayed fixed.
+  Normal patient open before placement left both viewports empty as required.
+- **Observed count refresh:** Home's 13 cards acquired counts after normal data preparation,
+  including 8/1/1/9/9/25 and 8/1/1/11/11/18/1. This is a real integration observation, not an
+  isolated same-path semantic-only mutation, cine acceptance or proof of complete downloads.
+- **INCONCLUSIVE:** one native sidebar drag did not produce a verified destination change.
+  A successful `change_series` command is not native drag acceptance. Home drag remains unmigrated.
+- **Test-adapter gap, not established product regression:** `select_patient` only calls the
+  downstream Home selection handler. It does not select `results_table.currentRow()`, which the
+  Home action checks. Initial thumbnail attempts with that incomplete precondition were correctly
+  rejected; the same route worked after real row selection. Do not weaken the production guard.
+
+Session health through 13:53:03: no ERROR/CRITICAL in the four reviewed regular logs; 51 timer
+stall records (max 1776.5 ms), seven convergence-miss markers, one non-terminal main-process
+`0x8001010d`, no new access violation. This interval includes startup, human idle time and test
+automation; it is not a matched performance benchmark or a claim of no lag. Source stayed alive.
+New-tab request at 13:52:31.439799 -> first-visible marker at 13:52:32.766740 (~1.327 s).
+
+The sampled source-live open/header boundary is now verified; targeted same-path-only refresh,
+cine/offline/unnamed cases, native drag and installed gates remain explicit. Unify is not complete.
+Follow the existing remaining sequence below. The control guide records the deterministic GUI
+preconditions so later laps do not repeat the adapter-only false failure.
+
+## 2026-09-14 follow-up: OPT-35 / OPT-60 live receipt and semantic refresh
+
+**Home double-click: user-confirmed and log-corroborated for the exercised workflow.**
+The 12:49:16 source session recorded a two-study open, seven-series metadata publication,
+explicit placement and a first visible image with no identity mismatch. This is not acceptance
+of every series, native Home drag, offline/cine cases or installed builds. That process predates
+the final header-presentation correction and the metadata-refresh change below.
+
+**Next bounded slice: code PASS; new source-live gate PENDING.** Same-path metadata changes
+could be coalesced away even when the card count/description changed. Comparison and rendering
+now share `extract_series_info_from_thumbnail`; the signature includes normalized visual fields
+and the existing immutable action identity. No filesystem reads, hashes, decode, network,
+download policy or scheduling changes were added. Pixel-content revision remains separate.
+
+Evidence: new guards **9 failed / 2 passed before**, then **68 focused passed** and
+**931 expanded passed / 1 skipped / 3 deselected / 3 existing xfails**, both exit 0.
+The same two independently proven HEAD failures listed in the earlier receipt remain explicitly
+excluded; no quarantine changes. **462 mirror pairs match**, exit 0. A warmed synthetic
+500-row signature-only probe (50 runs) measured median 1.894 ms, p95 2.051 ms; this is not a
+matched live-performance comparison or proof of absence of UI stalls.
+
+Remaining ordered work stays under OPT-35/OPT-60 and OPT-04, not a competing plan:
+
+| Gate / slice | Next action and boundary |
+|---|---|
+| Current live gate | After human source restart/login, verify count/description refresh and repeat exact-series double-click; retain repeated/unnamed multi-study and cine cases in the acceptance matrix. |
+| Home action convergence | Migrate Home drag and priority adapters to UID-scoped intent and the existing coordinator; never revive direct downloader helpers. Delete obsolete helpers only after caller/behavior guards. |
+| Lifecycle and render scheduling | Explicit idempotent callback disposal; separately guard deferred small-set atomic replacement. Preserve progressive rendering and Windows input deferral. |
+| OPT-35 P3 | Audit consumers before internal UID-keyed cache migration; preserve numeric public keys used by existing warmup/viewer consumers. Define producer-driven same-path pixel revision/invalidation. |
+| OPT-04 / OPT-35 P4 | Establish definitive download completion/convergence evidence before download optimization; then migrate remaining Download Manager/growing-thumbnail identity keys. |
+| Retirement and acceptance | Keep legacy guards until classified authority comparisons and the documented full-matrix/observation window justify retirement. Source live, mirror and installed acceptance remain separate gates. |
+
+Current-session caveats: 16 timer-reported UI stalls over 100 ms (maximum 2058.3 ms during
+startup, before the click), 10 convergence-miss markers, and one non-terminal main-process COM
+exception remain investigation items. No ERROR/CRITICAL or new access violation was found in
+the scoped records. Two legacy PK-guard messages started from `None`; they are not proof of
+wrong-study contamination. Details, rollback and timestamp boundaries are in the
+[provenance receipt](plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md).
+**The overall Unify master plan is not complete.** Fast, Advanced and VTK execution domains
+remain separate; only immutable identity/data contracts are shared.
+
+## 2026-09-14: OPT-35 / OPT-60 explicit Home thumbnail open
+
+**Latest user decision:** double-click a Home thumbnail to open/reuse the normal patient
+tab and place that exact series in the selected viewport. Single click remains preview-only.
+This supersedes the earlier existing-tab-only single-click scope below; it does not change
+the empty-layout policy when a patient is opened by name without an explicit series intent.
+
+**Historical implementation receipt; latest live scope is recorded above.** The cache-hit identity loss is
+guarded and corrected. Cached single-study, grouped, downloaded-preview and Offline Cloud
+producers share `_build_cached_thumbnail_payload` on workers, retaining UID/path/frame fields
+and rejecting ambiguous numeric-cache identity. Socket/placeholder payloads carry request-scoped
+study identity. No decode, encoding, transport or download-policy change is included.
+
+HomeTabService reuses the standard async open flow, shares in-flight opens and consumes the
+last UID-scoped intent only after destination metadata/layout readiness. QObject-parented,
+queued callbacks expire after 30 seconds without polling; close/tab changes or a subsequent
+placement cancel the intent. Destination-owned keys are resolved afresh, never copied from Home.
+
+Evidence: first requirement run **6 failed / 21 passed**, plus the downloaded-preview worker
+guard failed independently before convergence. Two additional failing presentation guards
+prevented UID preservation from adding a raw-UID header to single-study Home previews;
+explicit group labels are retained and unlabeled multi-study headers use `Study N`.
+Latest focused run **57 passed**, exit 0.
+Final broad run **920 passed / 1 skipped / 3 deselected / 3 existing xfails**, exit 0; two explicit
+exclusions are proven unchanged HEAD failures (`test_login_carries_the_user_identity_ids`,
+`test_status_flags_are_stashed_on_the_widget_to_avoid_recompute`), not new quarantines.
+Stateful identity **1 passed** (150 examples); **462 plugin mirrors match**. See the current
+[provenance receipt](plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md).
+
+Remaining extended acceptance: human restart/login with the final patch, actual Home double-click on unopened and existing
+patients, multi-study repeated/unnamed series, cine frame count and UID-matched rendered pixels.
+The 12:49 source session exercises the core route, but predates the final header correction.
+Installed acceptance remains separate.
+
+## 2026-09-14 historical receipt: first live click check FAILED
+
+**Current status supersedes the earlier connectivity/login blockers below.** After human login,
+`ping` and `list_actions` succeeded through the existing local client. In the fresh 12:10 source
+session, a bounded MR search found a single-study case with 18 series. A real Home Series 2 card
+click selected the card but did not activate the already-open patient tab; the probe returned
+`NO_ACTIVE_TAB`, and no `[HOME-SERIES-ACTION]` outcome was logged. The case-specific log confirms
+the Home cache-hit route. Source review and execution of the actual cached-payload method with
+synthetic I/O confirmed `_build_cached_thumbnail_payload` discards BOTH study and series UIDs
+even when the synthetic DB row contains them. The new action boundary correctly refuses that
+incomplete identity. Existing card tests start from complete metadata and missed this producer
+boundary. Do not weaken the UID gate or guess from the selected patient/card ordinal.
+
+Control comparison passed: MCP series 2 -> viewport 0 and series 3 -> viewport 1 rendered 11
+images each with matching study/series UIDs. MCP slice navigation 6 -> 1 and actual mouse wheel
+1 -> 2 were visible and state-confirmed. Native drag attempts did not prove a completed drop;
+one remained in the OLE drag loop and was canceled with Escape. Mark native drag INCONCLUSIVE,
+not a confirmed application regression. This sample does not cover multi-study/cine/offline.
+
+No runtime fix was made during this verification. Next bounded correction: guard the full
+cached-payload -> card -> action chain, preserve UID provenance at each producer, and audit
+number-collision handling before further cutover. Repeat the actual Home-click live scenario
+afterward. Detailed evidence and limits are in the September 14 provenance live-receipt section.
+
+## 2026-09-14: mandatory two-gate verification for existing Unify / OPT slices
+
+**12:10 follow-up:** the user explicitly authorized a normal source-app close/restart. The old
+source processes exited and one fresh source launch now includes the click patch and the
+process-scoped test flag; the production Agent Gateway is disabled for this run. The app is at
+login, which remains human-operated. Pre-login `ping` is unavailable: the live gate is still
+BLOCKED, not failed or passed. Focused automated recheck: **61 passed, exit 0**, reruns disabled.
+The control guide's authorized-restart receipt records process/source details; no runtime fix
+or persistent configuration change was made during this verification attempt.
+
+**User-required operating policy, not another implementation plan:** each runtime slice requires
+automated code tests and an affected-workflow live source-GUI pass. The durable procedure is
+[`AGENT_CONTROL_AND_TESTING_GUIDE.md`, section 0](for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md),
+also indexed in `AGENTS.md`, `CLAUDE.md`, the subsystem index and guard index. Discover the existing
+`aipacs-control` MCP first; its existing CLI uses the same local Test Control Server when tools
+are unavailable. Preserve human bootstrap, one source instance and no clinical/production gateway.
+
+**OPT-35 / OPT-60 live gate remains BLOCKED:** on this check the MCP was not exposed and CLI
+`ping` failed with local socket unavailable (exit 1); no named test pipe was found. The source
+app still dated from 10:57, before the click patch. No patient workflow, relaunch, external
+reception query or configuration change occurred. This is not evidence of a viewer failure.
+After human restart with `AIPACS_TEST_SERVER=1`, verify `ping`/`list_actions`, choose a bounded
+verified multi-study case, and exercise actual Home-card click plus destination/render checks.
+MCP `drag_series` alone bypasses this changed boundary; Home drag/retry remain separate work.
+Code verification already recorded below does not close this live gate.
+Documentation/control discovery verification: the existing test-server, adapter-contract and
+MCP-inventory suites passed **11 tests, exit 0**, reruns disabled; these are not live GUI tests.
+This policy update changed documentation only, not runtime control/clinical behavior.
+
+## 2026-09-14: OPT-35 / OPT-60 Home click identity cutover
+
+**Status: implemented and automated-verified for existing open tabs; live pending.**
+Both Home render schedules now use one card factory and a render-scoped immutable
+`SeriesActionIdentity` map. Posted clicks reject cleared/replaced renders. Home's
+handler delegates to `HomeTabService`, resolves a unique destination by both UIDs,
+rechecks after activation, and calls the normal viewer entry with that tab's key.
+The old direct-download click body was removed; generic numeric drag keys stay
+unchanged. No new downloader, I/O probe, decode path or cross-backend state exists.
+
+Four behavioral failures exposed the old ordinal/dead-handler boundary; seven
+additional tests described the absent destination API. Four later fail-before
+guards required advancing the identity-only render-signature prerequisite: compare
+the same immutable action to prevent same-PNG stale clicks. Full visual signature,
+pre-deferred-clear scheduling, Home drag/retry, coordinator migration, lifecycle
+and completion correctness remain separate. Missing/ambiguous/closed destinations
+fail closed; automatic new-tab creation is not introduced.
+
+Final focused suite **238 passed, exit 0**; stateful projection **1 passed, exit 0**;
+**462 mirrors match, exit 0**. Two brittle Windows guard tests now execute the
+actual deferral behavior; one obsolete quarantine entry was removed after XPASS.
+No new module/dependency/flag/schema; all five runtime files are core/unmirrored.
+Rollback the five cutover hunks together, preserving prior metadata/projection fixes.
+The separate 10:57 source run had ten matching render identities/zero SKIPs, but
+predates this click patch and does not verify its live acceptance. Full evidence,
+scope and restart matrix: the final September 14 provenance implementation record.
+
+## 2026-09-14: OPT-60 right-panel card metadata prerequisite
+
+**Status: fixed and automated-verified; source-live acceptance pending.** The shared
+`RightPanelWidget.extract_series_info_from_thumbnail` now preserves supplied study/series
+UIDs, original/display/storage identities, exact series path and separate frame/object
+counts. A fixed metadata allowlist repairs the existing projection; no parallel helper,
+new I/O, decoder, timing policy or action route was added. A real synthetic Qt card
+showed 2 images before and 420 after, without changing its two-object count.
+
+`test_right_panel_metadata_contract.py`: **4 failed / 4 passed before**, all eight
+pass after. Both real-method render schedules and legacy defaults/types are covered.
+Focused adjacent verification: **205 passed, exit 0**, reruns disabled; **462 mirrors
+match, exit 0**. The Home source has no plugin mirror. Rollback removes only the
+metadata-copy block/docstring change. The running process predates this patch;
+fresh source and installed acceptance remain pending. The immutable action envelope,
+ordinal/signal migration, semantic signature, scheduling and lifecycle remain separate
+steps. Details and retained risks are in the provenance implementation record.
+
+## 2026-09-14: source-run evidence after the Unify prerequisites
+
+**Status: partial live evidence, not full acceptance or permission to retire guards.**
+The user-started source session was inspected through 10:26 local time. There were 15
+`UX_FIRST_IMAGE_VISIBLE` records, including secondary-study offset keys, and no logged
+multi-study rebuild failures. Two UID-mismatched render attempts were rejected; each
+was followed by a matching render and visible image in less than 0.5 s. Consequently
+the OPT-35 zero-`SKIP` acceptance oracle is NOT satisfied. Keep the identity gates on;
+do not interpret successful recovery as proof that the stale-result path is fixed.
+
+The sampled viewer log contained 99 main-thread timer gaps (median 158.3 ms,
+p95 480.6 ms using sorted index floor((N-1)*0.95), maximum 3730.7 ms). The two
+gaps above 1 s were startup/UI construction, 3730.7 and 1931.2 ms; sampled stacks
+included `window.show()` and theme application. These are local UI observations,
+not proof of server delay, and are not a matched before/after performance comparison.
+One non-terminal `0x8001010d` record occurred; the same main process remained alive
+afterward. No access violation was present in this session's native-log portion.
+
+Separate pending findings: 25 `DM-CONVERGE-MISS` events (OPT-04, missing UI rows,
+not proof of re-download), one visit-status persistence-false warning (OPT-58), and
+one download ERROR classified as priority preemption, not server failure. Download
+completeness, offline/cine/unnamed-series coverage and installed-runtime acceptance
+are not proven by this run. The detailed evidence and next bounded metadata prerequisite
+are in the September 14 sections of the thumbnail/priority provenance document.
+
+## 2026-09-14: OPT-35 shared multi-study projection, compatibility preserved
+
+**Status: extraction implemented and automated-verified; source-live acceptance pending.**
+`series_identity.build_multistudy_series_projection` now owns the stable study-slot,
+offset-key and per-entry path projection formerly embedded in
+`_PWThumbnailsMixin._rebuild_multistudy_series_index`. The controller calls it once and
+retains its single-study gate and history/numeric ordering policy. The original inline
+implementation was removed. Ingestion normalization, same-study display-key allocation
+and immutable `SeriesRef` consumption retain their separate documented responsibilities.
+
+Before changing runtime code, 14 production-method compatibility cases passed for missing
+or identical labels, missing-number spellings, reserved-band avoidance, duplicate-number
+still/cine series, external exact paths, leading-zero raw labels, later study merges,
+repeat rebuilds, history ordering and single-study bypass. They still pass afterward;
+an additional pure-input ownership check brings the new file to 15 tests. The final
+focused suite is **171 passed, exit 0**. The existing stateful identity test now calls
+the production projection instead of its copied implementation; its independent identity
+and stable-key assertions pass (150 configured examples, up to 40 steps; **1 passed,
+exit 0**). A location-specific source guard was migrated to behavior at the shared seam.
+This is a contract-preserving refactor, not a newly reproduced defect or measured speedup.
+
+All **462 mirrors match**; neither changed runtime file has a plugin mirror. No new module,
+dependency, configuration, schema, DICOM byte transformation or installed-path requirement.
+Rollback restores the controller/helper extraction hunks together. Right-panel action
+envelopes, Download Manager routing, render signature and lifecycle remain pending under
+OPT-60. Details and source-live matrix:
+`docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`.
+
+## 2026-09-13: OPT-60 Qt thumbnail ownership and patient-close GC pressure
+
+**Status: queued Home-render retirement is code-verified (September 14 receipt above);
+full manager lifecycle/disposal remains diagnosed with its guards and fixes pending.
+The separate Local identity prerequisite is automated-verified as of 2026-09-14.** Current
+source defines no manager-level `cleanup()` or `dispose()`. Real-PySide6 probes corrected the
+initial retention hypothesis: a standalone `ThumbnailManager` was collectible while still
+connected to `ThemeManager.themeChanged`, and an immediate right-panel manager was collectible
+after its cards received `deleteLater()`. Parentlessness and the theme connection therefore do
+not prove a deterministic permanent leak. The confirmed strong-retention boundary is the
+patient-tab priority callback in `_hp_modules.py`: an outward signal connection targets a lambda
+that closes over the patient widget/home owner. A matching Qt probe kept both owner and manager
+alive after deferred deletion and collection until that connection was disconnected. Static
+delayed callbacks remain a separate bounded-retention/stale-result risk.
+
+Correction (2026-09-14): the misplaced May P1 disconnect in `CircularProgressborder.cleanup()`
+accessed a missing callback on a card whose `theme_manager` exists; its outer catch aborted the
+remaining cleanup. The card-effect receipt above corrects the earlier absent-attribute claim.
+Eleven measured GUI-thread full collections took 149.1–1501.1 ms (median 234.1 ms; latest
+306.4 ms). They are deferred by 150 ms, not moved off the GUI thread; moving global collection to
+a worker would risk running Qt/VTK finalizers on the wrong thread. The next lifecycle slice must
+start with fail-before guards, disconnect the confirmed outward callback, add one idempotent
+owner-driven disposal contract, clear back-references/state, and cancel or generation-gate late
+callbacks. Re-measure multi-cycle memory, threads, handles, GC, theme switching, and close/reopen.
+
+Separate correctness defects were reproduced and must not be bundled with lifecycle work: the
+right panel substitutes its card ordinal for series identity (`Series 4` emitted `0` for drag,
+selection, and priority); its legacy click handler depends on an attribute never assigned and a
+retired direct-downloader API; the newer priority handler contains an undefined variable after
+Download Manager dispatch; and its render signature omits semantic identity/count fields. The
+future route is an immutable series action identity into the existing Download Manager/intent
+coordinator, while preserving Local hard-offline behavior and the patient-viewer `display_key`
+contract. No current crash is attributed to OPT-60 without a matching runtime trace.
+
+The Git-history rationale and guarded migration sequence are recorded in
+`docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`. Preserve the
+complementary local/server and immediate/progressive paths; treat the direct-download/right-panel
+handler cluster as an incomplete Zeta migration rather than a supported second downloader.
+
+**2026-09-14 implementation, first prerequisite:** corrected
+`_HPSearchMixin._build_local_series_thumbnail_payload` so the existing pure
+`allocate_series_display_keys` runs for both successful and partial nonempty payloads.
+Previously it ran only in the exception handler; failures before the import also raised
+`UnboundLocalError`. Empty results now return without referencing an unbound allocator.
+No new I/O, thread, decoder, storage rule, schema, flag or dependency was introduced.
+`test_home_local_thumbnail_projection.py` executes the real method with isolated synthetic
+I/O: three failures before the fix (missing keys twice, unbound allocator once), two existing
+behaviors passing; all five pass afterward. The focused Local, patient-study-set, collision,
+SeriesRef and thumbnail suite is **120 passed, exit 0**; all **462 mirrors match, exit 0**.
+The changed Home mixin has no plugin mirror. No performance speedup is claimed.
+Rollback consists of the three added lines in that method; no data migration is needed.
+Source live and installed-build validation remain pending. Right-panel ordinal/action
+routing, semantic refresh, download completion and lifecycle work remain separate pending
+slices; study-local display keys must never be promoted to patient-global identity.
+
+## 2026-09-12: OPT-59 Viewer Configuration storage cleanup
+
+**Status: fixed and automated-verified; source live gate pending.** The storage panel's
+recursive size walk, destructive cleanup, preview, consistency operation, drive probing,
+and Qt worker lifecycle were treated as one ownership boundary. Single-pass `os.scandir`
+reduced the same full managed-storage scan from more than 90 seconds to 2.915 seconds
+(warm cache 0.006 ms). Deletion now fails closed on path escape or file-removal failure,
+uses Imported On as the primary retention date, preserves undatable patients, and refuses
+to race active imports, downloads, or viewer tabs. Worker results are marshalled to the GUI
+thread and process-owned jobs survive transient panel destruction; shutdown waits for a
+consistent boundary. The focused storage/GUI suite passes 59 tests and adjacent settings /
+download-state suites pass 18, all with exit code 0. Rollback is the complete OPT-59 slice;
+do not reconnect the dormant legacy patient cleanup manager. Full evidence and live checklist:
+`docs/reports/STORAGE_CLEANUP_SAFETY_AND_PERFORMANCE_2026-09-12.md`.
+
 ## 2026-09-08: OPT-55 spatial diagnosis input experiment
 
 Implemented the independent spatial-packet benchmark utility with complete native
@@ -467,6 +2183,65 @@ compensations* the lifecycle authority will absorb and let us delete.
 
 ## 9. Canonical optimization backlog (Deliverables 6 + 7)
 
+**OPT-56 Total Spine local-model follow-up (2026-09-18):** the new SAM correction
+workflow reuses Alignment's sealed portable runtime without changing that runtime
+or another viewer domain. `eagle_eye_total_spine/runtime_seal.py` holds a
+window-owned verification snapshot: full hashes on first use or changed metadata,
+then per-file identity/size/write/change-time checks on subsequent prompts, all in
+the existing background executor. No patient data or interpreter is cached here.
+The first independent cold full-service synthetic run took 284.92 s. A subsequent
+two-prompt session with already-warm filesystem caches took 36.85 s for first
+verification/inference and 17.38 s for the next prompt. The cold-vs-warm numbers are
+not a controlled claim about model acceleration. Both produced masks and proposals;
+runtime mutation/cancellation/failure guards passed. Source GUI and clinical
+acceptance remain pending; OPT-56 is not closed by this feature.
+
+**OPT-58 / OPT-60 Home image-I/O follow-up (2026-09-17):** the measured Home
+QPixmap file read now runs as QImage preparation in the existing shared worker
+service, with bounded progressive buffering and generation/native-lifetime checks.
+Existing Home action/grouped/atomic/cadence contracts remain. Two fail-before
+renderer guards; 23 new cases, 214 adjacent plus 24 panel/effect passes; 467 mirrors.
+Fresh normal-source GUI remains pending; do not close cold Local header admission,
+cache read/validation, pruning, Viewer or crash work. See the Home image preparation
+receipt in `reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md` for rollback and gates.
+
+**OPT-58 / OPT-60 enumeration correction, 2026-09-17:** shared Local inventory
+retains directory-entry type information, eliminating one redundant Path.stat per
+candidate while retaining independent fresh version checks. Two fail-before cost
+guards; 334 expanded passes / 1 unavailable-symlink skip. Cache-path/read timing
+split for the next source run. Grouped admission, cold/warm wall-time and GUI
+acceptance remain OPEN; see the UI-stall report's enumeration receipt. Advanced
+first-render freeze is assigned to its existing owner, not patched in Unify.
+
+**OPT-58 / OPT-60 source evidence, 2026-09-17 09:13 run:** grouped Local (2 studies,
+39 series) still waits 24.096 s for metadata; 2398 persisted hits / zero probes,
+21.361 s inventory dominated by enumeration and cache reads. This is not a test
+of the single-Local ownership branch. Concurrent first Advanced Render causes a
+13.785 s GUI gap, with MathText imports and 13.209 s first-render timing; routed
+to the Advanced owner as UNIFY-HANDOFF-2026-09-17-03. Read-only receipt in the
+UI-stall report; grouped latency, Home GUI PNG I/O and open-time pruning remain
+OPEN. No runtime fix or performance acceptance is claimed by this log review.
+
+**OPT-58 / OPT-60 ownership follow-up, 2026-09-17:** remove Home setup's duplicate
+inventory/snapshot push for exactly-one-study Local opens; the existing patient
+stream owns delivery. Grouped Local aggregation and Server routes are unchanged.
+Four pre-fix failures; 10 new guards / 321 expanded passes. Fresh-source GUI and
+matched KPIs are OPEN; cold per-series classification and grouped catalog-first
+admission are not fixed by this slice. See the single-study ownership receipt in
+`reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md` and section 15.
+
+**OPT-58 / OPT-60 status update, 2026-09-17:** Local repeated header admission
+has a guarded persisted-fact optimization; cold unverified admission, source-GUI
+acceptance and complete Unify/KPI closure remain open. See the dated receipt above
+and section 15; this extends the existing items, not a separate plan.
+
+**OPT-60 current slice status (2026-09-14):** manager retirement now also cancels card-local
+Ready/hide timers and running property animations. See the newest receipt and section 15 for
+the code gate. Source GUI requires a fresh launch; the 20:41 run predates card-effect changes.
+Direct legacy map clears, worker-image identity, real completion/priority and the remaining
+Unify phases stay open; no blanket native-crash or performance closure.
+Detailed scope/rollback are in the current receipts above; validation is recorded in section 15.
+
 One unified, risk-ranked backlog. Priority score ≈ **(Benefit × Confidence) ÷ (Risk × Complexity)**.
 States: VERIFIED-COMPLETE · COMPLETE-MONITOR · PARTIAL · READY-SAFE · IMPL-UNVERIFIED · NEEDS-INSTRUMENTATION
 · HIGH-RISK-DEFERRED · REGRESSION · OBSOLETE.
@@ -803,8 +2578,35 @@ source build — the only lane that proves GUI/render/clinical behavior; human-a
 
 ## 15. Validation & regression history (living log)
 
+**2026-09-18, OPT-56 / Total Spine SAM:** verified immutable-runtime reuse,
+changed-file revalidation, cancellation and no cache after failed/changing seals
+in `test_total_spine_assist.py`. Real SAM weights executed through the owned
+subprocess; synthetic repeated-prompt times were 36.85 s then 17.38 s (warm disk),
+separate from the earlier 284.92 s cold full-service run. No source application
+was launched or restarted; test-control ping was unavailable. See
+[`EAGLE_EYE_TOTAL_SPINE_ALIGNMENT.md`](modules/EAGLE_EYE_TOTAL_SPINE_ALIGNMENT.md)
+for feature tests, model provenance and remaining acceptance.
+
 | Date | Change | KPI/reliability before | After | Regression check | Result |
 |---|---|---|---|---|---|
+| 2026-09-19 | OPT-58 / OPT-60 inactive patient-tab thumbnail ownership | Cold 23-series Local verification ran 18.475 s while the next indexed 66-series grouped sidebar took 9.169 s and kept applying hidden-tab cards after a third patient opened; one synchronous card trace write sampled at 428.3 ms under overlap | Existing Local worker and qasync sidebar now share the authoritative patient-tab active lifecycle: pause at bounded worker/UI boundaries, retain generation/order/identity and resume in place; close/supersession cancellation unchanged. Intermediate INFO progress is card 1/every tenth plus exact terminal summary; paused native lifetime is rechecked every 50 ms | Four fail-before guards; Local/sidebar 66 passed; adjacent inactive-result/signal/lifecycle 64 passed, direct exit 0 | Code verified; fresh normal-source rapid A -> B -> C single/multi-study KPI and visual acceptance OPEN. Rollback `AIPACS_PATIENT_THUMBNAIL_VISIBILITY_GATE=0`; no Viewer/VTK/decode/download protocol/cache format change |
+| 2026-09-19 | OPT-58 / OPT-60 indexed-Local read amplification | Warm indexed cases still launched a whole-patient raw warm: 2,398 files / 596.2 MB / 9.843 s and 508 files / 133.2 MB / 5.397 s, overlapping catalog and first-image work | Known Local paths are catalog-owned and excluded from the patient-open raw warmer; no empty Local warm thread starts and a failed Local catalog lookup remains fail-closed. Server/unknown behavior is unchanged. The authoritative durable layer remains the revision-bound DB summary written by Import/Download; the bounded per-file disk cache remains only a cold-scan accelerator | Three behavioral guards failed before and pass after; 24 warmer tests; combined producer/index/Local/download/open boundary 150 passed / 1 unavailable-symlink skip | Code verified, fresh normal-source single/multi-study KPI and visual acceptance OPEN. Narrow rollback `AIPACS_LOCAL_INDEXED_FILE_WARM=1`; no Viewer/VTK/decode or download transport change |
+| 2026-09-17 | OPT-58 / OPT-60 10:49 normal-source log review | Home GUI QPixmap read previously stalled 1274 ms | Four Home preparation markers, no sampled Home read stack; patient tabs deliver 27/65 and grouped 39 cards; max patient-work gap 684.3 ms | Read-only scoped logs; prior code tests separate. Largest remaining sample is patient Local stream get_bytes/read_bytes, not Home | Positive Home execution evidence, not full visual/stress closure. Six-series zero-file paths require availability/mapping verification; cold header admission and Local image preparation remain open |
+| 2026-09-17 | OPT-58 / OPT-60 Home image preparation | 1274 ms GUI gap in Home QPixmap file read | Detached worker QImage preparation, same GUI scheduler/actions, two ready progressive images and cancelled stale generations | Two fail-before renderer guards; 23 new cases; 214 adjacent + 24 panel/effect passes; 467 mirror pairs match | Code verified; fresh normal-source GUI/KPI pending. No cold DICOM, cache-policy or Viewer change |
+| 2026-09-17 | OPT-58 / OPT-60 10:03 source acceptance review | Warm grouped 39-series metadata formerly 24.096 s; first Advanced Render formerly 13.209 s | Same primary-study/39-series workload metadata 2.011 s; first Advanced Render 40.747 ms. Cold 43-series admission still 22.336 s to stream completion; 66-series grouped 12.834 s to all cards | 125 direct focused passes; synthetic 141-card entry 0.76 ms, maximum apply 11.41 ms. Human workflow plus scoped logs; no new runtime changes | Sampled improvement, not complete closure. Cold header scans, cache read/validation and Home GUI QPixmap I/O remain; detailed 10:03 receipt in UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md |
+| 2026-09-17 | OPT-58 / OPT-60 Local enumeration cost | 13.439 s enumeration despite 2398 persisted hits / zero probes | Retain directory-entry type facts; preserve fresh version validation and sorted membership; split cache path/read timings | Two cost guards fail before; 192 redundant classification stats become zero; 334 expanded passes / 1 unavailable-symlink skip, exit 0 | Code verified; fresh-source grouped/single GUI and wall-time KPI OPEN. No complete catalog-first or crash closure |
+| 2026-09-17 | OPT-58 / OPT-60 single-study Local inventory owner | 54/66/130 inventory calls for 27/33/65 series; overlapping worker wait, not twice actual header reads | Remove redundant Home setup aggregation and stale snapshot push only for single-study Local; preserve existing stream, grouped and Server contracts | 4 fail-before / 6 pass-before; 10 new guards, 113 focused and 321 expanded passes, exit 0 | Code verified; fresh-source GUI and matched latency OPEN. Cold classification and grouped full-catalog barrier remain |
+| 2026-09-17 | OPT-58 / OPT-60 Local pixel-fact persistence | Two Local grouped metadata pushes take 6.570 / 27.004 s, all 2398 / 2412 files reprobed | Same inventory authority reuses positive, version/age-checked facts across restart; bounded central cache, fresh enumeration, no thumbnail-presence side effect | Four original behavioral failures plus one intermediate-placement failure; 32 new synthetic cases; 425 focused passes / 1 deselection / exit 0; 467 mirrors match | Code verified; fresh-source GUI and matched cold/warm KPI OPEN. First uncached scan still required; no crash, download or installed closure |
+| 2026-09-17 | OPT-58 / OPT-60 ordered Local inventory owner | Intermediate fact-primer preserved 6.950-13.707 s cold catalog times because producer and consumer interleaved | One ordered Home/patient resolver; bounded file parallelism and bounded pending queue only inside current exact series; warmer delegates known unverified Local directories. The September 19 follow-up also delegates producer-indexed Local rows; Server/unknown fallback remains raw-warm | New fail-before 4 failed / 44 passed; 50 direct and 129 projection-boundary passes; wider selection 1,295 passed / 2 skips / 3 quarantined xfails, with two unrelated baseline assertions red | Code verified; fresh single/multi-study first-card/full-catalog, exact-card, no-jump, Server and native-crash GUI gates OPEN. Rollback `AIPACS_LOCAL_ORDERED_INVENTORY=0`; indexed-Local rollback documented in the September 19 row |
+| 2026-09-14 | OPT-60 card-owned effect retirement | Old Ready/hide callbacks overwrite newer state; cleanup skips animation stop; manager retirement leaves effects running | Two reusable native-owned timers, parented progress animation, terminal effect cleanup invoked before manager map release; preserve native snapshot and stop priority animations | 7 corrected baseline failures / 1 pass; 2 additional transition failures corrected; 14 final Qt guards; 441 adjacent passes / 1 existing skip, exit 0; 462 mirrors match | Default-on, code PASS. Source GUI pending fresh launch; 20:41 run predates this edit. No native-crash, completion or performance closure |
+| 2026-09-14 | OPT-60 manager-owned callback retirement | Pending progress survived reset; old same-key cards dispatched after replacement; no terminal manager disposal before owner teardown | Parented cancellable generation-scoped timers; reset clears pending work; idempotent dispose releases owner/state; patient and weak Home registry call it without deleting native cards | 7 initial failures; 2 additional Home integration failures; final native-deletion guard exposed and corrected invalid-resource teardown; 17 final guards; 424 adjacent passes / 1 existing skip, exit 0; 462 mirrors match | Code PASS, default-on; fresh source GUI blocked on bootstrap. Card-owned animations, native-crash causation, performance and installed acceptance remain separate |
+| 2026-09-14 | OPT-60 same-identity small refresh swap | Deferred immediate refresh first emptied the panel | Retire actions immediately; preserve only identical known action sets, replace during paint suppression; failure allows retry | 3 baseline failures; additional preparation-failure guard caught a first-implementation gap; 16 final guards; 390 expanded passes / 1 existing skip; 17 separate import/overlay passes; 462 mirrors match | Default-on, live blocked; not full Unify or native-crash closure |
+| 2026-09-14 | OPT-60 Home render owner retirement | Clear retained progressive manager/card wrappers; action closure retained or addressed a deleted panel | Release retired render reference; weak panel action with validity/token guards before queue and delivery | 4 failures before; 10 final guards; 374 adjacent passes / 1 existing GUI skip, exit 0; 462 mirrors match | Fresh-source live pending; no generic disposal or crash/performance claim |
+| 2026-09-14 | OPT-60 patient-tab external signal lifetime | Capturing priority/completion closures retained deleted wrappers and delivered into closed tabs | Patient-owned weak-reference QObject relay; exact routing/filter preserved; idempotent per-connection disposal before teardown | 6 failures before; 16 final guards; 364 adjacent passes / 1 existing GUI skip, exit 0; 462 mirrors match | Sampled 17:57 open/close/reopen live PASS; real completion/priority pending; not full manager disposal or a crash/performance claim |
+| 2026-09-14 | OPT-60 search-owned preview retirement | Search removed rows but retained old preview/selection producers; advanced stale clear and old task cleanup could affect newer owners | Shared guarded search clear; identity-preserving pins and pending row remap; explicit retirement; ownership-safe cancellation cleanup | 7 main fail-before cases and 2 cleanup failures; 18 final new guards; 302 adjacent passes, exit 0; 462 mirrors match | Sampled Server/Local live PASS; extended matrix pending. No decoder/download/installed/full-Unify claim |
+| 2026-09-14 | OPT-60 queued Home-render retirement | Clear allowed deferred starts/retries or late ticks to rebuild retired content; context-free callbacks outlived the Qt panel | Clear-owned generation invalidation, explicit retry generation, Qt-context single shots and parented progressive timer | 9 failed / 4 passed before; 16 final lifecycle guards; 197 adjacent passes, exit 0; 462 mirrors match | Code-verified; sampled 15:39 replacement/open passed. Empty-search caller follow-up recorded above; no full disposal or installed-acceptance claim |
+| 2026-09-14 | OPT-35/OPT-60 existing-tab Home click cutover | Cards emitted ordinal strings; dead handler did not reach a viewer; same-PNG coalescing could retain another action identity | Frozen UID action, render-token rejection, unique destination-owned key resolution and normal viewer handoff; old direct click body removed | 4 behavioral failures + 7 absent-API failures before; 4 identity-signature failures before prerequisite; final 238 passed plus 1 stateful test, exit 0; 462 mirrors match | Automated only; Home drag/retry, full signature/scheduling, completion, live and installed gates remain open |
+| 2026-09-14 | OPT-60 Home card metadata prerequisite | Both render schedules discarded supplied UID/path/UI-key/frame facts; synthetic Qt cine card displayed 2 instead of 420 | Existing projection preserves only supplied identity/count fields; object count remains 2, visible count is 420 | 4 failures and 4 passes before; all 8 new guards pass after; focused suite 205 passed, exit 0; 462 mirrors match | Automated-verified only; no action-routing, semantic-refresh, performance or installed-runtime acceptance claim |
 | 2026-08-31 | OPT-55 Eagle Eye bounded same-slab focus-window backfill | Two focuses retained only 4 of 5 available slices; 20 new guard failures | Both now retain 5 slices, true four-slice slab stays at 4; 5 total images; 8,046,336 pixels and 4,546,578 bytes within unchanged caps; anchors, sagittal sampling, overview bytes, and 57 original files unchanged | V2/V3 63 passed; AI Imaging 643 passed, 8 existing xfailed; core-build inclusion 3 passed; 458 mirror pairs matched; private offline replay 3.03 s with outbound connections denied | Code/offline verified; no paid model call, build, or deployment. Live diagnostic benefit remains unverified. Details: V3 research plan section 16 and Eagle Eye LLM stage-2 document section 29 |
 | 2026-08-31 | OPT-55 additive bilateral sagittal experiment; adjacent scoped scorer correction | Three-slice focus row omits lateral planes available in overview; root contact suppressed by negated deviation | Opt-in supplement mode preserves all 4 base images/captions and adds 2 sheets, 7 planes each, approximately +/-14.4 mm; 6 images / 9,361,152 pixels / 4,897,937 bytes, within unchanged caps. Saved root contact scores under, not miss; 57 original files unchanged | Parasagittal 18 passed; scorer 25 passed; complete AI Imaging 675 passed, 8 existing xfailed; core inclusion 3 passed; 458 mirror pairs matched. Network-disabled replay: 2.551 s experimental, 2.852 s baseline (single observations, not speed comparison) | No model call, build, default promotion, or accuracy claim. New mode manifest 1.4.0; ordinary V3 stays 1.3.0. Full benchmark repair/reference adjudication and controlled clinical trials remain pending. Details: Eagle Eye stage-2 section 30 and V3 research section 16 |
 | 2026-08-31 | OPT-55 level identity, padding-only headroom, coverage visibility; scorer 1.2.0 | A uniform one-level shift passed monotonicity; padding used 99.92% of pixel cap; scorer missed participles and misattributed recess grades | Review-required audit preserves raw report without relabeling. All 5 base images and 21 supplemental anatomical tile contents retained; 60 originals unchanged. Pixels 11,990,784 to 11,253,504; bytes 5,890,397 to 5,881,762. Image cap remains 8/8; coverage exclusions become visible | Initial 22 failed/43 passed; self-review reproduced 5 map-parser and 2 subarticular-location failures before correction. Final focused 19 + 26 + 35; AI Imaging/core inclusion 732 passed, 8 existing xfailed; 462 mirror pairs matched. Network-disabled replay 3.735 s (one observation) | No model call, app launch, build, default promotion, or clinical claim. Supplement manifest 1.5.0; base V3 unchanged. Full Phase 0, frozen-input E1/E2, and clinical acceptance remain pending. See Eagle Eye stage-2 section 31 |
@@ -1091,6 +2893,27 @@ stale redistribution evidence before source snapshotting or any expensive compil
 This improves failure latency and operator repeatability without relaxing the
 six-artifact, serial Nuitka, source identity, legal, or install-acceptance gates.
 
+The completed 2026-09-10 version 3.6.6 matrix sharpens the OPT-53 performance
+decision with a second real measurement. Exact-input PyInstaller repackaging took
+about 49 minutes. Nuitka took about 3 hours 15 minutes; Stage 6 took about 54
+minutes, while Stage 10 took about 63 minutes and its three standalone Inno
+compression passes accounted for about 60 minutes. Both backends already compile
+one core and derive three edition views, so the six outputs do not represent six
+application compiles. Immutable runtime assets are already cached. The remaining
+safe reuse boundaries are fail-closed PyInstaller core reuse and same-candidate
+Nuitka recovery. Inno has no incremental block cache for a monolithic standalone
+EXE, so unchanged DLLs alone cannot authorize installer reuse. The next measured
+experiment remains content-addressed cross-candidate Nuitka Stage 6 reuse; a fast
+compression profile is limited to non-promotable diagnostics, and parallel Inno
+compilation remains disabled pending dedicated-machine RAM/disk evidence. Root
+`BUILD.md` now makes an unqualified build request an immutable six-file contract,
+and the coordinator CLI no longer exposes a final-output redirect. The same
+coordinator now owns interrupted-candidate recovery through `--resume-workspace`:
+it retains a completed backend, refuses an active recorded child, constrains Nuitka
+resume to release stages 0/6/7/8/9/10, and reruns coherence. This closes the manual
+recovery gap encountered by the 3.6.6 build without authorizing cross-candidate
+cache reuse.
+
 ### OPT-01 Printing follow-up - 2026-09-09
 
 DICOM network submission now runs in a bounded pool job holding captured settings, pixels and study identity. Association timeout is 10 s; DIMSE/network timeouts are 30 s; no automatic print retries. Before: synchronous network on the GUI thread. After: a held synthetic transport proves off-GUI execution, immediate return, and completion owned by the original study. No live latency percentile improvement is claimed.
@@ -1110,6 +2933,12 @@ the current source of truth.
 ---
 
 ## 17. Final decision — the safest highest-value remaining work *(rewritten 2026-07-14)*
+
+**Historical decision, not current completion status.** Follow the September 15
+closure audit at the top for current ordering. Its measured GUI DICOM cache miss
+qualifies the older blanket "decode/render healthy" statement below; it does not
+authorize rewriting the decoder. Preserve the historical evidence and existing
+default-on identity implementation while reconciling remaining acceptance gates.
 
 > **The highest-value work right now is not writing code. It is DRAINING THE VERIFICATION DEBT.**
 >
@@ -1196,6 +3025,19 @@ clinical adjudication remain pending. Details and scoped rollback:
 
 ### 2026-09-05 — OPT-55 provider/model boundary follow-up
 
+**2026-09-20 saved candidate follow-up:** the owner requested durable build defaults
+for the best available model experiments. Pipeline provenance 8.7.0 now persists
+Astra company screening and standard diagnosis with independent Gemini anatomy
+and context. The reporter preserves the tested Astra original-detail, medium
+reasoning and completion-token profile; explicit provider/model overrides remain.
+Fail-before: 5 failed / 1 passed. Final affected/provider/builder selection:
+164 passed, exit 0. All 468 plugin mirror pairs match. A synthetic-only real
+company transport call passed. Current source control ping/actions are reachable,
+but that process predates the edits: fresh-source GUI and installer acceptance
+remain pending. No clinical accuracy claim, installer, endpoint or key change.
+Neural grading, subtle findings and the existing eight-card coverage limit remain
+open. See [saved model profile](modules/EAGLE_EYE_LUMBAR_SAVED_MODEL_PROFILE_2026-09-20.md).
+
 The installed Eagle Eye failure exposed an old explicit direct-provider selection
 combined with hardcoded endpoint/model fallbacks. Company/GapGPT remains the default;
 direct mode now needs the user's saved selection, key and Base URL. Direct Eagle Eye
@@ -1240,3 +3082,272 @@ diagnostic result or production rollout. See the existing spatial experiment rep
 ### OPT-01 Printing reliability follow-up - 2026-09-09
 
 The print audit correction adds truthful Windows submission completion, DICOM operation/status reporting and pre-association validation; fixes shared image window/color fidelity. 89 focused tests pass, 462 mirror pairs match. This is correctness/reliability work, with no latency improvement claim or new GUI-thread offload. Remaining preparation latency and live device checks are recorded in `docs/modules/PRINT_TRANSPORT_AUDIT_2026-09-09.md`. Rollback is limited to the follow-up hunks and matching mirrors, preserving prior staged changes.
+
+
+### 2026-09-11: OPT-51 workspace-owned Eagle Eye jobs; OPT-58 follow-up boundary
+
+The workspace-first UI correction makes function selection explicit after navigation.
+The new entry guards reproduce and prevent pre-entry execution and Lumbar auto-capture.
+Parent destruction now invokes existing teardown before child QThreads are deleted,
+because the workstation removes tabs with deleteLater without closeEvent. A duplicate
+Lumbar request cannot replace an active analysis. This extends OPT-51 lifecycle ownership;
+it does not claim to close OPT-58 latency work. Existing MG/DX modal overlays, synchronous
+Lumbar preflight and viewer/dataset preparation remain for the requested later blocking
+pass. Validation: 1165 passed, 8 existing xfails in the broad selection; 99 related tests
+passed after final popup layout adjustments. See
+`docs/modules/EAGLE_EYE_WORKSPACE_ENTRY_2026-09-11.md` for files, pre-fix evidence,
+scoped rollback and the remaining human-launched live gate. No latency KPI was measured.
+
+### 2026-09-14: OPT-51 / OPT-58 Eagle Eye background interaction
+
+Four fail-before guards reproduced cancellation on dismissal in Brain, lesions and Alignment, and application-modal MG/DX progress. `background_analysis.py` now supplies owner-bound nonmodal windows with Continue working in PACS; hiding a computing job preserves its Future, while explicit Cancel and workspace destruction keep cancellation. Pending input scans still cancel to avoid delayed selectors over other patients. Reopening a completed Brain/lesion job preserves its result instead of starting another series scan. MG/DX use compact dismissible progress instead of a full-window cover; existing worker reentrancy guards remain. Alignment only cancels pending scan/load on hide. Lumbar results were already nonmodal; no capture/preflight latency claim is made.
+
+Verification: six new guards, 93 focused/adjacent passes, 3 build-inclusion passes, exit 0; 462 mirrored pairs match. The existing source process predates this patch. While its real lesion worker remained active, native minimize, PACS Home, opening a series and slice navigation succeeded. This proves current background worker coexistence only, not the new close/reopen behavior. Full new UI acceptance, reporting interaction and installed-client gates remain pending until a fresh source launch after the current job finishes. No model accuracy or CPU speedup claim. Rollback only these dialog, workspace, Alignment-hide and interactor-progress hunks plus viewer mirror; preserve earlier workspace and Brain changes.
+# 2026-09-15: OPT-56 Advanced Analysis UI/UX audit
+
+Header follow-up: scene-independent Python presentation now replaces module-action
+icons, styles the header/menu, removes case identifiers from the OS title and
+clamps resident launch geometry to the destination monitor. Two compact-title
+fail-before cases and six new presentation cases; 40 final adjacent passes,
+463 matching mirrors. PythonQt startup attribute failure corrected; 41 adjacent
+tests and the embedded synthetic resident probe pass. Fresh source-workstation
+launch renders MPR; custom module icons and Models dispatch verified. Native
+About metadata and complete extension responsiveness remain open. Details and
+rollback are in the linked Advanced Analysis audit.
+
+Dropdown follow-up: native inspection reproduced the empty template Home panel
+and hidden menu bar. The real MPR action is now Home / MPR; a flat installed-tool
+list replaces general module discovery, preserving manual segmentation and Eagle
+Eye programmatic entries. One new fail-before guard; 42 focused passes and 463
+matching mirrors. Subsequent native close/reopen exposed disconnected action
+routing; fixed by keeping native actions attached. Final gate: 44 focused passes,
+463 mirrors, second fresh launch opens all eight menu panels and Home returns to
+MPR with the menu bar intact. No editing/inference operation was validated.
+
+Panel follow-up: all eight curated modules now have scoped navy/cyan controls,
+AI-PACS headings and concise purpose captions; Measurements creation icons are
+custom. Two fail-before guards preserve control values/callbacks and intact grid
+layout ownership. Final code gate: 46 focused passes, four deselected, exit 0;
+463 mirrors match. Fresh native close/reopen verifies all eight styled panels and
+return to populated Home on the primary monitor. Remaining: deep internal icons,
+native version notice/rebuild and final panel-theme acceptance on monitor B.
+
+Default-size/numeric-control follow-up: native constructor and resident geometry
+now target 70% of available screen dimensions; legacy standby no longer maximizes.
+Four geometry cases failed before the fix. Shared immutable numeric styling and
+SVG chevrons replace missing arrows in base theme/Settings and Advanced panels,
+with explicit integrations for filtering, storage, printing and report controls.
+Code: 60 launch/theme/package passes and 150 adjacent UI passes (overlapping
+selections), direct exit 0; 464 Python mirrors plus four SVG parity guards.
+Native resident GUI: default 1344x722, Maximize/Restore, visible arrows and
+Sharpness 1.0 -> 1.1 -> 1.0 verified. C++ rebuild and fresh main-app Settings
+acceptance remain pending. Monitor B deferred by the user. Details/rollback in
+the same Advanced Analysis audit; no measured startup-speed claim.
+
+Live follow-up: source-launched external viewer rendered a local MR series;
+native menu, cross-line and wheel input worked, and PACS wheel input remained
+independent. On the 1280x1024 secondary monitor, normal geometry was partly
+offscreen; maximized 1280x976 fit, with overly wide module panels and low-contrast
+controls. About still displays Slicer text. Version/title sources now match 3.6.6:
+seven fail-before guards, 34 final adjacent passes (exit 0), 462 mirror pairs match.
+The running native binary is still 0.1: rebuild and fresh GUI acceptance pending.
+These sampled UI checks do not establish inference/startup performance acceptance.
+
+Initial source/document/asset review found inconsistent resident/native geometry,
+manual-review launch-option drift, unenforced custom-only executable overrides,
+and remaining native branding/icon acceptance gaps. No runtime change or measured
+speedup. Existing focused guards pass 23 cases (exit 0) when QApplication tests
+precede QCoreApplication tests; the reverse order terminated without a summary.
+The existing live control client could not connect; GUI acceptance remains open.
+See [the audit](reports/ADVANCED_ANALYSIS_UI_UX_AUDIT_2026-09-15.md) for evidence,
+priorities and implementation slices under the existing OPT-56 item.
+
+# 2026-09-15: OPT-51 / OPT-58 manual review follow-up
+
+Added worker-submitted isolated Slicer review preparation and lesion revision
+recalculation. Existing nonmodal progress and Continue working in PACS remain
+the execution boundary. Sixty-seven focused tests passed, including existing
+background dismissal/input guards. No measured inference speedup is claimed.
+Whole-brain edits produce a binary-volume addendum, preserving posterior
+inference. Live synthetic Slicer Erase/Save removed nine voxels and regenerated
+a matching binary addendum. PACS result-button acceptance awaits human login. See
+EAGLE_EYE_BRAIN_UI_AND_MAINTENANCE.md for supported scope and rollback.
+
+### OPT-56 startup welcome text follow-up
+
+The presentation adapter corrects the stale native welcome version to the product
+title while preserving the clinical disclaimer and acknowledgement controls.
+Known-message-only handling covers existing dialogs and Show events. Fail-before
+guard; 51 focused passes, exit 0; 465 mirrors match. Live acceptance pending because
+no source PACS/Advanced window was present. Native rebuild remains separate.
+
+
+## OPT-35 preview metadata follow-up (2026-09-16, post-20:51 session)
+
+Closed the reproduced metadata/pixel count and order mismatch in bounded Advanced
+previews via header reads for the exact selected decode files. No geometry transform,
+filter or renderer changes; unsupported mappings defer to full loading. Three
+fail-before cases, six final guards; load suite 280 passes / 4 xfails / 1 xpass,
+additional geometry/MPR suite 129 passes / 5 xfails; 467 mirrors match. Suites overlap
+on six preview guards. Ping/actions work, but fresh-source GUI acceptance is pending.
+Native COM/shared stalls remain routed to existing owner reports; first-render/filter
+latency is measured but not fixed. Details, rollback and live gate:
+[VTK review](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#opt-35-preview-frame-metadata-alignment-2026-09-16-post-2051-session).
+
+
+## OPT-23 page-switch overlay follow-up (2026-09-16)
+
+Reproduced background loading re-showing an opaque native cover after viewport Hide.
+A show-time anchor/lifetime/intent check now preserves hidden-page scoping. Two
+fail-before cases plus hidden-completion guard; 46 focused passes, 467 mirrors match.
+Ping/actions work; fresh-source page-switch GUI remains pending. Remote-drop wait
+belongs to the Download Manager handoff, not a proven VTK decoder failure. Evidence,
+rollback and acceptance are in the [VTK report](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md#opt-23-native-cover-after-page-switch-2026-09-16).
+
+## OPT-23 individual filter timing prerequisite (2026-09-16)
+
+Added PHI-free per-stage filter timing without changing image processing. Four guards, 30 focused passes, source GUI blocked on control ConnectionError. Synthetic timings do not reproduce the 11-second live workload; optimization remains pending stage evidence. Shared font backend unchanged; exception cleanup ownership requires separate guarded work. See the VTK review filter-stage measurement section for evidence and rollback.
+
+
+## OPT-35 / OPT-48 MPR admission stability (2026-09-16)
+
+Reproduced and blocked reuse of explicit Advanced previews or volumes with fewer
+pixel slices than instance records. No geometry/filter changes or synchronous full
+rebuild added. Nine failing-before guards, ten final cases, 192 focused MPR/US/route
+passes and 467 matching mirrors. Ping/actions succeed on the pre-edit app; fresh
+GUI preview-rejection -> completed-MPR gate remains. Upstream tab/cache promotion
+and open-time latency are separate. Details and rollback are in the VTK review's
+Guarded MPR admission section.
+
+## OPT-35 Advanced cache integrity with tab-delivery owner (2026-09-17)
+
+Closed independently reproduced decoded metadata/pixel mismatch admission and metadata-only growth in four owned cache methods. Five fail-before cases, eleven final cases; 391 expanded passes, four existing xfails, one quarantined xpass; 467 mirrors match. Shared delivery/activation remains Unify-owned. Fresh combined native drop/tab-switch acceptance pending; see VTK report for contract, limits and rollback.
+
+
+## OPT-48 deferred MPR teardown follow-up (2026-09-17)
+
+`_mpr_views.py::_build_deferred_3d_view` now stops after progress-event processing if
+MPR cleanup has begun, while still dismissing the busy dialog. Two fail-before cases;
+four final cases and 121 combined MPR/admission passes (exit 0). No geometry, rendering
+quality or performance claim. Mirror dry-run: zero drift. Fresh-source GUI close during
+3D progress and reopen gate pending; ping/actions available on the older running source.
+Evidence, remaining scope and narrow rollback are in the VTK domains report's
+"OPT-48 MPR deferred 3D teardown reentrancy" section.
+
+
+## OPT-35 cold preview text-render correction (2026-09-17)
+
+UNIFY-HANDOFF-2026-09-17-03 is implemented/code-verified, pending coordinated fresh-source GUI. `slice_progress.py` changes generated pipe separators to parentheses: VTK interprets pipes as MathText columns. Three fail-before guards include a real cold text-actor render; 49 combined passes and one builder mirror guard pass, 467 mirrors match. Matched synthetic first-render samples: old 441-515 ms with Matplotlib import; fixed 64-81 ms without it (three cold Python processes each, OS caches uncontrolled). No claim of full-app live latency closure. Camera, geometry and literal metadata untouched. Full files, rollback and live gate: VTK report top handoff receipt.
+
+
+## OPT-35 mixed MR/SC display compatibility (2026-09-17)
+
+Advanced presentation-frame route implemented/code-verified for single-frame MR/SC,
+MONOCHROME2/byte RGB, per-frame VOI and separate overlay graphics. Complete local-case
+preparation: 45 frames, nine RGB and 45 overlays; native synthetic render/scroll/reset
+checks pass. 153 focused passes, 468 source/mirror pairs match. No geometry reconstruction
+or full-volume cache for this sequence; no GUI-thread decode. Test-control unavailable,
+fresh source/clinical acceptance pending. VTK owner report records exact files, fail-before
+proof, bounded memory/layout limitations and rollback. Stale loader identity and generic
+failure-to-download mapping handed to the existing Unify UI-stall report, not patched here.
+
+
+## OPT-35 large DX admission correction (2026-09-18)
+
+Code-verified: Advanced now admits DX for-presentation images without IPP/IOP through its
+native independent-frame worker path. Original resolution/window retained; existing filters
+remain dispatched. Detector spacing is explicit and the ruler identifies its plane. Synthetic
+31.1 MP worker/native render passes; eight local affected DX images prepare successfully.
+132 focused passes plus one builder parity pass; 468 mirror pairs match. Existing source test
+server responds but predates edits: real drag/drop and packaged acceptance remain pending.
+See the VTK domains report's matching correction section for scope, evidence and rollback.
+
+
+## OPT-35 DOC/SC admission correction (2026-09-20)
+
+Advanced's series-100000 display defect is reproduced as excluded SC/DOC admission, not a
+numeric limit. Exact SC/DOC now uses native independent pages without image enhancement or
+fabricated spatial geometry. Two worker fail-before cases; 19 presentation cases; 137 focused
+and mirror passes, exit 0. Thirty local document samples prepare correctly. Test-control
+ping/actions available; fresh-source real drop still pending. See matching VTK domains report
+section. Historical OPT-07 shared offset-key work stays separate and is not closed by this fix.
+
+
+## OPT-35 DOC whole-series budget correction (2026-09-20)
+
+Repeat live failure exposed a second blocker after DOC classification: seven byte-RGB pages
+were charged as float64 components, exceeding the 512 MiB preparation cap. Fixed only DOC
+RGB accounting: native retained buffers plus largest-page workspace/overlay allowance; cap
+unchanged. Fail-before seven-page guard and pre-decode over-budget rejection pass. Full local
+seven-page worker delivery/native offscreen switching pass; 138 focused/parity tests pass.
+Fresh-source real drop remains pending. See VTK report DOC whole-series memory follow-up.
+
+## 2026-09-20: OPT-51 / OPT-58 Eagle Eye activity presentation
+
+Extend the existing background interaction slice: worker-backed preparation
+popups now expose stage text plus indeterminate activity; Lumbar owns one reusable
+nonmodal popup through capture/analysis and disposes it at terminal status/teardown.
+No worker ownership, GUI-thread decode, network protocol or performance budget was
+changed. This is activity visibility, not a latency improvement claim.
+Selected-series handoff and review ownership are documented in
+`docs/modules/EAGLE_EYE_WORKSPACE_ENTRY_2026-09-11.md`.
+Validation: 197 focused/adjacent/builder passes, exit 0; common-popup/Lumbar guards
+failed before and passed after; 468 mirror pairs match. Live bridge is reachable,
+but the source process predates the changes, so fresh-source native acceptance
+remains pending. Rollback only the activity/session hunks and their guard.
+
+
+## OPT-35 large CT stack interaction and preview continuity (2026-09-20)
+
+Code-verified: geometry-authoritative preview prefix, reuse of valid worker-read window
+headers during scroll, and proportional large-stack Advanced drag targets with endpoint
+clamping. Seven fail-before assertions; 208 broad passes plus one native transition pass;
+four existing display-geometry quarantines remain open. Both local 392-frame CT preview
+prefixes match source pixels/order. Cold preview measured about 1.05-1.10 s, so no cold-load
+speedup claim. Native filters unchanged; all 468 mirrors match. Real GUI speed/handoff/cache
+acceptance pending; no test flag or process changed. VTK report owns full evidence; existing
+Unify report owns the idle cache-admission/resume observation request.
+
+
+OPT-35 large-CT final verification update: older cached payloads also memoize a successful
+window-header fallback per viewer instance; additional fail-before guard proves one read
+across repeated visits. Final combined suite 210 passed / 4 existing quarantined xfailed,
+exit 0, superseding intermediate counts above. No live/FPS equivalence claim.
+
+
+## OPT-35 redundant spatial render correction (2026-09-20)
+
+Latest sampled slow updates remain render-bound after header reuse. Native fail-before
+proved two draws per changed slice. Advanced now prepares visuals at one native render's
+StartEvent, with observer cleanup on failure; other contexts retain their existing route.
+Pixel-equivalence, camera/order and recovery guards pass. Final 253 passed / 4 existing
+geometry xfailed, exit 0; all 468 mirrors match. Synthetic 392-slice rounds reduced draws
+60 to 30 per 30 updates; median 14-16 to 11-14 ms, tails variable. No live speed/FPS claim.
+VTK report owns details and remaining normal-source GUI gate; no launch flags changed.
+
+
+## OPT-58 / OPT-60 late-study sidebar generation correction (2026-09-20)
+
+The latest multi-study source trace proved that open admission started with two studies,
+the shared back-fill correctly delivered a third, and the patient tab still completed its
+older two-study/15-series sidebar snapshot. The third study's DICOM and canonical PNG were
+already present; server response and download were not the fault. The grouped render guard
+treated an accepted in-flight build as final, while an active prefetch discarded a newer
+target topology.
+
+The existing bounded Sidebar owner now keys accepted generations by the immutable ordered
+Study/Series identity signature. A changed topology supersedes the old task through its
+existing token/cancellation path; a change during prefetch queues exactly one follow-up
+worker. The replacement uses the existing off-GUI image/readiness preparation and card
+manager, including disk-authoritative ready-border hydration. Same-signature metadata is a
+no-op. No alternate loader/downloader, GUI-thread scan, Viewer decode/cache/render change,
+flag default or package mirror was introduced.
+
+Two behavioral guards failed before and pass after. Final focused Study-set/sidebar/state
+selection: 125 passed; expanded Local/Server/sidebar/identity/lifecycle selection:
+259 passed; exits 0. The synthetic 141-card receipt remains bounded (entry below
+1 ms in the final run; total application is scheduling/machine dependent and not a product
+latency claim). Rollback is limited to the signature/pending-generation methods and two
+guards. Fresh-source verification must reopen the affected multi-study pattern and require
+the late study/header/card, correct total, blue disk-ready border, stable geometry and the
+new PHI-free supersession trace before this item is live-verified.

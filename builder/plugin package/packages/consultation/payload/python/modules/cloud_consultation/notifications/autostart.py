@@ -15,6 +15,46 @@ logger = logging.getLogger(__name__)
 _POLLER_ATTR = "_aipacs_consultation_poller"
 
 
+def stop_consultation_poller() -> None:
+    """Terminal app-close gate; request stop without waiting for cloud I/O.
+
+    Invoked by the existing lifecycle registry before shared DB cleanup, and
+    by aboutToQuit as a fallback. Previously replaced owners are already retired.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    app._aipacs_consultation_shutdown = True
+    poller = getattr(app, _POLLER_ATTR, None)
+    if poller is not None:
+        poller.stop()
+
+
+def consultation_shutdown_complete() -> bool | None:
+    """Read all app-owned pollers, including replaced owners awaiting finish.
+
+    GUI-thread only. Do not import an optional producer during shutdown, pump
+    events, or wait for network I/O. This observes activity, not native deletion.
+    """
+    import sys
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return True
+    module = sys.modules.get("modules.cloud_consultation.notifications.poller")
+    if module is None:
+        return True
+    poller_type = getattr(module, "ConsultationPoller", None)
+    if not isinstance(poller_type, type):
+        return None
+    # Direct QApplication children only, not a walk of the workstation widget tree.
+    return all(owner.shutdown_complete for owner in app.children()
+               if isinstance(owner, poller_type))
+
+
 def _google_identity(aipacs_user: str):
     from modules.Identity.identity_service import IdentityService
 
@@ -55,6 +95,9 @@ def ensure_consultation_poller(auth_user: dict | None = None) -> bool:
         app = QApplication.instance()
         if app is None:
             return False
+        if (getattr(app, "_aipacs_consultation_shutdown", False)
+                or getattr(app, "_shutdown_reason", None)):
+            return False
 
         from modules.Identity.identity_service import IdentityService
 
@@ -80,7 +123,7 @@ def ensure_consultation_poller(auth_user: dict | None = None) -> bool:
             if getattr(existing, "_my_email", None) == my_address:
                 return True
             try:
-                existing.stop()
+                existing.dispose()
             except Exception:  # pragma: no cover - defensive
                 pass
 
@@ -93,6 +136,9 @@ def ensure_consultation_poller(auth_user: dict | None = None) -> bool:
         )
         poller.start()
         setattr(app, _POLLER_ATTR, poller)
+        if not getattr(app, "_aipacs_consultation_shutdown_hook", False):
+            app.aboutToQuit.connect(stop_consultation_poller)
+            app._aipacs_consultation_shutdown_hook = True
         logger.info("consultation poller started for %s", my_address)
         return True
     except Exception as exc:  # pragma: no cover - must never break callers

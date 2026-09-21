@@ -17,10 +17,9 @@ Actions exposed
     this after close to assert no zombies.
 
 ``count_native_faults_since``
-    Reads ``user_data/logs/native_fault.log`` and counts ``Windows
-    fatal exception`` entries since the timestamp in ``plan.entities``
-    (or since file start if absent). Optional filter on a hex code
-    (e.g. ``0x8001010d``).
+    Compatibility action returning EXTERNAL_NATIVE_PROBE_REQUIRED. Native-file
+    reads belong to the external MCP diagnostic process, not the Qt command bus.
+    Untimed records cannot answer a retrospective minutes/since query reliably.
 
 ``probe_idle_cpu``
     Samples CPU% over ``plan.entities.seconds`` (default 5). Returns
@@ -35,7 +34,6 @@ import os
 import statistics
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from ..command_envelope import CommandPlan, CommandResult
@@ -46,10 +44,6 @@ try:
     import psutil  # type: ignore
 except ImportError:
     psutil = None  # type: ignore
-
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_NATIVE_FAULT_LOG = _PROJECT_ROOT / "user_data" / "logs" / "native_fault.log"
 
 
 class SystemCommandAdapter:
@@ -162,56 +156,14 @@ class SystemCommandAdapter:
 
     # ── action: count_native_faults_since ────────────────────────────
     def count_native_faults_since(self, plan: CommandPlan, state: dict) -> CommandResult:
-        ent = plan.entities or {}
-        since_iso = ent.get("since_iso")
-        only_code = (ent.get("code") or "").lower().strip()
-
-        if not _NATIVE_FAULT_LOG.exists():
-            return CommandResult(
-                ok=True, action="count_native_faults_since",
-                message="native_fault.log not present",
-                data={"total": 0, "code_filtered": 0, "file_exists": False},
-            )
-        try:
-            text = _NATIVE_FAULT_LOG.read_text(encoding="utf-8", errors="replace")
-        except Exception as exc:
-            return CommandResult(
-                ok=False, action="count_native_faults_since",
-                message=f"read failed: {exc}",
-                error_code="LOG_READ_FAILED",
-            )
-
-        total = 0
-        code_filtered = 0
-        for line in text.splitlines():
-            if "Windows fatal exception" not in line:
-                continue
-            total += 1
-            if only_code and only_code in line.lower():
-                code_filtered += 1
-
-        # If a 'since' is provided, we don't have per-line timestamps in
-        # the native_fault.log format, so we fall back to file-mtime
-        # gating: report 'mtime_before_since' so the caller can decide.
-        mtime_before_since = False
-        if since_iso:
-            try:
-                since_dt = datetime.fromisoformat(since_iso)
-                mtime = datetime.fromtimestamp(_NATIVE_FAULT_LOG.stat().st_mtime)
-                mtime_before_since = mtime < since_dt
-            except Exception:
-                pass
-
+        # Retain the registered action, but never silently report zero from the
+        # retired shared path or enumerate native streams on the GUI thread.
         return CommandResult(
-            ok=True, action="count_native_faults_since",
-            message=f"total={total} filtered={code_filtered}",
-            data={
-                "total": total,
-                "code_filtered": code_filtered,
-                "code_filter": only_code or None,
-                "file_exists": True,
-                "mtime_before_since": mtime_before_since,
-            },
+            ok=False, action="count_native_faults_since",
+            message="Use external MCP snapshot_health for inventory or run_scenario for a byte-window assertion.",
+            error_code="EXTERNAL_NATIVE_PROBE_REQUIRED",
+            data={"total": None, "code_filtered": None, "file_exists": None,
+                  "verdict": "inconclusive"},
         )
 
     # ── action: probe_idle_cpu ───────────────────────────────────────

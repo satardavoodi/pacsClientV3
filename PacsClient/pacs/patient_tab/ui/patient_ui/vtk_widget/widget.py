@@ -54,13 +54,7 @@ class VTKWidget(
     def __init__(self, parent=None, height_viewer=480, patient_widget=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self._drop_hover_started_ms = 0.0
-        self._drop_hover_armed = False
-        self._drop_hover_inside = False
-        self._drop_hover_anchor_pos = None
-        self._drop_hover_timer = QTimer(self)
-        self._drop_hover_timer.setSingleShot(True)
-        self._drop_hover_timer.timeout.connect(self._arm_drop_target)
+        self._init_drop_hover_dwell()
         self.last_series_show = None
         self.id_vtk_widget = None
         self.current_style: AbstractInteractorStyle = None

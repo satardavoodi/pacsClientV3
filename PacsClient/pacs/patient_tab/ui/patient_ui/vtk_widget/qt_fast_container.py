@@ -38,6 +38,9 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
     _SERIES_DROP_MIME,
     _SYNC_MOVE_THROTTLE_MS,
 )
+from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._drop_hover_dwell import (
+    _DropHoverDwellMixin,
+)
 from PacsClient.utils.runtime_correlation import (
     now_mono_ms as _corr_now_mono_ms,
     record_event as _corr_record_event,
@@ -129,7 +132,7 @@ class _NullImageViewer:
 # Main widget
 # ---------------------------------------------------------------------------
 
-class QtFastContainer(QWidget):
+class QtFastContainer(_DropHoverDwellMixin, QWidget):
     """VTK-free viewer cell widget for FAST mode.
 
     Instantiated by the factory helpers in ``_pw_viewers.py`` /
@@ -171,6 +174,7 @@ class QtFastContainer(QWidget):
 
         # Accept series drops from the thumbnail sidebar.
         self.setAcceptDrops(True)
+        self._init_drop_hover_dwell()
         
         # ── Container layout for QtSliceViewer ──────────────────────────────
         # Initialize with an empty VBoxLayout so the viewer can be added later
@@ -1122,34 +1126,36 @@ class QtFastContainer(QWidget):
 
     def dragEnterEvent(self, event):
         if self._is_series_drop(event.mimeData()):
-            # Show blue border highlight during drag-over
-            self._show_drop_highlight(True)
+            self._begin_drop_hover(event)
             event.acceptProposedAction()
         else:
+            self._reset_drop_hover_state()
             event.ignore()
 
     def dragMoveEvent(self, event):
         if self._is_series_drop(event.mimeData()):
+            self._update_drop_hover(event)
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        # Hide blue border highlight when leaving
-        self._show_drop_highlight(False)
+        self._reset_drop_hover_state()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
         series_number = self._extract_series_number(event.mimeData())
         if series_number is None:
+            self._reset_drop_hover_state()
             event.ignore()
             return
 
         event.setDropAction(Qt.CopyAction)
         event.accept()
         
-        # Hide drop highlight after drop
-        self._show_drop_highlight(False)
+        # A quick deliberate drop remains valid even before the hover highlight
+        # arms; dwell controls traversal feedback, not drop acceptance.
+        self._reset_drop_hover_state()
 
         if self.viewport_spinner:
             try:

@@ -278,6 +278,31 @@ class _PWLifecycleMixin:
         The body is unchanged; it just runs inside a breadcrumb + hang watchdog.
         """
         with _close_step("exit_patient_widget"):
+            self._pipeline_prepare_retired = True
+            retire_thumbnails = getattr(self, '_retire_local_thumbnail_stream', None)
+            if retire_thumbnails is not None:
+                retire_thumbnails()
+            sidebar_task = getattr(self, '_sidebar_build_task', None)
+            if sidebar_task is not None and not sidebar_task.done():
+                try:
+                    sidebar_task.cancel()
+                except RuntimeError:
+                    logger.debug('Sidebar build cancellation unavailable', exc_info=True)
+            prepare_task = getattr(self, '_pipeline_thumbnail_task', None)
+            if prepare_task is not None and not prepare_task.done():
+                try:
+                    prepare_task.cancel()
+                except RuntimeError:
+                    # An already-closed event loop must not abort native cleanup.
+                    logger.debug('Startup preparation cancellation unavailable', exc_info=True)
+            relay = getattr(self, '_home_signal_relay', None)
+            if relay is not None:
+                relay.dispose()
+            # Retire each panel's independent callbacks before viewer teardown.
+            for name in ('thumbnail_manager', '_adv_thumbnail_manager'):
+                manager = getattr(self, name, None)
+                if manager is not None and hasattr(manager, 'dispose'):
+                    manager.dispose()
             self._exit_patient_widget_impl()
 
     def _exit_patient_widget_impl(self):
@@ -882,6 +907,10 @@ class _PWLifecycleMixin:
             return
         self._is_active_patient_tab = True
         try:
+            self._set_thumbnail_presentation_active(True)
+        except Exception:
+            logger.debug('Thumbnail presentation resume unavailable', exc_info=True)
+        try:
             print(f"✅ [PatientWidget] on_tab_activated study={self.study_uid}")
         except Exception:
             pass
@@ -905,6 +934,10 @@ class _PWLifecycleMixin:
         if not self._is_active_patient_tab:
             return
         self._is_active_patient_tab = False
+        try:
+            self._set_thumbnail_presentation_active(False)
+        except Exception:
+            logger.debug('Thumbnail presentation suspension unavailable', exc_info=True)
         try:
             print(f"🛑 [PatientWidget] on_tab_deactivated study={self.study_uid}")
         except Exception:

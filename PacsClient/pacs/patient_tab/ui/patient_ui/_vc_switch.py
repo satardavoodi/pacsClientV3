@@ -921,6 +921,8 @@ class _VCSwitchMixin:
                                         viewer_backend: str = BACKEND_VTK,
                                         force_reload: bool = False):
         """Load uncached series in background and apply on UI thread when ready."""
+        if getattr(self, '_viewer_loads_closed', False):
+            return
         viewer_id = self._get_viewer_id(vtk_widget)
         inflight_key = (viewer_id, str(series_number))
         if inflight_key in self._async_switch_inflight:
@@ -957,6 +959,8 @@ class _VCSwitchMixin:
                         if vtk_prev is not None and isinstance(meta_prev, dict):
                             def _apply_preview_ui():
                                 try:
+                                    if getattr(self, '_viewer_loads_closed', False) or self._load_cancelled(_cancel_tok):
+                                        return
                                     if not self._is_request_current(vtk_widget, expected_token):
                                         return
                                     current_meta = getattr(getattr(vtk_widget, 'image_viewer', None), 'metadata', {}) or {}
@@ -1018,7 +1022,10 @@ class _VCSwitchMixin:
                 self.logger.debug(f"Async load failed for series {series_number}: {e}")
                 ok = False
 
+            presentation_deferred = False
+
             def _finish_on_ui():
+                nonlocal presentation_deferred
                 if self._load_cancelled(_cancel_tok):
                     # S5b: tab/patient closed (or this load superseded) — bail BEFORE touching the
                     # possibly-deleted widget; clear the inflight guards so the viewer isn't blocked.
@@ -1029,11 +1036,15 @@ class _VCSwitchMixin:
                             bool(self._async_switch_inflight), reason="finish_cancelled")
                     except Exception:
                         pass
+                    self._retire_load_cancellation(_cancel_tok)
                     return
+                deferred = False
                 try:
                     self._interactive_load_in_progress = False
                     self._async_switch_inflight.discard(inflight_key)
                     self._set_zeta_external_interactive_busy(bool(self._async_switch_inflight), reason="finish_async_switch")
+                    if getattr(self, '_viewer_loads_closed', False):
+                        return
 
                     # Guard: verify vtk_widget is still alive (could have been deleted
                     # if the user closed the tab or changed layout while load was running).
@@ -1045,6 +1056,19 @@ class _VCSwitchMixin:
 
                     if not self._is_request_current(vtk_widget, expected_token):
                         self._hide_spinner_for_widget(target_widget_for_spinner)
+                        return
+
+                    if not self._tab_active:
+                        presentation_deferred = True
+                        pending = getattr(self, '_deferred_interactive_completions', None)
+                        if pending is None:
+                            pending = self._deferred_interactive_completions = {}
+                        previous = pending.get(viewer_id)
+                        if previous is not None and previous[1] is not _cancel_tok:
+                            self._retire_load_cancellation(previous[1])
+                        pending[viewer_id] = (_finish_on_ui, _cancel_tok)
+                        deferred = True
+                        logger.info("[VIEWER-HANDOFF] stage=deferred active=False loaded=%s", bool(ok))
                         return
 
                     if not ok:
@@ -1108,7 +1132,14 @@ class _VCSwitchMixin:
                         current_meta = getattr(getattr(vtk_widget, 'image_viewer', None), 'metadata', {}) or {}
                         current_series = str(current_meta.get('series', {}).get('series_number', '') or '')
                         current_is_preview = bool(current_meta.get('preview_only', False))
-                        _already_applied = current_series == str(series_number) and not current_is_preview
+                        # Hidden publication deliberately skipped rendering. An
+                        # OLD full view of the same series is not proof that the
+                        # newly published payload has been presented.
+                        _already_applied = (
+                            not presentation_deferred
+                            and current_series == str(series_number)
+                            and not current_is_preview
+                        )
                     except Exception:
                         _already_applied = False
 
@@ -1153,7 +1184,8 @@ class _VCSwitchMixin:
                 finally:
                     self._interactive_load_in_progress = False
                     self._set_zeta_external_interactive_busy(bool(self._async_switch_inflight), reason="finish_async_switch_finally")
-                    self._retire_load_cancellation(_cancel_tok)  # S5b: op finished — don't cancel later
+                    if not deferred:
+                        self._retire_load_cancellation(_cancel_tok)
 
             try:
                 self._queue_on_ui_thread(_finish_on_ui)
@@ -1170,6 +1202,24 @@ class _VCSwitchMixin:
                     pass
 
         threading.Thread(target=_worker, daemon=True, name=f"AsyncSwitchLoad-{series_number}-v{viewer_id}").start()
+
+    def _replay_deferred_interactive_completions(self):
+        """Resume original token-bound requests, not new loads, after activation."""
+        if not getattr(self, '_deferred_interactive_completions', None):
+            return
+
+        def _replay():
+            if getattr(self, '_viewer_loads_closed', False) or not self._tab_active:
+                return  # A hide before this tick must not consume the pending work.
+            pending = self._deferred_interactive_completions
+            for viewer_id, item in list(pending.items()):
+                if pending.get(viewer_id) is not item:
+                    continue
+                pending.pop(viewer_id, None)
+                item[0]()  # Original completion checks cancellation, identity and liveness.
+            logger.info("[VIEWER-HANDOFF] stage=activation_replay pending=%d", len(pending))
+
+        QTimer.singleShot(0, _replay)
 
     def _ensure_import_folder_path(self) -> str:
         """Ensure parent_widget.import_folder_path is set and return the study path.
@@ -1893,8 +1943,15 @@ class _VCSwitchMixin:
             pass
 
     def cancel_inflight_loads(self) -> int:
-        """Cancel every in-flight async apply for this controller (tab/patient close). No-op
-        when the registry was never used (flag off). Never raises."""
+        """Retire this controller's queued delivery and cancel registered loads.
+
+        Returns the registry cancellation count (zero if it was never used).
+        The close guard also protects queued results with no registered token.
+        """
+        self._viewer_loads_closed = True
+        pending = getattr(self, '_deferred_interactive_completions', None)
+        if pending is not None:
+            pending.clear()
         try:
             reg = getattr(self, "_cancel_registry", None)
             return reg.cancel_all() if reg is not None else 0

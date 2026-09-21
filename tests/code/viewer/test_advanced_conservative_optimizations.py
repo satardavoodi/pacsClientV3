@@ -39,6 +39,7 @@ def test_set_slice_skips_overlay_sync_when_no_overlays():
         orientation_markers=None,
     )
 
+    state._prepare_slice_visuals = lambda *args: ImageViewer2D._prepare_slice_visuals(state, *args)
     ImageViewer2D._set_slice_impl(state, 5, fast_interaction=False, force_annotations=False)
 
     assert calls["set_slice"] == 1

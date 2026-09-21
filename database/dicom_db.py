@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import sqlite3
+from pathlib import Path
 
 from database._pool import get_db_connection
 
@@ -419,6 +420,23 @@ def init_database():
                 cur.execute("ALTER TABLE series ADD COLUMN expected_instance_count INTEGER DEFAULT 0")
             if 'last_indexed_at' not in series_columns:
                 cur.execute("ALTER TABLE series ADD COLUMN last_indexed_at TEXT DEFAULT NULL")
+            # Producer/worker-verified Local pixel facts.  This state is
+            # intentionally independent from the geometry metadata index: both
+            # validate different questions.  It is trusted only while the
+            # managed series directory retains the stamped revision.
+            # Older/restored rows remain Unknown and keep the header-scan path.
+            if 'pixel_inventory_status' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN pixel_inventory_status TEXT DEFAULT 'Unknown'")
+            if 'pixel_instance_count' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN pixel_instance_count INTEGER DEFAULT 0")
+            if 'pixel_inventory_instance_count' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN pixel_inventory_instance_count INTEGER DEFAULT 0")
+            if 'display_frame_count' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN display_frame_count INTEGER DEFAULT 0")
+            if 'inventory_dir_mtime_ns' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN inventory_dir_mtime_ns INTEGER DEFAULT 0")
+            if 'pixel_inventory_schema' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN pixel_inventory_schema INTEGER DEFAULT 0")
         except Exception as e:
             logger.warning("Series metadata-index migration warning: %s", e)
 
@@ -1316,8 +1334,80 @@ def get_existing_patient_ids(patient_ids) -> set:
     return out
 
 
+def _validated_pixel_inventory(instance_count: int, pixel_instance_count: int,
+                               display_frame_count: int, series_path,
+                               expected_dir_mtime_ns: int = None):
+    """Validate one producer/scan summary against the managed storage boundary."""
+    try:
+        from PacsClient.utils import data_paths
+
+        instances = int(instance_count)
+        pixels = int(pixel_instance_count)
+        frames = int(display_frame_count)
+        series_dir = Path(os.fspath(series_path)).resolve()
+        root = Path(data_paths.DICOM_IMAGES_DIR).resolve()
+        relative = series_dir.relative_to(root)
+        if (len(relative.parts) != 2 or not series_dir.is_dir() or instances <= 0
+                or pixels < 0 or pixels > instances or frames < 0
+                or (pixels > 0 and frames < pixels)):
+            return None
+        revision = int(series_dir.stat().st_mtime_ns)
+        if (expected_dir_mtime_ns is not None
+                and revision != int(expected_dir_mtime_ns)):
+            return None
+        return instances, pixels, frames, revision
+    except (ImportError, OSError, TypeError, ValueError):
+        return None
+
+
+def mark_series_pixel_inventories(records: list) -> int:
+    """Atomically persist independently verified Local pixel summaries.
+
+    Records are ``(series_pk, instance_count, pixel_count, frame_count, path)``
+    for an owning producer, or the same tuple plus ``scan_dir_mtime_ns`` for a
+    legacy scan. The latter is compare-and-persist: a concurrently changed
+    directory is rejected. Invalid/external entries are ignored. This does not
+    alter geometry-index or download lifecycle state.
+    """
+    accepted = []
+    for record in records or []:
+        try:
+            if len(record) == 5:
+                series_pk, instances, pixels, frames, series_path = record
+                expected_revision = None
+            elif len(record) == 6:
+                series_pk, instances, pixels, frames, series_path, expected_revision = record
+            else:
+                continue
+            inventory = _validated_pixel_inventory(
+                instances, pixels, frames, series_path, expected_revision
+            )
+            if inventory is not None:
+                accepted.append((*inventory, int(series_pk)))
+        except (TypeError, ValueError):
+            continue
+    if not accepted:
+        return 0
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.executemany(
+                "UPDATE series SET pixel_inventory_status = 'Verified', "
+                "pixel_inventory_instance_count = ?, pixel_instance_count = ?, "
+                "display_frame_count = ?, inventory_dir_mtime_ns = ?, "
+                "pixel_inventory_schema = 1 WHERE series_pk = ?",
+                accepted,
+            )
+            conn.commit()
+        return len(accepted)
+    except Exception as e:
+        logger.debug("mark_series_pixel_inventories failed: %s", e)
+        return 0
+
+
 def mark_series_indexed(series_pk: int, indexed_count: int, expected_count: int = None,
-                        status: str = None) -> None:
+                        status: str = None, *, pixel_instance_count: int = None,
+                        display_frame_count: int = None, series_path=None) -> None:
     """Stamp the metadata-index status for a series (P0, 2026-06-16).
 
     Called at download/import completion AFTER instance rows are written. The
@@ -1326,6 +1416,8 @@ def mark_series_indexed(series_pk: int, indexed_count: int, expected_count: int 
     path may trust to skip the per-slice disk header rescan. Otherwise it stays
     ``NotIndexed`` and the disk path remains authoritative. Pass an explicit
     ``status`` to force one (e.g. ``FailedIndexing`` / ``NeedsReindex``).
+    Pixel-object/frame totals are accepted only with a complete index and a
+    stat-able managed series directory; otherwise any older summary is invalidated.
     Best-effort: a stamp failure must never break download/import.
     """
     import datetime as _dt
@@ -1336,42 +1428,93 @@ def mark_series_indexed(series_pk: int, indexed_count: int, expected_count: int 
     idx = int(indexed_count or 0)
     if status is None:
         status = 'Indexed' if (exp > 0 and idx >= exp) else 'NotIndexed'
+    inventory = None
+    if (status == 'Indexed' and exp > 0 and idx >= exp
+            and pixel_instance_count is not None and display_frame_count is not None):
+        inventory = _validated_pixel_inventory(
+            idx, pixel_instance_count, display_frame_count, series_path
+        )
     try:
         with get_db_connection() as conn:
             cur = conn.cursor()
-            cur.execute(
-                "UPDATE series SET metadata_index_status = ?, indexed_instance_count = ?, "
-                "expected_instance_count = ?, last_indexed_at = ? WHERE series_pk = ?",
-                (status, idx, exp, _dt.datetime.now().isoformat(timespec='seconds'), int(series_pk)),
-            )
+            timestamp = _dt.datetime.now().isoformat(timespec='seconds')
+            if inventory is None:
+                # An incomplete/unverified re-index invalidates an older summary;
+                # it must never leave a stale series looking producer-verified.
+                cur.execute(
+                    "UPDATE series SET metadata_index_status = ?, indexed_instance_count = ?, "
+                    "expected_instance_count = ?, last_indexed_at = ?, "
+                    "pixel_inventory_status = 'Unknown', pixel_inventory_instance_count = 0, "
+                    "pixel_instance_count = 0, "
+                    "display_frame_count = 0, inventory_dir_mtime_ns = 0, "
+                    "pixel_inventory_schema = 0 WHERE series_pk = ?",
+                    (status, idx, exp, timestamp, int(series_pk)),
+                )
+            else:
+                cur.execute(
+                    "UPDATE series SET metadata_index_status = ?, indexed_instance_count = ?, "
+                    "expected_instance_count = ?, last_indexed_at = ?, "
+                    "pixel_inventory_status = 'Verified', pixel_inventory_instance_count = ?, "
+                    "pixel_instance_count = ?, "
+                    "display_frame_count = ?, inventory_dir_mtime_ns = ?, "
+                    "pixel_inventory_schema = 1 WHERE series_pk = ?",
+                    (status, idx, exp, timestamp, inventory[0], inventory[1], inventory[2],
+                     inventory[3], int(series_pk)),
+                )
             conn.commit()
     except Exception as e:
         logger.debug("mark_series_indexed failed for series_pk=%s: %s", series_pk, e)
 
 
 def get_series_metadata_index(series_pk: int) -> dict:
-    """Return {'status','indexed','expected','last_indexed_at'} for a series, or a
-    NotIndexed default if the row/columns are absent (back-compat / pre-migration)."""
+    """Return geometry-index and independent pixel-inventory state.
+
+    A missing row/schema fails closed to NotIndexed/Unknown for restored and
+    pre-migration databases.
+    """
     try:
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT metadata_index_status, indexed_instance_count, "
-                "expected_instance_count, last_indexed_at FROM series WHERE series_pk = ?",
+                "expected_instance_count, last_indexed_at, pixel_inventory_status, "
+                "pixel_inventory_instance_count, pixel_instance_count, display_frame_count, inventory_dir_mtime_ns, "
+                "pixel_inventory_schema FROM series WHERE series_pk = ?",
                 (int(series_pk),),
             )
             row = cur.fetchone()
             if not row:
-                return {'status': 'NotIndexed', 'indexed': 0, 'expected': 0, 'last_indexed_at': None}
+                return {'status': 'NotIndexed', 'indexed': 0, 'expected': 0,
+                        'last_indexed_at': None, 'pixel_inventory_status': 'Unknown',
+                        'pixel_inventory_instances': 0, 'pixel_instances': 0, 'display_frames': 0,
+                        'inventory_dir_mtime_ns': 0, 'pixel_inventory_schema': 0}
             return {'status': row[0] or 'NotIndexed', 'indexed': int(row[1] or 0),
-                    'expected': int(row[2] or 0), 'last_indexed_at': row[3]}
+                    'expected': int(row[2] or 0), 'last_indexed_at': row[3],
+                    'pixel_inventory_status': row[4] or 'Unknown',
+                    'pixel_inventory_instances': int(row[5] or 0),
+                    'pixel_instances': int(row[6] or 0),
+                    'display_frames': int(row[7] or 0),
+                    'inventory_dir_mtime_ns': int(row[8] or 0),
+                    'pixel_inventory_schema': int(row[9] or 0)}
     except Exception:
-        return {'status': 'NotIndexed', 'indexed': 0, 'expected': 0, 'last_indexed_at': None}
+        return {'status': 'NotIndexed', 'indexed': 0, 'expected': 0,
+                'last_indexed_at': None, 'pixel_inventory_status': 'Unknown',
+                'pixel_inventory_instances': 0, 'pixel_instances': 0, 'display_frames': 0,
+                'inventory_dir_mtime_ns': 0, 'pixel_inventory_schema': 0}
 
 
-def _series_has_disk_files(folder) -> bool:
-    """True if ``folder`` exists and holds at least one .dcm (case-insensitive)."""
+def _series_has_disk_files(folder, known_instance_path=None) -> bool:
+    """True when a known instance or directory scan proves a DICOM exists.
+
+    Healthy indexed series normally resolve through one exact instance path.
+    Directory enumeration is retained as the conservative fallback when that
+    row is stale or absent, so partial DB drift can never cause a false prune.
+    """
     try:
+        if (known_instance_path
+                and str(known_instance_path).lower().endswith('.dcm')
+                and os.path.isfile(known_instance_path)):
+            return True
         if not folder or not os.path.isdir(folder):
             return False
         for fn in os.listdir(folder):
@@ -1426,7 +1569,9 @@ def prune_orphan_series_for_study(study_uid: str, source_root: str = None,
             study_dir = os.path.join(source_root, str(study_uid))
             rows = cur.execute(
                 "SELECT s.series_pk, s.series_number, s.series_path, "
-                "(SELECT COUNT(*) FROM instances i WHERE i.series_fk = s.series_pk) "
+                "(SELECT COUNT(*) FROM instances i WHERE i.series_fk = s.series_pk), "
+                "(SELECT i.instance_path FROM instances i "
+                " WHERE i.series_fk = s.series_pk ORDER BY i.instance_pk LIMIT 1) "
                 "FROM series s WHERE s.study_fk = ?", (study_pk,)
             ).fetchall()
 
@@ -1440,15 +1585,16 @@ def prune_orphan_series_for_study(study_uid: str, source_root: str = None,
             # downloaded) and its rows are a legitimate re-downloadable record — NEVER
             # prune those (that would delete the history of evicted studies).
             study_has_files = any(
-                _series_has_disk_files(_folder_for(sn, sp)) for (_pk, sn, sp, _nr) in rows
+                _series_has_disk_files(_folder_for(sn, sp), sample_path)
+                for (_pk, sn, sp, _nr, sample_path) in rows
             )
             if not study_has_files:
                 return []
-            for series_pk, series_number, series_path, n_rows in rows:
+            for series_pk, series_number, series_path, n_rows, sample_path in rows:
                 if not n_rows:
                     continue  # never downloaded (no rows) → pending, keep
                 folder = _folder_for(series_number, series_path)
-                if _series_has_disk_files(folder):
+                if _series_has_disk_files(folder, sample_path):
                     continue  # files present → valid, keep
                 pruned.append((str(series_number), int(n_rows)))
                 if not dry_run:

@@ -7,6 +7,15 @@ import pytest
 from builder import distribution_profiles as profiles
 from tests.code.ai_imaging.test_offline_lumbar import bundle
 from tests.code.builder.test_eagle_eye_brain_payload import brain_payload
+from tests.code.builder.test_eagle_eye_lesion_payload import make_lesion_payload
+from tests.code.builder.test_eagle_eye_alignment_payload import make_accepted_payload
+from tests.code.builder.test_eagle_eye_total_spine_payload import make_spine_payload, SYNTHETIC_HASH
+
+
+@pytest.fixture(autouse=True)
+def synthetic_spine_checkpoint_pin(monkeypatch):
+    from modules.ai_imaging.eagle_eye_total_spine import service
+    monkeypatch.setattr(service, 'WEIGHT_SHA256', SYNTHETIC_HASH)
 
 
 def source_stage(tmp_path):
@@ -21,6 +30,37 @@ def source_stage(tmp_path):
         {"module_id": "advanced_mpr", "available": True, "has_payload": True},
         {"module_id": "echomind", "available": True, "has_payload": True}]}))
     return source
+
+
+@pytest.mark.parametrize("edition", list(profiles.EDITIONS))
+def test_every_edition_retains_current_echomind_report_renderers(tmp_path, edition, bundle, brain_payload):
+    """The next edition stage must carry the reviewed report source bytes."""
+    import shutil
+
+    source = source_stage(tmp_path)
+    payload = add_complete_slicer_runtime(source)
+    shutil.copytree(bundle, payload / "offline_lumbar", dirs_exist_ok=True)
+    shutil.copytree(brain_payload, payload / "eagle_eye/brain")
+    make_lesion_payload(payload / 'eagle_eye/brain-lesions')
+    make_accepted_payload(payload / 'eagle_eye/alignment')
+    make_spine_payload(payload / 'eagle_eye/total-spine')
+    root = Path(__file__).resolve().parents[3]
+    relative = Path("plugin_packages/echomind/payload/python/modules/EchoMind")
+    (source / relative).mkdir(parents=True)
+    expected = {}
+    for name in ("viewer_chat/ai_chat_pages.py", "viewer_chat/ai_chat_widgets.py",
+                 "normal_templates.py", "reception_templates.py",
+                 "viewer_chat/normal_template_dialog.py", "viewer_chat/reception_template_dialog.py",
+                 "viewer_chat/openai_reporter.py"):
+        canonical = root / "modules/EchoMind" / name
+        mirror = root / "builder/plugin package/packages/echomind/payload/python/modules/EchoMind" / name
+        expected[name] = canonical.read_bytes()
+        assert mirror.read_bytes() == expected[name]
+        (source / relative / name).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative / name).write_bytes(mirror.read_bytes())
+    target = profiles.stage_edition(source, tmp_path / edition, profiles.EDITIONS[edition])
+    for name, content in expected.items():
+        assert (target / relative / name).read_bytes() == content
 
 
 def add_complete_slicer_runtime(source):
@@ -189,6 +229,9 @@ def test_three_output_contract_and_arm_identity(tmp_path, bundle, brain_payload)
         (module_path / name).write_text("# Synthetic integration fixture\n")
     shutil.copytree(bundle, payload / "offline_lumbar")
     shutil.copytree(brain_payload, payload / 'eagle_eye/brain')
+    make_lesion_payload(payload / 'eagle_eye/brain-lesions')
+    make_accepted_payload(payload / 'eagle_eye/alignment')
+    make_spine_payload(payload / 'eagle_eye/total-spine')
     commands = []
     def compile_fixture(command, **kwargs):
         commands.append(command)
@@ -257,6 +300,9 @@ def test_internal_eagle_eye_stage_does_not_require_distribution_receipt(
         (module_path / name).write_text("# Synthetic integration fixture\n")
     shutil.copytree(bundle, payload_root / "offline_lumbar")
     shutil.copytree(brain_payload, payload_root / "eagle_eye/brain")
+    make_lesion_payload(payload_root / 'eagle_eye/brain-lesions')
+    make_accepted_payload(payload_root / 'eagle_eye/alignment')
+    make_spine_payload(payload_root / 'eagle_eye/total-spine')
     (payload_root / "eagle_eye/brain/distribution-approval.json").unlink()
 
     staged = profiles.stage_edition(
@@ -287,6 +333,9 @@ def test_internal_installer_compile_explicitly_disables_distribution_receipt_gat
         (module_path / name).write_text("# Synthetic integration fixture\n")
     shutil.copytree(bundle, payload_root / "offline_lumbar")
     shutil.copytree(brain_payload, payload_root / "eagle_eye/brain")
+    make_lesion_payload(payload_root / 'eagle_eye/brain-lesions')
+    make_accepted_payload(payload_root / 'eagle_eye/alignment')
+    make_spine_payload(payload_root / 'eagle_eye/total-spine')
     (payload_root / "eagle_eye/brain/distribution-approval.json").unlink()
     commands = []
 

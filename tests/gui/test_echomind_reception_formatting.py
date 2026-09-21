@@ -82,6 +82,18 @@ def _payload(prepare, bubble) -> str:
     return prepare(bubble.get_export_html())
 
 
+def _size_px(html, text):
+    """Read actual character sizes, including inheritance, independent of units."""
+    from PySide6.QtGui import QTextDocument
+
+    doc = QTextDocument()
+    doc.setHtml(html)
+    cursor = doc.find(text)
+    assert not cursor.isNull(), "Synthetic text was lost during export"
+    font = cursor.charFormat().font()
+    return font.pixelSize() if font.pixelSize() > 0 else font.pointSizeF() / .75
+
+
 # ── 1. the regression itself: class-based styling must survive ──────────────
 
 def test_assistant_bubble_colours_reach_reception(qapp, prepare):
@@ -93,8 +105,7 @@ def test_assistant_bubble_colours_reach_reception(qapp, prepare):
 
 def test_assistant_bubble_font_sizes_reach_reception(qapp, prepare):
     out = _payload(prepare, _bubble(qapp, ASSISTANT_HTML))
-    sizes = set(RE_SIZE.findall(out))
-    assert "19px" in sizes and "15px" in sizes, f"sizes lost; got {sorted(sizes)}"
+    assert _size_px(out, "Assessment") == pytest.approx(16 * 19 / 15, abs=.03)
 
 
 def test_the_old_path_really_did_lose_it(qapp, prepare):
@@ -125,14 +136,20 @@ def test_report_bubble_keeps_every_colour(qapp, prepare):
 def test_report_bubble_keeps_its_size_hierarchy(qapp, prepare):
     """A 20px title and 15px body must not collapse into one size."""
     out = _payload(prepare, _bubble(qapp, REPORT_HTML))
-    sizes = set(RE_SIZE.findall(out))
-    assert "20px" in sizes and "15px" in sizes, f"hierarchy flattened: {sorted(sizes)}"
+    title = _size_px(out, "CT Chest Report")
+    body = _size_px(out, "Liver is unremarkable.")
+    assert body == pytest.approx(16, abs=.03)
+    assert title / body == pytest.approx(20 / 15, abs=.003)
 
 
 def test_mixed_language_directions_are_marked(qapp, prepare):
-    out = _payload(prepare, _bubble(qapp, REPORT_HTML))
+    bubble = _bubble(qapp, REPORT_HTML)
+    bubble.set_font_size(24)
+    out = _payload(prepare, bubble)
     dirs = set(RE_DIR.findall(out))
     assert {"rtl", "ltr"} <= dirs, f"per-block direction missing: {sorted(dirs)}"
+    assert _size_px(bubble.lbl.text(), "Liver is unremarkable.") == pytest.approx(
+        _size_px(out, "Liver is unremarkable."), abs=.03)
 
 
 def test_persian_capable_font_is_applied(qapp, prepare):
@@ -149,7 +166,10 @@ def test_reader_font_scale_reaches_reception(qapp, prepare):
     """A-/A+ changed only the rendered bubble; the payload ignored it."""
     bubble = _bubble(qapp, REPORT_HTML)
     bubble.set_font_size(24)
-    root = _payload(prepare, bubble)
+    out = _payload(prepare, bubble)
+    assert _size_px(out, "Liver is unremarkable.") == pytest.approx(24, abs=.03)
+    assert _size_px(out, "CT Chest Report") == pytest.approx(32, abs=.03)
+    root = out
     root = root[:root.index(">") + 1]
     assert "font-size: 18pt" in root, f"24px scale not carried: {root[:160]}"
 
@@ -171,7 +191,7 @@ def test_export_is_fully_inline_like_the_editor(qapp):
     assert "<body" in html.lower(), "no <body style> for the root font to come from"
     # The class-based colours/sizes are now inline attributes on the elements.
     assert "#1f3b77" in html, "heading colour was not inlined"
-    assert "19px" in html or "14pt" in html, "heading size was not inlined"
+    assert _size_px(html, "Assessment") == pytest.approx(16 * 19 / 15, abs=.03)
     # And the class rules themselves are gone from the boilerplate block.
     head = html[: html.lower().find("</head>") + 7] if "</head>" in html.lower() else ""
     assert ".aihead" not in head and ".aiwrap" not in head, (

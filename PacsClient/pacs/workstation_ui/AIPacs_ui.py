@@ -290,8 +290,34 @@ class ControlPanelWindow(object):
             panel = getattr(viewer_config, "storage_cleanup_panel", None)
             if panel is not None and hasattr(panel, "storageChanged"):
                 panel.storageChanged.connect(self._on_storage_changed_refresh_home)
+                if hasattr(panel, "set_activity_probe"):
+                    panel.set_activity_probe(self._storage_cleanup_activity_reasons)
         except Exception:
             logger.exception("Failed to wire storage cleanup refresh signal")
+
+    def _storage_cleanup_activity_reasons(self):
+        """Return PHI-free reasons why destructive local cleanup must wait."""
+        reasons = []
+        home = getattr(self, "home_widget", None)
+        if bool(getattr(home, "_import_flow_active", False)):
+            reasons.append("a DICOM import is running")
+        try:
+            manager = getattr(home, "custom_tab_manager", None)
+            patient_tabs = manager.get_all_patient_tabs() if manager is not None else {}
+            if patient_tabs:
+                reasons.append("one or more patient viewer tabs are open")
+        except Exception:
+            logger.debug("Storage cleanup patient-tab probe failed", exc_info=True)
+            reasons.append("patient viewer state could not be verified")
+        try:
+            from modules.download_manager.state.state_store import get_state_store
+
+            if get_state_store().get_active_downloads():
+                reasons.append("one or more downloads are active or pending")
+        except Exception:
+            logger.debug("Storage cleanup download probe failed", exc_info=True)
+            reasons.append("download activity could not be verified")
+        return reasons
 
     def _on_storage_changed_refresh_home(self):
         """Re-evaluate the home patient table's downloaded/green status after a

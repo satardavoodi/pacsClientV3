@@ -69,7 +69,7 @@ from PacsClient.utils.runtime_correlation import (
 # ── OPT-21: native-crash tracing (2026-07-07) ───────────────────────────────
 # Enable faulthandler as early as possible so a native fault (VTK/OpenGL/driver
 # access violation) leaves the Python stack of all threads in
-# user_data/logs/native_fault.log — even in the frozen build, which previously
+# user_data/logs/native_fault.<pid>.<session-token>.log — even in frozen builds, which previously
 # died with ZERO trace (PC2 Standard-MPR crash). Default ON; kill switch
 # AIPACS_NATIVE_FAULT_LOG=0. Must never break startup.
 try:
@@ -637,6 +637,16 @@ def configure_graphics_fallback():
 # Configure graphics BEFORE any Qt/VTK imports
 GRAPHICS_PROFILE = configure_graphics_fallback()
 
+# Viewer widgets are created later on the Qt thread. Reuse the graphics probe
+# completed above instead of re-reading runtime_profile.json and probing the
+# same hardware during first-viewer construction.
+try:
+    from modules.viewer.gpu_boost import prime_gpu_boost_profile_cache
+
+    prime_gpu_boost_profile_cache(GRAPHICS_PROFILE)
+except Exception:
+    pass
+
 # Fix Windows console encoding for emoji support
 if sys.platform == 'win32':
     try:
@@ -646,6 +656,12 @@ if sys.platform == 'win32':
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'ignore')
     except:
         pass
+
+from PacsClient.utils.pyside_signature_guard import install_pyside_signature_guard
+
+# Install before Qt application construction and credential/import workers.
+# Preserve exception visibility: this only corrects the reviewed registry race.
+install_pyside_signature_guard()
 
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
@@ -1321,7 +1337,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.6.6")
+    app.setApplicationVersion("3.6.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1512,6 +1528,16 @@ if __name__ == "__main__":
                 _gw.stop()
         except Exception:
             pass
+        # Record finalization intent while the async listener is still running.
+        # Callback returns are not proof that every Qt/native owner has drained.
+        try:
+            logging.getLogger(__name__).info(
+                "[SHUTDOWN_FINAL] phase=before_log_shutdown hard_exit_planned=%s "
+                "owner_completion=unverified",
+                os.environ.get("AIPACS_NO_HARD_EXIT", "") != "1",
+            )
+        except Exception:
+            pass
         # Game-changer #1: flush async log listener before process exit so
         # no records are lost to the queue on shutdown.
         try:
@@ -1519,8 +1545,8 @@ if __name__ == "__main__":
             shutdown_diagnostic_logging()
         except Exception:
             pass
-        # HARD-EXIT FAILSAFE (2026-07-14 shutdown review). All cleanup above has
-        # run; now GUARANTEE the process actually dies. Without this, a lingering
+        # HARD-EXIT FAILSAFE (2026-07-14 shutdown review). Cleanup above was
+        # attempted; this does not prove owner completion. Without this, a lingering
         # non-daemon thread (a native audio/PortAudio callback, a Qt Multimedia
         # backend thread, a stuck VTK/OpenGL teardown, a blocked socket recv) can
         # keep the interpreter — and therefore the whole AIPacs process and its
@@ -1531,9 +1557,6 @@ if __name__ == "__main__":
         # + log flush above. Escape hatch: AIPACS_NO_HARD_EXIT=1 (debugging).
         try:
             if os.environ.get("AIPACS_NO_HARD_EXIT", "") != "1":
-                logging.getLogger(__name__).info(
-                    "Application shutdown: hard-exit failsafe (all cleanup done)."
-                )
                 sys.stdout.flush()
                 sys.stderr.flush()
                 os._exit(0)

@@ -6,12 +6,18 @@ each session. Complements the **human-assisted bootstrap** section in `CLAUDE.md
 
 ## 0. Quick protocol (fast path — verified live 2026-06-03)
 
+**2026-09-14 policy correction:** historical launcher/lifecycle capabilities are not authorization
+to stop, relaunch, or log into the app. Current `AGENTS.md` requires human bootstrap and one source
+instance. Follow [the current two-gate procedure](for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md)
+section 0: discover `aipacs-control` or its existing CLI, then `ping` and `list_actions`. The human
+sets `AIPACS_TEST_SERVER=1` for a non-clinical source run. A missing bridge is BLOCKED, not a reason
+to use the installed executable, kill processes, or enable the production LAN gateway.
+
 The fastest reliable sequence. Details are in the sections below.
 
-1. **Launch (close + open in one):** run `run_app_canon_fresh.bat` — it kills any stale
-   instance and launches the `.venv` source build. (Agent: File Explorer is usually on
-   Monitor B; focus it, `Ctrl+L`, type the full `.bat` path, Enter. Human: double-click it.)
-2. **Login:** when the login card appears, click **Sign In** (credentials are saved).
+1. **Human launch:** the human opens the `.venv` source build once, with the test flag when
+   live automation is intended. If it is already running, verify patch freshness and attach.
+2. **Human login:** the human signs in; agents do not improvise saved-credential automation.
 3. **Home Page:** wait for it (server "razi", Patient Search panel).
 4. **Put it on Monitor A:** `Win+Shift+Right` (and `Win+Shift+Left` sends it back to B).
    Window must be focused. *Not* the maximize button.
@@ -31,8 +37,8 @@ One launcher, two clicks (Sign In + one keyboard shortcut), and you're working o
   - VS Code task **"AIPacs: Run App (logged)"**
   - `run_app_canon_fresh.bat` (kills stale instances, then launches the .venv build)
 - **Single-instance guard:** a second launch detects a running instance and just raises its
-  window, then exits — so the new code never loads. **Fully close / kill any running instance
-  first** (`taskkill /F /IM python.exe /T`, `pythonw.exe`, `aipacs.exe`).
+  window, then exits — so the new code never loads. Ask the human to close/restart the source
+  app when needed. Never kill processes by broad executable name or improvise recovery.
 - **Interpreter matters:** the system `python` (python313) and the project `.venv` can resolve
   different copies of the `modules` package. Use the explicit `.venv\Scripts\python.exe` to be
   sure you're running the repo source.
@@ -46,12 +52,16 @@ do not spend cycles fighting window management.
 
 ## 2. Startup
 - The app usually opens on **Monitor B**, sometimes **Monitor A**.
-- If it opens on Monitor B, a **low disk-space warning** may appear at startup. It is not
-  important — click **OK** to dismiss it.
+- A **low disk-space warning** may appear on either monitor. The user approved clicking
+  **OK** during GUI preflight (2026-09-14); do not choose **Don't show again** or delete data.
+  Acknowledgment does not resolve capacity risk for downloads/imports. This step was observed
+  working on the fresh source run; login remained pending afterward.
 
 ## 3. Login
 - After the warning, the **login page** appears.
-- Username and password are usually already saved → click **Sign In**.
+- Credentials may be prefilled; leave them masked and unchanged. The current Computer Use
+  skill prohibits automating authentication, including clicking **Sign In** with saved values.
+  Ask the human to sign in, then verify Home and the local test bridge before patient tests.
 
 ## 4. Monitor placement — mechanism & deterministic switching
 

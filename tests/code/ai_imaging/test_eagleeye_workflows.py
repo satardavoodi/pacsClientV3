@@ -162,7 +162,7 @@ def test_ui_routing_and_bone_age_import_guards_are_explicit():
     # added (bone age 1x1, lumbar 1x3, MG 1x2). Pin each branch's INTENT rather
     # than the old one-line ternary, so this guard does not rot again the next
     # time a mode joins.
-    assert 'if self.eagle_eye_mode == "bone_age":\n            initial_layout = (1, 1)' in patient_widget
+    assert 'if self.eagle_eye_mode in ("bone_age", "brain_mri"):\n            initial_layout = (1, 1)' in patient_widget
     assert 'elif self.eagle_eye_mode == "lumbar_mri":\n            initial_layout = LUMBAR_LAYOUT' in patient_widget
     assert 'LUMBAR_LAYOUT = (1, 3)' in patient_widget
     assert 'initial_layout = (1, 2)' in patient_widget

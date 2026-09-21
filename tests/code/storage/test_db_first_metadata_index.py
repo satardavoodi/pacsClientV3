@@ -38,11 +38,16 @@ def test_source_wiring_present():
     db = _read("database/dicom_db.py")
     assert "metadata_index_status" in db
     assert "def mark_series_indexed" in db
+    assert "def mark_series_pixel_inventories" in db
     assert "def get_series_metadata_index" in db
     assert "ALTER TABLE series ADD COLUMN metadata_index_status" in db
+    assert "pixel_inventory_status" in db
+    assert "display_frame_count" in db
 
     sd = _read("modules/download_manager/download/series_downloader.py")
     assert "mark_series_indexed" in sd
+    assert "try_dicom_file_pixel_facts" in sd
+    assert "display_frame_count=(display_frame_count if inventory_complete else None)" in sd
     assert "'slice_thickness': slice_thickness_val" in sd
     assert "'spacing_between_slices': spacing_between_val" in sd
 
@@ -132,6 +137,54 @@ def test_mark_series_indexed_roundtrip(tmp_path, monkeypatch):
         st = dicom_db.get_series_metadata_index(series_pk)
         assert st["status"] == "Indexed" and st["indexed"] == 5
         assert st["last_indexed_at"]
+
+        # A producer-verified pixel summary is part of the same metadata-index
+        # record.  Object count and display-frame count remain distinct (cine).
+        series_dir = tmp_path / "managed" / "1.2.3.studyuid" / "1"
+        series_dir.mkdir(parents=True)
+        monkeypatch.setattr(data_paths, "DICOM_IMAGES_DIR", tmp_path / "managed", raising=False)
+        dicom_db.mark_series_indexed(
+            series_pk,
+            indexed_count=2,
+            expected_count=2,
+            pixel_instance_count=2,
+            display_frame_count=420,
+            series_path=series_dir,
+        )
+        st = dicom_db.get_series_metadata_index(series_pk)
+        assert st["pixel_inventory_status"] == "Verified"
+        assert st["pixel_inventory_instances"] == 2
+        assert st["pixel_instances"] == 2
+        assert st["display_frames"] == 420
+        assert st["inventory_dir_mtime_ns"] == series_dir.stat().st_mtime_ns
+        assert st["pixel_inventory_schema"] == 1
+
+        # Pixel/displayability facts are independent of geometry-index trust.
+        legacy_pk = dicom_db.insert_series(
+            "1.2.3.legacy-series", spk_study, series_number="2"
+        )
+        legacy_dir = tmp_path / "managed" / "1.2.3.studyuid" / "2"
+        legacy_dir.mkdir()
+        assert dicom_db.mark_series_pixel_inventories([
+            (legacy_pk, 1, 0, 0, legacy_dir),
+        ]) == 1
+        legacy = dicom_db.get_series_metadata_index(legacy_pk)
+        assert legacy["status"] == "NotIndexed"
+        assert legacy["pixel_inventory_status"] == "Verified"
+        assert legacy["pixel_inventory_instances"] == 1
+
+        # Compare-and-persist rejects a scan whose directory changed before
+        # the batch writer acquired its DB transaction.
+        raced_pk = dicom_db.insert_series(
+            "1.2.3.raced-series", spk_study, series_number="3"
+        )
+        raced_dir = tmp_path / "managed" / "1.2.3.studyuid" / "3"
+        raced_dir.mkdir()
+        assert dicom_db.mark_series_pixel_inventories([
+            (raced_pk, 1, 1, 1, raced_dir, raced_dir.stat().st_mtime_ns + 1),
+        ]) == 0
+        raced = dicom_db.get_series_metadata_index(raced_pk)
+        assert raced["pixel_inventory_status"] == "Unknown"
     finally:
         with pool._pool_lock:
             pool._connection_pool.clear()
@@ -155,7 +208,11 @@ def test_migration_idempotent(tmp_path, monkeypatch):
         cols = [r[1] for r in con.execute("PRAGMA table_info(series)").fetchall()]
         con.close()
         for c in ("metadata_index_status", "indexed_instance_count",
-                  "expected_instance_count", "last_indexed_at"):
+                  "expected_instance_count", "last_indexed_at",
+                  "pixel_inventory_status", "pixel_instance_count",
+                  "pixel_inventory_instance_count",
+                  "display_frame_count", "inventory_dir_mtime_ns",
+                  "pixel_inventory_schema"):
             assert c in cols
     finally:
         with pool._pool_lock:

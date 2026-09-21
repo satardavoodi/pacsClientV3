@@ -214,6 +214,30 @@ def test_resolve_selected_first():
     assert ordered == ["B", "A"]
 
 
+# ── finalize_open_study_identity: one fail-closed OPEN identity ──────────────
+def test_open_identity_promotes_first_owner_filtered_study_when_row_primary_is_empty():
+    identity = pss.finalize_open_study_identity("  ", ["S1", "S2", "S1"])
+    assert identity.selected_study_uid == "S1"
+    assert identity.study_uids == ("S1", "S2")
+
+
+def test_open_identity_keeps_valid_selected_study_first():
+    identity = pss.finalize_open_study_identity("S2", ["S1", "S2"])
+    assert identity.selected_study_uid == "S2"
+    assert identity.study_uids == ("S2", "S1")
+
+
+def test_open_identity_rejects_empty_or_unsanctioned_selection():
+    assert pss.finalize_open_study_identity("", []) is None
+    assert pss.finalize_open_study_identity("FOREIGN", ["S1", "S2"]) is None
+
+
+def test_open_identity_is_immutable():
+    identity = pss.finalize_open_study_identity("S1", ["S1"])
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        identity.selected_study_uid = "S2"  # type: ignore[misc]
+
+
 # ── build_download_payload: canonical DownloadPlan dict ──────────────────────
 def test_build_download_payload():
     info = {"study_date": "2026-06-17", "modality": "DOC", "study_description": "Doc",
@@ -236,6 +260,7 @@ def test_build_download_payload_defaults():
 def test_service_class_api():
     assert pss.PatientStudySetService.merge_study_uids is pss.merge_study_uids
     assert pss.PatientStudySetService.resolve_study_uids is pss.resolve_study_uids
+    assert pss.PatientStudySetService.finalize_open_study_identity is pss.finalize_open_study_identity
     assert pss.PatientStudySetService.build_download_payload is pss.build_download_payload
 
 

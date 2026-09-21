@@ -818,6 +818,8 @@ class _VCBackendMixin:
         Returns: (vtk_image_data, metadata, index) or (None, None, -1)
         """
         series_str = str(series_number)
+        from PacsClient.pacs.patient_tab.utils.advanced_payload_integrity import advanced_payload_matches_frames
+
         t_lookup = now_ms()
 
         def _entry_is_valid(entry) -> bool:
@@ -830,6 +832,9 @@ class _VCBackendMixin:
                 item = self.parent_widget.lst_thumbnails_data[idx]
                 item_series = str(item.get('metadata', {}).get('series', {}).get('series_number', ''))
                 if item_series != series_str:
+                    return False
+
+                if not advanced_payload_matches_frames(entry[0], entry[1]):
                     return False
 
                 # Critical staleness guard:
@@ -955,7 +960,7 @@ class _VCBackendMixin:
                 vtk_data = item.get('vtk_image_data')
                 meta = item.get('metadata')
                 logger.debug(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ item retrieved: vtk={vtk_data is not None}, meta={meta is not None}")
-                if vtk_data is not None and meta is not None:
+                if vtk_data is not None and meta is not None and advanced_payload_matches_frames(vtk_data, meta):
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
                     if len(self._hot_series_cache) > 3:  # Keep hot cache small

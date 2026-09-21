@@ -180,7 +180,12 @@ def get_study_info_with_series(study_uid: str) -> dict:
             cur.execute("""
                 SELECT series_uid, series_number, series_description, modality,
                        image_count, protocol_name, body_part_examined, manufacturer,
-                       institution_name, thumbnail_path, series_path
+                       institution_name, thumbnail_path, series_path,
+                       metadata_index_status, indexed_instance_count,
+                       expected_instance_count, pixel_inventory_status,
+                       pixel_instance_count, display_frame_count,
+                       inventory_dir_mtime_ns, pixel_inventory_schema,
+                       series_pk, pixel_inventory_instance_count
                 FROM series WHERE study_fk = ? ORDER BY series_number
             """, (study_pk,))
             
@@ -191,7 +196,17 @@ def get_study_info_with_series(study_uid: str) -> dict:
                     'image_count': sr[4] or 0, 'protocol_name': sr[5],
                     'body_part_examined': sr[6], 'manufacturer': sr[7],
                     'institution_name': sr[8], 'thumbnail_path': sr[9],
-                    'series_path': sr[10]
+                    'series_path': sr[10],
+                    'metadata_index_status': sr[11] or 'NotIndexed',
+                    'indexed_instance_count': int(sr[12] or 0),
+                    'expected_instance_count': int(sr[13] or 0),
+                    'pixel_inventory_status': sr[14] or 'Unknown',
+                    'pixel_instance_count': int(sr[15] or 0),
+                    'display_frame_count': int(sr[16] or 0),
+                    'inventory_dir_mtime_ns': int(sr[17] or 0),
+                    'pixel_inventory_schema': int(sr[18] or 0),
+                    'series_pk': int(sr[19]),
+                    'pixel_inventory_instance_count': int(sr[20] or 0),
                 }
                 for sr in cur.fetchall()
             ]

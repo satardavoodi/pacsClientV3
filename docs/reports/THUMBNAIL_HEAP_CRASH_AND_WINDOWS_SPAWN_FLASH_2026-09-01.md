@@ -118,6 +118,12 @@ identity, layout selection, and Advanced/VTK execution are unchanged.
 The recurring `0x8001010d` OLE/COM diagnostic is a separate non-terminal issue.
 Existing drag/drop deferral contracts remain unchanged.
 
+**2026-09-13 integration note:** the Preview -> Complete path and the right-panel
+immediate/progressive render paths are intentional parallel latency/safety strategies. They must
+not be removed while repairing the separate card-identity, priority-routing, or manager-lifecycle
+defects. Their provenance and guarded change order are documented in
+`docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`.
+
 ## Regression evidence
 
 The new FAST ownership guards failed before the fix:

@@ -1023,7 +1023,7 @@ class _HPSearchMixin:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _build_cached_thumbnail_payload(self, study_uid: str) -> dict:
+    def _build_cached_thumbnail_payload(self, study_uid: str, series_rows=None) -> dict:
         """Build right-panel thumbnail payload from local thumbnail files + DB series metadata.
 
         Robust DB lookup (2026-05-26 hardening): the previous implementation made
@@ -1042,43 +1042,66 @@ class _HPSearchMixin:
         (this method, disk-driven) produce identical metadata for the same
         underlying DB state — preserving image_count > 0 on the re-render so the
         blue badge stays put.
+
+        September 14: retain UID/path/frame metadata and collision candidates.
+        All Home cache consumers use this projection on a worker. An explicit
+        series_rows snapshot preserves the downloaded-preview scope; without
+        one, the DB bulk lookup and legacy missing-row fallback remain available.
         """
-        payload = {'thumbnails': []}
+        payload = {'study_uid': str(study_uid), 'thumbnails': []}
+        allow_fallback = series_rows is None
 
         # Build a tolerant series_number → row index once, so the second render
         # produces the SAME image_count / description as Path 1's DB render.
         series_index: dict = {}
         try:
-            from database.manager import get_series_by_study_uid as _get_all_series
-            for _row in (_get_all_series(study_uid) or []):
+            from pathlib import Path
+            if series_rows is None:
+                from database.manager import get_series_by_study_uid as _get_all_series
+                series_rows = _get_all_series(study_uid) or []
+            for _row in series_rows:
                 sn_raw = _row.get('series_number', '')
                 sn_str = str(sn_raw if sn_raw is not None else '').strip()
                 if not sn_str:
                     continue
-                series_index[sn_str] = _row
-                # also index the leading-zero-stripped variant for disk-name mismatch
-                stripped = sn_str.lstrip('0') or '0'
-                series_index.setdefault(stripped, _row)
+                # Retain all candidates: Series Number is not unique. A legacy
+                # numeric PNG cannot identify one of two colliding series.
+                folder = str(_row.get('folder_key') or '')
+                if not folder and _row.get('series_path'):
+                    folder = Path(_row['series_path']).name
+                for key in {sn_str, sn_str.lstrip('0') or '0', folder} - {''}:
+                    series_index.setdefault(key, []).append(_row)
         except Exception:
             series_index = {}
 
         for series_path in get_all_series_thumbnail_from_study_folder(study_uid):
             series_number = get_name_file_from_path(series_path)
             sn_key = str(series_number or '').strip()
-            series_info = series_index.get(sn_key) \
-                or series_index.get(sn_key.lstrip('0') or '0') \
-                or {}
+            candidates = series_index.get(sn_key) or series_index.get(sn_key.lstrip('0') or '0') or []
+            series_info = candidates[0] if len(candidates) == 1 else {}
             # Final safety net: if the bulk lookup truly missed (study_pk race,
             # orphan thumbnail file), fall back to the original per-series call
             # so we don't lose data that single-shot lookup could still find.
-            if not series_info:
+            if not candidates and not allow_fallback:
+                continue  # Downloaded-preview refresh must not add orphan cards.
+            if not candidates and allow_fallback:
                 try:
                     series_info = self.get_series_info_from_database(study_uid, series_number) or {}
                 except Exception:
                     series_info = {}
 
+            if str(series_info.get('study_uid') or study_uid) != str(study_uid):
+                series_info = {}  # Never rebind a foreign row to the requested study.
+
             payload['thumbnails'].append(
                 {
+                    **{key: series_info[key] for key in (
+                        'series_uid', 'series_instance_uid', '_orig_series_number',
+                        'display_key', 'folder_key', 'series_path',
+                        'display_image_count', 'pixel_instance_count',
+                    ) if key in series_info},
+                    '_orig_series_number': series_info.get('_orig_series_number', series_info.get('series_number', series_number)),
+                    'study_uid': str(study_uid),
                     'file_path': series_path,
                     'series_number': series_number,
                     'modality': series_info.get('modality', 'Unknown'),
@@ -1097,26 +1120,60 @@ class _HPSearchMixin:
         return payload
 
     def _build_local_series_thumbnail_payload(self, study_uid: str) -> dict:
-        """Build a Local-mode sidebar payload from SQLite and disk only."""
+        """Build a Local-mode sidebar payload on its existing worker.
+
+        Legacy scans are persisted through the same independent pixel-inventory
+        writer used by the patient sidebar. This method is called with
+        ``asyncio.to_thread``; it must not be moved onto the Qt GUI thread.
+        """
         payload = {'study_uid': str(study_uid or ''), 'thumbnails': []}
+        inventory_backfill = []
+        indexed_inventory_series = 0
+        indexed_inventory_files = 0
+        indexed_inventory_frames = 0
         try:
             from pathlib import Path
             from database.manager import get_study_info_with_series
             from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
-            from PacsClient.utils.dicom_displayability import inspect_series_pixel_inventory
+            from PacsClient.utils.dicom_displayability import resolve_series_pixel_inventories
             from PacsClient.utils.patient_study_set import (
                 allocate_series_display_keys,
                 persisted_series_folder_key,
             )
 
             study_info = get_study_info_with_series(str(study_uid or '')) or {}
+            catalog = []
             for index, series in enumerate(study_info.get('series') or [], start=1):
                 if not isinstance(series, dict):
                     continue
                 series_number = str(series.get('series_number') or index)
                 series_path = str(series.get('series_path') or '').strip()
                 folder_key = persisted_series_folder_key(series_number, series_path)
-                pixel_inventory = inspect_series_pixel_inventory(series_path)
+                catalog.append(dict(
+                    series,
+                    study_uid=str(study_uid or ''),
+                    series_number=series_number,
+                    series_path=series_path,
+                    folder_key=folder_key,
+                ))
+            for series, pixel_inventory, inventory_source in (
+                resolve_series_pixel_inventories(catalog)
+            ):
+                series_number = series['series_number']
+                series_path = series['series_path']
+                folder_key = series['folder_key']
+                if inventory_source == 'index':
+                    indexed_inventory_series += 1
+                    indexed_inventory_files += pixel_inventory.instance_count
+                    indexed_inventory_frames += pixel_inventory.display_image_count
+                elif (series.get('series_pk')
+                        and pixel_inventory.instance_count > 0
+                        and pixel_inventory.directory_mtime_ns > 0):
+                    inventory_backfill.append((
+                        int(series['series_pk']), pixel_inventory.instance_count,
+                        pixel_inventory.pixel_instance_count, pixel_inventory.frame_count,
+                        series_path, pixel_inventory.directory_mtime_ns,
+                    ))
                 if not pixel_inventory.has_pixel_data:
                     _logger.info(
                         "[LOCAL_SERIES_SKIPPED] reason=no_pixel_data series_key=%s",
@@ -1149,6 +1206,22 @@ class _HPSearchMixin:
                 })
         except Exception:
             _logger.debug("Local series thumbnail payload failed", exc_info=True)
+        if indexed_inventory_series:
+            _logger.info(
+                "[LOCAL_PIXEL_INVENTORY] source=producer_index owner=home_local "
+                "series=%d files=%d frames=%d",
+                indexed_inventory_series, indexed_inventory_files,
+                indexed_inventory_frames,
+            )
+        if inventory_backfill:
+            try:
+                from database.dicom_db import mark_series_pixel_inventories
+                mark_series_pixel_inventories(inventory_backfill)
+            except Exception:
+                _logger.debug("Local pixel inventory backfill failed", exc_info=True)
+        # Normalize both successful and partial projections. An early import
+        # failure leaves no rows (and may not have bound the allocator).
+        if payload['thumbnails']:
             payload['thumbnails'] = allocate_series_display_keys(payload['thumbnails'])
         return payload
 
@@ -1792,22 +1865,9 @@ class _HPSearchMixin:
                     )
                     return
 
-                thumbnails = {'thumbnails': []}
-                all_series_thumbnails = get_all_series_thumbnail_from_study_folder(study_uid)
-                for series_path in all_series_thumbnails:
-                    series_number = get_name_file_from_path(series_path)
-                    series_info = self.get_series_info_from_database(study_uid, series_number)
-                    thumbnails['thumbnails'].append(
-                        {
-                            'file_path': series_path,
-                            'series_number': series_number,
-                            'modality': series_info.get('modality', 'Unknown'),
-                            'series_description': series_info.get('series_description', f'Series {series_number}'),
-                            'image_count': series_info.get('image_count', 0),
-                            'protocol_name': series_info.get('protocol_name', ''),
-                            'body_part_examined': series_info.get('body_part_examined', ''),
-                        }
-                    )
+                thumbnails = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
+                if not self._is_active_patient_selection(patient_id, study_uid):
+                    return
                 self.display_thumbnails(thumbnails.get('thumbnails', []), progressive=False)
                 if hasattr(self, '_log_open_trace'):
                     self._log_open_trace(study_uid, 'right_panel_offline_cloud_display', thumbnail_count=len(thumbnails.get('thumbnails', [])))
@@ -1820,7 +1880,7 @@ class _HPSearchMixin:
                     self._log_open_trace(study_uid, 'MainPageThumbnailRequested')
                 except Exception:
                     pass
-            local_payload = self._build_cached_thumbnail_payload(study_uid)
+            local_payload = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
             _local_thumbs = len(local_payload.get('thumbnails', []) or [])
             # Bugfix 44113 — when the server now reports MORE series than the local
             # thumbnail cache holds, the fast-cache path would pin the stale (partial)
@@ -2021,6 +2081,7 @@ class _HPSearchMixin:
                                 or ''
                             )
                             out['thumbnails'].append({
+                                'study_uid': str(study_uid),
                                 'series_uid': series_uid,
                                 'series_number': str(series_number),
                                 'series_description': str(series_description),
@@ -2130,7 +2191,7 @@ class _HPSearchMixin:
                         if hasattr(self, '_log_open_trace'):
                             self._log_open_trace(study_uid, 'right_panel_socket_done', thumbnail_count=len(thumbnails['thumbnails']))
                 else:
-                    fallback_payload = self._build_cached_thumbnail_payload(study_uid)
+                    fallback_payload = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
                     if fallback_payload.get('thumbnails'):
                         retry_block_until.pop(study_uid_str, None)
                         thumbnails = fallback_payload
@@ -2153,7 +2214,7 @@ class _HPSearchMixin:
                     study_uid, socket_error, exc_info=True,
                 )
 
-                fallback_payload = self._build_cached_thumbnail_payload(study_uid)
+                fallback_payload = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
                 if fallback_payload.get('thumbnails'):
                     retry_block_until.pop(study_uid_str, None)
                     thumbnails = fallback_payload
@@ -2198,6 +2259,7 @@ class _HPSearchMixin:
                         thumbnails['thumbnails'].append(
                             {
                                 'series_uid': series.get('series_uid') or series.get('series_instance_uid') or '',
+                                'study_uid': str(study_uid),
                                 'series_number': str(series_number),
                                 'series_description': series.get('series_description') or series.get('SeriesDescription') or f'Series {series_number}',
                                 'modality': series.get('modality') or series.get('Modality') or 'Unknown',

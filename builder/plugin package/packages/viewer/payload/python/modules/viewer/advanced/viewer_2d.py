@@ -23,6 +23,8 @@ from PySide6.QtCore import Qt
 import time
 from modules.mpr.curved_mpr.curved_mpr_module import CurvedMPRModule
 from modules.viewer.advanced.orientation_markers import DicomOrientationMarkers
+from modules.viewer.advanced.startup_timing import AdvancedStartupTiming
+from modules.viewer.advanced.slice_progress import slice_counter_text
 from modules.viewer.advanced.series_geometry_index import SeriesGeometryIndex
 from modules.viewer.geometry.source_geometry import SourceGeometry
 from modules.viewer.geometry.display_geometry import DisplayGeometry
@@ -199,7 +201,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
                  metadata_fixed, apply_default_filter, vtk_widget):
+        _startup_timing = AdvancedStartupTiming(logger)
         super().__init__()
+        _startup_timing.mark('vtk_base')
         self._suppress_render = False
         self._camera_lock_state = None
         self._camera_lock_until = 0.0
@@ -251,6 +255,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.vtk_image_data = vtk_image_data
 
+        _startup_timing.mark('object_setup')
+
         # For pydicom_2d (lazy backend), skip preprocessing: it may create a disconnected
         # vtkImageData copy (e.g. CT upsampling) that severs mark_vtk_modified() signaling.
         # The viewer is wired directly to the raw numpy-backed source instead.
@@ -259,7 +265,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         )
         if not _is_pydicom_lazy:
             self.vtk_image_data = self._preprocess_vtk_image_data(self.vtk_image_data)
+        _startup_timing.mark('preprocess')
         self._apply_direction_matrix_from_field_data()
+        _startup_timing.mark('direction')
         # vtk_image_data = flip_image_y(vtk_image_data)
         # self.vtk_image_data = _display_upsample_xy(self.vtk_image_data)
 
@@ -278,6 +286,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # Must be called AFTER self.metadata and self.vtk_image_data are set.
         self._series_geometry_index = self._build_series_geometry_index()
         self._bind_geometry_contract()
+        _startup_timing.mark('geometry')
 
         # Temporary proof log: confirm active module/function path in live runtime.
         self._emit_orientation_audit_active(
@@ -307,7 +316,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         # Fast initialization without renders
         _raw_lazy_vtk = self.vtk_image_data  # capture before ImageReslice may chain
+        _startup_timing.mark('window_setup')
         self.image_reslice = ImageReslice(self.vtk_image_data, self.metadata)
+        _startup_timing.mark('reslice')
         if _is_pydicom_lazy:
             # Bypass image_reslice: wire viewer directly to the raw numpy-backed source.
             # mark_vtk_modified() on the source causes the viewer's trivial producer to
@@ -349,6 +360,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # reset_image_viewer compares against this to skip the expensive SetInputData when
         # the same image_reslice object is updated in-place (saves ~1.4s per series switch).
         self._connected_reslice_output = self.image_reslice.GetOutput()
+        _startup_timing.mark('input_bind')
         
         # --- PIPELINE LOG: Viewer init summary ---
         _pre_img = self.image_reslice.vtk_image_data  # original (has field data)
@@ -416,6 +428,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         camera = self.renderer.GetActiveCamera()
         camera.ParallelProjectionOn()
+        _startup_timing.mark('display_setup')
 
         # â‌Œ FLICKER FIX: Load actors without rendering â€” render is deferred to
         # the end of the init sequence (see "ROOT-CAUSE ZOOM FIX" below).
@@ -423,6 +436,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.load_top_left_actors(render=False)
         self.load_bottom_left_actors(render=False)
         self.load_bottom_right_actors(render=False)
+        _startup_timing.mark('overlays')
 
         # --- ROOT-CAUSE ZOOM FIX (v2.3.8) --------------------------------------
         # vtkImageViewer2 has an internal FirstRender=1 one-shot that fires on the
@@ -448,13 +462,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # (in _vw_scroll.py and _legacy_widget.py) unnecessary, and makes the
         # various _protected_parallel_scale refresh sites a pure SSoT for
         # user-driven zoom persistence rather than a corruption-repair layer.
+        from .presentation_frames import show_overlay
+        show_overlay(self, 0)
         self.Render()
+        _startup_timing.mark('first_render')
         self.base_zoom_scale = self.zoom_to_fit(skip_render=False)
+        _startup_timing.mark('fit_render')
         # ----------------------------------------------------------------------
 
         logger.info(f"[CAMERA INIT]   Initial parallel scale (zoom_to_fit): {self.base_zoom_scale:.2f}")
         logger.info(f"[CAMERA INIT]   Camera position: {camera.GetPosition()}")
         logger.info(f"[CAMERA INIT]   Camera focal point: {camera.GetFocalPoint()}")
+        _startup_timing.finish()
 
     def Render(self):
         if getattr(self, "_suppress_render", False):
@@ -951,6 +970,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         - ط¨ط¯ظˆظ† Render/Update ظپظˆط±غŒ (caller ط§ع¯ط± ط®ظˆط§ط³طھ throttle ع©ظ†ط¯)
         - ط¨ظ‡غŒظ†ظ‡â€Œط³ط§ط²غŒ ط´ط¯ظ‡ ط¨ط±ط§غŒ ط³ط±ط¹طھ ط¨غŒط´طھط±
         """
+        if ((getattr(self, 'metadata', None) or {}).get('_advanced_presentation_frames')
+                or (new_metadata or {}).get('_advanced_presentation_frames')):
+            return False  # Replace the paired frame sequence; never grow its first image as Z.
         old_input = self.image_reslice.vtk_image_data
         ox, oy, oz = old_input.GetDimensions()
         nx, ny, nz = new_vtk_image_data.GetDimensions()
@@ -1016,6 +1038,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # Just reconnect to new input (much faster than creating new mapper)
             try:
                 self.color_mapper.SetInputConnection(self.image_reslice.GetOutputPort())
+                image = self.image_reslice.vtk_image_data
+                if (image.GetScalarType() == vtk.VTK_UNSIGNED_CHAR
+                        and image.GetNumberOfScalarComponents() in (3, 4)):
+                    # VTK passes byte RGB(A) through only at neutral W/L.
+                    # A reused CT mapper would otherwise grayscale the US frame.
+                    self.color_mapper.SetWindow(255.0)
+                    self.color_mapper.SetLevel(127.5)
                 return  # Early return to avoid unnecessary GetImageActor call
             except:
                 pass  # If failed, create new mapper below
@@ -1251,7 +1280,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             series_desc = self.metadata['series']['series_description']
 
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_slice_actor,
-                                                     f'{display_slice + self.skip_slices + 1} / {self.get_count_of_slices()}')
+                                                     slice_counter_text(self.metadata, self.get_count_of_slices(),
+                                                                        display_slice + self.skip_slices + 1))
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_study_date_actor, study_date)
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_time_actor, series_time)
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_name_actor, series_name)
@@ -1304,7 +1334,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         series_desc = self.metadata['series']['series_description']
 
         self.dicom_tags_actors.im_slice_actor = make_corner_actor(
-            f'{display_slice + self.skip_slices + 1} / {self.get_count_of_slices()}', right, top, 'right', 'top')
+            slice_counter_text(self.metadata, self.get_count_of_slices(), display_slice + self.skip_slices + 1),
+            right, top, 'right', 'top')
         self.dicom_tags_actors.im_study_date_actor = make_corner_actor(study_date, right, top - (1 * gap), 'right',
                                                                        'top')
         self.dicom_tags_actors.im_series_time_actor = make_corner_actor(series_time, right, top - (2 * gap), 'right',
@@ -1433,6 +1464,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.load_bottom_right_actors(render=False)
 
     def reset_image_viewer(self, vtk_image_data, metadata):
+        from .presentation_frames import clear_overlay
+        clear_overlay(self)
+        self._presentation_index = 0
+        self._presentation_monochrome_window = None
         import time
         _reset_start = time.time()
         # Keep a reference to the original raw input. For pydicom_2d the viewer is wired
@@ -1490,6 +1525,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             dims_changed = True
 
         can_reuse_reslice = (
+            not metadata.get('_advanced_presentation_frames') and
+            not (getattr(self, 'metadata', None) or {}).get('_advanced_presentation_frames') and
             current_series_uid is not None and
             current_series_uid == cached_series_uid and
             hasattr(self, 'image_reslice') and
@@ -1523,6 +1560,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             src_z = 1
         allow_preprocess_cache = src_z < int(self._skip_preprocess_cache_slice_threshold)
+        if metadata.get('_advanced_presentation_frames'):
+            allow_preprocess_cache = False
 
         # Try cached preprocessed display volume first
         cached_preprocessed = None
@@ -1729,6 +1768,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             logger.info(f"[reset_image_viewer] Called zoom_to_fit for {'new' if not is_same_series else 'initial'} series")
 
         # Final render with the correct scale already applied.
+        from .presentation_frames import show_overlay
+        show_overlay(self, 0)
         self.image_render_window.Render()
         _zoom_time = time.time() - _zoom_start
         print(f"         â€¢ zoom/scale restore: {_zoom_time:.3f}s")
@@ -1770,6 +1811,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         raw VTK k index before calling VTK's ``SetSlice()``.
         """
         try:
+            from .presentation_frames import frames_for, show_frame
+            if frames_for(self):
+                show_frame(self, slice_index)
+                return
             self._set_slice_impl(slice_index, fast_interaction, force_annotations)
         except Exception:
             logger.warning(
@@ -1811,10 +1856,71 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             if (_dg is not None)
             else int(slice_index)
         )
-        self.SetSlice(_raw_k)
-        actual_slice_index = int(self.GetSlice())   # raw VTK k (used for metadata indexing)
-        _t1 = time.perf_counter_ns()
+        # vtkImageViewer2.SetSlice renders internally. Prepare this frame's
+        # decorations at StartEvent, after native extent/clipping updates and
+        # before the renderer draws, rather than issuing a second render.
+        stages = [_t0, _t0, _t0]
+        failures = []
+        prepared = False
+        single_draw = getattr(getattr(self, 'vtk_widget', None), '_active_backend', None) == 'vtk_simpleitk'
+        window = self.GetRenderWindow() if single_draw else None
+        observer = None
 
+        def prepare_frame(*_args):
+            nonlocal prepared
+            if prepared:
+                return
+            prepared = True
+            if observer is not None:
+                window.RemoveObserver(observer)
+            stages[0] = time.perf_counter_ns()
+            try:
+                stages[1], stages[2] = self._prepare_slice_visuals(
+                    int(self.GetSlice()), _fast, force_annotations, _now_ms, stages[0])
+            except Exception as exc:
+                failures.append(exc)
+
+        if not single_draw:
+            self.SetSlice(_raw_k)
+            prepare_frame()
+            if failures:
+                raise failures[0]
+            self.Render()
+        elif int(self.GetSlice()) == int(_raw_k):
+            prepare_frame()
+            if failures:
+                raise failures[0]
+            self.Render()
+        else:
+            observer = window.AddObserver(vtk.vtkCommand.StartEvent, prepare_frame, 1.0)
+            try:
+                self.SetSlice(_raw_k)
+                if not prepared:
+                    prepare_frame()
+            finally:
+                window.RemoveObserver(observer)
+            if failures:
+                raise failures[0]
+        _t1, _t2, _t3 = stages
+        _t4 = time.perf_counter_ns()
+
+        # v2.2.3.2.5: Sub-stage timing for scroll performance analysis.
+        # Only log when total exceeds 30ms to avoid flooding on fast GPUs.
+        _total_ms = (_t4 - _t0) / 1_000_000
+        if _total_ms > 30.0:
+            _render_ms = (_t4 - _t3) / 1_000_000
+            logger.info(
+                "viewer-scroll sub-timing: SetSlice=%.1fms WL=%.1fms corners=%.1fms Render=%.1fms total=%.1fms",
+                (_t1 - _t0) / 1_000_000,
+                (_t2 - _t1) / 1_000_000,
+                (_t3 - _t2) / 1_000_000,
+                _render_ms,
+                _total_ms,
+                extra={"component": "viewer", "function": "ImageViewer2D.set_slice", "stage": "sub_timing"},
+            )
+
+    def _prepare_slice_visuals(self, actual_slice_index, _fast, force_annotations, _now_ms, _t1):
+        """Update metadata-dependent visuals before the single native draw."""
         # 2) Apply default window/level only if the user hasn't set a custom WL
         if not self.flag_set_custom_window_level:
             self.apply_default_window_level(actual_slice_index)
@@ -1849,7 +1955,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         
         # 5) Update orientation markers based on current displayed geometry
         try:
-            if hasattr(self, 'orientation_markers') and self.orientation_markers and self.metadata:
+            if self.metadata and self.metadata.get("spatial_geometry_available") is False:
+                if getattr(self, "orientation_markers", None):
+                    self.orientation_markers.clear()
+            elif hasattr(self, 'orientation_markers') and self.orientation_markers and self.metadata:
                 instances = self.metadata.get('instances', [])
                 if actual_slice_index < len(instances):
                     inst = instances[actual_slice_index]
@@ -1918,23 +2027,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception as e:
             logger.debug(f"Error emitting axial stack policy audit: {e}")
         
-        self.Render()
-        _t4 = time.perf_counter_ns()
-
-        # v2.2.3.2.5: Sub-stage timing for scroll performance analysis.
-        # Only log when total exceeds 30ms to avoid flooding on fast GPUs.
-        _total_ms = (_t4 - _t0) / 1_000_000
-        if _total_ms > 30.0:
-            _render_ms = (_t4 - _t3) / 1_000_000
-            logger.info(
-                "viewer-scroll sub-timing: SetSlice=%.1fms WL=%.1fms corners=%.1fms Render=%.1fms total=%.1fms",
-                (_t1 - _t0) / 1_000_000,
-                (_t2 - _t1) / 1_000_000,
-                (_t3 - _t2) / 1_000_000,
-                _render_ms,
-                _total_ms,
-                extra={"component": "viewer", "function": "ImageViewer2D.set_slice", "stage": "sub_timing"},
-            )
+        return _t2, _t3
 
     def _build_series_geometry_index(self) -> Optional["SeriesGeometryIndex"]:
         """Build SeriesGeometryIndex from current metadata and VTK image dimensions.
@@ -1944,6 +2037,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         """
         try:
             if not isinstance(self.metadata, dict):
+                return None
+            if self.metadata.get("spatial_geometry_available") is False:
                 return None
             instances = self.metadata.get("instances") or []
             if not instances:
@@ -2531,8 +2626,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         This is Phase 2 runtime migration plumbing. It is observational and does
         not change legacy display flow.
         """
+        # Retiring a series also retires its patient-space binding. In particular,
+        # nonspatial US must never inherit a previous CT/MR affine or K reversal.
+        self._source_geometry_contract = None
+        self._display_geometry_contract = None
+        ImageViewer2D._viewport_geometry_registry.unregister(self._viewer_viewport_id())
         try:
             if not isinstance(self.metadata, dict):
+                return
+            if self.metadata.get("spatial_geometry_available") is False:
+                self.orientation_markers.clear()
                 return
             instances = self.metadata.get("instances") or []
             if not instances:
@@ -3103,9 +3206,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         row_axis_mismatch_deg = self._vec_angle_deg(expected_screen_right, actual_screen_right)
         col_axis_mismatch_deg = self._vec_angle_deg(expected_screen_up, actual_screen_up)
-        normal_mismatch_deg = self._vec_angle_deg(iop_normal, screen_plane_normal)
+        # Screen-up is -DICOM-column, so its right/up normal is -IOP-normal.
+        # This is a basis diagnostic only: camera-world vectors have not been
+        # registered through the actor/reslice/display affine into patient LPS.
+        expected_screen_normal = self._safe_unit(np.cross(expected_screen_right, expected_screen_up))
+        normal_mismatch_deg = self._vec_angle_deg(expected_screen_normal, screen_plane_normal)
 
-        orientation_valid = bool(
+        camera_iop_basis_match = bool(
             row_axis_mismatch_deg is not None and row_axis_mismatch_deg <= 10.0
             and col_axis_mismatch_deg is not None and col_axis_mismatch_deg <= 10.0
             and normal_mismatch_deg is not None and normal_mismatch_deg <= 10.0
@@ -3167,14 +3274,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         plane = str(series_meta.get('geometry_plane', '') or series_meta.get('display_convention', '') or 'UNKNOWN')
 
         logger.warning(
-            "[ADVANCED_VTK_ORIENTATION_AUDIT] "
+            "[ADVANCED_VTK_ORIENTATION_AUDIT] schema=2 "
             "viewport_id=%s series_uid=%s series_number=%s slice_index=%s plane=%s iop_row=%s iop_col=%s iop_normal=%s "
             "ipp=%s pixel_spacing=%s slice_thickness=%s spacing_between_slices=%s rows=%s columns=%s sop_instance_uid=%s "
             "sitk_origin=%s sitk_spacing=%s sitk_direction=%s "
             "vtk_origin=%s vtk_spacing=%s vtk_direction_matrix_present=%s vtk_direction_matrix=%s "
             "actor_matrix=%s reslice_axes=%s camera_position=%s camera_focal_point=%s camera_view_up=%s vtk_slice_plane_normal=%s "
-            "expected_screen_right_lps=%s expected_screen_up_lps=%s actual_screen_right_lps=%s actual_screen_up_lps=%s "
-            "row_axis_mismatch_deg=%s col_axis_mismatch_deg=%s normal_mismatch_deg=%s orientation_valid=%s failure_class=%s",
+            "expected_screen_right_lps=%s expected_screen_up_lps=%s projected_camera_right_unregistered=%s projected_camera_up_unregistered=%s "
+            "row_axis_mismatch_deg=%s col_axis_mismatch_deg=%s normal_mismatch_deg=%s "
+            "camera_iop_basis_match=%s orientation_valid=not_evaluated "
+            "comparison_scope=unregistered_camera_vs_dicom legacy_failure_hint=%s",
             viewport_id,
             series_uid,
             series_number,
@@ -3210,7 +3319,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             row_axis_mismatch_deg,
             col_axis_mismatch_deg,
             normal_mismatch_deg,
-            orientation_valid,
+            camera_iop_basis_match,
             failure_class,
             extra={"component": "viewer"},
         )
@@ -3237,6 +3346,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             )
 
     def _apply_default_window_level_impl(self, slice_index):
+        from .presentation_frames import apply_frame_window, frames_for
+        if frames_for(self):
+            apply_frame_window(self, min(int(slice_index), len(frames_for(self)) - 1))
+            return
         instances = self.metadata.get('instances') or []
         if slice_index < len(instances):
             instance_metadata = instances[slice_index]
@@ -3418,6 +3531,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         try:
             if not isinstance(instance_metadata, dict):
                 return None, None, 'none'
+            prepared = instance_metadata.get('_advanced_header_window')
+            if prepared is not None:
+                return tuple(prepared)
             path = instance_metadata.get('instance_path')
             if not path:
                 return None, None, 'none'
@@ -3429,13 +3545,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 instance_metadata.get('photometric_interpretation')
                 or instance_metadata.get('PhotometricInterpretation')
             )
-            return resolve_cornerstone_like_window_level_from_dicom(
+            resolved = resolve_cornerstone_like_window_level_from_dicom(
                 path,
                 modality=modality,
                 presentation_intent_type=intent,
                 photometric=photometric,
                 enable_pixel_fallback=False,
             )
+            # Older cached payloads lack worker provenance. Memoize a successful
+            # legacy resolution in this viewer's instance metadata as well.
+            if resolved[0] is not None and resolved[1] is not None:
+                instance_metadata['_advanced_header_window'] = tuple(resolved)
+            return resolved
         except Exception:
             return None, None, 'none'
 
@@ -3697,6 +3818,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         if not flag_default:
             self.update_corners_actors()
 
+    def GetSlice(self):
+        # Native input is one image; the Python display index addresses the
+        # independently prepared presentation frames, never a spatial Z axis.
+        if (getattr(self, 'metadata', None) or {}).get('_advanced_presentation_frames'):
+            return int(getattr(self, '_presentation_index', 0))
+        return super().GetSlice()
+
     def get_window_level(self):
         window_width = self.color_mapper.GetWindow()
         window_center = self.color_mapper.GetLevel()
@@ -3704,6 +3832,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         return window_width, window_center
 
     def get_count_of_slices(self):
+        from .presentation_frames import frames_for
+        frames = frames_for(self)
+        if frames:
+            return len(frames)
         range_count = 0
         try:
             min_slice = int(self.GetSliceMin())
@@ -3847,6 +3979,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
     def enable_curved_mpr_mode(self, enabled=True):
         """Enable/disable curved MPR point picking mode"""
+        if enabled and (self.metadata or {}).get("spatial_geometry_available") is False:
+            logger.info("[CURVED_MPR_BLOCKED] reason=nonspatial_frame_sequence")
+            return
         self.curved_mpr_mode = enabled
         
         if enabled:
@@ -4502,7 +4637,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         yw = oy + float(jj) * sy
 
         if k is None:
-            zw = oz + sz * float(self.GetSlice())
+            native_k = 0 if self.metadata.get('_advanced_presentation_frames') else self.GetSlice()
+            zw = oz + sz * float(native_k)
         else:
             zw = oz + sz * float(k)
 
@@ -4551,7 +4687,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     def ijk_to_world_physical(self, i: float, j: float, k: float | None = None):
         """Direction-aware IJKâ†’World mapping in physical space."""
         if k is None:
-            k = float(self.GetSlice())
+            k = 0.0 if self.metadata.get('_advanced_presentation_frames') else float(self.GetSlice())
 
         ox, oy, oz = self.vtk_image_data.GetOrigin()
         sx, sy, sz = self.vtk_image_data.GetSpacing()

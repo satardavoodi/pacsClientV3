@@ -60,6 +60,150 @@ def test_chunk_larger_than_file_reads_whole_file(tmp_path):
     assert stats["bytes"] == 200
 
 
+def test_legacy_series_primes_shared_pixel_facts_instead_of_raw_read(
+        tmp_path, monkeypatch):
+    study = _make_study(tmp_path, "study-facts", {"1": 3}, size=100)
+    series_path = study / "1"
+    primed = []
+
+    def prime(path):
+        primed.append(Path(path))
+        return True, 1
+
+    monkeypatch.setattr(sfw, "prime_dicom_pixel_fact", prime)
+    stats = sfw._warm_paths(
+        [str(study)], chunk_bytes=64 * 1024, max_files=100,
+        max_seconds=10.0, workers=2,
+        pixel_fact_series_paths=[str(series_path)],
+    )
+
+    assert sorted(primed) == sorted(series_path.glob("*.dcm"))
+    assert stats["files"] == stats["fact_files"] == 3
+    assert stats["bytes"] == 0
+
+
+def test_only_unverified_local_series_select_shared_fact_warm(
+        tmp_path, monkeypatch):
+    study = _make_study(tmp_path, "study-select", {"ready": 1, "legacy": 1})
+    ready = {"series_path": str(study / "ready"), "state": "ready"}
+    legacy = {"series_path": str(study / "legacy"), "state": "legacy"}
+    monkeypatch.setattr(
+        sfw, "indexed_series_pixel_inventory",
+        lambda row: object() if row.get("state") == "ready" else None,
+    )
+
+    assert sfw._pixel_fact_series_paths([ready, legacy]) == {
+        os.path.normcase(os.path.abspath(study / "legacy"))
+    }
+
+
+def test_local_fact_warm_has_independent_rollback_switch(monkeypatch):
+    monkeypatch.setenv("AIPACS_LOCAL_PIXEL_FACT_WARM", "0")
+    assert sfw._pixel_fact_warm_enabled() is False
+    assert sfw._pixel_fact_series_paths([
+        {"series_path": "synthetic/legacy"},
+    ]) == set()
+
+
+def test_ordered_local_inventory_delegates_unverified_warm_work(monkeypatch, tmp_path):
+    study = _make_study(tmp_path, "study-owner", {"ready": 1, "legacy": 1})
+    ready = {"series_path": str(study / "ready"), "state": "ready"}
+    legacy = {"series_path": str(study / "legacy"), "state": "legacy"}
+    monkeypatch.delenv("AIPACS_LOCAL_ORDERED_INVENTORY", raising=False)
+    monkeypatch.setattr(
+        sfw, "indexed_series_pixel_inventory",
+        lambda row: object() if row.get("state") == "ready" else None,
+    )
+
+    raw, facts, delegated = sfw._local_series_warm_plan([ready, legacy])
+
+    assert raw == set()
+    assert facts == set()
+    assert delegated == {
+        os.path.normcase(os.path.abspath(study / "ready")),
+        os.path.normcase(os.path.abspath(study / "legacy")),
+    }
+
+
+def test_patient_open_does_not_raw_warm_producer_indexed_local_series(
+        monkeypatch, tmp_path):
+    """A durable Local index must not trigger a second whole-series disk read."""
+    study = _make_study(tmp_path, "study-indexed-local", {"ready": 3})
+    ready_path = os.path.normcase(os.path.abspath(study / "ready"))
+    ready = {"series_path": str(study / "ready"), "state": "ready"}
+    monkeypatch.delenv("AIPACS_LOCAL_INDEXED_FILE_WARM", raising=False)
+    monkeypatch.setattr(
+        sfw, "indexed_series_pixel_inventory",
+        lambda row: object() if row.get("state") == "ready" else None,
+    )
+
+    raw, facts, delegated = sfw._local_series_warm_plan([ready])
+
+    assert raw == set()
+    assert facts == set()
+    assert delegated == {ready_path}
+
+
+def test_indexed_local_patient_open_does_not_start_a_warm_thread(
+        monkeypatch, tmp_path):
+    study = _make_study(tmp_path, "study-indexed-no-thread", {"ready": 3})
+    monkeypatch.delenv("AIPACS_LOCAL_INDEXED_FILE_WARM", raising=False)
+    monkeypatch.setattr(sfw, "indexed_series_pixel_inventory", lambda _row: object())
+
+    started = sfw.warm_study_series_async(
+        [str(study)], local_series=[{"series_path": str(study / "ready")}],
+    )
+
+    assert started is False
+
+
+def test_indexed_local_file_warm_has_explicit_rollback(monkeypatch, tmp_path):
+    study = _make_study(tmp_path, "study-indexed-rollback", {"ready": 1})
+    ready_path = os.path.normcase(os.path.abspath(study / "ready"))
+    monkeypatch.setenv("AIPACS_LOCAL_INDEXED_FILE_WARM", "1")
+    monkeypatch.setattr(sfw, "indexed_series_pixel_inventory", lambda _row: object())
+
+    raw, facts, delegated = sfw._local_series_warm_plan([
+        {"series_path": str(study / "ready")},
+    ])
+
+    assert raw == {ready_path}
+    assert facts == set()
+    assert delegated == set()
+
+
+def test_ordered_local_inventory_rollback_restores_fact_warm(monkeypatch, tmp_path):
+    study = _make_study(tmp_path, "study-rollback", {"ready": 1, "legacy": 1})
+    ready = {"series_path": str(study / "ready"), "state": "ready"}
+    legacy = {"series_path": str(study / "legacy"), "state": "legacy"}
+    monkeypatch.setenv("AIPACS_LOCAL_ORDERED_INVENTORY", "0")
+    monkeypatch.setattr(
+        sfw, "indexed_series_pixel_inventory",
+        lambda row: object() if row.get("state") == "ready" else None,
+    )
+
+    raw, facts, delegated = sfw._local_series_warm_plan([ready, legacy])
+
+    assert raw == set()
+    assert facts == {os.path.normcase(os.path.abspath(study / "legacy"))}
+    assert delegated == {os.path.normcase(os.path.abspath(study / "ready"))}
+
+
+def test_delegated_local_series_is_not_touched_by_the_parallel_warmer(tmp_path):
+    study = _make_study(tmp_path, "study-delegated", {"ready": 1, "legacy": 3}, size=100)
+
+    stats = sfw._warm_paths(
+        [str(study)], chunk_bytes=1024, max_files=100,
+        max_seconds=10.0, workers=4,
+        delegated_series_paths=[str(study / "legacy")],
+    )
+
+    assert stats["files"] == 1
+    assert stats["bytes"] == 100
+    assert stats["fact_files"] == 0
+    assert stats["delegated_series"] == 1
+
+
 def test_missing_and_garbage_paths_are_safe(tmp_path):
     study = _make_study(tmp_path, "study-c", {"1": 1})
     stats = sfw._warm_paths(

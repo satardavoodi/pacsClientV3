@@ -107,6 +107,13 @@ def test_hard_exit_comes_after_the_cleanup():
     assert fin.index("instance_lock.release()") < fin.index("os._exit(0)")
 
 
+def test_finalization_breadcrumb_precedes_log_shutdown_and_is_not_drain_proof():
+    fin = _src("main.py").split("loop.run_forever()", 1)[1]
+    assert fin.index("[SHUTDOWN_FINAL]") < fin.index("shutdown_diagnostic_logging()")
+    assert "owner_completion=unverified" in fin
+    assert "all cleanup done" not in fin
+
+
 def test_takeover_path_also_has_a_hard_exit_failsafe():
     """The old instance receiving SHUTDOWN from a newer launch must also be
     guaranteed to die (it had this already — pin it so it can't regress)."""

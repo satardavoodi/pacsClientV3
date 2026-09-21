@@ -11,7 +11,10 @@ tracer tools only, never by the app itself.
 WHAT THIS DOES
 --------------
 Enables Python's ``faulthandler`` writing to
-``<user_data>/logs/native_fault.log`` so every future native fault leaves the
+``<user_data>/logs/native_fault.<pid>.<session-token>.log`` so each process owns
+its diagnostic stream without interleaving another process's native stacks. The
+historical shared ``native_fault.log`` is preserved read-only by this producer.
+Each future native fault leaves the
 Python stack of all threads (e.g. it would have pointed straight at
 ``_create_axial_view`` on PC2).
 
@@ -26,7 +29,7 @@ INVARIANTS
 - Must NEVER raise — startup cannot break because a log dir is unwritable.
 - The file handle stays open for the process lifetime (module-level global);
   closing it would make faulthandler write to a dead fd.
-- Append mode: sessions accumulate; each enable writes a session-start marker.
+- Exclusive creation: one file per process run, even after PID reuse.
 - Flag ``AIPACS_NATIVE_FAULT_LOG`` (default ON). ``=0`` disables (legacy).
 - Idempotent: a second call returns the existing path without re-opening.
 
@@ -39,12 +42,43 @@ import contextlib
 import datetime
 import logging
 import os
+from pathlib import Path
+import re
 import sys
+import uuid
 from typing import Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
 _handle = None  # keeps the log file handle alive for the process lifetime
+_PROCESS_LOG = re.compile(r"native_fault\.([0-9]+)\.([0-9a-f]{32})\.log\Z")
+
+
+def native_fault_log_pid(path) -> Optional[int]:
+    """Filename identity for the exclusive format; legacy files have no owner."""
+    match = _PROCESS_LOG.fullmatch(Path(path).name)
+    return int(match[1]) if match else None
+
+
+def discover_native_fault_logs(logs_dir, max_files: int = 256) -> list[Path]:
+    """Explicit diagnostic I/O: off-GUI callers only. Never include filtered reports.
+
+    Missing directories return no sources; other I/O errors and a source-count
+    limit propagate so callers cannot silently certify incomplete evidence.
+    """
+    found = []
+    try:
+        with os.scandir(logs_dir) as entries:
+            for entry in entries:
+                if entry.name == "native_fault.log" or _PROCESS_LOG.fullmatch(entry.name):
+                    if not entry.is_file(follow_symlinks=False):
+                        raise ValueError("NATIVE_LOG_INVALID_SOURCE")
+                    found.append(Path(entry.path))
+                    if len(found) > max_files:
+                        raise ValueError("NATIVE_LOG_FILE_LIMIT")
+    except FileNotFoundError:
+        return []
+    return sorted(found)
 
 
 def _flag_enabled() -> bool:
@@ -54,7 +88,7 @@ def _flag_enabled() -> bool:
 
 
 def enable_native_fault_log(logs_dir=None) -> Optional[str]:
-    """Enable faulthandler -> ``<logs_dir>/native_fault.log``.
+    """Enable faulthandler into an exclusively created process-session file.
 
     Returns the log file path, or ``None`` when disabled/failed. ``logs_dir``
     defaults to the app's ``user_data/logs`` (lazy import so this module stays
@@ -65,6 +99,7 @@ def enable_native_fault_log(logs_dir=None) -> Optional[str]:
         return None
     if _handle is not None:
         return getattr(_handle, "name", None)
+    handle = None
     try:
         import faulthandler
 
@@ -72,22 +107,29 @@ def enable_native_fault_log(logs_dir=None) -> Optional[str]:
             from PacsClient.utils.data_paths import LOGS_DIR as logs_dir
         logs_dir = str(logs_dir)
         os.makedirs(logs_dir, exist_ok=True)
-        path = os.path.join(logs_dir, "native_fault.log")
-        handle = open(path, "a", encoding="utf-8", errors="replace")
+        pid = os.getpid()
+        path = os.path.join(logs_dir, f"native_fault.{pid}.{uuid.uuid4().hex}.log")
+        handle = open(path, "x", encoding="utf-8", errors="replace")
+        faulthandler.enable(file=handle, all_threads=True)
+        _handle = handle  # retain the native fd even if publishing its header fails
         handle.write(
             "\n=== session start {ts} pid={pid} frozen={frozen} exe={exe} ===\n".format(
                 ts=datetime.datetime.now().isoformat(timespec="seconds"),
-                pid=os.getpid(),
+                pid=pid,
                 frozen=bool(getattr(sys, "frozen", False)),
                 exe=os.path.basename(sys.executable or "?"),
             )
         )
         handle.flush()
-        faulthandler.enable(file=handle, all_threads=True)
-        _handle = handle  # only publish after enable succeeded
-        logger.info("[NATIVE_FAULT_LOG] faulthandler enabled -> %s", path)
+        try:
+            logger.info("[NATIVE_FAULT_LOG] faulthandler enabled -> %s", path)
+        except Exception:
+            pass  # An unavailable logger must not invalidate active capture.
         return path
     except Exception as exc:  # must never break startup
+        if handle is not None and handle is not _handle:
+            with contextlib.suppress(Exception):
+                handle.close()
         try:
             logger.warning("[NATIVE_FAULT_LOG] setup failed: %r", exc)
         except Exception:
@@ -125,7 +167,7 @@ def reset_for_tests() -> None:
 # on its own **native** thread, so it fires *while the GIL is held*. Arm it
 # around a section that must not block; if the section overruns, every thread's
 # Python stack — including the stuck main thread's — lands in
-# ``native_fault.log`` with a ``Timeout (0:00:0N)!`` header.
+# the current process's native log with a ``Timeout (0:00:0N)!`` header.
 #
 # INVARIANTS
 # ----------
@@ -136,7 +178,7 @@ def reset_for_tests() -> None:
 #   dump we care about. The depth guard makes inner uses no-ops.
 # - No-op when the fault log is disabled/unavailable (no file handle to write
 #   to). We never open a second handle.
-# - Writes NOTHING to native_fault.log unless it actually fires, so routine
+# - Writes NOTHING to the native sink unless it actually fires, so routine
 #   closes do not pollute the file or the ``tools/diagnostics/filter_native_fault.py``
 #   block parser.
 # - Flag ``AIPACS_HANG_WATCHDOG`` (default ON). ``AIPACS_HANG_WATCHDOG_SECONDS``
@@ -170,7 +212,7 @@ def hang_watchdog(label: str, seconds: Optional[float] = None) -> "Iterator[bool
     Yields ``True`` when the watchdog was actually armed, ``False`` when it was
     skipped (disabled, no fault-log handle, or already armed further out) — the
     body runs either way. ``label`` is for the caller's own breadcrumb log line;
-    it is deliberately NOT written to native_fault.log (see INVARIANTS).
+    it is deliberately NOT written to the native sink (see INVARIANTS).
     """
     global _watchdog_depth
     armed = False

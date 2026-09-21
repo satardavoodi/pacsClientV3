@@ -22,7 +22,7 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 - Product: Windows desktop DICOM workstation built with Python, PySide6, VTK, SimpleITK,
   pydicom, SQLite, and packaged plugin payloads.
 - Source entry point: `main.py`.
-- Canonical current version: `3.6.6` in `pyproject.toml`, `main.py`, and release docs.
+- Canonical current version: `3.6.7` in `pyproject.toml`, `main.py`, and release docs.
 - Supported interpreter in this checkout: Python `3.13.5` from `.venv`.
 - The public AI-PACS website is a separate project. Read `WORKSPACE.md` before adding a
   website endpoint, shared identity/licensing work, Case-of-the-Day publishing, or ATI work.
@@ -47,6 +47,13 @@ item rather than creating a disconnected plan.
 
 ## Non-negotiable engineering rules
 
+- Workstream ownership (user decision, 2026-09-16): Unify work owns shared identity,
+  catalog/thumbnail presentation, download/file/state coordination and cache invalidation
+  contracts, not viewer-specific decoding, filters, rendering or decoded-cache internals.
+  Route Advanced/VTK findings to `docs/reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md`
+  and shared-pipeline findings to `docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`.
+  Use the handoff protocol in `docs/plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md`
+  section 0.2; do not implement another workstream's fix or sync its in-progress payloads.
 - Preserve unrelated and pre-existing worktree changes. This repository is often developed
   with a large dirty worktree; inspect `git status` and the relevant diff before every edit.
 - Every bug fix ships with a regression guard that fails before the fix, the minimal code
@@ -85,6 +92,38 @@ item rather than creating a disconnected plan.
   be run casually on a dirty worktree.
 
 ## Verification baseline and commands
+
+### Default launch preference (user decision, 2026-09-20)
+
+- Eagle Eye changes must work in normal default operation without test-only feature flags.
+- Normal user-requested launches keep `AIPACS_TEST_SERVER=0`. `run_app.ps1` enforces
+  this default; `run_app.ps1 -TestServer` is an explicit opt-in for an authorized
+  automation test session. Do not silently enable it on routine launches.
+- Do not interrupt active voice recording or clinical work merely to change a
+  launch flag. A running process retains its launch environment until restarted.
+
+### Mandatory code and live GUI gates (user decision, 2026-09-14)
+
+- Every runtime fix/Unify slice requires both automated code verification and an affected-workflow
+  live GUI pass. Report them separately; blocked/skipped GUI work is not a pass. Documentation-only
+  edits require document checks, not a fabricated application acceptance run.
+- Before asking the human to perform the workflow, discover and use the existing `aipacs-control`
+  MCP (`tools/testing/aipacs_control_mcp/server.py`). If unavailable in the current tool inventory,
+  its `client.py` uses the same local Test Control Server; do not invent another control path.
+  Read `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` section 0 first.
+- The human launches/logs into one source app with `AIPACS_TEST_SERVER=1` outside clinical reading.
+  Probe `ping`, then `list_actions`; never enable the production LAN Agent Gateway for this purpose.
+- Startup preference (2026-09-14): acknowledge the observed disk-space notice with **OK**, not
+  **Don't show again**; this does not authorize cleanup or disabling warnings. Keep this step in
+  GUI preflight. Never record/reveal saved credentials. The current Computer Use skill prohibits
+  authentication automation, so hand off **Sign In** to the human and resume after Home is ready.
+- MCP `drag_series` is a downstream series-switch test, not a real mouse/OLE drag or Home-card click.
+  Cover the changed input boundary with actual GUI input and verify rendered output, identity,
+  counts, and session-scoped logs. An accepted command or offscreen QWidget test is insufficient.
+- Discover multi-study cases through bounded current PACS/reception reads: MG+US, spine radiography
+  + lumbar MR, and repeat brain MR are candidate patterns, not proof of identity. Verify authoritative
+  person/admission linkage and distinct StudyInstanceUIDs; never join people by name alone.
+  Keep real identifiers/images out of memory, docs, committed fixtures, and external AI services.
 
 - The focused 2026-08-27 active-work suite is green: 294 tests covering Eagle Eye lumbar/LLM,
   overlay reentrancy, and EchoMind pipeline scoping.

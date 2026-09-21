@@ -20,7 +20,7 @@ Key behaviors:
   2. Auto-load DICOM from NEWMPR2_DICOM_DIR
   3. Set MPR layout and configure views
   4. Activate NewMPR2MPR module (if available)
-  5. Set window title to "AI-PACS Advanced Viewer v0.1"
+  5. Set window title to "AI-PACS Advanced Viewer v3.6.7"
 
 Usage:
   Slicer.exe --no-splash --python-script startup_script.py
@@ -320,7 +320,7 @@ def apply_immediate_branding():
         qt.QCoreApplication.setOrganizationDomain("ai-pacs.local")
         # Note: setApplicationDisplayName may not exist in all Qt versions
         try:
-            qt.QCoreApplication.setApplicationDisplayName("AI-PACS Advanced Viewer v0.1")
+            qt.QCoreApplication.setApplicationDisplayName("AI-PACS Advanced Viewer v3.6.7")
         except AttributeError:
             pass
         print("[NewMPR2] [OK] Application identity set (immediate)")
@@ -328,7 +328,7 @@ def apply_immediate_branding():
         # Set main window title immediately
         mw = slicer.util.mainWindow()
         if mw:
-            mw.setWindowTitle("AI-PACS Advanced Viewer v0.1")
+            mw.setWindowTitle("AI-PACS Advanced Viewer v3.6.7")
             print("[NewMPR2] [OK] Window title set (immediate)")
         
     except Exception as e:
@@ -1128,22 +1128,16 @@ def apply_window_level_if_present(volume_node, args):
 
 def set_window_title(patient_id=None, study_id=None):
     """
-    Update the window title with patient/study info.
+    Set a compact product title; keep patient/study identity in the scene.
     
     Args:
         patient_id: Optional patient ID
         study_id: Optional study ID
     """
     try:
-        title = "AI-PACS Advanced Viewer v0.1"
+        title = "AI-PACS Advanced Viewer v3.6.7"
         
-        if patient_id or study_id:
-            info_parts = []
-            if patient_id:
-                info_parts.append(f"Patient: {patient_id}")
-            if study_id:
-                info_parts.append(f"Study: {study_id}")
-            title = f"{title} | {' | '.join(info_parts)}"
+        # Case identity remains in the scene/workstation, never in the OS title.
         
         main_window = slicer.util.mainWindow()
         if main_window:
@@ -1152,6 +1146,25 @@ def set_window_title(patient_id=None, study_id=None):
             
     except Exception as e:
         print(f"[NewMPR2Slicer] Error setting window title: {e}")
+
+
+def install_presentation():
+    """Load the local presentation adapter once; never show a hidden window."""
+    import importlib.util
+    from pathlib import Path
+    if not hasattr(slicer, '_aipacsPresentationModule'):
+        spec = importlib.util.spec_from_file_location(
+            'aipacs_analysis_presentation', Path(__file__).with_name('presentation.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        slicer._aipacsPresentationModule = module
+    module = slicer._aipacsPresentationModule
+    module.install(slicer.util.mainWindow())
+    return module
+
+
+def prepare_window_geometry(requested=None):
+    install_presentation().place_window(slicer.util.mainWindow(), requested)
 
 
 def store_patient_info(patient_id=None, study_id=None, window_width=None, window_level=None, series_uid=None):
@@ -1777,7 +1790,9 @@ def main():
     print("[AIPACS_UI_PY] Python handles runtime data logic only")
     print("[AIPACS_UI_PY] ========================================")
     
-    # --- NOTE: Theming is now handled in C++ ---
+    install_presentation()
+
+    # --- NOTE: Base theming is handled in C++; the presentation adapter styles the header. ---
     # The following calls are no longer needed because:
     # - load_custom_stylesheet(): QSS is embedded in app resources and loaded in Main.cxx
     # - apply_immediate_branding(): App name/title set in Main.cxx, logo removed in setupUi

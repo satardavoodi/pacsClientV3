@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-21",
+  "original_sha256": {
+    "breast/FCOS_INFERENCE.py": "26d84c554b2cdebe08f76e4842f86d2968ce72c64693668ad8ecd9455658aee6",
+    "breast/CASE_DICOM_TO_PNG.py": "7a75bf2afa6bb5e79a136f60ddb5b13e60e75db2131db087388512ccfcb3b4d0",
+    "breast/XGBoost_AR/CREATE_LESION.py": "0805af3cee89dc8934964be205a00db83bc434ad8a4cb7cec6c66cb920d8e52c",
+    "breast/XGBoost_AR/SINGLEVIEW_FEATURES.py": "dd6b89abbdcc881a079784fa68e5cf4f513ed7d0258de5a944218214c21686dd",
+    "breast/XGBoost_AR/TWO_VIEW_FEATURES.py": "ea3dbdfebfcb1749fa88793cdddaf08183b924d266bd2b38ed964ead110be66b",
+    "breast/XGBoost_AR/XGBOOST_INFERENCE.py": "5c19d43c8da62a3dde82e5a1d738a3d58adfef489b73127a9837d100f4e61b53",
+    "bone-age/bone_age_inference.py": "29d519d085d5f48d5adc10413655bc5b42b1e49b534a0e6a177450e461ac157e",
+    "bone-age/dicom_utils.py": "a11520ab03fd8b96b1b0451275620470e43190fb660effe1b82c21bc0535cc4e"
+  },
+  "sources": {
+    "breast": "pacs:D:/FCOS_AR",
+    "bone-age": "wina100:D:/Bone/BoneInference"
+  },
+  "transformation": "AST-normalized; comments/docstrings, main demos and absolute machine paths removed; diagnostic translation; FCOS loader requires a verified adapter and disables backbone downloads.",
+  "distribution_rights": "Owner-supplied project; redistribution review remains pending."
+}

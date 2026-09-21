@@ -239,6 +239,62 @@ class HomeSearchService:
     def _thread_pool(self) -> ThreadPoolExecutor:
         return self._home.thread_pool
 
+    def _clear_search_results(self, generation: int | None = None) -> None:
+        """Replace rows and retire a preview whose selected identity did not survive.
+
+        Reuses an existing search clear boundary without adding I/O or yielding.
+        The table owns pinned-row retention; a matching selected pin keeps its
+        preview and fetch. Row-number debounce is invalid across every rebuild.
+        """
+        home = self._home
+        if self._cancelled or (generation is not None and home._search_generation != generation):
+            raise asyncio.CancelledError()
+        patient_table = home.patient_table_widget
+
+        def selected_identity():
+            row = patient_table.results_table.currentRow()
+            data = patient_table.get_patient_data_by_row(row) if row >= 0 else {}
+            return (str((data or {}).get('patient_id') or '').strip(),
+                    str((data or {}).get('study_uid') or '').strip())
+
+        before = selected_identity()
+        thumbnail_timer = getattr(home, '_thumbnail_request_timer', None)
+        pending_thumbnail = (thumbnail_timer is not None and thumbnail_timer.isActive()
+                             and getattr(home, '_pending_thumbnail_row', None)
+                             == patient_table.results_table.currentRow())
+        for timer in (getattr(patient_table, 'click_timer', None),
+                      thumbnail_timer):
+            if timer is not None:
+                timer.stop()
+        patient_table._pending_selection_row = -1
+        home._pending_thumbnail_row = None
+        patient_table.clear_table()
+        active = (str(getattr(home, '_active_thumb_patient_id', '') or '').strip(),
+                  str(getattr(home, '_active_thumb_study_uid', '') or '').strip())
+        if all(before) and before == active == selected_identity():
+            if pending_thumbnail:
+                # The selected pin can move to a different row during clear.
+                # Preserve its scheduled fetch, rebound to the surviving row.
+                home._pending_thumbnail_row = patient_table.results_table.currentRow()
+                thumbnail_timer.start(120)
+            return
+
+        # Empty identity historically means "not initialized" to async producers.
+        # Explicit retirement must instead reject their late responses until a
+        # genuine selection is marked, otherwise clearing the UI is only cosmetic.
+        home._mark_active_patient_selection('', '')
+        home._active_thumb_selection_retired = True
+        home._right_panel_fetch_inflight_uid = ''
+        home._right_panel_render_study_uid = ''
+        home._series_info_loading_active = False
+        task = getattr(home, '_current_thumbnail_task', None)
+        home._current_thumbnail_task = None
+        if task is not None and not task.done():
+            task.cancel()
+        panel = home.right_panel_widget
+        panel.clear_content()
+        panel.count_label.setText('0 series')
+
     # ── OPT-24b: connectivity freshness (avoids a probe round-trip per search) ──
     def _connectivity_is_fresh(self) -> bool:
         """True when a recent search proved the socket server is reachable."""
@@ -474,7 +530,7 @@ class HomeSearchService:
             home.search_progress.setRange(0, 0)
             home._update_connection_indicator_by_status('busy', 'Searching local database...')
 
-            home.patient_table_widget.clear_table()
+            self._clear_search_results()
             await asyncio.sleep(0)
 
             # Build search criteria
@@ -740,7 +796,7 @@ class HomeSearchService:
                     f"Reading studies from {server.get('name', 'Offline Cloud Server')}...",
                     cancellable=True,
                 )
-                home.patient_table_widget.clear_table()
+                self._clear_search_results(_my_search_gen)
                 home.search_progress.setVisible(True)
                 home.search_progress.setRange(0, 0)
 
@@ -979,7 +1035,7 @@ class HomeSearchService:
             CHUNK = 10
             if patients:
                 # Atomic swap: clear only when fresh results are ready.
-                home.patient_table_widget.clear_table()
+                self._clear_search_results(_my_search_gen)
                 home.patient_table_widget.begin_bulk_insert()
                 try:
                     for i, patient in enumerate(patients, start=1):
@@ -1018,7 +1074,7 @@ class HomeSearchService:
                     )
             else:
                 # No results from current query: clear old rows and show explicit state.
-                home.patient_table_widget.clear_table()
+                self._clear_search_results(_my_search_gen)
                 home._update_connection_indicator_by_status('busy', 'Socket Connected - No patients found')
 
             # OPT-24c: do NOT tear the shared service down after every search.
@@ -1163,7 +1219,7 @@ class HomeSearchService:
 
             total = len(rows)
             home.search_progress.setRange(0, max(1, total))
-            home.patient_table_widget.clear_table()
+            self._clear_search_results(_my_search_gen)
             if rows:
                 home.patient_table_widget.begin_bulk_insert()
                 try:

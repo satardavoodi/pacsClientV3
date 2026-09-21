@@ -91,6 +91,7 @@ from PacsClient.utils.db_manager import get_study_by_study_uid
 from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
 from PacsClient.utils.structured_logging import emit_download_event as _emit_download_event
+from PacsClient.utils.patient_study_set import finalize_open_study_identity
 from modules.storage.sync_mode_policy import local_is_source_of_truth
 
 from .widget import SourceOfPatientLoad
@@ -835,8 +836,43 @@ class _HPPatientOpenMixin:
         _t0_double_click = _time.perf_counter()
         _logger.info("[FAST-UX] double_click_t0 study=%s patient=%s", study_uid, patient_id)
         all_study_uids = await self._resolve_patient_study_uids_async(patient_id, study_uid)
-        if not all_study_uids:
-            all_study_uids = [str(study_uid or '').strip()]
+        open_identity = finalize_open_study_identity(study_uid, all_study_uids)
+        if open_identity is None:
+            self._ensure_open_trace_context(
+                study_uid,
+                t0=_t0_double_click,
+                patient_id=str(patient_id),
+                patient_name=str(patient_name),
+                source=str(getattr(self, 'source_of_patient_load', None)),
+                all_studies=0,
+            )
+            self._log_open_trace(study_uid, 'open_rejected_invalid_identity', level='error')
+            self._trace_action_done(
+                action_id,
+                phase='invalid_study_identity',
+                extra={'study_uid': ''},
+            )
+            self._double_click_first_series_loaded = True
+            self._maybe_hide_double_click_loading()
+
+            def _show_identity_warning():
+                try:
+                    if is_widget_alive(self):
+                        QMessageBox.warning(
+                            self,
+                            "Unable to Open Study",
+                            "This patient does not have a valid study identity. "
+                            "Refresh the patient list and try again.",
+                        )
+                except RuntimeError:
+                    pass
+
+            # The async callback must return before a modal Qt loop starts.
+            QTimer.singleShot(0, _show_identity_warning)
+            return None
+
+        study_uid = open_identity.selected_study_uid
+        all_study_uids = list(open_identity.study_uids)
         self._ensure_open_trace_context(
             study_uid,
             t0=_t0_double_click,
@@ -852,25 +888,6 @@ class _HPPatientOpenMixin:
         # actually enqueues missing series.
         try:
             self._log_open_trace(study_uid, 'PatientOpenDoubleClick', patient_id=str(patient_id or ''), all_studies=len(all_study_uids))
-        except Exception:
-            pass
-
-        # Self-heal (2026-06-17): drop any series rows of the opening studies whose
-        # downloaded files are GONE — orphans left behind by a re-split / re-download
-        # (e.g. POKORA 562346 series 3: 802 dangling rows pointing at a deleted
-        # folder). Only prunes a series that HAS instance rows but 0 on-disk .dcm
-        # files, and only when the store root is reachable; never a pending (0-row)
-        # series, never any file. Gated by AIPACS_PRUNE_ORPHAN_SERIES; best-effort so
-        # it can never break the open.
-        try:
-            from database.dicom_db import prune_orphan_series_for_study
-            for _su in (list(all_study_uids) if all_study_uids else [study_uid]):
-                _pruned = prune_orphan_series_for_study(str(_su))
-                if _pruned:
-                    self._log_open_trace(
-                        str(_su), 'orphan_series_pruned', patient_id=str(patient_id or ''),
-                        pruned=','.join(f"{n}({r})" for n, r in _pruned),
-                    )
         except Exception:
             pass
 
@@ -890,13 +907,8 @@ class _HPPatientOpenMixin:
         except Exception:
             pass
 
+        open_started = False
         try:
-            # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
-            if study_uid in self._opening_studies:
-                self._log_open_trace(study_uid, 'duplicate_open_blocked')
-                _logger.info("Duplicate open prevented for study %s", study_uid)
-                return
-
             # If already open, just focus it and exit
             existing_widget = self._find_widget_by_study_uid(study_uid)
             if existing_widget:
@@ -959,13 +971,17 @@ class _HPPatientOpenMixin:
                                     _logger.debug(
                                         "existing-tab series refresh failed for %s (%s)",
                                         study_uid, _rf_err)
-                            return
+                            return existing_widget
                 except Exception as e:
                     self._log_open_trace(study_uid, 'existing_tab_focus_error', level='error', error=str(e))
                     _logger.warning("Error switching to existing tab: %s", e, exc_info=True)
                     # Continue with normal flow if tab switching fails
 
-            self._opening_studies.add(study_uid)
+            if not self.tab_service.begin_patient_open(study_uid):
+                self._log_open_trace(study_uid, 'duplicate_open_blocked')
+                _logger.info("Duplicate open prevented for study %s", study_uid)
+                return None
+            open_started = True
 
             # Track loading state: keep until first series is displayed
             self._double_click_loading_active = True
@@ -1433,22 +1449,49 @@ class _HPPatientOpenMixin:
                 """Run background setup in a separate thread to avoid async conflicts"""
                 try:
                     self._log_open_trace(study_uid, 'background_setup_started')
-                    # WU-1 (2026-08-08): pre-warm OS/AV caches for this
-                    # patient's on-disk series files so the viewer's
-                    # switch-time header scan hits warm files (live 53417:
-                    # 40.5 ms/file cold vs 0.9 ms warm -> series 202 took
-                    # ~8.6 s to the viewport). Read-only, budgeted,
-                    # fire-and-forget; the scan/verification is unchanged.
+                    # WU-1 (2026-08-08): retain the read-only, budgeted raw
+                    # head warm for Server/unknown opens. Local opens pass
+                    # their detached catalog rows so the ordered/revision-
+                    # bound Local owner can suppress competing file reads.
                     try:
                         from PacsClient.pacs.patient_tab.utils.series_file_warm import (
                             warm_study_series_async,
                         )
+                        _local_warm_series = None
+                        if is_local:
+                            try:
+                                from database.manager import get_study_info_with_series
+                                _local_warm_series = []
+                                for _uid in (all_study_uids or [study_uid]):
+                                    _study_info = get_study_info_with_series(str(_uid)) or {}
+                                    _local_warm_series.extend(_study_info.get('series') or [])
+                            except Exception:
+                                # Preserve Local ownership on lookup failure.
+                                # None means Server/unknown and would re-enable
+                                # a whole-study raw read; [] fails closed while
+                                # the authoritative Local inventory still runs.
+                                _local_warm_series = []
+                                _logger.debug(
+                                    "[SERIES_FILE_WARM] Local catalog routing unavailable",
+                                    exc_info=True,
+                                )
                         warm_study_series_async(
                             [str(SOURCE_PATH / _uid)
-                             for _uid in (all_study_uids or [study_uid])]
+                             for _uid in (all_study_uids or [study_uid])],
+                            local_series=_local_warm_series,
                         )
                     except Exception:
                         _logger.debug("[SERIES_FILE_WARM] kick failed", exc_info=True)
+                    if is_local and len(all_study_uids) == 1:
+                        # Single-study Local startup already owns a bounded,
+                        # pixel-verified stream in the patient tab. Do not scan
+                        # every series again here or push Home's older snapshot
+                        # over that owner. Grouped Local still needs its complete
+                        # catalog below; Server metadata/attachments are unchanged.
+                        self._log_open_trace(
+                            study_uid, 'background_series_info_owned_by_local_stream'
+                        )
+                        return
                     # Download attachments in background (non-blocking)
                     if not is_local:
                         try:
@@ -1557,6 +1600,42 @@ class _HPPatientOpenMixin:
                 except Exception as e:
                     self._log_open_trace(study_uid, 'background_setup_error', level='error', error=str(e))
                     _logger.error("[BACKGROUND] Error in background setup: %s", e, exc_info=True)
+                finally:
+                    if not (is_local and len(all_study_uids) == 1):
+                        # Orphan reconciliation is post-catalog maintenance. The
+                        # Local inventory already excludes missing/non-pixel rows,
+                        # so cleanup must not gate grouped or Server publication.
+                        # Keep the existing worker, destructive safety checks and
+                        # failure visibility; only the ordering changes.
+                        try:
+                            from time import perf_counter as _perf_counter
+                            from database.dicom_db import prune_orphan_series_for_study
+
+                            _reconcile_started = _perf_counter()
+                            _pruned_total = 0
+                            _logger.info(
+                                '[LOCAL_ORPHAN_RECONCILE] owner=home_background '
+                                'phase=post_catalog_start studies=%d',
+                                len(all_study_uids) if all_study_uids else 1,
+                            )
+                            for _su in (list(all_study_uids) if all_study_uids else [study_uid]):
+                                _pruned = prune_orphan_series_for_study(str(_su))
+                                _pruned_total += len(_pruned)
+                                if _pruned:
+                                    self._log_open_trace(
+                                        str(_su), 'orphan_series_pruned',
+                                        patient_id=str(patient_id or ''),
+                                        pruned=','.join(f"{n}({r})" for n, r in _pruned),
+                                    )
+                            _logger.info(
+                                '[LOCAL_ORPHAN_RECONCILE] owner=home_background '
+                                'phase=post_catalog_finished studies=%d duration_ms=%.2f pruned=%d',
+                                len(all_study_uids) if all_study_uids else 1,
+                                (_perf_counter() - _reconcile_started) * 1000.0,
+                                _pruned_total,
+                            )
+                        except Exception:
+                            _logger.debug("Background orphan-series prune failed", exc_info=True)
 
             # Start background tasks in a separate thread (no async conflicts)
             threading.Thread(target=_background_setup_thread, daemon=True).start()
@@ -1566,6 +1645,7 @@ class _HPPatientOpenMixin:
             self._hide_double_click_loading()
 
             self._log_open_trace(study_uid, 'open_hot_path_complete')
+            return widget
 
             # Everything is handled in the fast path above
         except Exception as e:
@@ -1583,10 +1663,8 @@ class _HPPatientOpenMixin:
             except Exception:
                 pass
         finally:
-            try:
-                self._opening_studies.discard(study_uid)
-            except Exception:
-                pass
+            if open_started:
+                self.tab_service.end_patient_open(study_uid)
 
     def _hide_double_click_loading(self):
         """Hide the loading screen specifically for double-click events"""

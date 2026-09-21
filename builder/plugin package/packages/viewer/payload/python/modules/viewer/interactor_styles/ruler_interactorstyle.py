@@ -113,6 +113,16 @@ class RulerInteractorStyle(AbstractInteractorStyle):
         self.image_viewer.renderer.Render()
 
     def set_widget_repr(self, widget, color, title):
+        metadata = getattr(self.image_viewer, 'metadata', None) or {}
+        if metadata.get('_advanced_presentation_frames'):
+            instances = metadata.get('instances') or ()
+            index = self.image_viewer.GetSlice()
+            calibration = instances[index].get('spacing_calibration') if 0 <= index < len(instances) else None
+            if title.endswith(' mm'):
+                if calibration == 'detector':
+                    title += ' (detector)'
+                elif calibration == 'uncalibrated':
+                    title = title[:-3] + ' px'
         repr = widget.GetRepresentation()
         repr.GetAxisProperty().SetLineWidth(getattr(self, 'line_width', 1))
         repr.GetAxisProperty().SetColor(color)

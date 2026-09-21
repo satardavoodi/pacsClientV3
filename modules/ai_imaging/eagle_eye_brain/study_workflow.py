@@ -43,13 +43,20 @@ def load_study_series(study_uid):
     return sorted(rows, key=lambda row: (not row['preferred'], row['number']))
 
 
-def run_study_analysis(source, study_uid, series_uid, *, root, **kwargs):
-    from .patient_context import dicom_context
+def run_study_analysis(source, study_uid, series_uid, *, root, flair_source='', flair_series_uid=None, **kwargs):
+    from .patient_context import dicom_context, require_same_examination
     from .service import run_analysis
     context = dicom_context(source)
     if context.get('study_uid') != study_uid or context.get('series_uid') != series_uid:
         raise BrainError('The selected DICOM series no longer matches this examination. Select it again.')
-    return run_analysis(source, '', patient_output_root(root, context), **kwargs)
+    if flair_source:
+        flair_context = dicom_context(flair_source)
+        if (flair_context.get('study_uid') != study_uid
+                or flair_context.get('series_uid') != flair_series_uid
+                or flair_series_uid == series_uid):
+            raise BrainError('Choose a distinct FLAIR series from this examination.')
+        require_same_examination(context, flair_context)
+    return run_analysis(source, flair_source, patient_output_root(root, context), **kwargs)
 
 
 def export_pdf(result, destination):

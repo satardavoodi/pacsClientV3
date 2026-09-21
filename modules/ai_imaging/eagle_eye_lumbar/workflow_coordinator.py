@@ -38,11 +38,17 @@ class EagleEyeWorkflowCoordinator(QObject):
         self._session_dir = None
         self._series_probe_generation = 0
         self._series_probe_running = False
+        self._progress_popup = None
         self._series_probe_finished.connect(self._on_series_probe_finished)
+
+    @property
+    def busy(self) -> bool:
+        return (self._capture_controller is not None or self._series_probe_running
+                or bool(self._analysis_runner is not None and self._analysis_runner.running))
 
     def start_capture(self) -> None:
         """Resolve the required series and start the configured capture passes."""
-        if self._capture_controller is not None or self._series_probe_running:
+        if self.busy:
             print("[LUMBAR] capture already running; ignoring re-entry")
             return
 
@@ -329,6 +335,9 @@ class EagleEyeWorkflowCoordinator(QObject):
 
     def teardown(self) -> None:
         """Detach in-flight work before the host's child widgets are destroyed."""
+        from ..background_analysis import BackgroundProgress
+        BackgroundProgress.hide_overlay(self._progress_popup)
+        self._progress_popup = None
         self._series_probe_generation += 1
         self._series_probe_running = False
         controller = self._capture_controller
@@ -397,3 +406,13 @@ class EagleEyeWorkflowCoordinator(QObject):
 
     def _set_status(self, text: str, *, active: bool) -> None:
         self._host.set_processing_status(text, active=active)
+        from ..background_analysis import BackgroundProgress
+        if active:
+            if self._progress_popup is None:
+                self._progress_popup = BackgroundProgress.show_overlay(
+                    self._host, title='Eagle Eye Lumbar | Analysis', status=text)
+            else:
+                self._progress_popup.set_status(text)
+        else:
+            BackgroundProgress.hide_overlay(self._progress_popup)
+            self._progress_popup = None

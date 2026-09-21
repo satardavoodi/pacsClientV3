@@ -185,9 +185,11 @@ class ViewportSpinner:
         self.viewport_widget = viewport_widget
         self.spinner = None
         self.overlay = None
+        self._loading_generation = 0
         
     def show_loading(self, message="Loading series..."):
         """Show branded loading indicator over this viewport."""
+        self._loading_generation += 1
         try:
             from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
 
@@ -199,6 +201,7 @@ class ViewportSpinner:
                     subtitle="",
                     minimal=True,
                     pass_through=True,
+                    opaque_native_background=True,
                 )
                 try:
                     self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -211,6 +214,9 @@ class ViewportSpinner:
                     pass
                 self.overlay.show()
                 self.overlay.raise_()
+                # Paint the current cover before native VTK changes its surface.
+                # Do not pump the event loop: that can re-enter a series switch.
+                self.overlay.repaint()
                 try:
                     self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 except Exception:
@@ -236,6 +242,7 @@ class ViewportSpinner:
             self.spinner.start_spinning()
             # Ensure spinner is properly positioned within the viewport
             self.spinner.center_in_parent()
+            self.spinner.repaint()
             try:
                 if hasattr(self.viewport_widget, '_update_empty_drop_hint_visibility'):
                     self.viewport_widget._update_empty_drop_hint_visibility()
@@ -282,6 +289,7 @@ class ViewportSpinner:
         
     def hide_loading(self):
         """Hide the loading spinner"""
+        self._loading_generation += 1
         if self.overlay:
             try:
                 from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
@@ -302,8 +310,19 @@ class ViewportSpinner:
         except Exception:
             pass
     
+    def hide_loading_after(self, delay_ms):
+        """Only the load that scheduled completion may dismiss its cover."""
+        generation = self._loading_generation
+
+        def finish():
+            if self._loading_generation == generation:
+                self.hide_loading()
+
+        QTimer.singleShot(delay_ms, finish)
+
     def cleanup(self):
         """Cleanup spinner resources"""
+        self._loading_generation += 1
         if self.overlay:
             try:
                 from PacsClient.components.loading_overlay import AiPacsLoadingOverlay

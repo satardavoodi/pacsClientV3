@@ -823,6 +823,15 @@ def build_module_packages(
                 package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
                 for_distribution=for_distribution,
             )
+            from builder.eagle_eye_lesion_payload import stage_eagle_eye_lesions
+            stage_eagle_eye_lesions(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
+                                   for_distribution=for_distribution)
+            from builder.eagle_eye_alignment_payload import stage_eagle_eye_alignment
+            stage_eagle_eye_alignment(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
+                                      for_distribution=for_distribution)
+            from builder.eagle_eye_total_spine_payload import stage_eagle_eye_total_spine
+            stage_eagle_eye_total_spine(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
+                                       for_distribution=for_distribution)
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,

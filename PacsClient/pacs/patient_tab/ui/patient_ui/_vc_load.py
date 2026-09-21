@@ -461,6 +461,9 @@ class _VCLoadMixin:
         import time
         from pathlib import Path
 
+        load_event = None
+        is_owner = False
+        series_key = str(series_number)
         try:
             _start = time.perf_counter()
             t_load_total = now_ms()
@@ -689,20 +692,8 @@ class _VCLoadMixin:
             except Exception:
                 pass
 
-            # Fast no-op: same series already displayed in target viewport.
-            # Prevents duplicate full ITK pipeline when a second request arrives
-            # while the first switch has already applied.
-            try:
-                if (not force_reload) and target_vtk_widget is not None and getattr(target_vtk_widget, 'image_viewer', None) is not None:
-                    shown_series = str(
-                        getattr(target_vtk_widget.image_viewer, 'metadata', {}).get('series', {}).get('series_number', '')
-                    )
-                    if shown_series and shown_series == str(series_number):
-                        if int(target_vtk_widget.get_count_of_slices() or 0) > 0:
-                            logger.debug(f"âڈ­ï¸ڈ [LOAD SKIP] same series already visible series={series_number}")
-                            return True
-            except Exception:
-                pass
+            # A visible preview is not a completed load. The full-cache / full-
+            # candidate checks below own the no-op decision for both backends.
 
             # Bail out early if tab was deactivated while queued (e.g. user pressed F5).
             # Allow explicit user-driven loads even if tab_active flag is stale.
@@ -729,8 +720,6 @@ class _VCLoadMixin:
             if cached_full is not None:
                 cached_vtk, cached_meta = cached_full[0], cached_full[1]
                 if cached_vtk is not None and isinstance(cached_meta, dict):
-                    if not self._tab_active:
-                        return False
                     _apply_t = time.perf_counter()
                     self._apply_loaded_series_data_threadsafe(
                         series_number, cached_vtk, cached_meta,
@@ -801,8 +790,6 @@ class _VCLoadMixin:
                     if cached_full_after_wait is not None:
                         cached_vtk, cached_meta = cached_full_after_wait[0], cached_full_after_wait[1]
                         if cached_vtk is not None and isinstance(cached_meta, dict):
-                            if not self._tab_active:
-                                return False
                             self._apply_loaded_series_data_threadsafe(
                                 series_number, cached_vtk, cached_meta,
                                 self.parent_widget.metadata_fixed.get('patient_pk', None),
@@ -1105,18 +1092,8 @@ class _VCLoadMixin:
             _last_vtk_data = None   # v2.2.5.2: keep ref for immediate cache put
             _last_meta = None       # v2.2.5.2: keep ref for immediate cache put
             for item in result:
-                if not self._tab_active:
-                    # Tab was deactivated while full load was in progress.
-                    # Preserve loaded payload in full cache so re-activation can
-                    # display immediately without re-running the ITK pipeline.
-                    try:
-                        _inactive_vtk, _inactive_meta, _ = item
-                        if _inactive_vtk is not None and isinstance(_inactive_meta, dict):
-                            self._full_cache_put(series_key, _inactive_vtk, _inactive_meta)
-                    except Exception:
-                        pass
-                    logger.debug(f"âڈ­ï¸ڈ [LOAD SKIP] tab inactive during apply for series {series_number}")
-                    return False
+                # A hidden tab changes presentation, not load success. Publish
+                # the identity-normalized pair; the GUI defers only rendering.
                 if target_vtk_widget is not None and not self._is_request_current(target_vtk_widget, expected_token):
                     logger.debug(f"âڈ­ï¸ڈ [LOAD STALE] full series={series_number} ignored")
                     return False
@@ -1368,11 +1345,22 @@ class _VCLoadMixin:
             if evt is not None:
                 evt.set()
             return False
+        finally:
+            # Cover stale/early returns after the decoder yields as well as the
+            # ordinary success path. Never release a newer load's ownership.
+            if is_owner and load_event is not None:
+                with self._series_load_lock:
+                    if self._series_load_events.get(series_key) is load_event:
+                        self._series_load_events.pop(series_key, None)
+                        self._loading_series_numbers.discard(series_key)
+                        load_event.set()
 
     def _apply_loaded_series_data(self, series_number, vtk_image_data, metadata, patient_pk, study_pk,
                                   refresh_viewer=False, target_viewer_id=None, allow_paired: bool = True,
                                   expected_token=None):
         try:
+            if getattr(self, '_viewer_loads_closed', False):
+                return
             _t_apply_start = time.perf_counter()
             # [APPLY-ENTER] (OPT-20 diagnostic, log-only). Confirms the UI apply actually
             # RAN for this series (vs the worker->UI fire-and-forget post being lost). If a
@@ -1410,7 +1398,7 @@ class _VCLoadMixin:
                     if vtk_w is not None and getattr(vtk_w, 'id_vtk_widget', None) == target_viewer_id:
                         target_widget = vtk_w
                         break
-                if target_widget is not None and (not self._is_request_current(target_widget, expected_token)):
+                if target_widget is None or not self._is_request_current(target_widget, expected_token):
                     # [APPLY-STALE-EARLY] — the top-level stale guard drops the whole apply
                     # (incl. the render) when the request token is no longer current. Upgraded
                     # from debug to a visible, gated INFO because THIS is a prime OPT-20 suspect
@@ -1509,7 +1497,7 @@ class _VCLoadMixin:
                     )
                 except Exception:
                     pass
-            if refresh_viewer and series_idx >= 0:
+            if refresh_viewer and series_idx >= 0 and self._tab_active:
                 # Update ALL viewers currently showing this series (not just selected)
                 for vi, node_viewer in enumerate(self.lst_nodes_viewer or []):
                     vtk_w = getattr(node_viewer, 'vtk_widget', None)

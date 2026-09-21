@@ -49,15 +49,21 @@ class VolumeCacheError(RuntimeError):
     """Raised to a waiter when the coalesced decode it was waiting on failed."""
 
 
+@dataclass
+class _Flight:
+    event: threading.Event = field(default_factory=threading.Event)
+    value: Any = None
+    error: Optional[BaseException] = None
+
+
 class VolumeCache:
     """Thread-safe decoded-volume cache. All public methods are safe to call from any thread."""
 
     def __init__(self, max_entries: int = 8, max_bytes: int = 0) -> None:
         self._lock = threading.RLock()
         self._entries: Dict[Key, _Entry] = {}
-        # key -> (Event, [result_holder]) for in-flight decodes (coalescing).
-        self._inflight: Dict[Key, threading.Event] = {}
-        self._inflight_error: Dict[Key, BaseException] = {}
+        # Each generation owns its completion, result and error independently.
+        self._inflight: Dict[Key, _Flight] = {}
         self._max_entries = max(1, int(max_entries))
         self._max_bytes = max(0, int(max_bytes))  # 0 = no byte budget
         self.hits = 0
@@ -88,11 +94,13 @@ class VolumeCache:
                     "pinned": sum(1 for e in self._entries.values() if e.pinned)}
 
     # -- the coalescing get-or-create -------------------------------------- #
-    def get_or_create(self, key: Key, factory: Callable[[], Any], *, size: int = 0,
+    def get_or_create(self, key: Key, factory: Callable[[], Any], *, size: int | Callable[[Any], int] = 0,
                       pin: bool = False) -> Any:
         """Return the cached value for ``key``; if absent, run ``factory()`` exactly once even
-        under concurrent callers (the others wait and share the result). ``factory`` runs OUTSIDE
-        the lock. Raises :class:`VolumeCacheError` to waiters if the owning decode failed."""
+        under concurrent callers within one generation. ``factory`` and optional
+        ``size(value)`` run OUTSIDE the lock. Invalidation releases waiters and
+        rejects the old owner's result; it does not interrupt the factory itself.
+        Invalidation return counts continue to count stored entries only."""
         with self._lock:
             e = self._entries.get(key)
             if e is not None:
@@ -104,7 +112,7 @@ class VolumeCache:
             ev = self._inflight.get(key)
             if ev is None:
                 # We own the decode for this key.
-                ev = threading.Event()
+                ev = _Flight()
                 self._inflight[key] = ev
                 owner = True
             else:
@@ -112,44 +120,47 @@ class VolumeCache:
                 self.coalesced += 1
 
         if not owner:
-            # Wait for the owner's decode, then return the now-cached value.
-            ev.wait()
+            # Wait for this generation, independent of subsequent cache retention.
+            ev.event.wait()
             with self._lock:
-                err = self._inflight_error.pop(key, None)
-                if err is not None and key not in self._entries:
-                    raise VolumeCacheError(str(err))
+                if ev.error is not None:
+                    raise VolumeCacheError(str(ev.error))
                 e = self._entries.get(key)
-                if e is not None:
+                if e is not None and e.value is ev.value:
                     e.last_used = time.monotonic()
                     if pin:
                         e.pinned += 1
                     self.hits += 1
-                    return e.value
-            # Owner failed and left nothing — surface a miss-as-error.
-            raise VolumeCacheError("coalesced decode produced no value for %r" % (key,))
+                # Delivery is independent of retention: an oversized volume can be
+                # evicted immediately while all coalesced consumers still need it.
+                return ev.value
 
         # Owner path: run the factory outside the lock.
         self.misses += 1
         try:
             value = factory()
+            retained_size = max(0, int(size(value) if callable(size) else size))
         except BaseException as exc:  # noqa: BLE001 — propagate to waiters then re-raise
             with self._lock:
-                self._inflight_error[key] = exc
-                ev2 = self._inflight.pop(key, None)
-            if ev2 is not None:
-                ev2.set()
+                if self._inflight.get(key) is ev:
+                    self._inflight.pop(key)
+                    ev.error = exc
+                ev.event.set()
             raise
         with self._lock:
-            self._entries[key] = _Entry(value=value, size=max(0, int(size)),
+            if self._inflight.get(key) is not ev:
+                raise VolumeCacheError("volume build invalidated")
+            self._entries[key] = _Entry(value=value, size=retained_size,
                                         pinned=1 if pin else 0)
-            ev2 = self._inflight.pop(key, None)
+            self._inflight.pop(key)
+            ev.value = value
             self._evict_locked()
-        if ev2 is not None:
-            ev2.set()
+            ev.event.set()
         return value
 
     def put(self, key: Key, value: Any, *, size: int = 0, pin: bool = False) -> None:
         with self._lock:
+            self._cancel_flight_locked(key)
             self._entries[key] = _Entry(value=value, size=max(0, int(size)),
                                         pinned=1 if pin else 0)
             self._evict_locked()
@@ -179,11 +190,15 @@ class VolumeCache:
     # -- invalidation bus -------------------------------------------------- #
     def invalidate(self, key: Key) -> bool:
         with self._lock:
+            self._cancel_flight_locked(key)
             return self._entries.pop(key, None) is not None
 
     def invalidate_study(self, study_uid: Any) -> int:
         su = str(study_uid or "").strip()
         with self._lock:
+            for key in list(self._inflight):
+                if key[0] == su:
+                    self._cancel_flight_locked(key)
             doomed = [k for k in self._entries if k[0] == su]
             for k in doomed:
                 del self._entries[k]
@@ -191,11 +206,19 @@ class VolumeCache:
 
     def invalidate_all(self) -> int:
         with self._lock:
+            for key in list(self._inflight):
+                self._cancel_flight_locked(key)
             n = len(self._entries)
             self._entries.clear()
             return n
 
     # -- internal ---------------------------------------------------------- #
+    def _cancel_flight_locked(self, key: Key) -> None:
+        flight = self._inflight.pop(key, None)
+        if flight is not None:
+            flight.error = VolumeCacheError("volume build invalidated")
+            flight.event.set()
+
     def _evict_locked(self) -> None:
         # Count cap: evict LRU non-pinned until within max_entries.
         def _over_count() -> bool:

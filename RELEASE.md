@@ -81,7 +81,7 @@ new commit before publication; do not amend a commit that has reached any remote
 Run from the repository root with the supported development interpreter:
 
 ```powershell
-$version = "3.6.6"
+$version = "3.6.7"
 & .\.venv\Scripts\python.exe tools\git\release_manager.py audit --version $version
 ```
 
@@ -100,7 +100,7 @@ push or create a build receipt.
 Copy the complete SHA printed by `git rev-parse HEAD`; do not use a short SHA:
 
 ```powershell
-$version = "3.6.6"
+$version = "3.6.7"
 $releaseHead = git rev-parse HEAD
 & .\.venv\Scripts\python.exe tools\git\release_manager.py publish `
   --version $version `
@@ -124,7 +124,7 @@ A full PyInstaller + Nuitka candidate requires the fresh synchronization receipt
 for the exact current HEAD and version:
 
 ```powershell
-$version = "3.6.6"
+$version = "3.6.7"
 $releaseHead = git rev-parse HEAD
 $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12)).json"
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `

@@ -1200,14 +1200,20 @@ class _MprViewsMixin:
             _host = None
             _suppress = False
             try:
-                if mpr_deferred_3d_stable_swap_enabled():
-                    _host = layout.parentWidget()
-                    if _host is not None:
-                        _host.setUpdatesEnabled(False)
-                        _suppress = True
-            except Exception:
-                _suppress = False
-            try:
+                # Painting the progress dialog pumps Qt events. Patient/MPR
+                # teardown can run there and finalize the native resources.
+                # Recheck before touching the saved layout or constructing VTK;
+                # keep this return inside the dialog cleanup's finally block.
+                if getattr(self, '_mpr_closed', False):
+                    return
+                try:
+                    if mpr_deferred_3d_stable_swap_enabled():
+                        _host = layout.parentWidget()
+                        if _host is not None:
+                            _host.setUpdatesEnabled(False)
+                            _suppress = True
+                except Exception:
+                    _suppress = False
                 # 1. Build the real pane WHILE the placeholder still holds the cell.
                 self._create_3d_view(layout, 0, 1)
                 # 2. Only now drop the placeholder.

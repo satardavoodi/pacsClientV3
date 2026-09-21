@@ -1,11 +1,42 @@
 # AIPacs Release Notes (Consolidated)
 
-**Next build target:** v3.6.6 (2026-09-09), synchronized-source installers pending.
+**Latest local build:** v3.6.7 (2026-09-21), six local install-QA installers compiled.
 
 **Current Stable Version:** v3.6.4 (2026-08-29)
 **Previous Stable:** v3.6.3 (2026-08-23)
 **Release Date:** 2026-08-29
 **Branch:** beta-version
+
+---
+
+## v3.6.7 (local install-QA build 2026-09-21) - Consolidated workstation candidate
+
+Version 3.6.7 freezes the current reviewed working state into one immutable local
+build snapshot. The candidate consolidates the latest patient/study/series identity,
+Home and thumbnail coordination, viewer loading and GPU safeguards, asynchronous
+storage maintenance, Eagle Eye analysis, EchoMind reporting, Advanced Viewer, and
+packaging updates present in the requested development state.
+
+The canonical build produces exactly six installers from that same snapshot: Eagle
+Eye, Standard, and x64-on-ARM64-emulation editions for both PyInstaller and Nuitka.
+The files remain in `builder/output/installer` and
+`builder nuitka/output/installer`; no alternate output hierarchy is permitted.
+
+All six installers were compiled from one immutable source snapshot. The coordinator
+completed both backends with exit code 0 and cross-backend coherence exit 0. The
+final focused packaging gate passed 144 tests; 470 plugin mirror pairs and 34,529
+distribution-asset files were verified. All installer FileVersion and ProductVersion
+resources report 3.6.7, and independent SHA-256 calculations match the generated
+metadata. The Cardiac Flow multi-value normalization and standards-compliant
+DICOMDIR modules are present in both frozen backends and their focused regression
+tests pass.
+
+This request authorizes a local install-QA build, not source publication or production
+distribution. The dirty working state, unresolved credential-remediation gate, code
+signing, isolated clean-install and upgrade checks, real ARM64-host validation, and
+clinical acceptance remain explicit blockers to promotion.
+
+Preparation and evidence: [VERSION_3.6.7_BUILD.md](VERSION_3.6.7_BUILD.md).
 
 ---
 

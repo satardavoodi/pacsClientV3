@@ -322,6 +322,8 @@ def app_a_datas() -> list[tuple[str, str]]:
     # The separate Slicer process needs an actual script, not a frozen import.
     return dedupe_datas(common_app_datas() + collect_tree_datas(
         "modules/ai_imaging/eagle_eye_brain/slicer_worker.py"
+    ) + collect_tree_datas(
+        "modules/ai_imaging/eagle_eye_brain/manual_slicer.py"
     ))
 
 

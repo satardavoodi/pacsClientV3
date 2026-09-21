@@ -2,6 +2,12 @@
 
 ## Status
 
+**2026-09-14 status recheck:** the existing import-registration/layout guard and overlay-reentrancy
+guard selection passes again: 17 tests, exit 0. No import/layout runtime code changed in this
+recheck. The concurrent OPT-60 Home refresh work is not a new fix for this crash chain. Fresh
+heavy-import source acceptance and installed acceptance remain unproven by these tests; see the
+current implementation/crash-status table in `docs/OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md`.
+
 - Root cause: diagnosed from application, stall-probe, native-fault, and Windows
   Application Error evidence.
 - Source fix: implemented and guarded.

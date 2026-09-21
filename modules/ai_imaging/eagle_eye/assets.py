@@ -2,7 +2,12 @@
 from pathlib import Path
 
 FEATURE_ASSETS = {
+    'breast': 'eagle_eye/breast',
+    'bone_age': 'eagle_eye/bone-age',
+    'total_spine': 'eagle_eye/total-spine',
+    'alignment': 'eagle_eye/alignment',
     'brain': 'eagle_eye/brain',
+    'brain_lesions': 'eagle_eye/brain-lesions',
     # Preserve the deployed lumbar path for existing installations.
     'lumbar': 'offline_lumbar',
 }

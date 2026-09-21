@@ -524,30 +524,65 @@ class MessageBubble(QWidget):
         return escape(s).replace("\n", "<br>")
 
     def _wrap_scale_html(self, inner_html: str, size_px: int) -> str:
-        """Wrap HTML with a single font-size container.
+        """Resolve and scale rich text identically for display and export.
 
-        Qt RichText CSS support is limited; using inline style on a wrapper div is the most reliable.
-        To make +A / A- always work, we also strip any inline font-size directives that may override the wrapper.
+        Renderer sizes use a 15px body baseline. Scale every resolved run, not
+        just the document default: inline sizes otherwise defeat A-/A+.
+        Explicit point sizes prevent Qt heading adjustments from serializing
+        as browser-dependent x-large. Start from raw HTML on every invocation
+        so repeated changes neither compound nor modify the saved report.
         """
-        import re
+        from PySide6.QtGui import QFont, QTextCursor, QTextDocument, QTextFormat
 
-        size_px = int(size_px)
-        html = inner_html or ""
+        size_px = max(10, min(int(size_px), 40))
+        doc = QTextDocument()
+        font = QFont(self.lbl.font())
+        font.setPointSizeF(15 * 0.75)
+        doc.setDefaultFont(font)
+        doc.setHtml(inner_html or "")
 
-        # Remove font-size declarations that would override the wrapper.
-        html = re.sub(r"(?i)font-size\s*:\s*[^;\"']+\s*;?", "", html)
+        def scaled_format(fmt):
+            resolved = fmt.font()
+            points = (resolved.pixelSize() * 0.75 if resolved.pixelSize() > 0
+                      else resolved.pointSizeF())
+            if points <= 0:
+                points = 15 * 0.75
+            fmt.clearProperty(QTextFormat.FontPixelSize)
+            fmt.clearProperty(QTextFormat.FontSizeAdjustment)
+            fmt.setFontPointSize(points * size_px / 15)
+            return fmt
 
-        # Remove <font size="..."> overrides (keep tag, drop size attr).
-        html = re.sub(
-            r"(?i)<font\b([^>]*?)\s+size\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)([^>]*)>",
-            r"<font\1\2>",
-            html,
-        )
-
-        # Clean empty style attributes that may remain like style=""
-        html = re.sub(r"\sstyle\s*=\s*(?:\"\s*\"|'\s*')", "", html)
-
-        return f"""<div style="font-size:{size_px}px; line-height:1.35;">{html}</div>"""
+        runs = []
+        blocks = []
+        block = doc.begin()
+        while block.isValid():
+            # Qt serializes list-item size from the block character format.
+            # Scaling only spans leaves a stale <li font-size> on re-import.
+            blocks.append((block.position(), scaled_format(block.charFormat())))
+            it = block.begin()
+            while not it.atEnd():
+                fragment = it.fragment()
+                if fragment.isValid():
+                    fmt = scaled_format(fragment.charFormat())
+                    runs.append((fragment.position(), fragment.length(), fmt))
+                it += 1
+            block = block.next()
+        cursor = QTextCursor(doc)
+        for position, fmt in blocks:
+            cursor.setPosition(position)
+            cursor.setBlockCharFormat(fmt)
+            # Retain resolved appearance without reapplying semantic heading
+            # defaults when Qt or Reception imports this HTML again.
+            block_format = cursor.blockFormat()
+            block_format.setHeadingLevel(0)
+            cursor.setBlockFormat(block_format)
+        for position, length, fmt in runs:
+            cursor.setPosition(position)
+            cursor.setPosition(position + length, QTextCursor.KeepAnchor)
+            cursor.setCharFormat(fmt)
+        font.setPointSizeF(size_px * 0.75)
+        doc.setDefaultFont(font)
+        return doc.toHtml()
 
     def _refresh_display(self) -> None:
         """Re-render the bubble text with current font size + RTL/LTR enforcement."""
@@ -574,8 +609,8 @@ class MessageBubble(QWidget):
         """
         Apply current font size to the message label with clamping.
 
-        NOTE: For RichText, QLabel stylesheet doesn't reliably scale all HTML (e.g., inline-styled paragraphs).
-        We re-wrap HTML with a scaling container + CSS to force inheritance.
+        Resolve and scale rich-text formats because a QLabel stylesheet alone
+        cannot override explicit sizes on report paragraphs and list items.
         """
         self._refresh_display()
 
@@ -895,60 +930,18 @@ class MessageBubble(QWidget):
     )
 
     def get_export_html(self) -> str:
-        """Fully-inlined HTML of this bubble, for the Reception server.
+        """Export the same scaled rich text displayed in the bubble.
 
-        WHY THIS EXISTS (2026-07-28) — "Send to Reception" lost colours, fonts
-        and sizes while the Medical Report Editor kept them, even though BOTH
-        end up calling the same `prepare_report_html_for_server()`.
-
-        The difference was never the transfer; it was the INPUT SHAPE.
-
-        * The Report Editor sends `QTextEdit.toHtml()` — Qt rich text, where
-          every colour/font/size is an INLINE attribute and the document font
-          sits on `<body style=...>`.
-        * EchoMind sent `get_html()` -> `_raw_text`, hand-built markup in which a
-          large part of the styling lives in `<style>` blocks addressed by CSS
-          class (`_render_assistant_html`, `_wrap_rtl_html`'s `.rtl-wrap`).
-
-        `prepare_report_html_for_server()` is inline-CSS-only *by contract* — it
-        strips `<style>` blocks because the server strips them anyway. So every
-        class-based rule was deleted and the `class=` attributes were left
-        pointing at rules that no longer existed. Measured on a real assistant
-        bubble: colours `[]`, sizes `[]`, font = the generic fallback.
-
-        Pushing the same markup through a `QTextDocument` first resolves those
-        class rules into inline character/block formats — i.e. it produces
-        exactly the shape the Report Editor already produces, and the shape the
-        transformer was built for. Measured on the same bubble afterwards:
-        colours `['#1f3b77', '#dddddd']`, sizes `['15px', '19px']`.
-
-        Deliberately built from `_raw_text`, NOT from the displayed HTML:
-        `_wrap_scale_html()` STRIPS every inline `font-size` so its A-/A+ wrapper
-        can win, which would flatten the report's own size hierarchy (a 20px
-        title and 15px body both becoming one size). Instead the user's chosen
-        scale is carried as the document's DEFAULT font, so the hierarchy and
-        the chosen scale both survive.
-
-        Must be called on the GUI thread (it reads this widget's font).
+        Resolve class styles and heading sizes before the inline-only Reception
+        normalizer runs. Must run on the GUI thread because it reads the label
+        font. The original HTML remains the authoritative local saved copy.
         """
-        # QFont is NOT among this module's top-level QtGui imports — import it
-        # here explicitly. (Relying on the module namespace raised NameError,
-        # which the fallback below swallowed, silently restoring the very bug
-        # this method exists to fix. Hence the warning log.)
-        from PySide6.QtGui import QFont, QTextDocument
-
         src = self._ensure_html_text(self._raw_text or "")
         if not src.strip():
             return ""
         try:
-            doc = QTextDocument()
-            font = QFont(self.lbl.font())
-            # `_font_size` is px (it feeds `font-size:{n}px`); QFont wants points.
             px = max(10, min(int(getattr(self, "_font_size", 15) or 15), 40))
-            font.setPointSizeF(max(6.0, px * 0.75))
-            doc.setDefaultFont(font)
-            doc.setHtml(src)
-            html = doc.toHtml()
+            html = self._wrap_scale_html(src, px)
         except Exception as exc:
             # Never block the send — but say so, loudly. A silent fallback here
             # looks exactly like "the fix did nothing".
@@ -3753,10 +3746,16 @@ class UnifiedComposer(QWidget):
             return
         try:
             from modules.EchoMind import normal_templates as _nt
+            from .reception_template_dialog import library_events
+            library_events.imported.connect(self._nt_receive_imported_library)
             self._nt_records = _nt.load_library()
             self._nt_refresh_combo()
         except Exception:
             self._nt_records = []
+
+    def _nt_receive_imported_library(self, records):
+        self._nt_records = list(records)
+        self._nt_refresh_combo()
 
     def _nt_refresh_combo(self, select_id: str = ""):
         """Rebuild the picker from `_nt_records`, preserving the active choice."""
@@ -3870,7 +3869,7 @@ class UnifiedComposer(QWidget):
         """
         from modules.EchoMind import normal_templates as _nt
 
-        body = _nt.template_body_text(rec)
+        body = _nt.template_report_text(rec)
         self._nt_active_id = str(rec.get("id") or "")
         self._buf_normal_template = body
         if getattr(self, "_active_tab", "") == "normal_template":
@@ -3901,7 +3900,8 @@ class UnifiedComposer(QWidget):
             return
 
         dlg = NormalTemplateLibraryDialog(self, records=self._nt_records,
-                                          active_id=self._nt_active_id)
+                                          active_id=self._nt_active_id,
+                                          modality=self._selected_modality)
         dlg.templateChosen.connect(self._nt_apply_record)
         dlg.exec()
         self._nt_records = dlg.records()

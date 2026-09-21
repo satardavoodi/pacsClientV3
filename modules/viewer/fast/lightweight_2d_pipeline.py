@@ -26,14 +26,15 @@ import threading
 import time
 import warnings
 from collections import OrderedDict
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
+from copy import copy, deepcopy
 from dataclasses import dataclass, replace as _dc_replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pydicom
 from pydicom.charset import python_encoding
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 from PySide6.QtGui import QImage
 from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
     auto_window_level_from_dicom_voi,
@@ -502,6 +503,78 @@ class PipelineConfig:
     decode_timeout_ms: float = 500.0  # max decode time before marking slow
 
 
+@dataclass(frozen=True)
+class InitialDisplayFacts:
+    """Prepared display facts; pixels retain the existing Fast rendering policy."""
+
+    slice_index: int
+    scalar_range: Tuple[float, float]
+    first_window: Tuple[float, float]
+    target_window: Tuple[float, float]
+    per_instance_window: bool
+    study_uid: str
+    series_uid: str
+    overlay_sources: tuple
+
+
+class PreparedInitialDisplay:
+    """Single-consumer Fast-only data handoff, never a QObject or executor handoff.
+
+    The caller must snapshot metadata before scheduling, bound admission, and
+    validate its request/revision/lifetime on GUI delivery. This primitive does
+    not schedule work or certify filesystem freshness/download completeness.
+    """
+
+    def __init__(self, request_key, config, state, facts):
+        self._request_key = request_key
+        self._config = config
+        self._state = state
+        self._facts = facts
+        self._lock = threading.Lock()
+
+    def _take(self, request_key, config):
+        with self._lock:
+            if self._state is None:
+                raise ValueError("Prepared initial display already consumed or discarded")
+            if request_key != self._request_key:
+                raise ValueError("Prepared initial display request does not match")
+            if config != self._config:
+                raise ValueError("Prepared initial display configuration does not match")
+            state, self._state = self._state, None
+            return state, self._facts
+
+    def discard(self):
+        """Release an unadopted result; never clear a consumer's owned containers."""
+        with self._lock:
+            self._state = None
+
+
+def window_differs_substantially(ww_a, wc_a, ww_b, wc_b) -> bool:
+    """Existing Fast per-instance W/L threshold, shared with startup preparation."""
+    try:
+        ww_a = float(ww_a); wc_a = float(wc_a)
+        ww_b = float(ww_b); wc_b = float(wc_b)
+    except (TypeError, ValueError):
+        return (ww_a, wc_a) != (ww_b, wc_b)
+    lo = max(1e-6, min(abs(ww_a), abs(ww_b)))
+    width_ratio = max(abs(ww_a), abs(ww_b)) / lo
+    level_shift = abs(wc_a - wc_b) / lo
+    return width_ratio >= 1.5 or level_shift >= 0.5
+
+
+# Explicit data-only allowlist. Native Qt state, locks, signals, executors,
+# pending futures and interaction/generation ownership must NEVER cross here.
+_INITIAL_DISPLAY_STATE_FIELDS = (
+    "_slices", "_window", "_level", "_pixel_cache", "_frame_cache",
+    "_overlay_cache", "_color_cache", "_extras_checked", "_dicom_extras_series",
+    "_series_path", "_series_uid", "_series_number", "_series_modality",
+    "_series_presentation_intent_type", "_is_open", "_multiframe_classification",
+    "_mf_geometry_cache", "_mf_ds_cache", "_cs_wl_cache",
+    "_voi_lut_function_cache", "_wl_source_by_index", "_slice_trace_header_cache",
+    "_filter_first_slices",
+)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Helper functions
 # ═══════════════════════════════════════════════════════════════════════════
@@ -880,6 +953,119 @@ class Lightweight2DPipeline(QObject):
 
     # ── Public API ──────────────────────────────────────────────────────
 
+    @classmethod
+    def prepare_initial_display(
+        cls, series_path: str, *, metadata, request_key: tuple,
+        config: Optional[PipelineConfig] = None, cancelled=None,
+        per_instance_window: bool = True,
+    ) -> PreparedInitialDisplay:
+        """Prepare on a worker using an unpublished, worker-owned pipeline.
+
+        No prefetch, QWidget, signal receiver or live viewer is involved. Only
+        the first and middle pixels are required; existing multiframe dataset
+        reuse survives the handoff without copying the full cine pixel array.
+        Cooperative cancellation is checked between blocking operations, never
+        by terminating a running codec. Integration into request scheduling is
+        deliberately separate from this preparation/adoption primitive.
+        """
+        app = QCoreApplication.instance()
+        if threading.current_thread() is threading.main_thread() or (
+            app is not None and QThread.currentThread() == app.thread()
+        ):
+            raise RuntimeError("Initial display preparation requires a worker thread")
+        if (not isinstance(request_key, tuple) or len(request_key) != 4
+                or not all(isinstance(v, str) and v for v in request_key[:3])
+                or type(request_key[3]) is not int or request_key[3] < 0):
+            raise ValueError("Initial display requires an owner/identity/revision request key")
+        metadata = deepcopy(metadata)
+        series = (metadata or {}).get("series") or {}
+        study_uid = str(series.get("study_uid") or (metadata or {}).get("study_uid") or "")
+        if (study_uid, str(series.get("series_uid") or "")) != request_key[1:3]:
+            raise ValueError("Initial display metadata does not match request identity")
+
+        def check_cancelled():
+            if cancelled is not None and cancelled():
+                raise CancelledError("Initial display preparation cancelled")
+
+        check_cancelled()
+        owned_config = _dc_replace(config or PipelineConfig())
+        pipeline = cls(config=owned_config)
+        try:
+            pipeline.open_series(series_path, metadata=metadata)
+            check_cancelled()
+            if not pipeline.slice_count:
+                raise ValueError("Initial display contains no pixel-bearing slices")
+            middle = pipeline.slice_count // 2
+            # Do not accept the renderer's legacy black-frame fallback as a
+            # successful prepared result. Error handling belongs to the caller.
+            if pipeline._get_pixel_array(0) is None:
+                raise ValueError("Initial display first pixel decode failed")
+            scalar_range = pipeline.get_scalar_range(0)
+            check_cancelled()
+            first_window = pipeline.get_default_window_level(0)
+            target_window = pipeline.get_default_window_level(middle)
+            check_cancelled()
+            if pipeline._get_pixel_array(middle) is None:
+                raise ValueError("Initial display target pixel decode failed")
+            chosen_window = first_window
+            if per_instance_window and window_differs_substantially(
+                *target_window, *first_window
+            ):
+                chosen_window = target_window
+            pipeline.set_window_level(*chosen_window, trigger_prefetch=False)
+            ww, wc = pipeline._resolve_window_level(middle)
+            pipeline._render_frame_uncached(
+                middle, ww, wc, bool(owned_config.opencv_filter_enabled),
+                record_metrics=False,
+            )
+            # Preserve the image-owned overlay reader, but run its header/stat
+            # work on the producer. The factory can retain the original first
+            # instance or project sorted multiframe instances; prepare both
+            # possible first paths without changing either ordering contract.
+            from PacsClient.utils.overlay_identity_source import read_identity_tags
+            instances = (metadata or {}).get("instances") or []
+            first = instances[0] if instances and isinstance(instances[0], dict) else {}
+            paths = [str(first.get("instance_path") or "").strip()]
+            if pipeline.is_multiframe_series() and pipeline.slice_count > len(instances):
+                paths.append(str(pipeline._slices[0].path).strip())
+            overlay_sources = []
+            for path in dict.fromkeys(paths):
+                check_cancelled()
+                overlay_sources.append((path, tuple(read_identity_tags(path).items())))
+            check_cancelled()
+            # Copy only the small ownership containers. Pixel arrays, QImages
+            # and cached datasets move by reference, with no concurrent producer.
+            state = {name: copy(getattr(pipeline, name))
+                     for name in _INITIAL_DISPLAY_STATE_FIELDS}
+            return PreparedInitialDisplay(
+                request_key, owned_config, state,
+                InitialDisplayFacts(middle, scalar_range, first_window, target_window,
+                                    bool(per_instance_window), study_uid, request_key[2],
+                                    tuple(overlay_sources)),
+            )
+        finally:
+            # This pipeline has never submitted prefetch/grow tasks. Its Qt
+            # object and all executors remain on the preparation side.
+            pipeline.shutdown()
+
+    def adopt_initial_display(self, prepared, *, request_key: tuple) -> InitialDisplayFacts:
+        """Adopt once into a fresh pipeline on its owning thread, without I/O.
+
+        The caller must reject a closed/superseded viewer before this call. An
+        invalid key/config never consumes the payload or changes this pipeline.
+        """
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("Initial display adoption requires the pipeline owner thread")
+        if (getattr(self, '_initial_display_admission_closed', False)
+                or self._is_open or self._slices or self._prefetch_pending
+                or self._frame_prefetch_pending or self._grow_future is not None):
+            raise ValueError("Initial display adoption requires an empty pipeline")
+        state, facts = prepared._take(request_key, self._config)
+        self.__dict__.update(state)
+        self._adopted_initial_display_facts = facts
+        self._initial_display_admission_closed = True
+        return facts
+
     @property
     def slice_count(self) -> int:
         return len(self._slices)
@@ -1102,6 +1288,8 @@ class Lightweight2DPipeline(QObject):
 
     def close_series(self) -> None:
         """Release all resources."""
+        self._initial_display_admission_closed = True
+        self._adopted_initial_display_facts = None
         grow_future = self._grow_future
         self._grow_future = None  # discard any stale in-flight grow scan
         if grow_future is not None:

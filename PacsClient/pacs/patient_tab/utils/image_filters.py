@@ -742,6 +742,15 @@ def apply_filters(
     # Timing start
     # ------------------------------------------------------------------
     t0 = time.time()
+    _stage_start = time.perf_counter()
+    _stage_ms = {}
+
+    def _checkpoint(name):
+        nonlocal _stage_start
+        now = time.perf_counter()
+        _stage_ms[name] = (now - _stage_start) * 1000.0
+        _stage_start = now
+
 
     series_meta = metadata.get("series", {}) if isinstance(metadata, dict) else {}
     modality = str(series_meta.get("modality", "") or "").upper()
@@ -852,6 +861,8 @@ def apply_filters(
     if _orig_pixel_type != sitk.sitkFloat32:
         itk_image = sitk.Cast(itk_image, sitk.sitkFloat32)
 
+    _checkpoint("prepare")
+
     # ------------------------------------------------------------------
     # Noise reduction
     # ------------------------------------------------------------------
@@ -863,6 +874,8 @@ def apply_filters(
             itk_image = _smooth_xy_recursive(itk_image, sigma_xy=float(sigma), sigma_z=0.0)
         else:
             itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
+
+    _checkpoint("noise")
 
     # ------------------------------------------------------------------
     # Low-resolution anti-alias (conservative, matrix-gated)
@@ -890,6 +903,8 @@ def apply_filters(
                 sitk.Multiply(aa_smoothed, aa_blend),
             )
 
+    _checkpoint("anti_alias")
+
     # ── GIL yield: brief pause between stages ──
     # v2.2.3.2.3: 2ms is enough for the main thread to process one VTK render
     # cycle (~18ms budget).  Longer sleeps slow down background loads without
@@ -899,6 +914,7 @@ def apply_filters(
     # ------------------------------------------------------------------
     # Multiscale sharpening
     # ------------------------------------------------------------------
+    _checkpoint("yield_before_sharpen")
     if modality == "MR":
         ms_cfg = modality_settings.get("multiscale_sharpening", {})
         if ms_cfg.get("enabled", True):
@@ -906,14 +922,18 @@ def apply_filters(
             amounts = ms_cfg.get("mild_amounts", ms_cfg.get("amounts", [0.25, 0.12, 0.06])) if mild_mode else ms_cfg.get("amounts", [0.25, 0.12, 0.06])
             itk_image = apply_multiscale_sharpening(itk_image, sigmas=sigmas, amounts=amounts)
 
+        _checkpoint("multiscale")
         time.sleep(0.002)
+        _checkpoint("yield_before_laplacian")
 
         lap_cfg = modality_settings.get("laplacian_sharpening", {})
         if lap_cfg.get("enabled", True):
             alpha = lap_cfg.get("mild_alpha", lap_cfg.get("alpha", 0.12)) if mild_mode else lap_cfg.get("alpha", 0.12)
             itk_image = apply_laplacian_sharpening(itk_image, alpha=float(alpha))
 
+        _checkpoint("laplacian")
         time.sleep(0.002)
+        _checkpoint("yield_before_adaptive")
 
         ad_cfg = modality_settings.get("adaptive_sharpening", {})
         if ad_cfg.get("enabled", True):
@@ -926,6 +946,8 @@ def apply_filters(
                 edge_boost=float(edge_boost),
                 sigma=float(sigma_val),
             )
+
+    _checkpoint("adaptive")
 
     # ------------------------------------------------------------------
     # Cast back to original pixel type once — covers BOTH CT and MR paths.
@@ -944,6 +966,18 @@ def apply_filters(
                 upperBound=float(_orig_max),
             )
         itk_image = sitk.Cast(itk_image, _orig_pixel_type)
+
+    _checkpoint("finalize")
+    logger.info(
+        "[ADVANCED-FILTER-KPI] schema=1 mod=%s slices=%d threads=%d "
+        "prepare_ms=%.3f noise_ms=%.3f anti_alias_ms=%.3f multiscale_ms=%.3f "
+        "laplacian_ms=%.3f adaptive_ms=%.3f finalize_ms=%.3f yield_ms=%.3f",
+        modality, nz, _filter_threads,
+        *(_stage_ms.get(name, 0.0) for name in (
+            "prepare", "noise", "anti_alias", "multiscale", "laplacian", "adaptive", "finalize")),
+        sum(value for name, value in _stage_ms.items() if name.startswith("yield_")),
+        extra={"component": "viewer", "function": "image_filters.apply_filters", "stage": "filter_breakdown"},
+    )
 
     # Timing end
     _dt = time.time() - t0

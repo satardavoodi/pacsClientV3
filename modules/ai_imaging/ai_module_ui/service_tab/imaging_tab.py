@@ -1,4 +1,4 @@
-﻿import ast
+import ast
 import csv
 import math
 import json
@@ -40,9 +40,10 @@ class _BoneAgeLoadedEvent(QEvent):
     """Ø±ÙˆÛŒØ¯Ø§Ø¯ Ø³ÙØ§Ø±Ø´ÛŒ Ø¨Ø±Ø§ÛŒ Ø§Ù†ØªÙ‚Ø§Ù„ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø´Ø¯Ù‡ Ø§Ø² ØªØ±Ø¯ Ù¾Ø³â€ŒØ²Ù…ÛŒÙ†Ù‡ Ø¨Ù‡ ØªØ±Ø¯ Ø§ØµÙ„ÛŒ"""
     EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
     
-    def __init__(self, data: dict):
+    def __init__(self, data: dict, activate=False):
         super().__init__(_BoneAgeLoadedEvent.EVENT_TYPE)
         self.data = data
+        self.activate = activate
 
 
 # ------------------------------ Box helpers ------------------------------
@@ -249,11 +250,12 @@ class DXSidebar(BaseSidebar):
     Sidebar for DX (Bone Age) modality.
     """
 
-    def __init__(self, parent, study_uid: str, imaging_tab=None):
+    def __init__(self, parent, study_uid: str, imaging_tab=None, *, autoload=True):
         super().__init__(parent, study_uid)
         self.imaging_tab = imaging_tab
         self.build_ui()
-        self.load_data()
+        if autoload:
+            self.load_data()
 
     def build_ui(self):
         """
@@ -360,6 +362,33 @@ class DXSidebar(BaseSidebar):
 
         except Exception as e:
             print(f"[DXSidebar] failed to load bone age: {e}")
+
+    def apply_result(self, data, *, restore_review=True):
+        """Apply worker-loaded values without reading files on the GUI thread."""
+        self.feature_list.clear()
+        for label, primary, fallback in (
+                ('Bone Age (Years)', 'bone_age_years', 'predicted_bone_age_years'),
+                ('Bone Age (Months)', 'bone_age_months', 'predicted_bone_age_months'),
+                ('Sex', 'sex', 'sex')):
+            value = data.get(primary)
+            if value is None:
+                value = data.get(fallback)
+            if value is not None:
+                self.feature_list.addItem(f'{label}: {value}')
+        if not restore_review:
+            return
+        feedback = data.get('_feedback') or {}
+        for field, key in ((self.corrected_years_edit, 'corrected_bone_age_years'),
+                           (self.corrected_months_edit, 'corrected_bone_age_months'),
+                           (self.reviewer_edit, 'reviewer_id')):
+            if key in feedback:
+                field.setText(str(feedback[key] or ''))
+        for field, key in ((self.corrected_sex_combo, 'corrected_sex'),
+                           (self.validation_combo, 'validation_status')):
+            if key in feedback:
+                index = field.findText(str(feedback[key] or ''))
+                field.setCurrentIndex(max(index, 0))
+        self.notes_edit.setPlainText(str(feedback.get('correction_notes') or ''))
 
     def _save_review(self):
         try:
@@ -605,6 +634,7 @@ def normalize_eagle_eye_mode(mode):
 class ImagingToolsTab(AbstractTab):
     # Signal emitted when tab is fully loaded and rendered
     fully_loaded = Signal()
+    analysis_result_ready = Signal(str, bool)
     
     def __init__(self, study_uid: Optional[str] = None, eagle_eye_mode: Optional[str] = None):
         super().__init__()
@@ -614,6 +644,8 @@ class ImagingToolsTab(AbstractTab):
         self._sidebar_store: dict[str, dict] = {}
         self.vtk_initialized = False
         self.current_sidebar = None
+        self._result_panels = {}
+        self._bone_age_result = {}
         self._eagle_eye_workflow = EagleEyeWorkflowCoordinator(self)
         self._mammography_analysis = MammographyAnalysisController(self)
         self._dx_wrist_analysis = DXWristAnalysisController(self)
@@ -628,8 +660,8 @@ class ImagingToolsTab(AbstractTab):
         self._init_mg_widgets()
 
         # ---- base layouts
-        self.add_section('Home', self.home_layout())
-        self.add_section('Segment', self.segment_layout())
+        self.add_section('Home', self.home_layout(), show_title=False)
+        self.add_section('Segment', self.segment_layout(), show_title=False)
 
         self.vertical_layout: QVBoxLayout = self.get_center_layout_vertical()
         self.left_sidebar_root_layout: QVBoxLayout = self.get_sidebar_layout()
@@ -721,30 +753,10 @@ class ImagingToolsTab(AbstractTab):
             self.processing_bar.hide()
 
     def _remove_patient_widget_buttons(self):
-        """Ø­Ø°Ù Ø¯Ú©Ù…Ù‡â€ŒÙ‡Ø§ÛŒ ØºÛŒØ±Ø¶Ø±ÙˆØ±ÛŒ Ø§Ø² patient_widget"""
-        if hasattr(self.patient_widget, 'btn_series'):
-            self.patient_widget.sidebar.layout().removeWidget(self.patient_widget.btn_series)
-            self.patient_widget.btn_series.setParent(None)
-            self.patient_widget.btn_series.deleteLater()
-
-        if hasattr(self.patient_widget, 'btn_reception'):
-            self.patient_widget.sidebar.layout().removeWidget(self.patient_widget.btn_reception)
-            self.patient_widget.btn_reception.setParent(None)
-            self.patient_widget.btn_reception.deleteLater()
-
-        if hasattr(self.patient_widget, 'btn_ai_chat'):
-            self.patient_widget.sidebar.layout().removeWidget(self.patient_widget.btn_ai_chat)
-            self.patient_widget.btn_ai_chat.setParent(None)
-            self.patient_widget.btn_ai_chat.deleteLater()
-
-        # Remove empty sidebar container if exists
-        if hasattr(self.patient_widget, 'sidebar') and self.patient_widget.sidebar:
-            if self.patient_widget.sidebar.layout().count() == 0:
-                self.patient_widget.container_layout.removeWidget(self.patient_widget.sidebar)
-                self.patient_widget.sidebar.setParent(None)
-                self.patient_widget.sidebar.deleteLater()
-                self.patient_widget.container_layout.setSpacing(0)
-                self.patient_widget.container_layout.setContentsMargins(0, 0, 0, 0)
+        """Hide Patient-only navigation while retaining inherited callback targets."""
+        sidebar = getattr(self.patient_widget, "sidebar", None)
+        if sidebar is not None:
+            sidebar.hide()
 
     def _post_init_setup(self):
         """Ø§Ø¬Ø±Ø§ÛŒ Ø¹Ù…Ù„ÛŒØ§Øª Ø³Ù†Ú¯ÛŒÙ† Ù¾Ø³ Ø§Ø² Ù†Ù…Ø§ÛŒØ´ UI Ø§ÙˆÙ„ÛŒÙ‡"""
@@ -782,11 +794,7 @@ class ImagingToolsTab(AbstractTab):
         if self.detect_modality() == "MG":
             QTimer.singleShot(100, self._load_mg_runs_into_dropdown)
 
-        # Lumbar MRI is a one-click session generator: the sweep starts by
-        # itself once the layout is on screen. Deferred so the tab paints first
-        # and the user sees the three panes rather than a frozen window.
-        if self.eagle_eye_mode == "lumbar_mri":
-            QTimer.singleShot(600, self._eagle_eye_workflow.start_capture)
+        # First paint is navigation only. Capture starts from Choose Function.
 
     def closeEvent(self, event):
         """Detach an in-flight analysis BEFORE this tab's children are freed.
@@ -936,6 +944,7 @@ class ImagingToolsTab(AbstractTab):
 
         self.mg_runs_label = QLabel("AI Results")
         self.mg_runs_combo = QComboBox()
+        self.mg_runs_combo.currentIndexChanged.connect(self._on_mg_run_changed)
 
         # -------- Apply
         self.apply_btn = QPushButton("Apply")
@@ -996,6 +1005,7 @@ class ImagingToolsTab(AbstractTab):
                 return False
             # clear the run-once latch so the manifest is re-read
             self.mg_runs_loaded = False
+            self._activate_mg_result = True
             self._load_mg_runs_into_dropdown()
             print("[MG] AI Results dropdown refreshed after Eagle Eye run")
             return True
@@ -1062,6 +1072,9 @@ class ImagingToolsTab(AbstractTab):
 
         if selected_index_to_apply >= 0:
             QTimer.singleShot(0, lambda idx=selected_index_to_apply: self._on_mg_run_changed(idx))
+        if self.mg_runs_combo.count():
+            self.analysis_result_ready.emit('MG', getattr(self, '_activate_mg_result', False))
+        self._activate_mg_result = False
 
     def _save_mg_manifest_selection(self, det_csv: str, cls_csv: str | None) -> None:
         """Persist selected MG run as active in manifest."""
@@ -1141,7 +1154,7 @@ class ImagingToolsTab(AbstractTab):
         if hasattr(vtk_widget, '_schedule_manager_ai_safe'):
             vtk_widget._schedule_manager_ai_safe(reason="mg_run_changed")
 
-    def _load_bone_age_feature_if_exists(self):
+    def _load_bone_age_feature_if_exists(self, *, activate=False):
         """
         Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age Ø¨Ù‡ ØµÙˆØ±Øª ØºÛŒØ±Ù‡Ù…Ø²Ù…Ø§Ù†
         """
@@ -1152,31 +1165,27 @@ class ImagingToolsTab(AbstractTab):
         json_path = ATTACHMENT_PATH / self.study_uid / "bone_age.json"
         
         # ØªÙ†Ø¸ÛŒÙ… Ø­Ø§Ù„Øª Ù„ÙˆØ¯ÛŒÙ†Ú¯ Ø¯Ø± UI
-        if hasattr(self, "feature_view") and self.feature_view is not None:
-            self.feature_view.setPlaceholderText("Loading bone age data...")
-            self.feature_view.clear()
-            self.feature_view.setEnabled(False)
-        
-        # Ø§Ø¬Ø±Ø§ÛŒ Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø± ØªØ±Ø¯ Ø¬Ø¯Ø§Ú¯Ø§Ù†Ù‡
         threading.Thread(
             target=self._load_bone_json_async,
-            args=(json_path,),
+            args=(json_path, activate),
             daemon=True
         ).start()
 
-    def _load_bone_json_async(self, json_path: Path):
+    def _load_bone_json_async(self, json_path: Path, activate=False):
         """Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ ÙØ§ÛŒÙ„ JSON Ø¯Ø± ØªØ±Ø¯ Ù¾Ø³â€ŒØ²Ù…ÛŒÙ†Ù‡"""
         try:
             data = {}
             if json_path.exists():
                 with open(json_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                data['_feedback'] = load_feedback_row(
+                    json_path.parent / 'bone_age_feedback.csv', 'case_id', self.study_uid) or {}
         except Exception as e:
             print(f"[DX] Failed to load bone_age.json: {e}")
             data = {"error": str(e)}
         
         # Ø§Ù†ØªÙ‚Ø§Ù„ Ø¯Ø§Ø¯Ù‡ Ø¨Ù‡ ØªØ±Ø¯ Ø§ØµÙ„ÛŒ Ø§Ø² Ø·Ø±ÛŒÙ‚ Ø±ÙˆÛŒØ¯Ø§Ø¯ Ø³ÙØ§Ø±Ø´ÛŒ
-        QApplication.postEvent(self, _BoneAgeLoadedEvent(data))
+        QApplication.postEvent(self, _BoneAgeLoadedEvent(data, activate))
 
     def customEvent(self, event: QEvent):
         """Ù¾Ø±Ø¯Ø§Ø²Ø´ Ø±ÙˆÛŒØ¯Ø§Ø¯Ù‡Ø§ÛŒ Ø³ÙØ§Ø±Ø´ÛŒ"""
@@ -1188,53 +1197,21 @@ class ImagingToolsTab(AbstractTab):
 
     def _handle_bone_age_loaded(self, event: _BoneAgeLoadedEvent):
         """Ù¾Ø±Ø¯Ø§Ø²Ø´ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age Ø¯Ø±ÛŒØ§ÙØª Ø´Ø¯Ù‡"""
-        self._update_bone_age_ui(event.data)
+        self._update_bone_age_ui(event.data, activate=event.activate)
 
-    def _update_bone_age_ui(self, data: dict):
-        """Ø¨Ù‡â€ŒØ±ÙˆØ²Ø±Ø³Ø§Ù†ÛŒ UI Ø¨Ø§ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age"""
-        if not hasattr(self, "feature_view") or self.feature_view is None:
+    def _update_bone_age_ui(self, data: dict, *, activate=False):
+        """Publish available Bone Age results to their dedicated review tab."""
+        if not data or 'error' in data:
             return
-            
-        self.feature_view.setEnabled(True)
-        
-        if "error" in data:
-            self.feature_view.setPlainText(f"Error loading bone age data:\n{data['error']}")
+        if not any(data.get(key) is not None for key in (
+                'bone_age_years', 'predicted_bone_age_years',
+                'bone_age_months', 'predicted_bone_age_months')):
             return
-            
-        lines = []
-        if sex := data.get("sex"):
-            lines.append(f"Sex: {sex}")
-            
-        age_years_val = data.get("bone_age_years")
-        if age_years_val is None:
-            age_years_val = data.get("predicted_bone_age_years")
-
-        if age_years_val is not None:
-            try:
-                # ØªØ¨Ø¯ÛŒÙ„ Ø³Ù† Ø§Ø¹Ø´Ø§Ø±ÛŒ Ø¨Ù‡ Ø³Ø§Ù„ + Ù…Ø§Ù‡ Ø¨Ø§ Ø±ÙÙ†Ø¯ Ø¨Ù‡ Ø¨Ø§Ù„Ø§
-                y = int(age_years_val)
-                fractional = float(age_years_val) - y
-                months_float = fractional * 12.0
-                months = int(months_float)
-                if months_float - months > 1e-8:
-                    months += 1
-                if months == 12:
-                    y += 1
-                    months = 0
-                    
-                if months > 0:
-                    years_text = f"Bone age: {y} years {months} months"
-                else:
-                    years_text = f"Bone age: {y} years"
-                lines.append(years_text)
-            except (TypeError, ValueError):
-                pass
-        
-        text = "\n".join(lines) if lines else ""
-        if text:
-            self.feature_view.setPlainText(text)
-        else:
-            self.feature_view.setPlaceholderText("No bone age data available")
+        self._bone_age_result = dict(data)
+        panel = self._result_panels.get('DX')
+        if panel is not None:
+            panel.apply_result(data, restore_review=False)
+        self.analysis_result_ready.emit('DX', activate)
 
     def _on_mg_run_changed(self, index: int):
         """Ù¾Ø±Ø¯Ø§Ø²Ø´ ØªØºÛŒÛŒØ± Ø¯Ø± Ø§Ù†ØªØ®Ø§Ø¨ MG runs Ø¨Ø§ Ù…Ø¯ÛŒØ±ÛŒØª Ø®Ø·Ø§"""
@@ -1480,7 +1457,7 @@ class ImagingToolsTab(AbstractTab):
             return "DX"
         if self.eagle_eye_mode == "mammography":
             return "MG"
-        if self.eagle_eye_mode == "lumbar_mri":
+        if self.eagle_eye_mode in ("lumbar_mri", "brain_mri"):
             return "MR"
 
         study_uid = self.study_uid
@@ -2710,60 +2687,22 @@ class ImagingToolsTab(AbstractTab):
 
     # ---------- Left sidebar ----------
     def left_sidebar_layout_ui(self):
-        """
-        Initialize modality-specific sidebar with safe signal handling.
-        """
-        # Ù¾Ø§Ú© Ú©Ø±Ø¯Ù† Ø³Ø§ÛŒØ¯Ø¨Ø§Ø± Ù‚Ø¨Ù„ÛŒ
-        if self.current_sidebar:
-            self.current_sidebar.setParent(None)
-            self.current_sidebar.deleteLater()
-            self.current_sidebar = None
+        """The preparation sidebar contains only the existing Home/Segment tools."""
+        self.left_sidebar_widget.hide()
 
-        modality = self.detect_modality()
-
-        if modality == "DX":
-            self.current_sidebar = DXSidebar(
-                parent=self.left_sidebar_widget,
-                study_uid=self.study_uid,
-                imaging_tab=self
-            )
+    def result_panel(self, modality):
+        """Create each study-owned review panel once, outside Imaging Tools."""
+        if modality in self._result_panels:
+            return self._result_panels[modality]
+        if modality == 'MG':
+            panel = MGSidebar(parent=None, study_uid=self.study_uid, imaging_tab=self)
+        elif modality == 'DX':
+            panel = DXSidebar(parent=None, study_uid=self.study_uid, imaging_tab=self, autoload=False)
+            panel.apply_result(self._bone_age_result)
         else:
-            # MG (default)
-            self.current_sidebar = MGSidebar(
-                parent=self.left_sidebar_widget,
-                study_uid=self.study_uid,
-                imaging_tab=self
-            )
-            
-            # Ù…Ø¯ÛŒØ±ÛŒØª Ø§Ù…Ù† Ø³ÛŒÚ¯Ù†Ø§Ù„â€ŒÙ‡Ø§
-            try:
-                # Ø±ÙØ¹ Ø§ØªØµØ§Ù„Ø§Øª Ù‚Ø¨Ù„ÛŒ (Ø§Ú¯Ø± ÙˆØ¬ÙˆØ¯ Ø¯Ø§Ø´ØªÙ‡ Ø¨Ø§Ø´Ø¯)
-                if hasattr(self.mg_runs_combo, '_mg_signal_connected') and self.mg_runs_combo._mg_signal_connected:
-                    self.mg_runs_combo.currentIndexChanged.disconnect(self._on_mg_run_changed)
-                    self.mg_runs_combo._mg_signal_connected = False
-            except (TypeError, RuntimeError, AttributeError) as e:
-                # Ù‡ÛŒÚ† Ø§ØªØµØ§Ù„ÛŒ ÙˆØ¬ÙˆØ¯ Ù†Ø¯Ø§Ø±Ø¯ ÛŒØ§ widget Ù†Ø§Ù…Ø¹ØªØ¨Ø± Ø§Ø³Øª
-                print(f"Info: No previous connection to disconnect: {e}")
-            
-            # Ø§ØªØµØ§Ù„ Ø³ÛŒÚ¯Ù†Ø§Ù„ Ø¬Ø¯ÛŒØ¯
-            try:
-                self.mg_runs_combo.currentIndexChanged.connect(self._on_mg_run_changed)
-                self.mg_runs_combo._mg_signal_connected = True
-            except (RuntimeError, TypeError) as e:
-                print(f"Error connecting signal: {e}")
-                self.mg_runs_combo._mg_signal_connected = False
-            
-            # Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ MG Ø§Ú¯Ø± Ù‚Ø¨Ù„Ø§Ù‹ Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ù†Ø´Ø¯Ù‡ Ø¨Ø§Ø´Ø¯
-            if not self.mg_runs_loaded:
-                QTimer.singleShot(50, self._load_mg_runs_into_dropdown)
-        
-        # Ù¾Ø§Ú© Ú©Ø±Ø¯Ù† layout Ù‚Ø¨Ù„ÛŒ
-        while self.left_sidebar_layout.count():
-            child = self.left_sidebar_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        
-        self.left_sidebar_layout.addWidget(self.current_sidebar)
+            return None
+        self._result_panels[modality] = panel
+        return panel
 
     # ---------- CSV update ----------
     def update_csv(self, csv_path, row):

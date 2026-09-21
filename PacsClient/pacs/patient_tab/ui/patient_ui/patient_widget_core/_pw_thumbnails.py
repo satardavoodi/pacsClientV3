@@ -17,6 +17,7 @@ from PacsClient.pacs.patient_tab.utils import check_and_get_thumbnails
 from PacsClient.utils.series_completeness import build_series_completeness_snapshot
 from PacsClient.utils.series_facts import resolve_series_expected_count
 from PacsClient.utils.series_identity import (
+    build_multistudy_series_projection,
     get_series_number as _get_series_number,
     get_series_uid as _get_series_uid,
     resolve_series_identifier as _resolve_series_identifier,
@@ -69,32 +70,148 @@ def series_is_clinical_history(series) -> bool:
 class _PWThumbnailsMixin:
     """Server thumbnails, series info, series resolution."""
 
+    def _set_thumbnail_presentation_active(self, active: bool) -> None:
+        """Suspend or resume this tab's thumbnail producers without retiring them.
+
+        Patient tabs remain alive when another tab becomes current.  Their disk
+        inventory and prepared-card generations therefore keep their identity,
+        but hidden tabs must not compete for disk or mutate Qt layouts.  The
+        visibility gates pause at a bounded producer boundary and resume the
+        same generation when the tab becomes active again.
+        """
+        if os.getenv('AIPACS_PATIENT_THUMBNAIL_VISIBILITY_GATE', '1') == '0':
+            active = True
+
+        stream = getattr(self, '_local_thumbnail_stream', None)
+        if stream is not None:
+            gate = stream.get('visibility_gate')
+            timer = stream.get('timer')
+            if active:
+                if gate is not None:
+                    gate.set()
+                if timer is not None and not timer.isActive():
+                    timer.start(10)
+            else:
+                if gate is not None:
+                    gate.clear()
+                if timer is not None:
+                    timer.stop()
+
+        sidebar = getattr(self, '_sidebar_build_visibility', None)
+        if sidebar is not None:
+            gate = sidebar.get('gate')
+            if gate is not None:
+                if active:
+                    gate.set()
+                else:
+                    gate.clear()
+
+    def _start_sidebar_build(self, *, files=None, groups=None, entries=None):
+        """Use the shared prepared-card scheduler; retain explicit no-loop rollback."""
+        if os.getenv('AIPACS_SIDEBAR_BUILD_CHUNKED', '1') == '0':
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        from PacsClient.pacs.patient_tab.utils.thumbnail_batch_runner import start_sidebar_build
+        start_sidebar_build(self, loop, files=files, groups=groups, entries=entries,
+                            list_files=check_and_get_thumbnails)
+        return True
+
     def _local_thumbnail_workflow(self) -> bool:
         return str(getattr(self, '_deferred_caller', '') or '').strip().lower() in {
             'import', 'local'
         }
 
-    def _build_local_thumbnail_entries(self, study_uid: str) -> list[dict]:
-        """Read local series metadata and existing thumbnail paths without network."""
+    def _build_local_thumbnail_entries(
+        self, study_uid: str, *, publish=None, cancelled=None, existing_records=(),
+    ) -> list[dict]:
+        """Read pixel-verified Local entries; optionally deliver them on this worker.
+
+        Unique canonical numbers can be delivered immediately, even in a mixed
+        catalog. Alias-requiring entries retain complete-inventory allocation:
+        an unseen non-pixel sibling must not change an already-published handle.
+        """
         from PacsClient.utils.patient_study_set import allocate_series_display_keys
 
         entries = []
+        inventory_backfill = []
+        indexed_inventory_series = 0
+        indexed_inventory_files = 0
+        published_uids = set()
+        early_blocked = False
         try:
             from database.manager import get_study_info_with_series
             from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
-            from PacsClient.utils.dicom_displayability import inspect_series_pixel_inventory
+            from PacsClient.utils.dicom_displayability import resolve_series_pixel_inventories
             from PacsClient.utils.patient_study_set import (
                 persisted_series_folder_key,
             )
 
             info = get_study_info_with_series(str(study_uid or '')) or {}
+            catalog = []
             for index, series in enumerate(info.get('series') or [], start=1):
                 if not isinstance(series, dict):
                     continue
                 series_number = str(series.get('series_number') or index)
                 series_path = str(series.get('series_path') or '').strip()
                 folder_key = persisted_series_folder_key(series_number, series_path)
-                pixel_inventory = inspect_series_pixel_inventory(series_path)
+                catalog.append(dict(series, study_uid=str(study_uid or ''),
+                                    series_number=series_number, series_path=series_path,
+                                    folder_key=folder_key))
+            from collections import Counter
+            numbers = Counter(s['series_number'] for s in catalog)
+            early_catalog = ()
+            if publish is not None:
+                stable = [s for s in catalog if numbers[s['series_number']] == 1
+                          and s['series_number'].isdecimal()
+                          and 0 <= int(s['series_number']) < 900000
+                          and s['folder_key'] == s['series_number']]
+                # Only publish raw handles that remain their own canonical key.
+                # Allocating alias-requiring prefixes can shift later aliases.
+                early_catalog = tuple(s for s in allocate_series_display_keys(
+                    stable, existing_records=existing_records
+                ) if s['display_key'] == s['series_number'])
+            early_by_number = {s['series_number']: s for s in early_catalog}
+            if publish is not None:
+                history_first = _history_first_enabled()
+                if history_first and any(
+                    series_is_clinical_history(s) and s['series_number'] not in early_by_number
+                    for s in catalog
+                ):
+                    # Preserve history-first when that group itself needs the
+                    # complete inventory to resolve duplicate/legacy identities.
+                    early_catalog = ()
+                    early_by_number = {}
+
+                def order(s):
+                    try:
+                        number = int(s['series_number'])
+                    except (TypeError, ValueError):
+                        number = 0
+                    return (0 if history_first and series_is_clinical_history(s) else 1, number)
+
+                catalog.sort(key=order)
+            catalog = tuple(catalog)  # Worker-owned, never modified after publication.
+            for series, pixel_inventory, inventory_source in (
+                resolve_series_pixel_inventories(catalog, cancelled=cancelled)
+            ):
+                series_number = series['series_number']
+                series_path = series['series_path']
+                folder_key = series['folder_key']
+                if cancelled is not None and cancelled():
+                    break
+                if inventory_source == 'index':
+                    indexed_inventory_series += 1
+                    indexed_inventory_files += pixel_inventory.instance_count
+                elif (series.get('series_pk') and pixel_inventory.instance_count > 0
+                      and pixel_inventory.directory_mtime_ns > 0):
+                    inventory_backfill.append((
+                        int(series['series_pk']), pixel_inventory.instance_count,
+                        pixel_inventory.pixel_instance_count, pixel_inventory.frame_count,
+                        series_path, pixel_inventory.directory_mtime_ns,
+                    ))
                 if not pixel_inventory.has_pixel_data:
                     self.logger.info(
                         "[LOCAL_SERIES_SKIPPED] reason=no_pixel_data series_key=%s",
@@ -116,7 +233,7 @@ class _PWThumbnailsMixin:
                     file_path = repair_local_series_thumbnail(
                         str(study_uid or ''), info, series, folder_key, series_path
                     )
-                entries.append({
+                entry = {
                     'file_path': file_path,
                     'study_uid': str(study_uid or ''),
                     'series_uid': series.get('series_uid') or '',
@@ -130,10 +247,43 @@ class _PWThumbnailsMixin:
                     'display_image_count': pixel_inventory.display_image_count,
                     'protocol_name': series.get('protocol_name') or '',
                     'body_part_examined': series.get('body_part_examined') or '',
-                })
+                }
+                if series_number in early_by_number:
+                    entry['display_key'] = early_by_number[series_number]['display_key']
+                    entry['_orig_series_number'] = series_number
+                entries.append(entry)
+                # Publish only an ordered prefix. Passing an unresolved alias
+                # would require moving already-visible cards at completion.
+                if series_number not in early_by_number:
+                    early_blocked = True
+                if (series_number in early_by_number and not early_blocked
+                        and (cancelled is None or not cancelled())):
+                    publish(entry, early_catalog)
+                    published_uids.add((entry['series_uid'], entry['folder_key']))
         except Exception:
             self.logger.debug("Local thumbnail metadata load failed", exc_info=True)
-        return allocate_series_display_keys(entries)
+            if publish is not None:
+                raise  # The stream must report failure, not a false completed inventory.
+        if indexed_inventory_series:
+            self.logger.info(
+                "[LOCAL_PIXEL_INVENTORY] source=producer_index series=%d files=%d",
+                indexed_inventory_series, indexed_inventory_files,
+            )
+        entries = allocate_series_display_keys(entries, existing_records=existing_records)
+        if inventory_backfill and (cancelled is None or not cancelled()):
+            try:
+                from database.dicom_db import mark_series_pixel_inventories
+                mark_series_pixel_inventories(inventory_backfill)
+            except Exception:
+                self.logger.debug("Local pixel inventory backfill failed", exc_info=True)
+        if publish is not None:
+            verified_catalog = tuple(entries)
+            for entry in entries:
+                if cancelled is not None and cancelled():
+                    break
+                if (entry['series_uid'], entry['folder_key']) not in published_uids:
+                    publish(entry, verified_catalog)
+        return entries
 
     def _log_open_thumbnail_trace(self, phase: str, level: str = 'info', **fields) -> None:
         study_uid = getattr(self, 'study_uid', None)
@@ -193,7 +343,7 @@ class _PWThumbnailsMixin:
     def set_method_open_ai_module_tab(self, method_add_new_tab):
         self.method_add_new_tab = method_add_new_tab
 
-    def set_server_series_info(self, series_list):
+    def set_server_series_info(self, series_list, *, reserved_records=(), schedule_thumbnails=True):
         """
         Set (or merge) series information from server for thumbnails.
         Called by home_ui when opening a patient tab with progressive download.
@@ -201,8 +351,9 @@ class _PWThumbnailsMixin:
         On the FIRST call the internal maps are built from scratch and thumbnail
         loading is scheduled.  On SUBSEQUENT calls (e.g. from the background
         setup thread in _hp_patient_open) only genuinely-new series are merged
-        in without overwriting existing entries — this preserves gRPC-fetched
+        in without overwriting existing entries — this preserves socket-fetched
         image counts and avoids a redundant reload that would reset border states.
+        Display handles are owner-local and stable across partial metadata batches.
 
         Args:
             series_list: List of series info dicts from server
@@ -212,7 +363,24 @@ class _PWThumbnailsMixin:
             resolve_series_folder_key,
         )
 
-        incoming_series = [item for item in (series_list or []) if isinstance(item, dict)]
+        primary_uid = str(getattr(self, 'study_uid', '') or '').strip()
+        previous_records = [
+            dict(record, study_uid=study_uid)
+            for study_uid, bucket in (getattr(self, '_studies_series', None) or {}).items()
+            for record in bucket
+        ]
+        previous_by_uid = {
+            (str(record.get('study_uid') or ''), _get_series_uid(record)): record
+            for record in previous_records if _get_series_uid(record)
+        }
+        incoming_series = []
+        for item in series_list or []:
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            if not item.get('study_uid') and _PRIMARY_BUCKET_FALLBACK and primary_uid:
+                item['study_uid'] = primary_uid
+            incoming_series.append(item)
         groups_by_study = {}
         all_series_group = []
         for item in incoming_series:
@@ -234,13 +402,17 @@ class _PWThumbnailsMixin:
                 continue
             series_uid = _get_series_uid(series)
             study_uid = str(series.get('study_uid') or '')
+            previous = previous_by_uid.get((study_uid, series_uid), {})
             group = groups_by_study.get(study_uid, []) if study_uid else all_series_group
             folder_key = str(
                 series.get('folder_key')
+                or previous.get('folder_key')
                 or resolve_series_folder_key(series_number, series_uid, group)
                 or series_number
             )
             series['folder_key'] = folder_key
+            if not series.get('series_path') and previous.get('series_path'):
+                series['series_path'] = previous['series_path']
             if study_uid and not series.get('series_path'):
                 try:
                     from PacsClient.utils.config import SOURCE_PATH
@@ -248,7 +420,9 @@ class _PWThumbnailsMixin:
                 except Exception:
                     pass
             prepared_series.append(series)
-        series_list = allocate_series_display_keys(prepared_series)
+        series_list = allocate_series_display_keys(
+            prepared_series, existing_records=[*previous_records, *reserved_records]
+        )
 
         existing = getattr(self, '_server_series_info', None)
         is_first_call = not existing  # True when called for the first time
@@ -281,6 +455,13 @@ class _PWThumbnailsMixin:
                 # Merge: fill in fields that are absent or empty in the
                 # existing record without overwriting authoritative gRPC data.
                 existing_entry = self._server_series_info[entry_key]
+                if (str(existing_entry.get('study_uid') or primary_uid),
+                        _get_series_uid(existing_entry)) != (
+                        str(series.get('study_uid') or primary_uid), series_uid):
+                    # Different studies can share a study-local handle. Their
+                    # grouped projection below owns offset assignment; never
+                    # fill metadata on another series before that rebuild.
+                    continue
                 for field in ('series_description', 'modality', 'protocol_name', 'body_part_examined'):
                     if not existing_entry.get(field) and series.get(field):
                         existing_entry[field] = series[field]
@@ -319,6 +500,14 @@ class _PWThumbnailsMixin:
             this_uid = _get_series_uid(series)
             if this_uid and any(_get_series_uid(s) == this_uid for s in bucket):
                 continue
+            if not this_uid and any(
+                not _get_series_uid(s)
+                and s.get('display_key') == series.get('display_key')
+                and s.get('folder_key') == series.get('folder_key')
+                and s.get('series_path') == series.get('series_path')
+                for s in bucket
+            ):
+                continue
             bucket.append(series)
 
         # Multi-study patient: rebuild a collision-free, study-aware series
@@ -344,12 +533,16 @@ class _PWThumbnailsMixin:
             is_first_call
             or (new_count > 0 and not getattr(self, '_thumbnail_load_inflight', False))
         )
-        if should_load:
+        if should_load and schedule_thumbnails:
             # Use QMetaObject.invokeMethod so this is always dispatched on the
             # main thread regardless of which thread calls set_server_series_info.
             # QTimer.singleShot called from a non-Qt thread has no event loop to
             # post to and is silently dropped — QueuedConnection is safe.
             QMetaObject.invokeMethod(self, "_load_server_thumbnails", Qt.QueuedConnection)
+
+        # The receiver is a GUI-owned QObject with a queued connection. Emitting
+        # from background setup is safe; it never loads a viewer on that worker.
+        self.series_metadata_ready.emit()
 
     @Slot()
     def _load_server_thumbnails(self):
@@ -364,7 +557,14 @@ class _PWThumbnailsMixin:
         # Guard: prevent concurrent loads for the same widget
         if getattr(self, '_thumbnail_load_inflight', False):
             return
+        if getattr(self, '_pipeline_prepare_retired', False):
+            return
         self._thumbnail_load_inflight = True
+        if (self._local_thumbnail_workflow()
+                and not getattr(self, '_is_multistudy_hint', False)
+                and len(getattr(self, '_studies_series', {}) or {}) <= 1):
+            self._start_local_thumbnail_stream()
+            return
 
         def _worker():
             try:
@@ -375,6 +575,224 @@ class _PWThumbnailsMixin:
                 self._thumbnail_load_inflight = False
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _start_local_thumbnail_stream(self):
+        """One bounded producer, one GUI-owned timer; no per-card threads/signals."""
+        from queue import Queue, Full
+        from time import perf_counter
+        from PySide6.QtGui import QImage
+        from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import (
+            ThumbnailImageSourceService,
+        )
+
+        study_uid = str(self.study_uid or '')
+        stopped = threading.Event()
+        visibility_gate = threading.Event()
+        visibility_enabled = (
+            os.getenv('AIPACS_PATIENT_THUMBNAIL_VISIBILITY_GATE', '1') != '0'
+        )
+        if not visibility_enabled or getattr(self, '_is_active_patient_tab', True):
+            visibility_gate.set()
+        mailbox = Queue(maxsize=2)
+        previous = tuple(dict(s, study_uid=uid)
+                         for uid, bucket in (getattr(self, '_studies_series', {}) or {}).items()
+                         for s in bucket)
+        timer = QTimer(self)
+        state = dict(study_uid=study_uid, stopped=stopped, mailbox=mailbox,
+                     visibility_gate=visibility_gate,
+                     timer=timer, started=perf_counter(), delivered=0)
+        self._local_thumbnail_stream = state
+        # This callback owns only an Event, never a widget/native wrapper.
+        def on_destroyed(*_args):
+            stopped.set()
+        state['on_destroyed'] = on_destroyed
+        self.destroyed.connect(on_destroyed)
+        timer.timeout.connect(self._drain_local_thumbnail_stream)
+        if visibility_gate.is_set():
+            timer.start(10)
+        self._log_open_thumbnail_trace('local_thumb_stream_start', queue_capacity=2)
+
+        def send(message):
+            while not stopped.is_set():
+                try:
+                    mailbox.put(message, timeout=0.05)
+                    return
+                except Full:
+                    continue
+
+        def wait_until_active():
+            while not stopped.is_set():
+                if visibility_gate.wait(0.05):
+                    return True
+            return False
+
+        def worker():
+            try:
+                if not wait_until_active():
+                    return
+
+                def publish(entry, catalog):
+                    if not wait_until_active():
+                        return
+                    try:
+                        image = ThumbnailImageSourceService.prepare_image(
+                            study_uid,
+                            str(entry.get('folder_key') or entry.get('series_number') or ''),
+                            str(entry.get('file_path') or ''),
+                        )
+                    except Exception:
+                        # Preserve the Local placeholder fallback without exposing
+                        # a clinical path or moving the retrying read to the GUI.
+                        self.logger.warning(
+                            'Local thumbnail image preparation failed', exc_info=True
+                        )
+                        image = QImage()
+                    if not wait_until_active():
+                        return
+                    send(('entry', entry, catalog, image))
+                    # If the tab was hidden after the bounded mailbox admission,
+                    # do not advance the inventory generator into another series.
+                    wait_until_active()
+
+                entries = self._build_local_thumbnail_entries(
+                    study_uid, publish=publish,
+                    cancelled=stopped.is_set, existing_records=previous,
+                )
+                # Preserve exact UID-scoped count persistence on this worker;
+                # never start one writer per delivered card or block the GUI.
+                if entries and not stopped.is_set():
+                    try:
+                        from database.manager import update_series_image_count_by_uid
+                        for entry in entries:
+                            if stopped.is_set():
+                                break
+                            update_series_image_count_by_uid(
+                                study_uid, entry['series_number'], entry['image_count'],
+                                series_uid=entry['series_uid'],
+                            )
+                    except Exception:
+                        self.logger.warning('Local thumbnail count persistence failed', exc_info=True)
+                # Orphan cleanup is maintenance, not catalog admission. Every
+                # published row has already passed the authoritative pixel
+                # inventory, so a missing series cannot reach the sidebar. Run
+                # the destructive self-heal only after the ordered card stream
+                # has been admitted, while retaining this existing non-Qt owner.
+                if not stopped.is_set():
+                    reconcile_started = perf_counter()
+                    try:
+                        from database.dicom_db import prune_orphan_series_for_study
+                        self.logger.info(
+                            '[LOCAL_ORPHAN_RECONCILE] owner=patient_stream '
+                            'phase=post_catalog_start'
+                        )
+                        pruned = prune_orphan_series_for_study(study_uid)
+                        self.logger.info(
+                            '[LOCAL_ORPHAN_RECONCILE] owner=patient_stream '
+                            'phase=post_catalog_finished duration_ms=%.2f pruned=%d',
+                            (perf_counter() - reconcile_started) * 1000.0,
+                            len(pruned),
+                        )
+                    except Exception:
+                        self.logger.debug(
+                            'Post-catalog Local orphan reconciliation failed', exc_info=True
+                        )
+                send(('done', None, None, None))
+            except Exception:
+                self.logger.debug('Local thumbnail stream failed', exc_info=True)
+                send(('failed', None, None, None))
+
+        try:
+            threading.Thread(target=worker, name='LocalThumbnailInventory', daemon=True).start()
+            # Metadata can finish a small inventory before prepared startup
+            # reaches pipeline_manager. Remember the startup request beyond the
+            # inflight window; explicit later refreshes still use the normal loader.
+            self._local_thumbnail_startup_started = True
+        except Exception:
+            self._retire_local_thumbnail_stream()
+            raise
+
+    def _retire_local_thumbnail_stream(self):
+        state = getattr(self, '_local_thumbnail_stream', None)
+        if state is None:
+            return
+        self._local_thumbnail_stream = None
+        state['stopped'].set()
+        state.get('visibility_gate', state['stopped']).set()
+        timer = state['timer']
+        timer.stop()
+        timer.timeout.disconnect(self._drain_local_thumbnail_stream)
+        timer.deleteLater()
+        self.destroyed.disconnect(state['on_destroyed'])
+        self._thumbnail_load_inflight = False
+
+    @Slot()
+    def _drain_local_thumbnail_stream(self):
+        """Admit at most one verified card per tick; reject stale/grouped owners."""
+        from queue import Empty
+        from time import perf_counter
+
+        state = getattr(self, '_local_thumbnail_stream', None)
+        if state is None:
+            return
+        manager = getattr(self, 'thumbnail_manager', None)
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or state['study_uid'] != str(self.study_uid or '')
+                or not self._local_thumbnail_workflow()
+                or getattr(self, '_is_multistudy_hint', False)
+                or len(getattr(self, '_studies_series', {}) or {}) > 1
+                or manager is None or getattr(manager, '_disposed', False)):
+            self._retire_local_thumbnail_stream()
+            return
+        try:
+            kind, entry, catalog, prepared_image = state['mailbox'].get_nowait()
+        except Empty:
+            return
+        if kind != 'entry':
+            # The worker publishes in final order. Never move visible cards on
+            # completion (including a refresh with existing selected cards).
+            self._log_open_thumbnail_trace(
+                'local_thumb_stream_finished', outcome=kind, delivered=state['delivered'],
+                elapsed_ms=round((perf_counter() - state['started']) * 1000, 2),
+            )
+            self._retire_local_thumbnail_stream()
+            return
+        try:
+            apply_started = perf_counter()
+            self.set_server_series_info([entry], reserved_records=catalog, schedule_thumbnails=False)
+            # A concurrent metadata producer may have transferred ownership to
+            # the grouped renderer. Never publish primary-only cards afterwards.
+            if len(getattr(self, '_studies_series', {}) or {}) > 1:
+                self._retire_local_thumbnail_stream()
+                return
+            from PySide6.QtGui import QPixmap
+            from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import (
+                ThumbnailImageSourceService,
+            )
+            prepared_pixmap = QPixmap.fromImage(prepared_image)
+            if prepared_pixmap.isNull():
+                prepared_pixmap = ThumbnailImageSourceService._placeholder_pixmap(
+                    str(entry.get('display_key') or entry.get('series_number') or '')
+                )
+            self._render_thumbnails_from_entries(
+                [entry], start_index=len(manager.lst_buttons_name),
+                local_verified=True, persist_counts=False,
+                prepared_pixmaps={
+                    str(entry.get('display_key') or entry.get('series_number') or ''):
+                        prepared_pixmap,
+                },
+            )
+            state['delivered'] += 1
+            # The terminal marker retains the exact total. Sampling intermediate
+            # progress prevents one synchronous INFO file write per Qt card.
+            if state['delivered'] == 1 or state['delivered'] % 10 == 0:
+                self._log_open_thumbnail_trace(
+                    'local_thumb_stream_card', delivered=state['delivered'],
+                    elapsed_ms=round((perf_counter() - state['started']) * 1000, 2),
+                    apply_ms=round((perf_counter() - apply_started) * 1000, 2),
+                )
+        except Exception:
+            self.logger.warning('Local thumbnail delivery rejected', exc_info=True)
+            self._retire_local_thumbnail_stream()
 
     async def _load_server_thumbnails_async(self):
         """Load thumbnails from local cache or socket server and render them."""
@@ -541,6 +959,24 @@ class _PWThumbnailsMixin:
             self._log_open_thumbnail_trace('patient_tab_thumb_error', level='error', error=str(e))
             self.logger.debug(f"Error loading server thumbnails: {e}")
 
+    def _multistudy_group_signature(self, groups=None):
+        """Return the immutable identity/order signature for one sidebar generation."""
+        groups = groups if groups is not None else getattr(
+            self, '_multistudy_viewer_groups', None
+        )
+        signature = []
+        for study_uid, slot, entries in groups or ():
+            members = []
+            for key, info in entries or ():
+                info = info or {}
+                members.append((
+                    str(key),
+                    str(info.get('series_uid') or info.get('series_instance_uid') or ''),
+                    str(info.get('folder_key') or info.get('_orig_series_number') or ''),
+                ))
+            signature.append((str(study_uid), int(slot), tuple(members)))
+        return tuple(signature)
+
     def _schedule_multistudy_thumbnail_prefetch(self) -> None:
         """Fetch every study's series thumbnails into the on-disk cache, then
         render the sidebar grouped by study.
@@ -556,7 +992,19 @@ class _PWThumbnailsMixin:
         studies_index = getattr(self, '_studies_series', None) or {}
         if len(studies_index) <= 1:
             return
+        signature = self._multistudy_group_signature()
+        if not signature:
+            return
         if getattr(self, '_multistudy_prefetch_inflight', False):
+            # The active worker owns an immutable study-set snapshot. Remember
+            # only a genuinely newer topology and let its GUI-thread completion
+            # schedule exactly one follow-up worker.
+            if signature != getattr(self, '_multistudy_prefetch_signature', None):
+                self._multistudy_prefetch_pending_signature = signature
+                self._log_open_thumbnail_trace(
+                    'patient_tab_thumb_prefetch_followup_queued',
+                    studies=len(signature),
+                )
             return
         target_study_uids = [str(su) for su in studies_index.keys()]
         if not target_study_uids:
@@ -566,9 +1014,19 @@ class _PWThumbnailsMixin:
                 self, "_render_multistudy_grouped_slot", Qt.QueuedConnection
             )
             return
+        if signature == getattr(self, '_multistudy_prefetched_signature', None):
+            if (not getattr(self, '_multistudy_thumbs_rendered', False)
+                    or signature != getattr(self, '_multistudy_sidebar_signature', None)):
+                QMetaObject.invokeMethod(
+                    self, "_render_multistudy_grouped_slot", Qt.QueuedConnection
+                )
+            return
         self._multistudy_prefetch_inflight = True
+        self._multistudy_prefetch_signature = signature
+        self._multistudy_prefetch_pending_signature = None
 
         def _worker():
+            generation_ready = False
             try:
                 from modules.network.socket_client import PatientListSocketClient
                 from modules.network.socket_config import get_socket_server_settings
@@ -579,6 +1037,7 @@ class _PWThumbnailsMixin:
                 if not host:
                     return
                 port = int(server.get('port') or server.get('socket_port') or 50052)
+                generation_ready = True
 
                 for su in target_study_uids:
                     try:
@@ -593,6 +1052,7 @@ class _PWThumbnailsMixin:
                         finally:
                             client.disconnect()
                         if not isinstance(data, dict):
+                            generation_ready = False
                             continue
                         saved = 0
                         for series in data.get('series_thumbnails') or []:
@@ -608,28 +1068,54 @@ class _PWThumbnailsMixin:
                             if isinstance(raw, (bytes, bytearray)) and series_number:
                                 save_thumbnail_with_bytes(su, series_number, raw)
                                 saved += 1
+                        if saved <= 0:
+                            generation_ready = False
                         self._log_open_thumbnail_trace(
                             'patient_tab_thumb_multistudy_prefetch',
                             target_study=su[-24:],
                             thumbnail_count=saved,
                         )
                     except Exception as exc:
+                        generation_ready = False
                         self.logger.debug(
                             f"Multi-study thumbnail prefetch failed for {su}: {exc}"
                         )
             except Exception as exc:
                 self.logger.debug(f"Multi-study thumbnail prefetch error: {exc}")
             finally:
-                self._multistudy_prefetch_inflight = False
-                # Caches are warm — render the grouped sidebar on the main thread.
+                self._multistudy_prefetch_completed_signature = signature
+                self._multistudy_prefetch_completed_ok = generation_ready
                 try:
                     QMetaObject.invokeMethod(
-                        self, "_render_multistudy_grouped_slot", Qt.QueuedConnection
+                        self, "_finish_multistudy_thumbnail_prefetch_slot", Qt.QueuedConnection
                     )
                 except Exception:
                     pass
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    @Slot()
+    def _finish_multistudy_thumbnail_prefetch_slot(self):
+        """Commit a worker generation and schedule any newer study-set snapshot."""
+        completed = getattr(self, '_multistudy_prefetch_completed_signature', None)
+        completed_ok = bool(getattr(self, '_multistudy_prefetch_completed_ok', False))
+        self._multistudy_prefetch_inflight = False
+        if completed and completed_ok:
+            self._multistudy_prefetched_signature = completed
+
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or getattr(self, '_pw_close_handled', False)
+                or getattr(getattr(self, 'thumbnail_manager', None), '_disposed', False)):
+            self._multistudy_prefetch_pending_signature = None
+            return
+
+        current = self._multistudy_group_signature()
+        pending = getattr(self, '_multistudy_prefetch_pending_signature', None)
+        self._multistudy_prefetch_pending_signature = None
+        if (pending and pending != completed) or current != completed:
+            self._schedule_multistudy_thumbnail_prefetch()
+            return
+        self._render_multistudy_grouped()
 
     def _rebuild_multistudy_series_index(self) -> None:
         """Rebuild `_server_series_info` with patient-unique, study-aware keys.
@@ -661,35 +1147,6 @@ class _PWThumbnailsMixin:
         except Exception:
             source_root = None
 
-        primary = str(getattr(self, 'study_uid', '') or '')
-        # STABLE per-study slot assignment (2026-06-20). The offset key
-        # (slot*1_000_000 + orig) MUST NOT change when another previous exam is
-        # merged later. The old ``sorted(others)`` re-sorted on every rebuild, so a
-        # study's slot — and thus its keys — shifted whenever a previous exam that
-        # sorts earlier was added. Proven in download_diagnostics: the SAME key
-        # 1000005 resolved to two different studies over time, so a drag could load
-        # the WRONG (previous) study. Fix: assign each study a PERMANENT slot in
-        # first-seen order (primary always slot 0); append newly-seen studies, never
-        # reorder survivors. Fail-safe: any error falls back to the legacy order.
-        try:
-            slot_order = getattr(self, '_multistudy_slot_order', None)
-            if not isinstance(slot_order, list):
-                slot_order = []
-            if primary and primary in studies_index:
-                if primary in slot_order:
-                    slot_order.remove(primary)
-                slot_order.insert(0, primary)  # primary is always slot 0
-            for su in sorted(s for s in studies_index.keys() if s != primary):
-                if su not in slot_order:
-                    slot_order.append(su)  # new study -> next free slot, stable
-            slot_order = [su for su in slot_order if su in studies_index]  # prune gone
-            self._multistudy_slot_order = slot_order
-            ordered = list(slot_order)
-        except Exception:
-            ordered = ([primary] if primary in studies_index else []) + sorted(
-                su for su in studies_index.keys() if su != primary
-            )
-
         _hist_on = _history_first_enabled()
 
         def _series_order_key(s):
@@ -705,41 +1162,20 @@ class _PWThumbnailsMixin:
             except (TypeError, ValueError):
                 return (hist, 1, 0)
 
-        new_info: dict = {}
-        uid_to_key: dict = {}
-        viewer_groups: list = []
-        for slot, su in enumerate(ordered):
-            offset = 0 if slot == 0 else slot * 1_000_000
-            group: list = []
-            # Render each study's series in ascending numeric order.
-            for series in sorted(studies_index.get(su, []) or [], key=_series_order_key):
-                orig = series.get('_orig_series_number') or _get_series_number(series)
-                try:
-                    local_display_int = int(str(series.get('display_key') or orig).strip())
-                except (TypeError, ValueError):
-                    continue
-                key = str(local_display_int + offset)
-                entry = dict(series)
-                entry['series_number'] = key
-                entry['display_key'] = key
-                entry['_orig_series_number'] = str(orig)
-                entry['_study_slot'] = slot
-                entry['study_uid'] = su
-                if source_root is not None and not entry.get('series_path'):
-                    folder_key = str(entry.get('folder_key') or orig)
-                    entry['series_path'] = str(source_root / su / folder_key)
-                new_info[key] = entry
-                s_uid = _get_series_uid(series)
-                if s_uid:
-                    uid_to_key[s_uid] = key
-                group.append((key, entry))
-            if group:
-                viewer_groups.append((su, slot, group))
-
-        if new_info:
-            self._server_series_info = new_info
-            self._series_uid_to_number = uid_to_key
-            self._multistudy_viewer_groups = viewer_groups
+        # One pure projection owns stable slots, offset keys and per-entry paths.
+        # The tab keeps its lifetime slot history and presentation ordering policy.
+        projection = build_multistudy_series_projection(
+            studies_index,
+            str(getattr(self, 'study_uid', '') or ''),
+            getattr(self, '_multistudy_slot_order', None),
+            source_root,
+            series_sort_key=_series_order_key,
+        )
+        self._multistudy_slot_order = projection.slot_order
+        if projection.series_info:
+            self._server_series_info = projection.series_info
+            self._series_uid_to_number = projection.uid_to_key
+            self._multistudy_viewer_groups = projection.viewer_groups
 
     @Slot()
     def _render_multistudy_grouped_slot(self):
@@ -831,6 +1267,10 @@ class _PWThumbnailsMixin:
             label.setObjectName("multiStudyHeader")
             label.setTextFormat(Qt.RichText)
             label.setWordWrap(True)
+            # Match the existing card column before measuring wrapped height.
+            # Otherwise scrollbar admission can rewrap a long header after paint.
+            label.setMinimumWidth(190)
+            label.setMaximumWidth(190)
             if is_prev:
                 label.setStyleSheet(
                     "QLabel#multiStudyHeader {"
@@ -860,17 +1300,59 @@ class _PWThumbnailsMixin:
         least one study; on total failure it falls back to the single-study
         loader so the sidebar is never worse than before.
         """
-        if getattr(self, '_multistudy_thumbs_rendered', False):
-            return True
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or getattr(getattr(self, 'thumbnail_manager', None), '_disposed', False)):
+            return False
         groups = getattr(self, '_multistudy_viewer_groups', None)
+        signature_builder = getattr(self, '_multistudy_group_signature', None)
+        if callable(signature_builder):
+            signature = signature_builder(groups)
+        else:
+            # Preserve the renderer's standalone compatibility contract used by
+            # legacy embedders and focused method-level guards.
+            signature = tuple(
+                (str(study_uid), int(slot), tuple(
+                    (
+                        str(key),
+                        str((info or {}).get('series_uid')
+                            or (info or {}).get('series_instance_uid') or ''),
+                        str((info or {}).get('folder_key')
+                            or (info or {}).get('_orig_series_number') or ''),
+                    )
+                    for key, info in entries or ()
+                ))
+                for study_uid, slot, entries in groups or ()
+            )
+        previous_signature = getattr(self, '_multistudy_sidebar_signature', None)
+        if (getattr(self, '_multistudy_thumbs_rendered', False)
+                and signature
+                and signature == previous_signature):
+            return True
+        if (getattr(self, '_multistudy_thumbs_rendered', False)
+                and previous_signature and signature != previous_signature):
+            self._log_open_thumbnail_trace(
+                'patient_tab_thumb_generation_superseded',
+                previous_studies=len(previous_signature),
+                studies=len(signature),
+            )
+        self._multistudy_thumbnail_fallback = False
+        self._sidebar_build_token = getattr(self, '_sidebar_build_token', 0) + 1
         if not groups:
             # Index missing/failed — fall back to the single-study loader so the
             # sidebar still shows the primary study rather than nothing.
+            self._multistudy_thumbnail_fallback = True
             try:
                 QMetaObject.invokeMethod(self, "_load_server_thumbnails", Qt.QueuedConnection)
             except Exception:
                 pass
             return False
+
+        if self._start_sidebar_build(groups=groups):
+            # Accepted, not yet painted. Completion is logged by the scheduler.
+            self._multistudy_sidebar_signature = signature
+            self._multistudy_thumbs_rendered = True
+            self._thumbnails_shown = True
+            return True
 
         thumb_container = None
         try:
@@ -885,12 +1367,18 @@ class _PWThumbnailsMixin:
 
             # Clean slate: clear the grid and the thumbnail-manager bookkeeping
             # so a prior single-study render (if any) cannot leave duplicates.
+            tm = getattr(self, 'thumbnail_manager', None)
+            if tm is not None:
+                tm._cancel_deferred_work()
+                tm._retire_card_effects()
             try:
                 while self.thumb_grid.count():
                     item = self.thumb_grid.takeAt(0)
                     w = item.widget() if item is not None else None
                     if w is not None:
-                        w.setParent(None)
+                        # Keep native ownership until deferred deletion. A late
+                        # state callback must never resurrect a top-level card.
+                        w.hide()
                         w.deleteLater()
             except Exception:
                 pass
@@ -923,6 +1411,10 @@ class _PWThumbnailsMixin:
                 header = self._make_study_header_widget(slot, su, len(renderable))
                 if header is not None:
                     self.thumb_grid.addWidget(header, thumb_index, 0, 1, 2)
+                    # Include this row in the card insertion's synchronous layout
+                    # pass. An implicitly hidden label is otherwise omitted until
+                    # Qt's deferred show event, moving every following card.
+                    header.show()
                     thumb_index += 1
 
                 for key, entry, file_path in renderable:
@@ -944,6 +1436,7 @@ class _PWThumbnailsMixin:
                             pass
 
             if rendered_any:
+                self._multistudy_sidebar_signature = signature
                 self._multistudy_thumbs_rendered = True
                 self._thumbnails_shown = True
                 try:
@@ -983,6 +1476,7 @@ class _PWThumbnailsMixin:
             # Nothing rendered (caches not ready / unexpected failure) — fall
             # back to the original single-study loader so the user still sees
             # the primary study rather than an empty sidebar.
+            self._multistudy_thumbnail_fallback = True
             try:
                 QMetaObject.invokeMethod(self, "_load_server_thumbnails", Qt.QueuedConnection)
             except Exception:
@@ -1003,6 +1497,8 @@ class _PWThumbnailsMixin:
         ``AIPACS_SIDEBAR_BUILD_CHUNKED=0`` as the kill switch. The multi-study grouped
         render path is intentionally left untouched.
         """
+        if self._start_sidebar_build(files=tuple(thumbnails or ())):
+            return
         try:
             _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             thumbs = list(thumbnails or [])
@@ -1043,6 +1539,12 @@ class _PWThumbnailsMixin:
         changes. Chunk size is ``AIPACS_SIDEBAR_BUILD_CHUNK`` (default 3)."""
         if token != getattr(self, '_sidebar_build_token', 0):
             return  # a newer render started; stop this stale chain
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or getattr(getattr(self, 'thumbnail_manager', None), '_disposed', False)
+                or ((getattr(self, '_is_multistudy_hint', False)
+                     or len(getattr(self, '_studies_series', {}) or {}) > 1)
+                    and not getattr(self, '_multistudy_thumbnail_fallback', False))):
+            return  # Grouped ownership or close supersedes queued single-study work.
         try:
             chunk = max(1, int(os.getenv("AIPACS_SIDEBAR_BUILD_CHUNK", "3") or "3"))
         except Exception:
@@ -1097,8 +1599,14 @@ class _PWThumbnailsMixin:
     def _render_thumbnails_from_files_slot(self):
         """Main-thread slot: drain _pending_thumbnails_files and render."""
         thumbnails = getattr(self, '_pending_thumbnails_files', None)
+        self._pending_thumbnails_files = None
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or getattr(getattr(self, 'thumbnail_manager', None), '_disposed', False)
+                or ((getattr(self, '_is_multistudy_hint', False)
+                     or len(getattr(self, '_studies_series', {}) or {}) > 1)
+                    and not getattr(self, '_multistudy_thumbnail_fallback', False))):
+            return
         if thumbnails:
-            self._pending_thumbnails_files = None
             self._log_open_thumbnail_trace('patient_tab_thumb_render_files', thumbnail_count=len(thumbnails))
             self._render_thumbnails_from_files(thumbnails)
 
@@ -1106,14 +1614,33 @@ class _PWThumbnailsMixin:
     def _render_thumbnails_from_entries_slot(self):
         """Main-thread slot: drain _pending_thumbnails_entries and render."""
         entries = getattr(self, '_pending_thumbnails_entries', None)
+        self._pending_thumbnails_entries = None
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or getattr(getattr(self, 'thumbnail_manager', None), '_disposed', False)
+                or ((getattr(self, '_is_multistudy_hint', False)
+                     or len(getattr(self, '_studies_series', {}) or {}) > 1)
+                    and not getattr(self, '_multistudy_thumbnail_fallback', False))):
+            return
         if entries:
-            self._pending_thumbnails_entries = None
             self._log_open_thumbnail_trace('patient_tab_thumb_render_entries', thumbnail_count=len(entries))
             self._render_thumbnails_from_entries(entries)
 
-    def _render_thumbnails_from_entries(self, series_entries: list):
+    def _render_thumbnails_from_entries(
+        self, series_entries: list, *, start_index=0, local_verified=False, persist_counts=True,
+        prepared_pixmaps=None,
+    ):
         """Render thumbnail widgets from server entries."""
         try:
+            # Socket entries and cache hits must share one presentation owner.
+            # Preserve Local's already bounded, pixel-verified stream unchanged.
+            import asyncio as _asyncio
+            try:
+                _asyncio.get_running_loop()
+                prepared_entries = (not local_verified and start_index == 0
+                                    and os.getenv('AIPACS_SIDEBAR_BUILD_CHUNKED', '1') != '0')
+            except RuntimeError:
+                prepared_entries = False
+            admitted_entries = []
             _hist_on = _history_first_enabled()
 
             def _sort_key(item):
@@ -1127,14 +1654,31 @@ class _PWThumbnailsMixin:
             # Collect series numbers + counts for background DB update.
             db_update_entries: list = []
 
-            thumb_index = 0
-            _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
+            thumb_index = start_index
+            _sp_downloaded = (self._get_correct_study_path()
+                              if not local_verified and not prepared_entries
+                              and hasattr(self, '_get_correct_study_path') else None)
             for series in sorted(series_entries, key=_sort_key):
                 file_path = series.get('file_path')
                 series_number = str(series.get('series_number', ''))
                 if not series_number:
                     continue
                 entry_key = str(series.get('display_key') or series_number)
+
+                if local_verified:
+                    current = getattr(self, '_server_series_info', {}).get(entry_key)
+                    if current and (
+                        str(current.get('study_uid') or self.study_uid), current.get('series_uid') or ''
+                    ) != (str(series.get('study_uid') or self.study_uid), series.get('series_uid') or ''):
+                        raise ValueError('Local card identity changed during delivery')
+                    manager = self.thumbnail_manager
+                    if entry_key in manager.lst_buttons_name:
+                        mapped = getattr(manager, '_series_uid_to_number', {}).get(series.get('series_uid'))
+                        if mapped != entry_key:
+                            raise ValueError('Existing Local card has no matching series identity')
+                        manager.update_series_image_count(
+                            entry_key, int(series.get('display_image_count') or series.get('image_count') or 0)
+                        )
 
                 # ── Sync _server_series_info with gRPC image_count ──────────
                 # The gRPC response carries the authoritative image count.
@@ -1146,29 +1690,45 @@ class _PWThumbnailsMixin:
                     ssi = getattr(self, '_server_series_info', {})
                     if entry_key in ssi:
                         ssi[entry_key]['image_count'] = img_count
+                        if local_verified:
+                            ssi[entry_key]['display_image_count'] = series.get('display_image_count', img_count)
                     else:
                         ssi[entry_key] = dict(series)
                     db_update_entries.append(
                         (series_number, series.get('series_uid') or '', img_count)
                     )
 
+                if prepared_entries:
+                    admitted_entries.append(dict(series))
+                    continue
+
+                prepared_kwargs = {}
+                if prepared_pixmaps is not None:
+                    prepared_pixmap = prepared_pixmaps.get(entry_key)
+                    if prepared_pixmap is None:
+                        raise ValueError('Prepared Local thumbnail image is missing')
+                    prepared_kwargs['prepared_pixmap'] = prepared_pixmap
                 thumb_index = self.add_thumbnail_to_thumbnail_layout(
                     thumb_index=thumb_index,
                     file_path_thumbnail=file_path,
                     key_thumbnail=entry_key,
-                    series_info=series
+                    series_info=series,
+                    **prepared_kwargs,
                 )
                 # ✅ Default pending style unless series data is already downloaded
                 if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                    if self._is_series_downloaded(entry_key, study_path=_sp_downloaded):
+                    if local_verified or self._is_series_downloaded(entry_key, study_path=_sp_downloaded):
                         self.thumbnail_manager.set_series_ready(entry_key)
                     else:
                         self.thumbnail_manager.set_series_pending(entry_key)
 
+            if prepared_entries:
+                self._start_sidebar_build(entries=admitted_entries)
+
             # ── Persist image_count to DB in background ─────────────────────
             # This ensures future sessions (thumbnails loaded from disk cache)
             # also display the correct DICOM image count before download starts.
-            if db_update_entries and self.study_uid:
+            if persist_counts and db_update_entries and self.study_uid:
                 study_uid = self.study_uid
 
                 def _persist_counts():
@@ -1189,6 +1749,8 @@ class _PWThumbnailsMixin:
 
         except Exception as e:
             self.logger.debug(f"Error rendering server thumbnails: {e}")
+            if local_verified:
+                raise
 
     def resolve_series_key(self, series_identifier: str) -> str:
         """Resolve series UID to series number when possible."""
@@ -1279,7 +1841,9 @@ class _PWThumbnailsMixin:
         except Exception:
             return False
 
-    def show_exist_thumbnails(self):
+    def show_exist_thumbnails(self, *, thumbnail_files=None):
+        # Startup supplies a worker-prepared listing; never re-enumerate it on
+        # GUI. None keeps the explicit legacy refresh/Education API unchanged.
         # Multi-study: the study-grouped render path (_render_multistudy_grouped)
         # owns the thumbnail sidebar. Skip this single-study early render so it
         # does not flicker against the grouped render that would replace it.
@@ -1291,10 +1855,12 @@ class _PWThumbnailsMixin:
         # Prevent double rendering
         if self._thumbnails_shown:
             print("⏭️ Thumbnails already shown, skipping...")
-            return len(check_and_get_thumbnails(self.import_folder_path, self.study_uid) or [])
+            return len((check_and_get_thumbnails(self.import_folder_path, self.study_uid) or [])
+                       if thumbnail_files is None else thumbnail_files)
         
         thumb_index = 0
-        thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
+        thumbnails = (check_and_get_thumbnails(self.import_folder_path, self.study_uid)
+                      if thumbnail_files is None else thumbnail_files)
         if thumbnails:
             # History-first, then numeric series-number order (ascending:
             # smallest at top). A thumbnail file is keyed by its stem = series
@@ -1338,6 +1904,11 @@ class _PWThumbnailsMixin:
                 except RuntimeError:
                     # No running event loop - skip logo check
                     pass
+
+            if self._start_sidebar_build(files=thumbnails):
+                # This exact inventory count controls startup hit/miss routing;
+                # pending presentation must never look like an empty cache.
+                return len(thumbnails)
 
             # ── BATCH ADD: suppress repaints while adding thumbnails ──
             thumb_container = self.thumb_grid.parentWidget()

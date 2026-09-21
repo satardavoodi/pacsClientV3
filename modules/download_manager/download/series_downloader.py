@@ -295,6 +295,9 @@ class SeriesDownloader:
         completed_series = []
         skipped_series = []
         failed_series = []
+        # Retain the UID-scoped destination selected by the normal path. Retry
+        # must not reconstruct a bare number and enter a sibling series' folder.
+        series_output_dirs = {}
         total_downloaded = 0
         total_skipped = 0
         
@@ -421,6 +424,7 @@ class SeriesDownloader:
                         extra={"component": "download", "study_uid": study_uid},
                     )
                 series_output_dir = study_output_dir / _folder_name
+                series_output_dirs[series_info.series_uid] = series_output_dir
 
                 # Enhanced sequential progress logging
                 logger.info("")
@@ -667,7 +671,7 @@ class SeriesDownloader:
                             continue
 
                         s_num = str(s_info.series_number)
-                        s_out = study_output_dir / s_num
+                        s_out = series_output_dirs[series_uid]
 
                         logger.info(f"    🔄 Retrying series {s_num} (attempt {retry_round})...")
 
@@ -995,8 +999,12 @@ class SeriesDownloader:
             # Serial 480-file loop took ~2.2s; parallel drops to ~0.5s (I/O-bound, safe to thread).
             import json as _json
             import concurrent.futures as _cf_dl
+            from PacsClient.utils.dicom_displayability import try_dicom_file_pixel_facts
             instances_to_insert = []
             skipped_count = 0
+            pixel_inventory_verified = True
+            pixel_instance_count = 0
+            display_frame_count = 0
 
             logger.info(f"    💾 [DB-INSERT] Processing {len(dicom_files)} DICOM files for series {series_info.series_number or series_info.series_uid[:20]}...")
             t_decode_headers = now_ms()
@@ -1110,7 +1118,7 @@ class SeriesDownloader:
                             spacing_between_val = float(_sbs)
                     except Exception:
                         pass
-                    return {
+                    record = {
                         'sop_uid': str(sop_uid),
                         'series_fk': _series_pk_ref,
                         'instance_path': str(dcm_file),
@@ -1126,6 +1134,10 @@ class SeriesDownloader:
                         'slice_thickness': slice_thickness_val,
                         'spacing_between_slices': spacing_between_val,
                     }
+                    # Producer-time payload classification runs in this
+                    # subprocess executor, never on Qt. A read failure remains
+                    # unverified instead of becoming a persisted non-pixel fact.
+                    return record, try_dicom_file_pixel_facts(dcm_file)
                 except Exception as dcm_err:
                     logger.debug(f"    ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
                     return None
@@ -1140,8 +1152,15 @@ class SeriesDownloader:
             for _result in _read_results:
                 if _result is None:
                     skipped_count += 1
+                    pixel_inventory_verified = False
                 else:
-                    instances_to_insert.append(_result)
+                    _record, _pixel_facts = _result
+                    instances_to_insert.append(_record)
+                    if _pixel_facts is None:
+                        pixel_inventory_verified = False
+                    elif _pixel_facts[0]:
+                        pixel_instance_count += 1
+                        display_frame_count += int(_pixel_facts[1] or 1)
 
             # Brief yield before DB write.
             await asyncio.sleep(0.005)
@@ -1219,7 +1238,19 @@ class SeriesDownloader:
             # files on disk); a partial/failed index stays NotIndexed → disk path.
             try:
                 from database.dicom_db import mark_series_indexed
-                mark_series_indexed(series_pk, inserted_count, expected_count=len(dicom_files))
+                inventory_complete = bool(
+                    pixel_inventory_verified
+                    and inserted_count == len(dicom_files)
+                    and skipped_count == 0
+                )
+                mark_series_indexed(
+                    series_pk,
+                    inserted_count,
+                    expected_count=len(dicom_files),
+                    pixel_instance_count=(pixel_instance_count if inventory_complete else None),
+                    display_frame_count=(display_frame_count if inventory_complete else None),
+                    series_path=(series_output_dir if inventory_complete else None),
+                )
             except Exception:
                 pass
             log_stage_timing(

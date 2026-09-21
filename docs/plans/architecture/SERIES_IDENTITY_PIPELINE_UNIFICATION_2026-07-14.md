@@ -1,11 +1,30 @@
 # Series-Identity Pipeline Unification — resolve ONCE, thread it, retire the guards
 
-**Status:** PLAN (no code yet) · **Created:** 2026-07-14 · **Owner:** viewer / multi-study
+**Status:** Historical July design; consult OPT-35 in the master plan for current phase status.
+**Created:** 2026-07-14 · **Owner:** viewer / multi-study
 **Directive it serves:** *"the pipeline should be straightforward for showing the series and
 optimizing performance and speed"* + the standing rule
 *"route decisions through the ONE authority, not bespoke checks + flags."*
 
 Master plan: this is **OPT-35**. Extend §9/§15 there; do not start a competing plan.
+
+**Latest September 14 receipt:** Home double-click now uses immutable UID-scoped intent and
+the normal async opener; the user's two-study server-open sample is log-corroborated. Home
+semantic render refresh is code-verified separately and awaits fresh-source live acceptance.
+P3 internal cache migration and P4 Download Manager/growing-thumbnail key migration are not
+complete. Retain the legacy guards: two live PK-guard messages started from `None`, and this
+guard executes before the authoritative SeriesRef DB override. Those initialization messages
+do not establish an authority conflict. Classify initialization/conflict and finish the required
+matrix/observation window before retirement. See OPT-35/OPT-60's current master-plan receipt.
+
+**2026-09-14 implementation note:** `SeriesRef` is already implemented. The patient-tab
+multi-study entry projection now calls the shared pure
+`series_identity.build_multistudy_series_projection`; the old inline loop was removed.
+Missing-number normalization and collision-key allocation retain their existing authorities.
+Fourteen compatibility cases passed before and after extraction, with 171 final focused
+tests and one stateful test passing. This is not completion of the later cache, action,
+Download Manager or legacy-retirement phases. The July decision request at the end of this
+document is historical; it is not a fresh approval gate for already-authorized work.
 
 ---
 

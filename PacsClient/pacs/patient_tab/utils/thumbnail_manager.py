@@ -143,6 +143,7 @@ class CircularProgressborder(QFrame):
     
     def __init__(self, parent=None, theme=None):
         super().__init__(parent)
+        self._effects_retired = False
         self._progress = 0  # 0-100
         self._border_width = 2  # border thickness
         self._downloading = False
@@ -161,9 +162,19 @@ class CircularProgressborder(QFrame):
         self.theme_manager = get_theme_manager()
         
         # Animation for smooth progress updates
-        self._animation = QPropertyAnimation(self, b"progress")
+        self._animation = QPropertyAnimation(self, b"progress", self)
         self._animation.setDuration(400)  # 400ms smooth animation
         self._animation.setEasingCurve(QEasingCurve.InOutCubic)
+
+        # Card-local presentation only; never an authoritative download receipt.
+        self._ready_timer = QTimer(self)
+        self._ready_timer.setSingleShot(True)
+        self._ready_timer.setInterval(450)
+        self._ready_timer.timeout.connect(self._finish_progress_animation)
+        self._ready_hide_timer = QTimer(self)
+        self._ready_hide_timer.setSingleShot(True)
+        self._ready_hide_timer.setInterval(2500)
+        self._ready_hide_timer.timeout.connect(self._hide_ready_label)
         
         # Make background transparent
         self.setStyleSheet("background: transparent; border: none;")
@@ -198,8 +209,20 @@ class CircularProgressborder(QFrame):
         # Raise label to top to ensure it's visible over everything
         self._progress_label.raise_()
 
+    def _accept_effect_update(self):
+        from shiboken6 import isValid
+        return not self._effects_retired and isValid(self)
+
+    def _finish_progress_animation(self):
+        if self._accept_effect_update():
+            self.setReady(True)
+
     def force_green_border(self):
         """Force the border to show green immediately"""
+        if not self._accept_effect_update():
+            return
+        self._ready_timer.stop()
+        self._animation.stop()
         self._is_ready = True
         self._downloading = False
         self._progress = 100
@@ -223,6 +246,8 @@ class CircularProgressborder(QFrame):
         return self._progress
     
     def set_progress(self, value):
+        if not self._accept_effect_update():
+            return
         self._progress = max(0, min(100, value))
         
         # Update progress label text and visibility
@@ -271,6 +296,10 @@ class CircularProgressborder(QFrame):
     
     def setProgressAnimated(self, value):
         """Set progress with smooth animation"""
+        if not self._accept_effect_update():
+            return
+        self._ready_timer.stop()
+        self._ready_hide_timer.stop()
         if self._animation.state() == QPropertyAnimation.Running:
             self._animation.stop()
         
@@ -280,16 +309,23 @@ class CircularProgressborder(QFrame):
         
         # If reaching 100%, trigger ready state after animation
         if value >= 100:
-            QTimer.singleShot(450, lambda: self.setReady(True))  # 450ms = animation time + buffer
+            self._ready_timer.start()
     
     def setDownloading(self, downloading: bool):
         """Set downloading state"""
+        if not self._accept_effect_update():
+            return
+        self._ready_timer.stop()
+        self._ready_hide_timer.stop()
+        self._animation.stop()
         self._downloading = downloading
         if downloading:
             self._is_ready = False
             # Show progress label if downloading
             if self._progress > 0 and self._progress < 100:
                 self._progress_label.setVisible(True)
+            else:
+                self._progress_label.hide()
         else:
             # Hide progress label when not downloading
             self._progress_label.setVisible(False)
@@ -298,6 +334,12 @@ class CircularProgressborder(QFrame):
 
     def setReady(self, ready: bool):
         """Set ready state - FIXED VERSION"""
+        if not self._accept_effect_update():
+            return
+        self._ready_timer.stop()
+        self._ready_hide_timer.stop()
+        self._animation.stop()
+        was_ready = self._is_ready
         self._is_ready = ready
         if ready:
             self._downloading = False
@@ -324,9 +366,10 @@ class CircularProgressborder(QFrame):
                 # Force update immediately
                 self._progress_label.update()
                 
-                # Hide after 2.5 seconds (تغییر از 2000 به 2500)
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(2500, lambda: self._hide_ready_label())
+                # Restart the card-owned presentation interval for this state.
+                self._ready_hide_timer.start()
+        elif was_ready:
+            self._progress_label.hide()
         
         # Force immediate repaint
         self.update()
@@ -334,6 +377,8 @@ class CircularProgressborder(QFrame):
 
     def _hide_ready_label(self):
         """Hide the ready/progress label with safety checks"""
+        if not self._accept_effect_update() or not self._is_ready:
+            return
         try:
             # ✅ FIX: Use _progress_label (the actual attribute) instead of _ready_label
             if not hasattr(self, '_progress_label') or self._progress_label is None:
@@ -368,35 +413,28 @@ class CircularProgressborder(QFrame):
             _tm_logger.debug("error in on_thumbnail_ready: %s", e)
 
     def cleanup(self):
-        """Clean up resources and timers"""
-        try:
-            # Disconnect from the app-lifetime ThemeManager so the closed tab's
-            # thumbnail manager does not stay pinned as a live signal receiver.
-            try:
-                if getattr(self, 'theme_manager', None) is not None:
-                    self.theme_manager.themeChanged.disconnect(self._on_theme_changed)
-            except (TypeError, RuntimeError):
-                pass
-            if hasattr(self, 'dot_timer') and self.dot_timer:
-                self.dot_timer.stop()
-                self.dot_timer.deleteLater()
+        """Retire effects, retaining native children/pixels until their owner deletes them.
 
-            if hasattr(self, '_animation') and self._animation:
-                self._animation.stop()
-                self._animation.deleteLater()
-                
-            # Clean up progress label if it exists
-            if hasattr(self, '_progress_label') and self._progress_label:
-                try:
-                    self._progress_label.setParent(None)  # Remove from parent
-                    self._progress_label.deleteLater()   # Schedule for deletion
-                except RuntimeError:
-                    pass  # Label already deleted
-        except Exception:
-            pass
+        This card has no theme signal subscription. The manager owns that connection.
+        Stopping animations does not emit finished or start a priority-return animation.
+        """
+        from shiboken6 import isValid
+        if self._effects_retired:
+            return
+        self._effects_retired = True
+        if not isValid(self):
+            return
+        self._ready_timer.stop()
+        self._ready_hide_timer.stop()
+        # Include overlapping priority flashes, not just the latest stored reference.
+        for animation in self.findChildren(
+                QPropertyAnimation, options=Qt.FindDirectChildrenOnly):
+            animation.stop()
                 
     def setSelected(self, selected: bool):
         """Set selected state"""
+        if not self._accept_effect_update():
+            return
         self._is_selected = selected
         
         # Update shadow effect for selected state
@@ -871,6 +909,9 @@ class ThumbnailManager(QObject):
 
     def __init__(self, method_change_series, theme=None):
         super().__init__()  # فراخوانی سازنده QObject
+        self._disposed = False
+        self._work_generation = 0
+        self._deferred_callbacks = {}
         self.buttons = []
         self.lst_buttons_name = []
         self.method_change_series = method_change_series
@@ -900,6 +941,94 @@ class ThumbnailManager(QObject):
         self._series_projection_state = {}
         self._series_total_images = {}
         self.thumbnail_image_ready.connect(self._apply_thumbnail_image)
+
+    def _schedule_owned_callback(self, delay_ms, callback):
+        """Schedule GUI work owned by this manager's current state generation."""
+        if self._disposed:
+            return
+        from shiboken6 import isValid
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        generation = self._work_generation
+        owner_ref = weakref.ref(self)
+        self._deferred_callbacks[timer] = callback
+
+        def deliver():
+            owner = owner_ref()
+            if owner is None or not isValid(owner):
+                return
+            pending = owner._deferred_callbacks.pop(timer, None)
+            timer.timeout.disconnect(deliver)
+            timer.deleteLater()
+            if not owner._disposed and generation == owner._work_generation and pending is not None:
+                pending()
+
+        timer.timeout.connect(deliver)
+        timer.start(max(0, int(delay_ms)))
+
+    def _cancel_deferred_work(self):
+        """Retire callbacks without processing events or touching viewer resources."""
+        from shiboken6 import isValid
+
+        self._work_generation += 1
+        for timer in self._deferred_callbacks:
+            if isValid(timer):
+                timer.stop()
+                timer.timeout.disconnect()
+                timer.deleteLater()
+        self._deferred_callbacks.clear()
+        self._progress_update_pending.clear()
+        self._progress_update_last_ts.clear()
+        self._thumb_state_log_last_ts.clear()
+        self._progress_update_timer_active = False
+        self._border_state_update_pending = False
+        self._last_border_apply_ts = 0.0
+        self._scroll_active = False
+
+    def _retire_card_effects(self):
+        """Retire only this generation's card-local effects before dropping its map."""
+        from shiboken6 import isValid
+        for widget in self.series_widgets.values():
+            border = getattr(widget, 'progress_border', None)
+            if isinstance(border, CircularProgressborder) and isValid(border):
+                border.cleanup()
+
+    def dispose(self):
+        """Terminal, idempotent GUI-owner retirement; widgets retain their Qt parents.
+
+        Unlike reset_all_states(), a disposed manager cannot be reused. Do not
+        force GC, delete native cards here, or share this state across viewers.
+        """
+        if self._disposed:
+            return
+        self._disposed = True
+        self._cancel_deferred_work()
+        self._retire_card_effects()
+        from shiboken6 import isValid
+
+        for publisher, signal_name, slot in (
+            (self.theme_manager, 'themeChanged', self._on_theme_changed),
+            (self, 'thumbnail_image_ready', self._apply_thumbnail_image),
+        ):
+            if not isValid(self) or not isValid(publisher):
+                continue  # Qt already disconnected a destroyed receiver/publisher.
+            try:
+                getattr(publisher, signal_name).disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass  # Publisher may already have been destroyed during shutdown.
+        self.method_change_series = None
+        self.current_study_uid = None
+        self.selected_series = None
+        self._placeholder_cache = None
+        self.buttons.clear()
+        self.lst_buttons_name.clear()
+        self.series_widgets.clear()
+        self.ready_series.clear()
+        self.viewed_series.clear()
+        self._series_uid_to_number.clear()
+        self._series_projection_state.clear()
+        self._series_total_images.clear()
 
     @staticmethod
     def _normalize_total_images(total_images):
@@ -931,9 +1060,11 @@ class ThumbnailManager(QObject):
 
     def set_scroll_active(self, active: bool):
         """Defer heavy thumbnail border repaints while the viewer is scrolling."""
+        if self._disposed:
+            return
         self._scroll_active = bool(active)
         if not self._scroll_active and self._border_state_update_pending:
-            QTimer.singleShot(0, lambda: self.apply_border_states_new(immediate=True))
+            self._schedule_owned_callback(0, lambda: self.apply_border_states_new(immediate=True))
 
     def _progress_update_interval_ms(self) -> float:
         """Thumbnail progress cadence: normal 10 Hz, protected 2 Hz."""
@@ -942,12 +1073,14 @@ class ThumbnailManager(QObject):
         return float(thumbnail_progress_interval_ms())
 
     def _schedule_progress_flush(self, delay_ms: float) -> None:
-        if self._progress_update_timer_active:
+        if self._disposed or self._progress_update_timer_active:
             return
         self._progress_update_timer_active = True
-        QTimer.singleShot(max(0, int(delay_ms)), self._flush_pending_progress_updates)
+        self._schedule_owned_callback(delay_ms, self._flush_pending_progress_updates)
 
     def _flush_pending_progress_updates(self) -> None:
+        if self._disposed:
+            return
         self._progress_update_timer_active = False
         pending = dict(self._progress_update_pending)
         self._progress_update_pending.clear()
@@ -1108,6 +1241,8 @@ class ThumbnailManager(QObject):
 
     def _on_theme_changed(self, theme):
         """Handle theme changes - update all created thumbnails"""
+        if self._disposed:
+            return
         self._theme = theme
         # Update border colors for all existing thumbnails
         for widget in self.series_widgets.values():
@@ -1138,6 +1273,8 @@ class ThumbnailManager(QObject):
 
     def update_thumbnail_image(self, series_number: str, image: QImage):
         """Thread-safe image update (emit to GUI thread)."""
+        if self._disposed:
+            return
         try:
             if image is None or image.isNull():
                 return
@@ -1222,6 +1359,8 @@ class ThumbnailManager(QObject):
 
     def _apply_thumbnail_image(self, series_number: str, image: QImage):
         """Apply image to existing thumbnail widget on GUI thread."""
+        if self._disposed:
+            return
         try:
             series_key = str(series_number)
             widget = self.series_widgets.get(series_key)
@@ -1253,11 +1392,17 @@ class ThumbnailManager(QObject):
 
     def set_current_study_uid(self, study_uid):
         """Set the current study UID - fixes the AttributeError"""
+        if self._disposed:
+            return
         self.current_study_uid = study_uid
         _tm_logger.debug("ThumbnailManager: set current study UID: %s", study_uid)
 
     def reset_all_states(self):
         """Reset all thumbnail states for a new patient"""
+        if self._disposed:
+            return
+        self._cancel_deferred_work()
+        self._retire_card_effects()
         _tm_logger.debug("ThumbnailManager: resetting all states for new patient")
 
         # Clear all ready series
@@ -1382,6 +1527,8 @@ class ThumbnailManager(QObject):
         """
         Apply border states using new CircularProgressborder - OPTIMIZED VERSION
         """
+        if self._disposed:
+            return
         try:
             if self._scroll_active:
                 self._border_state_update_pending = True
@@ -1398,7 +1545,7 @@ class ThumbnailManager(QObject):
                 delay_ms = 0 if elapsed_ms >= frame_budget_ms else int(frame_budget_ms - elapsed_ms)
 
                 self._border_state_update_pending = True
-                QTimer.singleShot(delay_ms, lambda: self.apply_border_states_new(immediate=True))
+                self._schedule_owned_callback(delay_ms, lambda: self.apply_border_states_new(immediate=True))
                 return
 
             # We are executing the coalesced update now.
@@ -1563,6 +1710,9 @@ class ThumbnailManager(QObject):
 
     def create_thumbnail_widget(self, pixmap: QPixmap, label_text: str, sop_instance_uid='test uid', thumbnail_index=0, series_info=None, show_progress=False):
         """Create unified and consistent thumbnail widget for all scenarios"""
+        if self._disposed:
+            return None
+        card_generation = self._work_generation
         try:
             # Canonical series key priority:
             # 1) thumbnail_index (caller passes key_thumbnail/series number)
@@ -1979,7 +2129,15 @@ class ThumbnailManager(QObject):
                 pass
             
             # Setup drag functionality
+            def card_is_current():
+                from shiboken6 import isValid
+                return (isValid(self) and not self._disposed
+                        and card_generation == self._work_generation
+                        and self.series_widgets.get(series_key) is widget)
+
             def on_drag_started(_btn):
+                if not card_is_current():
+                    return
                 # ✅ Use real series_number, NOT thumbnail_index
                 # UX-2: go through set_active_series so the active marker always
                 # overrides an older viewed/ready state and the other cards'
@@ -1991,6 +2149,8 @@ class ThumbnailManager(QObject):
             
             # Setup click functionality
             def on_thumb_clicked():
+                if not card_is_current():
+                    return
                 # UX-2: a click on the ALREADY-active card un-checks it (Qt
                 # toggle) and used to fall through here doing nothing, leaving
                 # the card looking inactive. Re-assert the checked state so a
@@ -2075,6 +2235,8 @@ class ThumbnailManager(QObject):
             
             # Connect retry button to emission signal
             def on_retry_clicked():
+                if not card_is_current():
+                    return
                 try:
                     study_uid = ''
                     if series_info and 'study_uid' in series_info:
@@ -2177,6 +2339,8 @@ class ThumbnailManager(QObject):
     
 
     def set_series_pending(self, series_number: str):
+        if self._disposed:
+            return
         try:
             series_key = self._resolve_series_key(series_number)
 
@@ -2219,6 +2383,8 @@ class ThumbnailManager(QObject):
             _tm_logger.debug("set_series_pending error: %s", e)
 
     def set_series_ready(self, series_number: str):
+        if self._disposed:
+            return
         try:
             series_key = self._resolve_series_key(series_number)
             if self._set_ready_reentrant_guard:
@@ -2260,6 +2426,8 @@ class ThumbnailManager(QObject):
         Cheap and idempotent: a series already marked is a no-op with no
         repaint, so repeated loads of the same series cost nothing.
         """
+        if self._disposed:
+            return
         try:
             series_key = self._resolve_series_key(series_number)
             if series_key in self.viewed_series:
@@ -2303,6 +2471,8 @@ class ThumbnailManager(QObject):
         to a user action, so it must not sit in the 150 ms coalescing window.
         Idempotent and exception-proof — never blocks the series switch.
         """
+        if self._disposed:
+            return False
         try:
             series_key = self._resolve_series_key(series_number)
             if series_key is None or str(series_key) == "":
@@ -2436,7 +2606,7 @@ class ThumbnailManager(QObject):
 
                                 # Flash 3 times
                                 for i in range(3):
-                                    QTimer.singleShot(i * 1000, flash_priority)
+                                    self._schedule_owned_callback(i * 1000, flash_priority)
 
                                 _tm_logger.debug("ThumbnailManager: priority animation started for series %s", series_key)
                         except (RuntimeError, AttributeError):
@@ -2460,6 +2630,8 @@ class ThumbnailManager(QObject):
         """
         Update download progress with PRIORITY indicator
         """
+        if self._disposed:
+            return
         try:
             series_key = self._resolve_series_key(series_number)
             try:
@@ -2657,7 +2829,7 @@ class ThumbnailManager(QObject):
 
                             # Hide after 2.5 seconds (both glass and progress)
                             # Use a lambda with error handling to prevent accessing deleted objects
-                            QTimer.singleShot(2500, lambda w=widget: self._hide_overlay_safe(w))
+                            self._schedule_owned_callback(2500, lambda w=widget: self._hide_overlay_safe(w))
 
                             # Mark as ready
                             self.ready_series.add(series_key)
@@ -2877,6 +3049,8 @@ class ThumbnailManager(QObject):
         Mark series as starting download - THREAD SAFE
         علامت‌گذاری شروع دانلود سری - thread safe
         """
+        if self._disposed:
+            return
         try:
             series_key = self._resolve_series_key(series_number)
             total_images = self._remember_series_total_images(series_key, total_images)
@@ -3034,6 +3208,8 @@ class ThumbnailManager(QObject):
         """
         Mark series as download complete AND ready for display - با سیستم اولویت‌دار
         """
+        if self._disposed:
+            return
         try:
             series_key = self._resolve_series_key(series_number)
             total_images = self._remember_series_total_images(series_key, total_images)
@@ -3183,6 +3359,8 @@ class ThumbnailManager(QObject):
         """
         نمایش پیشرفت دانلود خودکار تامب‌نیل‌ها
         """
+        if self._disposed:
+            return
         try:
             _tm_logger.debug("showing auto-download progress for %d series", total_series)
             
@@ -3202,6 +3380,8 @@ class ThumbnailManager(QObject):
         """
         ایجاد ویجت نمایش پیشرفت دانلود خودکار
         """
+        if self._disposed:
+            return
         try:
             # Auto-download widget: previously stamped Material blue
             # (#3182ce) on every theme. Now derives from the active theme:
@@ -3306,6 +3486,8 @@ class ThumbnailManager(QObject):
         """
         به‌روزرسانی پیشرفت دانلود خودکار
         """
+        if self._disposed:
+            return
         try:
             if hasattr(self, 'auto_download_widget') and self.auto_download_widget:
                 # محاسبه درصد
@@ -3357,7 +3539,7 @@ class ThumbnailManager(QObject):
                     
                     # مخفی کردن پس از 3 ثانیه
                     from PySide6.QtCore import QTimer
-                    QTimer.singleShot(3000, self.hide_auto_download_widget)
+                    self._schedule_owned_callback(3000, self.hide_auto_download_widget)
                 
         except Exception as e:
             _tm_logger.debug("error updating auto download progress: %s", e)

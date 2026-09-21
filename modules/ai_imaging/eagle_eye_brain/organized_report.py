@@ -198,7 +198,8 @@ def _image(data):
     return '<img width="620" src="data:image/png;base64,' + data + '"/>'
 
 
-def write_paged_pdf(html, path):
+def write_paged_pdf(html, path, *, title="AI-PACS | Brain volumetry | Review required",
+                    heading="AI-PACS  |  EAGLE EYE BRAIN"):
     from html.parser import HTMLParser
     from PySide6.QtCore import QRectF, QSizeF, Qt
     from PySide6.QtGui import QPdfWriter, QPageSize, QPainter, QTextDocument, QFont, QColor, QFontMetrics
@@ -212,14 +213,14 @@ def write_paged_pdf(html, path):
     head, body = html.split("<body>", 1)
     parts = body.removesuffix("</body></html>").split(PAGE)
     writer = QPdfWriter(str(path)); writer.setResolution(96); writer.setPageSize(QPageSize(QPageSize.A4))
-    writer.setTitle("AI-PACS | Brain volumetry | Review required")
+    writer.setTitle(title)
     width, height = writer.width(), writer.height()
     documents = []
     for section_index, part in enumerate(parts, 1):
         doc = QTextDocument(); doc.setDefaultFont(QFont("Arial", 9))
         doc.setTextWidth(width - 24); doc.setHtml(head + "<body>" + part + "</body></html>")
         if doc.size().height() > height - 130:
-            raise ValueError(f"Brain report section {section_index} exceeds its printable page; reduce content or split section.")
+            raise ValueError(f"Report section {section_index} exceeds its printable page; reduce content or split section.")
         documents.append(doc)
     painter = QPainter(writer)
     try:
@@ -227,7 +228,7 @@ def write_paged_pdf(html, path):
             if index:
                 writer.newPage()
             painter.setPen(QColor("#203e54")); painter.setFont(QFont("Arial", 13, QFont.Weight.Bold))
-            painter.drawText(12, 24, "AI-PACS  |  EAGLE EYE BRAIN")
+            painter.drawText(12, 24, heading)
             painter.setFont(QFont("Arial", 8))
             text = QFontMetrics(painter.font()).elidedText(parser.patient, Qt.TextElideMode.ElideRight, width - 24)
             painter.drawText(12, 43, text); painter.drawLine(12, 52, width - 12, 52)

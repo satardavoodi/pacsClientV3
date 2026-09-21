@@ -6,6 +6,16 @@ Safety contract: **do not change clinically verified geometry, slice order,
 orientation, or rendering output.** Metadata is only *stored and reused* — never
 recomputed differently.
 
+**As-built extension, 2026-09-17:** the existing series metadata-index record now
+also stores an **independent** verified pixel-object/display-frame summary and the
+managed series-directory revision. Import and Download Manager stamp it only after
+complete indexing. A successful legacy worker scan can batch-backfill that summary
+without claiming geometry metadata is Indexed; its scan revision must still match at
+commit. Local thumbnail projections use it only while the revision remains current.
+All older, partial, external, raced or changed data keeps the prior header-scan fallback.
+This does not activate DB-first geometry for Fast, alter download-completeness truth,
+or share decoded caches across viewer domains. See OPT-58/60 and the thumbnail pipeline.
+
 ## TL;DR / verdict
 
 The direction is correct, and most of it is **already built**:

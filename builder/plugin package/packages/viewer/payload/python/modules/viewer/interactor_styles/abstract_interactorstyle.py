@@ -408,6 +408,9 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         dy = current_pos[1] - self.last_pos[1]
 
         max_slice = self.image_viewer.get_count_of_slices()
+        widget = getattr(self.image_viewer, 'vtk_widget', None)
+        proportional_drag = (
+            getattr(widget, '_active_backend', None) == 'vtk_simpleitk' and max_slice > 100)
         if max_slice <= 25:
             basic_slice_change = 10
             max_step_per_event = 1
@@ -431,7 +434,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
             step = int(dy / basic_slice_change)  # signed steps from drag distance
             if step == 0:
                 return
-            step = max(-int(max_step_per_event), min(int(max_step_per_event), int(step)))
+            if not proportional_drag:
+                step = max(-int(max_step_per_event), min(int(max_step_per_event), int(step)))
 
             # Use display-domain slice so K-flip geometry contracts produce
             # the correct base position. get_display_slice() converts raw_k → display_k
@@ -447,6 +451,10 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                 except Exception:
                     pass
             next_slice = int(base_slice) - step
+            if proportional_drag:
+                # The viewport coalesces to this target; do not discard distance
+                # from a fast mouse event or discard a gesture past an endpoint.
+                next_slice = max(0, min(max_slice - 1, next_slice))
 
             if 0 <= next_slice < max_slice:  # if slice valid
                 try:

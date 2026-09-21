@@ -223,7 +223,9 @@ class SocketDicomClient:
         
         self.socket = None
         self.connected = False
-        self.lock = threading.Lock()
+        # A serialized request may call connect(), which owns this same lock.
+        # Reentrancy is for that owner only; other requests remain serialized.
+        self.lock = threading.RLock()
         
         # Cancellation for preemption checks (R25)
         # Can use external cancel_check callback or internal flag
@@ -751,17 +753,46 @@ class SocketDicomClient:
                 )
                 logger.debug(f"📤 Request sent, waiting for response...")
 
-                # Loop to handle broadcasts and wait for actual response
-                max_broadcast_retries = 10
+                # Notifications are valid frames, not failed request attempts.
+                # Bound a continuous notification stream by elapsed time, not
+                # a count that rejects an otherwise healthy busy server.
+                # Check between frames only: a real large response body keeps
+                # its existing per-recv timeout, not a new whole-batch deadline.
+                response_wait_started = time.monotonic()
+                response_wait_deadline = response_wait_started + self.timeout
                 broadcast_count = 0
                 
-                while broadcast_count < max_broadcast_retries:
+                while True:
+                    if self.is_cancelled():
+                        raise NetworkError("Download cancelled before response header (preemption)")
+                    if broadcast_count and time.monotonic() >= response_wait_deadline:
+                        raise NetworkError(
+                            f"Response wait timeout after {broadcast_count} broadcasts"
+                        )
                     # Receive response length
                     logger.debug(f"📥 Waiting for response header (4 bytes)...")
                     t_recv_header = now_ms()
-                    response_length_bytes = self._safe_recv(4)
-                    if not response_length_bytes:
-                        raise NetworkError("Connection closed by server")
+                    response_length_bytes = bytearray()
+                    while len(response_length_bytes) < 4:
+                        if self.is_cancelled():
+                            raise NetworkError("Download cancelled during header receive (preemption)")
+                        if broadcast_count:
+                            remaining = response_wait_deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise NetworkError(
+                                    f"Response wait timeout after {broadcast_count} broadcasts"
+                                )
+                            # A quiet/fragmented header after notifications must
+                            # not restart a full timeout for each fragment.
+                            self.socket.settimeout(min(self.timeout, remaining))
+                        try:
+                            header_chunk = self._safe_recv(4 - len(response_length_bytes))
+                        finally:
+                            if broadcast_count and self.socket is not None:
+                                self.socket.settimeout(self.timeout)
+                        if not header_chunk:
+                            raise NetworkError("Connection closed by server during response header")
+                        response_length_bytes.extend(header_chunk)
                     log_stage_timing(
                         logger,
                         component="ipc",
@@ -772,6 +803,8 @@ class SocketDicomClient:
                     )
 
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
+                    if response_length == 0:
+                        raise NetworkError("Invalid response length: zero")
 
                     # Validate response length to prevent extremely large allocations.
                     # An implausibly large length means the socket stream has
@@ -854,6 +887,8 @@ class SocketDicomClient:
                     # Parse response
                     t_parse = now_ms()
                     response = json.loads(response_data.decode('utf-8'))
+                    if not isinstance(response, dict):
+                        raise NetworkError("Invalid response envelope: expected JSON object")
                     log_stage_timing(
                         logger,
                         component="ipc",
@@ -866,13 +901,20 @@ class SocketDicomClient:
                     # Check if this is a broadcast message
                     if response.get('type') == 'broadcast':
                         broadcast_count += 1
-                        event_type = response.get('event_type', 'unknown')
                         logger.debug(
-                            f"📡 Received broadcast message (type: {event_type}), continuing to wait for actual response... ({broadcast_count}/{max_broadcast_retries})"
+                            "Received broadcast frame; still waiting for response (skipped=%d)",
+                            broadcast_count,
                         )
                         continue  # Skip this broadcast and wait for the actual response
                     
                     # This is the actual response
+                    if broadcast_count:
+                        logger.info(
+                            "[SOCKET_RESPONSE] endpoint=%s broadcasts_skipped=%d elapsed_ms=%.2f",
+                            endpoint, broadcast_count,
+                            (time.monotonic() - response_wait_started) * 1000,
+                            extra={"component": "ipc"},
+                        )
                     logger.info(
                         f"📥 Response parsed: status={response.get('status', 'unknown')}",
                         extra={"component": "ipc"},
@@ -888,10 +930,6 @@ class SocketDicomClient:
                     )
                     return response
                 
-                # If we exit the loop, we received too many broadcasts without a response
-                logger.error(f"❌ Received {broadcast_count} broadcasts without getting actual response")
-                raise NetworkError(f"Too many broadcast messages, no response received")
-
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
                 if self.is_cancelled() or _is_expected_preemption(e):
                     logger.info(f"⏸️ Request cancelled for {endpoint}: {e}")
@@ -942,10 +980,12 @@ class SocketDicomClient:
                 # endpoint's None-on-error contract is unchanged.
                 if endpoint == 'GetSeriesImages' and "Response too large" in str(e):
                     return {'status': 'error', 'error': str(e), 'message': str(e)}
-                # Handle other socket errors that indicate connection problems
+                # An incomplete/invalid response must retire the stream even on
+                # the final attempt. Otherwise its unread reply could be taken
+                # as the reply to a later request on this persistent connection.
                 if (
-                    isinstance(e, (socket.error, OSError, NetworkError))
-                    and _is_transient_connection_drop(e)
+                    isinstance(e, (NetworkError, UnicodeDecodeError, json.JSONDecodeError))
+                    or (isinstance(e, (socket.error, OSError)) and _is_transient_connection_drop(e))
                 ):
                     self.connected = False
                     if self.socket:
@@ -1358,9 +1398,8 @@ class SocketDicomClient:
                 if file_name in existing_files_set:
                     continue  # pre-existing file, already counted in skipped_count
                 if file_name in written_this_run:
-                    # Duplicate instance within this run — not in the initial
-                    # scan, so count it as newly skipped (matches prior behavior).
-                    skipped_count += 1
+                    # Already counted in downloaded_count. Counting it again
+                    # would inflate Overall Progress without another local file.
                     continue
                 
                 if not dicom_data_b64:
@@ -1530,10 +1569,31 @@ class SocketDicomClient:
             )
             self._emit_resource_probe(viewer_mode="Shared", level=logging.WARNING)
         
-        elapsed = time.time() - start_time
-        
+        # End-of-pagination is not proof that every expected file was saved.
+        # Reuse resume eligibility (including .part/short-file exclusion), once
+        # per series, off the event-loop thread. This is a lower-bound file-count
+        # check, NOT a SOP-manifest, pixel-validity or durable-study certificate.
+        # Keep the existing zero-count metadata contract; its authority is a
+        # separate manifest concern, not inferable from an empty response here.
+        verification_started = time.monotonic()
+        present_count = len(await asyncio.to_thread(self._scan_existing_files, output_dir))
+        cancelled = self.is_cancelled()
+        complete = present_count >= expected_count and not cancelled
+        error_message = None
+        if cancelled:
+            error_message = "Download cancelled (preemption)"
+        elif not complete:
+            error_message = f"Incomplete series: present={present_count} expected={expected_count}"
         logger.warning(
-            f"✅ Series {series_number} complete: "
+            "[SERIES_FILE_COUNT_CHECK] expected=%d present=%d passed=%s cancelled=%s check_ms=%.2f",
+            expected_count, present_count, complete, cancelled,
+            (time.monotonic() - verification_started) * 1000.0,
+            extra={"component": "ipc"},
+        )
+        elapsed = time.time() - start_time
+
+        logger.warning(
+            f"Series {series_number} {'complete' if complete else 'incomplete'}: "
             f"{downloaded_count} downloaded, {skipped_count} skipped ({elapsed:.1f}s)",
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
@@ -1548,13 +1608,14 @@ class SocketDicomClient:
         )
         
         return SeriesDownloadResult(
-            success=True,
+            success=complete,
             series_uid=series_uid,
             series_number=series_number,
             downloaded=downloaded_count,
             skipped=skipped_count,
             total=expected_count,
-            elapsed_seconds=elapsed
+            elapsed_seconds=elapsed,
+            error_message=error_message,
         )
     
     def _scan_existing_files(self, output_dir: Path) -> List[str]:

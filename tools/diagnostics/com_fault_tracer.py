@@ -1,6 +1,6 @@
 """
 Safe, env-gated COM call-site tracer — diagnoses the 0x8001010d
-(RPC_E_WRONGTHREAD) first-chance fault by logging every *Python-initiated* COM
+first-chance fault by logging instrumented *Python-initiated* COM
 call with its thread, COM apartment, and Python stack.
 
 READ-ONLY: it only logs; it never changes app behaviour. When the env var is
@@ -9,12 +9,11 @@ unset (the default), install() is a no-op.
 Enable:   set AIPACS_COM_TRACE=1   then launch the app and reproduce the fault.
 Output:   user_data/logs/com_trace.log
 
-How to read it: when native_fault.log gains a `0x8001010d` entry, the LAST
-`[COM-TRACE]` line in com_trace.log just before it is the culprit. Its
-`thread=` / `apartment=` reveal the wrong-thread call (e.g. a COM object created
-on the STA main thread but called from an MTA worker). If com_trace.log shows NO
-COM call near the fault, the COM is native (Qt OLE/drag-drop, a C-extension) —
-which itself rules out the Python layer and points the investigation at Qt.
+Correlate a `0x8001010d` record in the process-exclusive native log with
+same-process/thread COM traces and lifecycle evidence. A last nearby trace is a
+candidate, not proof of the culprit; missing instrumented calls do not rule out
+Python code. Historical shared native_fault.log headers cannot attribute adjacent
+dumps to a process. This tracer does not classify exceptions as terminal crashes.
 """
 from __future__ import annotations
 

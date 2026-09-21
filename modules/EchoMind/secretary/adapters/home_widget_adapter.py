@@ -204,15 +204,67 @@ class HomeWidgetAdapter:
         patient_id: str,
         patient_name: str,
         study_uid: str,
-    ) -> None:
-        """Single-click selection — the SAME handler a real row click reaches
-        (debounced emit → `_on_patient_single_clicked`): marks the active
-        selection, runs the reconcile, and drives the right-panel thumbnail
-        fast-cache gate. Added 2026-06-04 (fidelity audit §4.1 — was the
-        largest untestable real workflow)."""
+    ) -> dict[str, Any]:
+        """Select one current result and queue the normal debounced selection.
+
+        Resolve from current table rows, never the accumulated search cache or
+        a supplied name. A grouped member UID selects its canonical patient row.
+        Returning means selection is queued, not that thumbnails have rendered.
+        """
         if not self.home:
             raise RuntimeError("Home widget is unavailable")
-        self.home._on_patient_single_clicked(patient_id, patient_name, study_uid)
+        from PySide6.QtCore import QItemSelectionModel, QThread
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None or QThread.currentThread() != app.thread():
+            raise RuntimeError("Patient selection requires the GUI thread")
+        task = getattr(self.home, "_search_task", None)
+        if task is not None and not task.done():
+            raise RuntimeError("Patient search is still in progress")
+
+        panel = self.home.patient_table_widget
+        table = panel.results_table
+        pid = str(patient_id or "").strip()
+        uid = str(study_uid or "").strip()
+        if not pid:
+            raise ValueError("Patient identity is required")
+        matches = []
+        for row in range(table.rowCount()):
+            if table.isRowHidden(row):
+                continue
+            data = panel.get_patient_data_by_row(row) or {}
+            if str(data.get("patient_id") or "").strip() != pid:
+                continue
+            primary_uid = str(data.get("study_uid") or "").strip()
+            members = {str(value).strip() for value in data.get("study_uids", [])}
+            if primary_uid and (not uid or uid == primary_uid or uid in members):
+                matches.append((row, data))
+        if len(matches) != 1:
+            raise ValueError("Patient/study must match exactly one current visible result")
+
+        row, data = matches[0]
+        table.selectionModel().setCurrentIndex(
+            table.model().index(row, 0),
+            QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+        )
+        # Selection signals are synchronous. Recheck before queuing in case a
+        # receiver replaced/sorted the results; never dispatch a stale row index.
+        current = panel.get_patient_data_by_row(table.currentRow()) or {}
+        if (table.currentRow() != row
+                or current.get("patient_id") != data.get("patient_id")
+                or current.get("study_uid") != data.get("study_uid")):
+            raise RuntimeError("Patient selection changed during dispatch")
+        # currentRowChanged already queues when the row changes; this also covers
+        # reselecting the current row. The SAME timer coalesces both, without I/O,
+        # nested event pumping, direct Home callbacks or an independent timer.
+        panel._emit_patient_selection(row)
+        return {
+            "patient_id": str(data.get("patient_id") or ""),
+            "patient_name": str(data.get("patient_name") or ""),
+            "study_uid": str(data.get("study_uid") or ""),
+            "selection_state": "queued",
+        }
 
     def download_studies(self, studies: list[dict[str, Any]], set_current_tab: bool = False) -> None:
         if not self.home:

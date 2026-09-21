@@ -13,13 +13,13 @@ set(APPLICATION_DISPLAY_NAME
   )
 
 set(VERSION_MAJOR
-  0
+  3
   )
 set(VERSION_MINOR
-  1
+  6
   )
 set(VERSION_PATCH
-  0
+  7
   )
 
 set(DESCRIPTION_SUMMARY

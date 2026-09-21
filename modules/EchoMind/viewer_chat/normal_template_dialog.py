@@ -82,7 +82,7 @@ class NormalTemplateLibraryDialog(QDialog):
     libraryChanged = Signal()
 
     def __init__(self, parent=None, records: Optional[List[Dict[str, Any]]] = None,
-                 active_id: str = ""):
+                 active_id: str = "", modality: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Normal Template Library")
         self.setModal(True)
@@ -91,6 +91,7 @@ class NormalTemplateLibraryDialog(QDialog):
         self._records: List[Dict[str, Any]] = list(records if records is not None else nt.load_library())
         self._active_id = str(active_id or "")
         self._dirty_id = ""
+        self._report_modality = nt.canonical_modality(modality)
 
         self.setStyleSheet(f"""
             QDialog {{ background:{CLR_BG_PANEL}; color:{CLR_TEXT}; }}
@@ -208,6 +209,12 @@ class NormalTemplateLibraryDialog(QDialog):
         self.btn_close = QPushButton("Close", self)
         self.btn_close.clicked.connect(self.reject)
         act.addWidget(self.btn_import)
+        self.btn_reception = QPushButton("Reception…", self)
+        self.btn_reception.clicked.connect(self._open_reception)
+        act.addWidget(self.btn_reception)
+        self.btn_organized = QPushButton("Organized templates…", self)
+        self.btn_organized.clicked.connect(self._open_organized)
+        act.addWidget(self.btn_organized)
         act.addWidget(self.btn_delete)
         act.addWidget(self.lbl_count, 1)
         act.addWidget(self.btn_use)
@@ -215,6 +222,9 @@ class NormalTemplateLibraryDialog(QDialog):
         root.addLayout(act)
 
         self._refresh_filters()
+        index = self.cmb_modality.findText(self._report_modality)
+        if index >= 0:
+            self.cmb_modality.setCurrentIndex(index)
         self._refresh_list()
 
     # ── data helpers ────────────────────────────────────────────────────────
@@ -333,6 +343,27 @@ class NormalTemplateLibraryDialog(QDialog):
         self.btn_save_meta.setEnabled(bool(self._dirty_id and self.ed_name.text().strip()))
 
     # ── actions ─────────────────────────────────────────────────────────────
+    def _open_reception(self):
+        from .reception_template_dialog import ReceptionTemplateDialog
+        dialog = ReceptionTemplateDialog(self, modality=self._report_modality)
+        dialog.libraryUpdated.connect(self._reception_imported)
+        dialog.exec()
+
+    def _open_organized(self):
+        from .reception_template_dialog import OrganizedTemplateReviewDialog, library_events
+        dialog = OrganizedTemplateReviewDialog(self)
+        library_events.imported.connect(self._reception_imported)
+        try:
+            dialog.exec()
+        finally:
+            library_events.imported.disconnect(self._reception_imported)
+
+    def _reception_imported(self, records):
+        self._records = list(records)
+        self._refresh_filters()
+        self._refresh_list()
+        self.libraryChanged.emit()
+
     def _save_metadata(self):
         if not self._dirty_id:
             return

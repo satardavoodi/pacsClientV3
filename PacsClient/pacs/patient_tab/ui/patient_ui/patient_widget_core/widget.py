@@ -133,6 +133,7 @@ class PatientWidget(_PWSyncMixin, _PWAdvancedMixin, _PWPanelsMixin, _PWViewersMi
     series_images_progress = Signal(str, int, int)  # (series_number, downloaded_count, total_count)
     # Signal emitted when widget is fully loaded and ready
     loading_complete = Signal()
+    series_metadata_ready = Signal()  # Home placement intents; queued GUI consumption
 
     def __init__(self, parent=None, import_folder_path: str = None, size_init_viewers=(1, 1),
                 caller: CallerTypes = None, study_uid=None, patient_id=None, enable_progressive_mode=False,

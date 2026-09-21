@@ -9,16 +9,18 @@ import time
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
 from PacsClient.utils.diagnostic_logging import now_ms
+from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._drop_hover_dwell import (
+    _DropHoverDwellMixin,
+)
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
     _DROP_HOVER_ARM_MS,
-    _DROP_DWELL_MOVE_TOLERANCE_PX,
     _SERIES_DROP_MIME,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class _VWDragDropMixin:
+class _VWDragDropMixin(_DropHoverDwellMixin):
     """Drag-and-drop: series drop with dwell-timer visual feedback."""
 
     def _is_supported_drop_payload(self, mime_data) -> bool:
@@ -59,74 +61,13 @@ class _VWDragDropMixin:
             return None
         return None
 
-    def _arm_drop_target(self):
-        """QTimer.timeout slot — outer guard (H8, v2.2.9.3)."""
-        try:
-            self._arm_drop_target_impl()
-        except Exception:
-            logger.error(
-                "_arm_drop_target: unhandled exception (suppressed)",
-                exc_info=True,
-            )
-
-    def _arm_drop_target_impl(self):
-        if not self._drop_hover_inside:
-            return
-        self._drop_hover_armed = True
-        self._show_drop_highlight(True)
-
-    def _drag_event_point(self, event):
-        try:
-            return event.position().toPoint()
-        except Exception:
-            return event.pos()
-
-    def _restart_drop_dwell(self, anchor_point=None):
-        self._drop_hover_started_ms = now_ms()
-        self._drop_hover_armed = (_DROP_HOVER_ARM_MS <= 0)
-        if anchor_point is not None:
-            self._drop_hover_anchor_pos = anchor_point
-        if self._drop_hover_armed:
-            self._show_drop_highlight(True)
-            try:
-                self._drop_hover_timer.stop()
-            except Exception:
-                pass
-        else:
-            self._show_drop_highlight(False)
-            self._drop_hover_timer.start(_DROP_HOVER_ARM_MS)
-
-    def _reset_drop_hover_state(self, hide_overlay: bool = True):
-        self._drop_hover_inside = False
-        self._drop_hover_armed = False
-        self._drop_hover_started_ms = 0.0
-        self._drop_hover_anchor_pos = None
-        try:
-            self._drop_hover_timer.stop()
-        except Exception:
-            pass
-        if hide_overlay:
-            self._show_drop_highlight(False)
-
     def dragEnterEvent(self, event):
         if not self._is_supported_drop_payload(event.mimeData()):
             self._reset_drop_hover_state()
             event.ignore()
             return
 
-        self._drop_hover_inside = True
-        if self._is_internal_series_drop_payload(event.mimeData()):
-            # Internal thumbnail drag should be immediately droppable.
-            self._drop_hover_started_ms = now_ms()
-            self._drop_hover_armed = True
-            self._drop_hover_anchor_pos = self._drag_event_point(event)
-            try:
-                self._drop_hover_timer.stop()
-            except Exception:
-                pass
-            self._show_drop_highlight(True)
-        else:
-            self._restart_drop_dwell(anchor_point=self._drag_event_point(event))
+        self._begin_drop_hover(event)
         event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
@@ -134,32 +75,7 @@ class _VWDragDropMixin:
             event.ignore()
             return
 
-        point = self._drag_event_point(event)
-        if self._is_internal_series_drop_payload(event.mimeData()):
-            self._drop_hover_inside = True
-            self._drop_hover_armed = True
-            self._drop_hover_anchor_pos = point
-            self._drop_hover_started_ms = now_ms()
-            try:
-                self._drop_hover_timer.stop()
-            except Exception:
-                pass
-            self._show_drop_highlight(True)
-            event.acceptProposedAction()
-            return
-
-        anchor = self._drop_hover_anchor_pos
-        if anchor is None:
-            self._restart_drop_dwell(anchor_point=point)
-        else:
-            moved = (point - anchor).manhattanLength()
-            if moved > _DROP_DWELL_MOVE_TOLERANCE_PX:
-                self._restart_drop_dwell(anchor_point=point)
-
-        if not self._drop_hover_armed and _DROP_HOVER_ARM_MS > 0:
-            elapsed_ms = now_ms() - float(self._drop_hover_started_ms or 0.0)
-            if elapsed_ms >= _DROP_HOVER_ARM_MS:
-                self._arm_drop_target()
+        self._update_drop_hover(event)
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):

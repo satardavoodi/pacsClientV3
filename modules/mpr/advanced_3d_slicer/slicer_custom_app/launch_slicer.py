@@ -565,7 +565,7 @@ def build_slicer_command(
         'import qt,slicer;'
         'qt.QCoreApplication.setApplicationName("AI-PACS Advanced Viewer");'
         'qt.QCoreApplication.setOrganizationName("AI-PACS");'
-        '[mw.setWindowTitle("AI-PACS Advanced Viewer v0.1") for mw in [slicer.util.mainWindow()] if mw];'
+        '[mw.setWindowTitle("AI-PACS Advanced Viewer v3.6.7") for mw in [slicer.util.mainWindow()] if mw];'
         '_rl=lambda:(lambda pd,w=qt.QWidget():[w.setFixedHeight(0),pd.setTitleBarWidget(w)] if pd else None)(slicer.util.findChild(slicer.util.mainWindow(),"PanelDockWidget"));'
         '[qt.QTimer.singleShot(t,_rl) for t in [50,100,200,500,1000]]'
     )
@@ -986,7 +986,7 @@ import qt
 import slicer
 
 # ===== BRANDING CONSTANTS =====
-BRAND_TITLE = "AI-PACS Advanced Viewer v0.1"
+BRAND_TITLE = "AI-PACS Advanced Viewer v3.6.7"
 
 # ===== HIDE WINDOW IMMEDIATELY - BEFORE ANYTHING ELSE =====
 # This MUST run first to prevent window from flashing
@@ -1234,10 +1234,7 @@ class StandbyCommandListener:
             mw = slicer.util.mainWindow()
             if mw:
                 # Build title with patient ID
-                if patient_id:
-                    title = f"{BRAND_TITLE} | Patient: {patient_id}"
-                else:
-                    title = BRAND_TITLE
+                title = BRAND_TITLE
                     
                 # Apply branding while still hidden
                 mw.setWindowTitle(title)
@@ -1256,7 +1253,7 @@ class StandbyCommandListener:
                 # NOW show the window - user will only see branded title
                 print(f"[AIPACS_STANDBY] Showing window with title: {title}")
                 mw.show()
-                mw.showMaximized()
+                mw.showNormal()
                 mw.raise_()
                 mw.activateWindow()
                 

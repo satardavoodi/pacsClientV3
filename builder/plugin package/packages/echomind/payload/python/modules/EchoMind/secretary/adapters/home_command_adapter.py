@@ -157,9 +157,10 @@ class HomeCommandAdapter:
 
     # ── action: select_patient (single-click → thumbnails) ──────────
     def select_patient(self, plan: CommandPlan, state: dict) -> CommandResult:
-        """Single-click selection (fidelity audit §4.1). Missing name/uid are
-        resolved from the last search's rows so `{"patient_id": ...}` alone is
-        a production-identical click."""
+        """Delegate identity resolution and queued selection to the UI adapter.
+
+        The accumulated search cache is not authority for current row selection.
+        """
         guard = self._available("select_patient")
         if guard is not None:
             return guard
@@ -173,16 +174,6 @@ class HomeCommandAdapter:
             )
         name = str(ent.get("patient_name") or "")
         uid = str(ent.get("study_uid") or "")
-        if not (name and uid):
-            try:
-                rows_fn = getattr(self._home, "read_patient_rows", None)
-                for row in (rows_fn() if callable(rows_fn) else []) or []:
-                    if str(row.get("patient_id")) == patient_id:
-                        name = name or str(row.get("patient_name") or "")
-                        uid = uid or str(row.get("study_uid") or "")
-                        break
-            except Exception:
-                pass
         method = getattr(self._home, "select_patient", None)
         if not callable(method):
             return CommandResult(
@@ -191,7 +182,7 @@ class HomeCommandAdapter:
                 error_code="ADAPTER_INCOMPLETE",
             )
         try:
-            method(patient_id, name, uid)
+            selected = method(patient_id, name, uid)
         except Exception as exc:
             return CommandResult(
                 ok=False, action="select_patient",
@@ -200,8 +191,11 @@ class HomeCommandAdapter:
             )
         return CommandResult(
             ok=True, action="select_patient",
-            message=f"Selected patient {patient_id}",
-            data={"patient_id": patient_id, "patient_name": name, "study_uid": uid},
+            message="Patient selection queued",
+            data=selected if isinstance(selected, dict) else {
+                "patient_id": patient_id, "patient_name": name, "study_uid": uid,
+                "selection_state": "queued",
+            },
         )
 
     # ── action: download_patient ─────────────────────────────────────

@@ -1,5 +1,26 @@
 # Viewer Unification — staged plan (better · faster · simpler) — 2026-06-25
 
+**Current-status qualifier (2026-09-15):** this is a historical staged design, not
+an authoritative list of today's missing implementations. Current switch stable
+identity, progressive state authority and disk/DB SeriesRef readers already default
+on in source. Do not restart S0 or disable those defaults based on older sections.
+Reconcile remaining UID/revision, retry/priority and retirement gates against the
+existing master plan and [current closure audit](../../reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+Unification preserves separate Fast, Advanced and VTK execution/ownership domains.
+
+**Workstream clarification (2026-09-16):** follow the [authoritative boundary and
+two-way handoff](UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#02-workstream-ownership-and-two-way-handoff-user-decision-2026-09-16).
+Historical "one volume cache" language below does not authorize a shared mutable
+store across Fast, Advanced or VTK modules. Unify owns common coordination/contracts;
+viewer owners retain decode/filter/render and decoded-cache internals. Cross-domain
+immutable-volume reuse remains opt-in under the boundary document's section 7.1.
+
+**Execution lock (2026-09-18):** every `NEXT`, pending stage and S0-S5 action below is
+historical context until reconciled through the boundary document's
+[current U0-U5 ledger](UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#current-execution-ledger---2026-09-18).
+Do not resume a stage directly from this document. Only the current open `U*` slice may
+change shared behavior, and its status is recorded in the optimization master plan.
+
 **Premise (user directive):** stop patching symptoms one at a time; look at the whole
 process/structure from above. The recurring viewer bugs are one structural cause. Fix the
 structure and the symptoms disappear *and* the codebase shrinks.

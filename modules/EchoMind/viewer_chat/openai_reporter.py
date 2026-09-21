@@ -376,6 +376,8 @@ def build_report_system_prompt(
     # already strips; the two disagreed about the same input.
     modality = _to_str(modality).strip()
     normal_template = _to_str(normal_template)
+    from modules.EchoMind.normal_templates import PERSIAN_REFERENCE_MARKER
+    normal_template = normal_template.split(PERSIAN_REFERENCE_MARKER, 1)[0]
     if normal_template:
         ##print("NORMAL TEMPLATE IS PRESENTED")
         template_logic = ("""
@@ -383,11 +385,15 @@ def build_report_system_prompt(
 
             WHAT THE TEMPLATE IS
             • The block fenced as ===== NORMAL_TEMPLATE ... ===== END NORMAL_TEMPLATE below is the
-              PHYSICIAN'S OWN report template for a NORMAL study of this type. It is their house
+              PHYSICIAN'S OWN report template for reuse. Normal text is the normal-study baseline;
+              named pathology codes and fillable fields are conditional content, not that baseline.
+              It is their house
               style: their sections, their order, their headings, their wording.
             • It is a TEMPLATE, not patient data. Nothing in it is an observation about THIS patient
               until you keep it.
-            • The dictation contains ONLY the abnormal findings. Your job is to merge the two:
+            • The dictation may contain abnormalities, positive benign findings, measurements,
+              normal observations, history, codes, choices, recommendations and corrections.
+              Your job is to merge the two:
               the physician's pathology, expressed inside the physician's template.
 
             STRUCTURE AND STYLE — FOLLOW THE TEMPLATE, NOT YOUR OWN HABITS
@@ -446,8 +452,13 @@ def build_report_system_prompt(
             • ORGANIZATION: the template's OWN section structure governs 'Normal Findings' —
               keep its headings, its order and its wording. Do NOT re-group the physician's
               template to match a different scheme. The REPORT ORGANIZATION rule above still
-              applies to 'Pathological Findings', and to any normal content the template does
-              not cover.
+              applies to 'Pathological Findings'. TEMPLATE NORMALS ARE EXHAUSTIVE:
+              do not fill gaps with default normals, even when a modality rule lists other
+              organs. Keep unaffected template statements; remove conflicting statements or
+              narrow a grouped statement to its unaffected members. Never invent a replacement
+              normal template. Keep dictated pathology separately, numbered and one finding
+              per paragraph. Before returning, check every normal claim against the supplied
+              template and remove any claim with no source in it.
 
             OUTPUT
             • This block governs the CONTENT of the findings sections. It does NOT define the JSON
@@ -2677,6 +2688,75 @@ def build_report_system_prompt(
         f"{modality_logic.strip()}\n\n"
 
 )
+    if normal_template:
+        system_prompt += (
+            "\nON-REQUEST TEMPLATE CODES AND FIELDS:\n"
+            "A supplied template can contain normal baseline text, fillable fields and named "
+            "pathology macros. Blocks between BEGIN ON_REQUEST_PATHOLOGY_CODE and "
+            "END ON_REQUEST_PATHOLOGY_CODE are conditional macros, NEVER normal findings. "
+            "Read their Code name and Region and the complete original sentences. Explicitly "
+            "named code sections in legacy templates have the same conditional meaning. "
+            "Do not activate a code just because it exists, the patient has a related finding, "
+            "or its name occurs in a negated/cancelled instruction. An explicit physician request "
+            "to bring/use a code authorizes expansion of its source sentences as dictated pathology. "
+            "Match spoken names across languages and obvious transcription variants only when "
+            "the intended source code is unambiguous and its anatomy/modality fits the study. "
+            "For example, a request for the lumbar degenerative code must not select a cervical "
+            "code. Atrophy/small-vessel code wording must come from the supplied source, not "
+            "medical memory. Never manufacture a missing code or silently choose between "
+            "ambiguous codes; explicitly request clarification without presenting the unresolved "
+            "request as a clinical finding. A negative finding is not a request to expand a code. "
+            "Expand every applicable source sentence of the requested code, preserving wording, "
+            "negation, uncertainty and meaning. The physician's explicit corrections, exclusions, "
+            "levels, laterality and measurements override the macro. Never guess missing values. "
+            "Deduplicate repeated code invocations. Put expanded abnormalities in Pathological Findings, "
+            "numbered with one finding per paragraph, and remove/narrow only conflicting baseline "
+            "normal statements. Preserve unaffected baseline normals. Do not output code labels, "
+            "boundary markers or unused macro sentences as patient findings. "
+            "BEGIN TEMPLATE_FIELDS / END TEMPLATE_FIELDS contain optional fillable sentences, "
+            "not established normal findings. Fill only with explicitly dictated applicable values; "
+            "never infer a value, level or severity, and identify required missing information "
+            "for clarification. Unfilled fields and unrequested macros cannot populate normals, "
+            "pathology, technique or impression. These rules apply only when a template is supplied.\n"
+            "\nFINAL TEMPLATE PRECEDENCE: The supplied normal template is the exclusive source "
+            "of normal findings for EVERY modality and every normal section in its JSON schema. "
+            "Modality examples and defaults are not additional template content. Keep unaffected "
+            "template wording and order; remove or narrow only statements contradicted by the "
+            "dictated pathology, subject to the sex-specific and unfilled-placeholder exclusions. "
+            "If no normal statements remain, use an empty string in the required normal field; "
+            "never invent a normal statement to fill it. Preserve all dictated abnormalities "
+            "even outside the template. Do not copy a normal-study impression over pathology.\n"
+            "\nTEMPLATE MERGE FIDELITY CHECK (perform silently before returning JSON):\n"
+            "1. Account for each explicitly dictated fact, not just each diagnosis. Retain its "
+            "anatomy, side, number, distribution, morphology, uncertainty and any dictated "
+            "recommendation. Benign positive findings are still positive findings: preserve "
+            "their full described details in findings/axillary fields, not merely a BI-RADS label "
+            "or a normal negative statement. Do not use a generic label to replace several "
+            "explicit observations. Preserve explicit history/comparison information in an "
+            "appropriate existing schema field without inventing new fields.\n"
+            "2. Bind each measurement to the exact organ, side and source slot before rendering. "
+            "Keep supplied order, precision and units; use the source slot unit only when the "
+            "dictation provides no conflicting unit. Never relabel an explicit measurement unit. "
+            "Only two dictated dimensions must remain two dimensions; preserve both rather than "
+            "dropping them because the source has three blanks. Leave the unprovided dimension "
+            "out and identify missing information when necessary. Never copy a measurement "
+            "from one side to the other. The latest explicit correction replaces the old value.\n"
+            "3. Treat alternative density/composition, history, assessment and recommendation "
+            "sentences in TEMPLATE_FIELDS or TEMPLATE_OPTIONS as a choice bank, not simultaneous patient facts. "
+            "Resolve a spoken parent-code plus option only from the supplied bank: FL1 selects "
+            "option 1 under FL, and BCB selects B under BC when those entries exist. These are "
+            "history/composition choices, not pathological findings. Never confuse density B "
+            "with BI-RADS 2, or silently repair an unclear spoken code to another category. "
+            "Select only the unambiguous dictated choice; preserve dictated breast composition "
+            "and per-side BI-RADS in their dedicated fields. If unclear, flag for clarification "
+            "rather than infer it from the template, other findings or an old report.\n"
+            "4. For every final normal assertion, verify a supporting source-template clause "
+            "and no contradiction with any dictated or explicitly activated code finding. "
+            "If one paired organ is abnormal, narrow only the affected clause to the untouched "
+            "side; do not erase unrelated normal attributes. Do not insert normal muscles, "
+            "projections, regions or structures from modality examples when absent from the "
+            "template. A generic normal sentence must never overwrite a positive benign finding.\n"
+        )
     return system_prompt
 
 
@@ -2775,6 +2855,8 @@ def reporter(
     # is a live behaviour change, so it has a kill switch.
     if modality and _report_validation_enabled():
         raw_content = _validate_report_json(raw_content, modality.lower())
+    from modules.EchoMind.normal_templates import remember_report_template
+    remember_report_template(raw_content, normal_template)
     return {
         "content": raw_content,
         "usage": {
@@ -3122,6 +3204,15 @@ def EagleEyeImageAnalysis(
         "temperature": float(temperature),
         "max_tokens": int(max_tokens or EAGLE_EYE_MAX_TOKENS),
     }
+    # Preserve the tested company Astra profile without changing other models
+    # or the explicit, user-configured direct-provider transport.
+    if payload["model"].removeprefix("openai/") == "gpt-6-astra":
+        payload["max_completion_tokens"] = payload.pop("max_tokens")
+        payload.pop("temperature")
+        payload["reasoning_effort"] = "medium"
+        for block in user_content:
+            if block.get("type") == "image_url":
+                block["image_url"]["detail"] = "original"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -3453,8 +3544,12 @@ STRICT RULES:
 def translate_report(
     user_msg: str,
     CENTER_Key: Optional[str] = None,
-    model: str = PRIMARY_REPORT_MODEL):
+    model: str = PRIMARY_REPORT_MODEL,
+    *, template_reference: Optional[dict] = None):
     user_msg = _to_str(user_msg)
+    from modules.EchoMind import normal_templates as template_library
+    if template_reference is None:
+        template_reference = template_library.report_template_reference(user_msg)
     m = Manage.instance()
     center, api_key = m.get_center_and_gapgpt_key()
     token_instructions = """
@@ -3604,7 +3699,7 @@ def translate_report(
     payload = {
         "model": (_to_str(model).strip() or "Unknown"),
         "messages": [
-            {"role": "system", "content": token_instructions},
+            {"role": "system", "content": token_instructions + template_library.persian_template_translation_prompt(template_reference)},
             {"role": "user", "content": user_msg}
         ]
     }
@@ -3646,7 +3741,7 @@ def translate_report(
     #  RETURN THE AI OUTPUT
     # ------------------------------------------------------
     return {
-        "content": result["choices"][0]["message"]["content"],
+        "content": template_library.reuse_persian_template_wording(user_msg, result["choices"][0]["message"]["content"], template_reference),
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -4275,7 +4370,7 @@ def correction(
     # ------------------------------------------------------
     #  RETURN AI MESSAGE
     # ------------------------------------------------------
-    return {
+    revised = {
         "content": result["choices"][0]["message"]["content"],
         "usage": {
             "prompt_tokens": prompt_tokens,
@@ -4284,7 +4379,9 @@ def correction(
             "model": (_to_str(model).strip() or "Unknown"),
             "center": (_to_str(center).strip() or "Unknown")
         }
-    }     
+    }
+    from modules.EchoMind.normal_templates import inherit_report_template
+    return inherit_report_template(user_report, revised)
 
 # ============================
 # 🔹 Example Test

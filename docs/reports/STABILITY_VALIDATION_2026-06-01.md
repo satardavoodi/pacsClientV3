@@ -1,6 +1,17 @@
 # AI-PACS — Stability, Responsiveness & Crash-Resistance Validation
 **Date:** 2026-06-01 (local +03:30)  ·  **Build:** source build, `.venv` (Python 3.13.5)  ·  **Live app under observation:** PID 66964
 
+> **Current-source correction — 2026-09-13:** Keep the live measurements below as
+> historical evidence, but do not use §9b's original conclusion as proof that thumbnail-manager
+> ownership was fixed. The cited `thumbnail_manager.py:266 cleanup` belonged to
+> `CircularProgressborder`, not `ThumbnailManager`; commit `6617bca0` placed the intended
+> disconnect in the wrong class. Current `ThumbnailManager` has no manager-level disposal method.
+> The observed RSS/thread improvement may reflect the other controller, executor, timer, and tab
+> registry fixes plus the short soak; it cannot isolate or validate the missing manager teardown.
+> A later real-PySide6 probe also disproved the stronger assertion that the theme connection alone
+> retains a standalone manager. The confirmed retention edge is an outward priority callback whose
+> lambda closes over the patient widget/home owner; delayed callbacks remain a separate risk.
+
 ---
 
 ## 0. Method & scope
@@ -23,7 +34,7 @@ What improved (verified):
 - **Thumbnail/download socket path is healthy** (237–563 ms fetches, success signature intact, no port-105/45 s-timeout failures).
 
 What is still open:
-- **Residual memory growth.** 14 / 84 sessions still trip the leak heuristic (down from 31/66 ≈ 47% → 17%). Consistent with the **ThemeManager `themeChanged`-disconnect fix (audit item "P1") still being deferred.**
+- **Residual memory growth.** 14 / 84 sessions still trip the leak heuristic (down from 31/66 ≈ 47% → 17%). The short historical soak cannot attribute that growth to one signal. Current probes identify an outward patient-priority callback as a confirmed retention edge; the theme signal alone did not retain a standalone manager.
 - **Recurring COM-wrong-thread fault `0x8001010d` (RPC_E_WRONGTHREAD): 97 occurrences** in the current `native_fault.log` (up from "40+" on 5/31). The app survives each (first-chance), but it is a real threading/COM-apartment bug and a latent crash risk.
 - **UI responsiveness stalls up to 3.0 s** from synchronous audio I/O on the main thread (`attachments_dropdown._load_audio`).
 - **A download-manager drag/visibility stall-hardening feature is specified by the test-suite but absent from the build** (17 contract tests fail), plus a failing drag-preempt behavior.
@@ -133,10 +144,20 @@ def _update_lang_buttons_visibility(self):
 ### F4 — Series load-on-demand failures (graceful) · Severity: LOW (monitor)
 **Evidence:** ~20+ `change_series_on_viewer: async load-on-demand FAILED … preview remained active` in `app.log` (21–1278 ms). Fallback keeps the preview, so it is not user-blocking. Monitor for frequency growth; not a blocker.
 
-### F5 — Residual memory growth / ThemeManager "P1" deferred · Severity: MEDIUM (long-session)
+### F5 — Residual memory growth / thumbnail ownership incomplete · Severity: MEDIUM (long-session)
 **Evidence:** 14/84 sessions still leak-flagged; recent sessions grow +120…+386 MB before close.
-**Root cause (per 5/31 audit):** each patient tab connects ~10 child widgets to the app-lifetime `ThemeManager.themeChanged` singleton and never disconnects on close, pinning the tab's object graph. The 5/31 audit applied items 1–4 (excepthooks, DB backoff cap, timer parenting, header-executor shutdown) but **deferred the `themeChanged`-disconnect ("P1")** pending soak validation.
-**Recommendation:** apply P1 (disconnect `themeChanged` in the ~10 widget close/cleanup methods listed in the audit) and re-run the soak sampler to confirm RSS returns toward baseline per cycle. This is the single highest-leverage change for "slows down / auto-closes after a while."
+**Corrected root-cause status:** the original audit inferred that app-lifetime theme connections
+pinned the tab graph, but current real-PySide6 probes do not reproduce that retention: a standalone
+manager remains collectible while connected, and an immediate right-panel manager is released
+after its cards are deleted. A separate outward priority connection is reproducibly strong: its
+home callback lambda closes over the patient widget, and the synthetic owner/manager graph is
+released only after disconnect. Static delayed callbacks may also retain stale generations.
+**Current recommendation:** preserve valid existing teardown, then implement OPT-60 as a guarded
+ownership slice: fail-before tests, disconnect the confirmed outward callback, add idempotent
+owner-driven `ThumbnailManager` disposal, clear back-references/pending state, and cancel or
+generation-gate delayed callbacks. Re-run a multi-cycle soak afterward. Eleven measured full
+GUI-thread collections took 149.1–1501.1 ms (median 234.1 ms), but do not move global GC to a
+worker where Qt/VTK finalizers may run. Explicit teardown comes first.
 
 ### F6 — Download-manager drag/visibility stall-hardening absent · Severity: MEDIUM (responsiveness/regression)
 **Evidence:** 17 contract tests in `test_dm_rebuild_drag_skip` / `test_dm_widget_init_contract` / `test_state_store_batch_update` fail because the methods/guards they assert are not in `modules/download_manager` (grep-confirmed).
@@ -159,7 +180,10 @@ Two `python` processes from 5/31 17:53–17:57 (~80 MB, 43–44 threads) plus fo
 
 ## 6. Recommendations (prioritized)
 
-1. **Apply ThemeManager "P1" disconnect (F5)** — highest-leverage fix for long-session memory growth; re-run `process_soak_sampler.py` to verify per-cycle RSS returns to baseline.
+1. **Complete the guarded thumbnail ownership slice (F5 / OPT-60)** — disconnect the confirmed
+   outward priority callback, add a real manager disposal contract and stale-callback guards, then
+   re-run `process_soak_sampler.py`; do not copy the historical misplaced disconnect or treat the
+   theme signal alone as the proven retainer.
 2. **Apply the F1 guard** — trivial, behavior-neutral; removes a recurring async exception.
 3. **Instrument F3 COM call sites** — capture the `0x8001010d` caller, then defer/marshal it; this is the top latent crash risk.
 4. **De-block the audio stall (F2)** — lazy-load on first Play (lowest-risk variant).
@@ -226,17 +250,23 @@ The two safe fixes were applied, statically verified (both files **compile + imp
 
 **Live resource profile (PID 69708, sampler):**
 - **Idle** (5-min sampler): **flat** — RSS 416.9 → 421.2 MB, threads 29–35, handles stable → **no idle leak**.
-- **One open/view/close cycle:** idle 462 MB / 33 thr / 1912 hnd → peak **520 MB / 83 thr / 2106 hnd** → ~1 min post-close 498 MB / 65 thr / 2064 hnd. Resources **release gradually but not fully to baseline within a minute** (+36 MB, +32 threads). No hard runaway, but it **reinforces F5** (ThemeManager P1 deferred). NB: this is the first *direct* thread measurement — the headless soak analyzer couldn't parse thread counts, so its "thread-leak 0/84" was "no data," not "confirmed flat." A multi-cycle live soak is the definitive next check.
+- **One open/view/close cycle:** idle 462 MB / 33 thr / 1912 hnd → peak **520 MB / 83 thr / 2106 hnd** → ~1 min post-close 498 MB / 65 thr / 2064 hnd. Resources **release gradually but not fully to baseline within a minute** (+36 MB, +32 threads). No hard runaway, but it reinforces the need for F5 ownership measurement; it does not identify the theme signal as the cause. NB: this is the first *direct* thread measurement — the headless soak analyzer couldn't parse thread counts, so its "thread-leak 0/84" was "no data," not "confirmed flat." A multi-cycle live soak is the definitive next check.
 
 **Log health during the live test (fixed build):** `btn_lang_en` errors **0 new** since 12:16 (still 3 total, all pre-fix); `native_fault.log` **untouched since 12:16:25 startup** (no `0x8001010d`, no crash); no new ERROR/Exception in `app.log`.
 
 **Live verdict:** responsive and stable through a full clinical cycle on the fixed build.
 
-### 9b. P1 status resolved by multi-cycle soak (6 cycles, PID 69708)
+### 9b. Historical multi-cycle soak (6 cycles, PID 69708; P1 conclusion superseded)
 
-Investigating F5 revealed the **P1 disconnects are already largely applied**: the controller/manager sites disconnect `themeChanged` on teardown — `thumbnail_manager.py:266` (`cleanup`), `thumbnail_panel.py:615` (`cleanup_timers`), `_pw_lifecycle.py:366` (patient-core `closeEvent`, which `close_patient_tab` triggers via `widget.close()`), `_vc_warmup.py:529` (`clear_all_caches_for_close`). The **P8 prerequisite** (pop `dict_tabs_widget`) is in `exit_patient_widget` (lines 196-198). **P2** (per-series `ThreadPoolExecutor.shutdown` in `_pw_series.py:611`) and **P3** (inflight-guard cleanup in `_vc_switch.py:759`) are also already applied. Only the **6 child-widget connects** (`header_widget:63`, `patient_tab_widget:56`, `reception_panel_widget:64`, `service_tab_widget:40`, `sidebar_widget:79`, `toolbar_manager:757`) remain unguarded — the exact sites the audit deferred pending soak validation.
+At the time, F5 was interpreted as showing that controller/manager P1 disconnects were largely
+applied. Current source invalidates the manager part of that interpretation: the cited
+`thumbnail_manager.py:266 cleanup` was `CircularProgressborder.cleanup()`, not a method on
+`ThumbnailManager`. The patient-core, viewer-controller, thumbnail-panel, registry, P2, and P3
+changes remain independently relevant; the table below records the observed process behavior,
+not proof that all manager/outward-callback ownership was correct.
 
-**Soak: 6 open→view→close cycles, distinct patients (44023/44301/44415/44295/44419/44417), ~25 s settle each, sampler attached.**
+**Soak: 6 open→view→close cycles using distinct patient selections, ~25 s settle each,
+sampler attached. Historical patient identifiers were removed from this report.**
 
 | Metric | Audit pre-fix baseline | This soak (post-fix) | Verdict |
 |---|---|---|---|
@@ -245,7 +275,12 @@ Investigating F5 revealed the **P1 disconnects are already largely applied**: th
 | Handles | — | +~8/cycle (2044→~2099) | modest |
 | Crash / freeze | — | **none** — 6 cycles fully responsive | **PASS** |
 
-**Verdict: the controller/manager disconnects + P8 SUFFICE.** Per-cycle RSS growth is below the leak threshold and threads are stable — the 32→128 runaway is gone. The earlier single-cycle "+32 threads" reading was **slow Qt thread-pool release**, which the multi-cycle troughs show settles fully. This meets the audit's own gate to **leave the 6 child-widget edits deferred** (marginal gain vs. the teardown-firing uncertainty the audit flagged); they remain available if a future pass wants to shave the residual ~4.5 MB/cycle. **F5 is effectively controlled** with the currently-applied fixes (F1, F2, P1-controller/manager, P2, P3, P8) — the workstation is stable and responsive under repeated clinical workflow.
+**Corrected verdict:** this run showed materially better RSS and thread behavior for six cycles
+and no crash/freeze during the exercised workflow. It supports the combined effect of the valid
+fixes, but it does **not** prove that `ThumbnailManager` teardown was present or that F5 is closed.
+The remaining manager/outward-callback and delayed-callback ownership must be guarded and fixed
+under OPT-60, followed by a longer source soak. The theme signal alone is not a reproduced
+retainer. No specific native crash is attributed to this gap without a matching runtime trace.
 
 ### 9c. Code-level stress suites (Phase 3/4/5) — harness fixed + run
 
@@ -278,7 +313,7 @@ With the focus-stealers closed and the F1/F2-fixed build, the remaining live pha
 - **Phase 8 — Viewer stability on a 270-slice CT (PASS):** stack scroll (smooth, overlays update), **window/level** (WW/WL 350/50 → 649/249), **zoom** (scale change), **2×2 layout** change (re-fit, no freeze), **dual-viewport** with per-series windowing (mediastinum WW:350 vs auto lung WW:1200), and a **length measurement** (caliper annotation). MPR intentionally not driven (VTK path — honors the "FAST must not instantiate VTK" invariant).
 - **Phase 3 — Multi-patient tabs (PASS):** 4 simultaneous tabs (AMERI CT-chest, MOBASHERI MR-brain 15 series, RAJABI MR-knee, SHOKUHI head-CT). Tab switching restored each tab's full state (layout, measurement, windowing, slice) with **zero cross-tab leakage, no thumbnail mixing, correct study assignment**. Footprint: 3 tabs ~518 MB/77 thr; 4-tab peak 522 MB/85 thr — bounded.
 - **Phase 5 — Critical escalation (PASS):** dragged a still-downloading 198-image series into a viewport → immediate render to slice 100/198, **no black screen, no freeze, no UI block**.
-- **Phase 9 — Crash-resistance edge cases (PASS):** closed a tab mid-download (clean; auto-switched to a sibling tab with state intact); rapid-closed 3 tabs in succession (clean return to list). **0 native faults across all of it.** (Theme-switch-while-viewing UI control not located this session; the ThemeManager teardown path is validated separately in §9b.)
+- **Phase 9 — Crash-resistance edge cases (PASS):** closed a tab mid-download (clean; auto-switched to a sibling tab with state intact); rapid-closed 3 tabs in succession (clean return to list). **0 native faults across all of it.** Theme switching was not exercised, and §9b does not independently validate manager disposal.
 
 **Live verdict: stable, responsive, and crash-free under heavy real-world multi-patient / large-study / escalation / rapid-teardown workflow.**
 

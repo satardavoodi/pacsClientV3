@@ -337,6 +337,12 @@ def resolve_stage_models(pipeline, backend: str = "", model: str = ""):
     return [model or resolve_model(backend, stage) for stage in stages]
 
 
+def resolve_anatomy_model(screening_stage, backend: str = "", model: str = "") -> str:
+    """Resolve anatomy independently, preserving explicit caller/provider pins."""
+    stage = atomic_pipeline.anatomy_mapping_stage_for(screening_stage)
+    return model or resolve_model(backend, stage)
+
+
 def summarize_models(stage_models) -> str:
     """The one-line summary stored as a record's `model`.
 
@@ -1167,6 +1173,8 @@ def run_analysis(
                 )
             if use_atomic:
                 anatomy_stage = atomic_pipeline.anatomy_mapping_stage_for(screening_stage)
+                anatomy_model = resolve_anatomy_model(screening_stage, resolved_backend, model)
+                started["anatomy_model"] = anatomy_model
                 anatomy_outcome = None
                 anatomy_package = None
                 try:
@@ -1176,7 +1184,7 @@ def run_analysis(
                         total=total,
                         artifact_key="anatomy_mapping",
                         stage=anatomy_stage,
-                        stage_model=screening_model,
+                        stage_model=anatomy_model,
                         package=local_package,
                         backend=resolved_backend,
                         send=send,
@@ -1295,6 +1303,7 @@ def run_analysis(
                         "version": atomic_pipeline.ATOMIC_PIPELINE_VERSION,
                         "sent_as_single_request": False,
                         "anatomy_mapping_request": "anatomy_mapping",
+                        "anatomy_mapping_model": anatomy_model,
                         "anatomy_card_count": anatomy_package.image_count,
                         "request_groups": [request.key for request, _outcome in outcomes],
                         "failed_request_groups": failures,

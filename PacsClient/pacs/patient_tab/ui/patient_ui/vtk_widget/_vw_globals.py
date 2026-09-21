@@ -155,6 +155,8 @@ def _throttle_background_threads(throttle: bool) -> None:
             pass
 
 
+# Shutdown ownership only. Registration must never make a download (including an
+# idle prewarm spare) subject to a viewport's scroll/settle lifetime.
 _active_download_pids: set = set()
 
 
@@ -167,31 +169,23 @@ def unregister_download_subprocess(pid: int) -> None:
 
 
 def _nt_suspend_download_subprocesses() -> None:
-    if sys.platform != 'win32' or not _active_download_pids:
-        return
-    desired = 0x0800
-    for pid in list(_active_download_pids):
-        try:
-            handle = ctypes.windll.kernel32.OpenProcess(desired, False, pid)
-            if handle:
-                ctypes.windll.ntdll.NtSuspendProcess(handle)
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception:
-            pass
+    """Compatibility no-op: interaction must not suspend the download process.
+
+    A suspended child can retain an IPC/DB lock or never receive its queued job.
+    A viewport may close, switch series or return without rendering, so its settle
+    callback cannot own download liveness. Keep the child's existing BELOW_NORMAL
+    OS priority; user pause/preemption remains owned by Download Manager. OPT-04.
+    """
+    return
 
 
 def _nt_resume_download_subprocesses() -> None:
-    if sys.platform != 'win32' or not _active_download_pids:
-        return
-    desired = 0x0800
-    for pid in list(_active_download_pids):
-        try:
-            handle = ctypes.windll.kernel32.OpenProcess(desired, False, pid)
-            if handle:
-                ctypes.windll.ntdll.NtResumeProcess(handle)
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception:
-            pass
+    """Compatibility no-op; do not release a native suspension we do not own.
+
+    Apply this policy on a fresh source run, not by hot-reloading a process that
+    was already suspended by the retired interaction policy.
+    """
+    return
 
 
 def terminate_all_download_subprocesses() -> None:

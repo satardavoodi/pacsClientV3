@@ -7,7 +7,7 @@ Prints a single-screen snapshot of the testing framework:
 * Latest KPI run summary       (PASS / WARN / FAIL across workflows)
 * Regression-catalog row count (how many guarded behaviours?)
 * Sandbox test-file count      (code / gui / pywinauto / live)
-* Recent crash count           (native_fault.log delta in last 24h)
+* Native record inventory      (legacy + process files; not a retrospective crash count)
 
 Use this as the project's "is everything green?" check before a
 release, after a refactor, or as the first command of a new session::
@@ -139,18 +139,12 @@ def _probe_test_inventory() -> dict:
 
 
 def _probe_recent_crashes() -> dict:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from tools.diagnostics.native_fault_probe import native_fault_inventory
     nf = PROJECT_ROOT / "user_data" / "logs" / "native_fault.log"
-    if not nf.exists():
-        return {"ok": True, "file_exists": False, "total": 0,
-                "com_inhibit": 0, "mtime": None}
-    text = nf.read_text(encoding="utf-8", errors="replace")
-    lines = text.splitlines()
-    total = sum(1 for l in lines if "Windows fatal exception" in l)
-    com = sum(1 for l in lines if "0x8001010d" in l)
-    mtime = nf.stat().st_mtime
-    age_h = (time.time() - mtime) / 3600.0
-    return {"ok": True, "file_exists": True, "total": total,
-            "com_inhibit": com, "mtime": mtime, "age_hours": age_h}
+    result = native_fault_inventory(nf, 24 * 60)
+    return {**result["data"], "ok": result["ok"], "error_code": result.get("error_code")}
 
 
 # ── rendering ──────────────────────────────────────────────────────────
@@ -257,19 +251,13 @@ def main() -> int:
     # ── Recent crashes ──────────────────────────────────────────────
     cr = _probe_recent_crashes()
     print(f"{C_BOLD}Native faults{C_RESET}")
-    if not cr["file_exists"]:
-        print(f"  {_badge('-')} native_fault.log not present")
+    if not cr["ok"]:
+        print(f"  {_badge('WARN', 'warn')} Native evidence unavailable: {cr.get('error_code')}")
     else:
-        age = cr.get("age_hours", 0)
-        if cr["com_inhibit"] == 0:
-            print(f"  {_badge('OK')} {cr['total']} fatal exception(s) total · "
-                  f"0 COM-inhibit (0x8001010d) · "
-                  f"file age {age:.1f}h")
-        else:
-            print(f"  {_badge('WARN', 'warn')} {cr['total']} fatal "
-                  f"exception(s) total · {cr['com_inhibit']} COM-inhibit · "
-                  f"file age {age:.1f}h")
-            warns += 1
+        print(f"  {_badge('INFO')} {cr['total']} native record(s), {cr['com_inhibit']} COM-inhibit, "
+              f"{cr['files_observed']} source file(s)")
+    print("        Retrospective time window / terminal-crash verdict: inconclusive.")
+    warns += 1
     print()
 
     # ── Verdict ─────────────────────────────────────────────────────

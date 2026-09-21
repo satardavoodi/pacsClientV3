@@ -6,9 +6,9 @@ state bugs**: a display key resolved to the WRONG study depending on the SEQUENC
 previous-exam merges. An example test picks one sequence; a `RuleBasedStateMachine` explores
 *arbitrary* sequences and shrinks any failure to a minimal reproducer.
 
-The model drives the pure `SeriesRef` authority (`PacsClient/utils/series_ref.py`) the way the real
-multi-study viewer does, building `server_series_info` EXACTLY as `_rebuild_multistudy_series_index`
-does (offset keys `slot*1_000_000 + orig`, stamped entries, stable first-seen slot order). It then
+The model drives the pure `SeriesRef` authority (`PacsClient/utils/series_ref.py`) through the
+production shared multi-study projection, also used by `_rebuild_multistudy_series_index`.
+There is no test-local replica of the production key/path construction. It then
 asserts the invariants the whole OPT-35 refactor is supposed to guarantee — under every reachable
 state:
 
@@ -41,28 +41,23 @@ from PacsClient.utils.series_ref import (
     is_offset_key,
     resolve_series_ref,
 )
+from PacsClient.utils.series_identity import build_multistudy_series_projection
 
 SRC = "/src"
 PRIMARY = "STUDY_P"
 
 
 def _build_server_series_info(slot_order, series_by_study, source_root):
-    """Faithful mirror of _rebuild_multistudy_series_index (_pw_thumbnails.py:592)."""
-    info = {}
-    for slot, su in enumerate(slot_order):
-        offset = 0 if slot == 0 else slot * MULTISTUDY_OFFSET
-        for orig in sorted(series_by_study[su]):
-            suid = series_by_study[su][orig]
-            key = str(orig + offset)
-            info[key] = {
-                "series_number": key,
-                "_orig_series_number": str(orig),
-                "_study_slot": slot,
-                "study_uid": su,
-                "series_path": f"{source_root}/{su}/{orig}",
-                "series_uid": suid,
-            }
-    return info
+    """Adapt generated synthetic input into the real production projection."""
+    groups = {
+        study_uid: [{"series_number": str(number), "series_uid": uid}
+                    for number, uid in series.items()]
+        for study_uid, series in series_by_study.items()
+    }
+    return build_multistudy_series_projection(
+        groups, PRIMARY, slot_order, source_root,
+        series_sort_key=lambda row: int(row["series_number"]),
+    ).series_info
 
 
 class MultiStudyIdentityMachine(RuleBasedStateMachine):
@@ -135,6 +130,7 @@ class MultiStudyIdentityMachine(RuleBasedStateMachine):
     @invariant()
     def keys_and_uids_are_unique(self):
         info = self._info()
+        assert len(info) == sum(len(series) for series in self.series_by_study.values())
         keys = list(info.keys())
         assert len(keys) == len(set(keys)), "duplicate display key across studies"
         uids = [e["series_uid"] for e in info.values()]

@@ -37,10 +37,22 @@ def test_no_study_uid_series_attributed_to_primary_then_drop():
     assert "continue" in seg                     # legacy drop still reachable
 
 
-def test_rebuild_still_stamps_primary_slot0():
+def test_rebuild_still_stamps_primary_slot0(tmp_path):
     # The fix's whole point is that the primary (slot 0) entry gets stamped with its
     # own series_path/_orig_series_number so entry-authority resolves it — that
-    # stamping must remain in the multi-study rebuild.
+    # stamping must remain in the shared projection consumed by the rebuild.
+    from PacsClient.utils.series_identity import build_multistudy_series_projection
+
     assert "_rebuild_multistudy_series_index" in _SRC
-    assert "entry['series_path']" in _SRC
-    assert "entry['_orig_series_number']" in _SRC
+    assert "projection = build_multistudy_series_projection(" in _SRC
+    result = build_multistudy_series_projection(
+        {"primary": [{"series_uid": "uid-p", "series_number": "4"}],
+         "secondary": [{"series_uid": "uid-s", "series_number": "4"}]},
+        "primary", [], tmp_path,
+        series_sort_key=lambda row: int(row["series_number"]),
+    )
+    primary = result.series_info["4"]
+    assert primary["_study_slot"] == 0
+    assert primary["study_uid"] == "primary"
+    assert primary["_orig_series_number"] == "4"
+    assert primary["series_path"] == str(tmp_path / "primary" / "4")

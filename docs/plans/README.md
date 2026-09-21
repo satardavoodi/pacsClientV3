@@ -7,12 +7,18 @@ This folder is the canonical home for active planning documents, recovery plans,
 - Put new plan documents under `docs/plans/`
 - Prefer a topical subfolder when it helps avoid name collisions or keeps context clear
 - Keep architecture/source-of-truth docs in their normal folders; only planning-oriented documents belong here
+- Do not create another optimization/Unify roadmap. Optimization priority and status live
+  in `../OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md`; the one allowed shared-pipeline
+  order is the U0-U5 ledger in
+  `architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md`. Dated reports record evidence,
+  not competing execution queues.
 
 ## Current layout
 
 - `plan.md` - master planning ledger
 - `FAST_GROW_BATCHING_HARDENING_2026-05-12.md` - FAST additive grow batching, reliability hardening, KPI contract, and validation notes
 - `analysis/` - evaluation notes, block reviews, baselines, and ClearCanvas handoff planning
+- `analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md` - required provenance and guarded migration order before consolidating thumbnail or priority routes
 - `performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md` - canonical next-step FAST storm/performance plan
 - `performance/FAST_2D_CELL_SEPARATION_PLAN.md` - **✅ COMPLETED (Step 1 of performance surgery)** VTK-free FAST mode viewer cells
 - `performance/` - performance roadmaps, KPI playbooks, and execution plans
@@ -32,6 +38,8 @@ Build-specific planning no longer lives in `docs/plans/`; use `builder/docs/NUIT
 
 ## Recommended starting points
 
+- For shared Unify work, read the U0-U5 ledger first, then the optimization master plan;
+  continue only the current open gate.
 - Read `plan.md` for the broader planning ledger and historical context.
 - Read `performance/FAST_VIEW_PERFORMANCE_EXECUTION_PLAN.md` for the current detailed execution sequence and KPI contract.
 - Read `performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md` for the current canonical next-step performance/orchestration plan.

@@ -22,8 +22,17 @@ from typing import Any, Optional
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
+_REPO_ROOT = _HERE.parents[2]
+sys.path.insert(0, str(_REPO_ROOT))
 
 from client import AipacsControlClient  # noqa: E402
+from tools.diagnostics.native_fault_probe import (  # noqa: E402
+    NativeFaultWindow, native_fault_inventory,
+)
+
+# This transport refuses frozen apps; do not derive logs from an EchoMind payload
+# module's parents. Read outside the app/Qt process, using this source checkout.
+_NATIVE_LOG_PATH = _REPO_ROOT / "user_data" / "logs" / "native_fault.log"
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -122,9 +131,10 @@ def open_patient(patient_id: str, patient_name: str = "", study_uid: str = "") -
 
 @mcp.tool()
 def select_patient(patient_id: str, patient_name: str = "", study_uid: str = "") -> str:
-    """Single-click selection (real handler): marks selection + loads the
-    home right-panel thumbnails via the fast-cache gate. Name/uid auto-resolve
-    from the last search when omitted."""
+    """Select exactly one current visible Home row and queue normal thumbnails.
+    Identity resolves from the current table, not accumulated search history.
+    An optional study UID must belong to that row. Success means queued, not rendered.
+    """
     ent: dict[str, Any] = {"patient_id": patient_id}
     if patient_name:
         ent["patient_name"] = patient_name
@@ -284,9 +294,13 @@ def query_thumbnail_state() -> str:
 
 @mcp.tool()
 def snapshot_health(since_minutes: int = 10) -> str:
-    """SnapshotHealth: resources + native-fault count — the pass/fail probe."""
+    """Resources + bounded historical native inventory, NOT a pass/fail receipt.
+
+    Legacy records lack event timestamps. The requested retrospective window is
+    explicitly inconclusive; run_scenario uses an actual before/after baseline.
+    """
     res = _send("snapshot_resources", {})
-    faults = _send("count_native_faults_since", {"minutes": since_minutes})
+    faults = native_fault_inventory(_NATIVE_LOG_PATH, since_minutes)
     return _j({"resources": res, "native_faults": faults})
 
 
@@ -498,7 +512,10 @@ def burst(commands_json: str, interval_ms: int = 0, seed: int = 0) -> str:
 def run_scenario(path: str, seed: int = 0, loops: int = 0) -> str:
     """Run a scenario file (JSON). Steps: {"action", "entities", "after_ms"}
     plus pseudo-actions: wait_ms {ms}, wait_for_download {study_uid,timeout_s},
-    assert_health {max_new_native_faults}. 'loops' overrides the file's loop
+    assert_health {max_new_native_faults, max_new_watchdog_dumps}. Limits default
+    to zero and are cumulative from scenario start; top-level limits govern the
+    final check. Missing/replaced/oversized evidence or lost connectivity fails.
+    Native records are not terminal-crash counts. 'loops' overrides the file's loop
     count. Relative paths resolve against the scenarios/ folder. Returns a
     summary; full timeline goes to the session JSONL."""
     p = Path(path)
@@ -508,10 +525,19 @@ def run_scenario(path: str, seed: int = 0, loops: int = 0) -> str:
     rng = random.Random(seed or spec.get("seed", 0))
     n_loops = loops or int(spec.get("loop", 1))
     steps = spec.get("steps", [])
-    baseline = _send("count_native_faults_since", {"minutes": 1})
+    resources = _send("snapshot_resources", {}, timeout_ms=5000)
+    pid = (resources.get("data") or {}).get("pid")
+    baseline = NativeFaultWindow(_NATIVE_LOG_PATH, expected_pid=pid)
+    if not resources.get("ok") or type(pid) is not int or pid <= 0:
+        baseline.error = "HEALTH_PROCESS_UNVERIFIED"
     failures: list[dict] = []
     executed = 0
     t_start = time.perf_counter()
+    if baseline.error:
+        return _j({"scenario": spec.get("name", p.stem), "loops": n_loops,
+                   "steps_executed": 0, "total_ms": 0,
+                   "failures": [{"action": "health_preflight", "error": baseline.error}],
+                   "native_faults_after": baseline.check()["data"]})
     for loop_i in range(n_loops):
         for step in steps:
             action = str(step.get("action"))
@@ -530,7 +556,9 @@ def run_scenario(path: str, seed: int = 0, loops: int = 0) -> str:
                 executed += 1
                 continue
             if action == "assert_health":
-                h = _send("count_native_faults_since", {"minutes": 30})
+                h, health_error = _check_scenario_health(baseline, ent)
+                if health_error:
+                    failures.append({"loop": loop_i, "action": action, "error": health_error})
                 executed += 1
                 continue
             res = _send(action, ent, timeout_ms=int(step.get("timeout_ms", 60000)))
@@ -539,13 +567,37 @@ def run_scenario(path: str, seed: int = 0, loops: int = 0) -> str:
                 failures.append({"loop": loop_i, "action": action,
                                  "error": res.get("error_code"), "message": res.get("message")})
     total_ms = round((time.perf_counter() - t_start) * 1000.0, 1)
-    health = _send("count_native_faults_since", {"minutes": max(1, int(total_ms / 60000) + 2)})
+    health, health_error = _check_scenario_health(baseline, spec)
+    if health_error:
+        failures.append({"action": "final_health", "error": health_error})
     summary = {"scenario": spec.get("name", p.stem), "loops": n_loops,
                "steps_executed": executed, "total_ms": total_ms,
                "failures": failures, "native_faults_after": health.get("data"),
                "session_log": str(_session_path or "")}
     _record("scenario_summary", summary)
     return _j(summary)
+
+
+def _check_scenario_health(baseline: NativeFaultWindow, limits: dict) -> tuple[dict, str | None]:
+    """External diagnostic I/O; verify the same live app using its resource probe."""
+    health = baseline.check()
+    if not health.get("ok"):
+        return health, health["error_code"]
+    resources = _send("snapshot_resources", {}, timeout_ms=5000)
+    if not resources.get("ok"):
+        return health, "HEALTH_TRANSPORT_UNAVAILABLE"
+    if (resources.get("data") or {}).get("pid") != baseline.expected_pid:
+        return health, "HEALTH_PROCESS_CHANGED"
+    for field, option, code in (
+        ("total", "max_new_native_faults", "NATIVE_FAULT_LIMIT"),
+        ("watchdog_dumps", "max_new_watchdog_dumps", "NATIVE_WATCHDOG_LIMIT"),
+    ):
+        value = limits.get(option, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return health, "INVALID_HEALTH_LIMIT"
+        if health["data"][field] > value:
+            return health, code
+    return health, None
 
 
 # ── app lifecycle tools (launch / dialogs / login / monitors / ready) ─

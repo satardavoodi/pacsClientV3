@@ -1,4 +1,14 @@
-# AI-PACS Reliability Patchset — P1–P4 (ready to apply) — 2026-05-31
+# AI-PACS Reliability Patchset — P1–P4 (historical proposal) — 2026-05-31
+
+> **Current-source correction — 2026-09-13:** This file preserves the 2026-05-31
+> proposal and its original line references; it is not a ready-to-apply patchset for the
+> current tree. In particular, the proposed `ThumbnailManager.cleanup()` site did not
+> exist. Commit `6617bca0` inserted the intended theme disconnect into
+> `CircularProgressborder.cleanup()` instead. Current `ThumbnailManager` connects to the
+> app-lifetime `ThemeManager.themeChanged` signal but has no manager-level `cleanup()` or
+> `dispose()`. Do not copy the P1 thumbnail snippet below. The replacement must begin with
+> fail-before lifecycle guards and an idempotent owner-driven manager disposal contract;
+> it is tracked as OPT-60.
 
 Companion to `RELIABILITY_SOAK_AUDIT_2026-05-31.md`. These four fixes touch the
 viewer/download/teardown paths, so they are delivered as **exact, reviewable diffs to apply on
@@ -6,7 +16,8 @@ the Windows source build and verify with the GUI + soak sampler** — not applie
 pass. (P5, DB pool dead-thread eviction, was already applied to `database/_pool.py`; the five
 §2 fixes in the audit doc are also already applied.)
 
-Apply order: **P3 → P2 → P4 → P1** (lowest-risk/highest-certainty first). After each, run the
+The original proposed apply order was **P3 → P2 → P4 → P1**. Reconcile every item against
+current code before using it. After each current fix, run the
 soak sampler (`tools/reliability/process_soak_sampler.py`) across scenario **S1/S2** and confirm
 per-cycle RSS/thread growth drops. Line numbers are from the 2026-05-31 tree; re-confirm before
 editing.
@@ -140,7 +151,7 @@ worker starting after reconstruction.
 
 ---
 
-## P1 — `themeChanged` never disconnected on tab close → primary memory leak (Critical)
+## P1 — historical `themeChanged` proposal (current thumbnail site was not implemented)
 
 **Sites (10) — each connects a slot to the app-lifetime singleton `ThemeManager.themeChanged`:**
 
@@ -148,7 +159,7 @@ worker starting after reconstruction.
 |---|---|---|
 | `patient_widget_viewer_controller.py:202` | `_on_theme_changed_refresh_viewports` | `clear_all_caches_for_close()` (`_vc_warmup.py:522`) |
 | `patient_widget_core/widget.py:350` | `_on_app_theme_changed` | `closeEvent()` (`_pw_lifecycle.py:349`) / `exit_patient_widget()` |
-| `utils/thumbnail_manager.py:696` | `_on_theme_changed` | `cleanup()` (`thumbnail_manager.py:259`) |
+| `utils/thumbnail_manager.py:696` | `_on_theme_changed` | **Historical error:** no `ThumbnailManager.cleanup()` existed; use the future guarded manager disposal contract, not the line cited here. |
 | `thumbnail_panel.py:69` | `_on_theme_changed` | `cleanup_timers()` (`:606`) |
 | `header_widget.py:63` | `_on_theme_changed` | add/extend `closeEvent` |
 | `reception_panel_widget.py:64` | `_on_theme_changed` | add/extend `closeEvent` |
@@ -179,12 +190,19 @@ Concrete examples:
         except (TypeError, RuntimeError):
             pass
 
-# thumbnail_manager — inside cleanup() (:259):
+# INVALID HISTORICAL EXAMPLE — do not apply. The referenced cleanup belonged to
+# CircularProgressborder, not ThumbnailManager.
         try:
             self.theme_manager.themeChanged.disconnect(self._on_theme_changed)
         except (TypeError, RuntimeError):
             pass
 ```
+
+The correct current boundary is not merely a signal-disconnect line. Owners must dispose the
+manager before card/layout destruction, cancel or generation-gate delayed callbacks, disconnect
+the app-lifetime theme signal, and clear strong back-references. That change remains pending and
+must not alter series identity, drag payloads, DICOM grouping, download behavior, or viewer
+execution domains.
 
 **Prerequisite — make teardown actually run (P8).** This fix only helps if the tab's cleanup runs
 and the widget graph is released. Today `home_widget.dict_tabs_widget[study_uid]` (set at open)

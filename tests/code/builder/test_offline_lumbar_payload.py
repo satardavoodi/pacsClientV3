@@ -38,6 +38,8 @@ def test_installer_copies_model_environment_without_pruning():
 
 
 def test_materializer_includes_bundle_in_same_advanced_package(bundle, tmp_path, monkeypatch, brain_payload):
+    from tests.code.builder.test_eagle_eye_lesion_payload import make_lesion_payload
+    monkeypatch.setenv('AIPACS_EAGLE_EYE_LESION_SOURCE', str(make_lesion_payload(tmp_path / 'lesions')))
     from builder import materialize_plugin_packages as materializer
     from builder.plugin_package_registry import plugin_package_definition_map
     runtime = tmp_path / "slicer"
@@ -61,6 +63,8 @@ def test_materializer_includes_bundle_in_same_advanced_package(bundle, tmp_path,
 
 @pytest.mark.parametrize("reuse", [False, True])
 def test_release_staging_includes_model_for_fresh_and_reused_payload(bundle, tmp_path, monkeypatch, reuse, brain_payload):
+    from tests.code.builder.test_eagle_eye_lesion_payload import make_lesion_payload
+    monkeypatch.setenv('AIPACS_EAGLE_EYE_LESION_SOURCE', str(make_lesion_payload(tmp_path / 'lesions')))
     from builder import build_release, materialize_plugin_packages
     from builder.plugin_package_registry import plugin_package_definition_map
     monkeypatch.setattr(materialize_plugin_packages, "_ensure_lite_viewer_built", lambda: None)

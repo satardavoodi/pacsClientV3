@@ -21,8 +21,9 @@ from modules.offline_cloud_server.service import export_studies_to_offline_cloud
 
 
 # ── IMP-2 (2026-08-05): header-only DICOM reads during import registration ──
-# save_complete_study_info() runs on the GUI thread right after an import's
-# copy job finishes, and used to `dcmread(file)` EVERY imported file IN FULL
+# save_complete_study_info() historically ran on the GUI thread right after an
+# import copy. It now runs in the import registration worker, but it still used
+# to `dcmread(file)` EVERY imported file IN FULL
 # (pixel data included) just to extract six header tags for the instances
 # table. Measured live 2026-08-05 (MRI GA T, 384 files / 66 MB): a 10.6 s
 # MAIN_THREAD_STALL 20:37:04→20:37:14 whose F11 samples sat in pydicom's
@@ -646,6 +647,31 @@ class _HPStudySaveMixin:
                             if instances_to_save:
                                 inserted = insert_instances_batch(instances_to_save)
                                 print(f"[SAVE_INSTANCES] ✅ Saved {inserted} instances for series {series_number}")
+                                # Publish the producer-owned Local catalog summary
+                                # only when this exact import generation copied and
+                                # indexed every destination object.  Existing or
+                                # partial destinations remain Unknown and use the
+                                # legacy worker verifier on first open.
+                                from database.dicom_db import mark_series_indexed
+                                inventory_verified = bool(
+                                    series.get('local_inventory_verified')
+                                    and int(series.get('local_instance_count') or 0) == len(dicom_files)
+                                    and len(instances_to_save) == len(dicom_files)
+                                )
+                                mark_series_indexed(
+                                    series_pk,
+                                    indexed_count=len(instances_to_save),
+                                    expected_count=len(dicom_files),
+                                    pixel_instance_count=(
+                                        int(series.get('local_pixel_instance_count') or 0)
+                                        if inventory_verified else None
+                                    ),
+                                    display_frame_count=(
+                                        int(series.get('local_frame_count') or 0)
+                                        if inventory_verified else None
+                                    ),
+                                    series_path=(series_path if inventory_verified else None),
+                                )
                             else:
                                 print(f"[SAVE_INSTANCES] ⚠️ No instances to save for series {series_number}")
                         else:

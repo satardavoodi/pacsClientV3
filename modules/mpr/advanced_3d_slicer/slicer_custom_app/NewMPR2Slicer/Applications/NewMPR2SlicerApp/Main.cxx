@@ -37,7 +37,7 @@ namespace
 // These match the branding in launch_slicer.py and startup_script.py
 const char* AIPACS_APP_NAME = "AIPacsAdvancedViewer";
 const char* AIPACS_DISPLAY_NAME = "AI-PACS Advanced Viewer";
-const char* AIPACS_WINDOW_TITLE = "AI-PACS Advanced Viewer v0.1";
+const char* AIPACS_WINDOW_TITLE = "AI-PACS Advanced Viewer v3.6.7";
 const char* AIPACS_ORG_NAME = "AI-PACS";
 const char* AIPACS_ORG_DOMAIN = "ai-pacs.local";
 

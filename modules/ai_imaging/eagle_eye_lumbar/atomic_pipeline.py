@@ -245,7 +245,7 @@ analysis.
         label="Lumbar MRI anatomy mapping",
         text=prompt,
         model_feature=base_stage.model_feature,
-        model_default=base_stage.model_default,
+        model_default="gemini-3.1-pro-preview",
         temperature=getattr(base_stage, "temperature", 1.0),
         max_output_tokens=ATOMIC_SCREENING_MAX_OUTPUT_TOKENS,
     )

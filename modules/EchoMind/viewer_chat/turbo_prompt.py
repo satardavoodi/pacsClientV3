@@ -432,9 +432,15 @@ def build_turbo_system_prompt(
     if not isinstance(profile, dict) or mod not in supported_modalities():
         return base
 
-    # The TEMPLATE path (opt-in, AIPACS_TURBO_PROMPT_V2=1). It replaces the whole
-    # prompt rather than narrowing spans inside it, so it is a behaviour change and
-    # defaults off until it has been evaluated against real transcripts.
+    # The regional V2 renderer has no supplied-template slot: rendering it
+    # silently discards the physician's template and generates default normals.
+    # Use the shared template-aware contract for this explicit mode; untemplated
+    # Turbo keeps its existing regional structure and sampling parameters.
+    if str(normal_template or "").strip():
+        return base
+
+    # The regional TEMPLATE path defaults on; AIPACS_TURBO_PROMPT_V2=0 disables
+    # it. It replaces the whole prompt rather than narrowing spans inside it.
     try:
         from .turbo_template import template_v2_enabled
         if template_v2_enabled():

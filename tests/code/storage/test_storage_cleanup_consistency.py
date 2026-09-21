@@ -136,3 +136,43 @@ def test_partial_failure_sets_warning_and_success_false(tmp_path, monkeypatch):
     assert res.success is False
     assert any("db" in w.lower() for w in res.warnings), res.warnings
     assert "WARNING" in res.message
+
+
+def test_directory_size_uses_single_pass_scandir_not_path_rglob(tmp_path, monkeypatch):
+    root = tmp_path / "managed"
+    (root / "a" / "b").mkdir(parents=True)
+    (root / "one.bin").write_bytes(b"1" * 7)
+    (root / "a" / "two.bin").write_bytes(b"2" * 11)
+    (root / "a" / "b" / "three.bin").write_bytes(b"3" * 13)
+
+    def _rglob_is_forbidden(*_args, **_kwargs):
+        raise AssertionError("recursive storage sizing must not use Path.rglob")
+
+    monkeypatch.setattr(Path, "rglob", _rglob_is_forbidden)
+    assert lscm.LocalStorageCleanupManager()._calculate_directory_size(root) == 31
+
+
+def test_clear_all_keeps_database_when_any_patient_file_cannot_be_removed(
+    tmp_path, monkeypatch
+):
+    db, src, _thumb = _setup(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as c:
+        c.execute("INSERT INTO studies(study_uid) VALUES('1.2.locked')")
+    locked = src / "1.2.locked"
+    locked.mkdir()
+    (locked / "image.dcm").write_bytes(b"x")
+    real_rmtree = lscm.shutil.rmtree
+
+    def _fail_locked(path, *args, **kwargs):
+        if Path(path).name == "1.2.locked":
+            raise PermissionError("synthetic file lock")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(lscm.shutil, "rmtree", _fail_locked)
+    result = lscm.LocalStorageCleanupManager().cleanup_patients_folder()
+
+    assert result.success is False
+    with sqlite3.connect(db) as c:
+        assert c.execute(
+            "SELECT COUNT(*) FROM studies WHERE study_uid = '1.2.locked'"
+        ).fetchone()[0] == 1

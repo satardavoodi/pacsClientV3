@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import ctypes
 import time
@@ -285,19 +286,33 @@ class LocalStorageCleanupManager:
         return folder_map
 
     def cleanup_patients_folder(self) -> CleanupResult:
-        files_deleted, folders_touched = self._clear_paths([SOURCE_PATH])
         warnings: List[str] = []
+        file_failures: List[str] = []
+        files_deleted, folders_touched = self._clear_paths(
+            [SOURCE_PATH], failures=file_failures
+        )
+        warnings.extend(file_failures)
         db_ok = True
-        try:
-            db_rows = self._cleanup_patients_db()
-        except Exception as exc:
+        db_rows = 0
+        if file_failures:
+            # Never erase the authoritative DB index when any managed patient
+            # folder could not be removed.  The retained rows keep the failed
+            # files discoverable and make a retry safe instead of creating a
+            # silent orphan on disk.
             db_ok = False
-            db_rows = 0
-            warnings.append(f"patient files deleted but DB cleanup failed: {exc}")
-            logger.error(
-                "[storage-cleanup] patients DB cleanup failed after file deletion: %s",
-                exc, exc_info=True,
+            warnings.append(
+                "patient database was kept because one or more folders could not be removed"
             )
+        else:
+            try:
+                db_rows = self._cleanup_patients_db()
+            except Exception as exc:
+                db_ok = False
+                warnings.append(f"patient files deleted but DB cleanup failed: {exc}")
+                logger.error(
+                    "[storage-cleanup] patients DB cleanup failed after file deletion: %s",
+                    exc, exc_info=True,
+                )
         # Patient images are gone -> their cached thumbnail bytes must not survive in
         # RAM (would otherwise still preview a cleared patient until LRU eviction).
         self._clear_thumbnail_store(warnings)
@@ -308,8 +323,11 @@ class LocalStorageCleanupManager:
             folders_touched=folders_touched,
             files_deleted=files_deleted,
             db_rows_affected=db_rows,
-            message="Patients data folder cleaned and patient-linked DB rows removed."
-                    + ("" if db_ok else " WARNING: DB cleanup failed — run the storage consistency check."),
+            message=(
+                "Patients data folder cleaned and patient-linked DB rows removed."
+                if db_ok
+                else "Patient cleanup stopped safely before database removal. Review the warnings and retry."
+            ),
             warnings=warnings,
         )
 
@@ -432,7 +450,7 @@ class LocalStorageCleanupManager:
                     child.unlink(missing_ok=True)
                     files_deleted += 1
                 elif child.is_dir():
-                    child_files = sum(1 for p in child.rglob("*") if p.is_file())
+                    child_files = self._directory_metrics(child)[1]
                     shutil.rmtree(child, ignore_errors=False)
                     files_deleted += child_files
                     folders_touched += 1
@@ -483,21 +501,76 @@ class LocalStorageCleanupManager:
             ),
         )
 
-    def _calculate_directory_size(self, root: Path) -> int:
-        if not root.exists() or not root.is_dir():
-            return 0
+    @staticmethod
+    def _directory_metrics(root: Path) -> tuple[int, int]:
+        """Return ``(bytes, files)`` with one non-following scandir walk.
 
-        total = 0
+        ``Path.rglob`` followed by ``is_file`` and ``stat`` performs multiple
+        filesystem calls per entry and was measured to take tens of seconds on
+        the thumbnail tree.  ``DirEntry`` reuses enumeration metadata and, by
+        refusing to follow links/reparse points, also prevents a managed-root
+        scan from escaping into another tree.
+        """
         try:
-            for p in root.rglob("*"):
-                if p.is_file():
-                    try:
-                        total += int(p.stat().st_size)
-                    except Exception:
-                        continue
-        except Exception:
-            return total
-        return total
+            root_path = os.fspath(root)
+            if not os.path.isdir(root_path) or os.path.islink(root_path):
+                return 0, 0
+        except OSError:
+            return 0, 0
+
+        total_bytes = 0
+        total_files = 0
+        pending = [root_path]
+        while pending:
+            current = pending.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                pending.append(entry.path)
+                            elif entry.is_file(follow_symlinks=False):
+                                total_bytes += int(entry.stat(follow_symlinks=False).st_size)
+                                total_files += 1
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return total_bytes, total_files
+
+    def _calculate_directory_size(self, root: Path) -> int:
+        return self._directory_metrics(root)[0]
+
+    @staticmethod
+    def _find_named_directories(root: Path, wanted_name: str) -> List[Path]:
+        """Find directories by name with a link-safe scandir traversal."""
+        found: List[Path] = []
+        try:
+            root_path = os.fspath(root)
+            if not os.path.isdir(root_path) or os.path.islink(root_path):
+                return found
+        except OSError:
+            return found
+
+        pending = [root_path]
+        wanted = wanted_name.casefold()
+        while pending:
+            current = pending.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        try:
+                            if not entry.is_dir(follow_symlinks=False):
+                                continue
+                            if entry.name.casefold() == wanted:
+                                found.append(Path(entry.path))
+                            else:
+                                pending.append(entry.path)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return found
 
     def _calculate_printing_usage_bytes(self) -> int:
         unique_dirs: set[Path] = set()
@@ -519,29 +592,30 @@ class LocalStorageCleanupManager:
             pass
 
         # Fallback scan
-        if ATTACHMENT_PATH.exists():
-            for p in ATTACHMENT_PATH.rglob("Filming"):
-                if p.is_dir():
-                    unique_dirs.add(p)
+        unique_dirs.update(self._find_named_directories(ATTACHMENT_PATH, "Filming"))
 
         total = 0
         for d in unique_dirs:
             total += self._calculate_directory_size(d)
         return total
 
-    def _clear_paths(self, paths: List[Path]) -> tuple[int, int]:
+    def _clear_paths(
+        self, paths: List[Path], *, failures: List[str] | None = None
+    ) -> tuple[int, int]:
         total_files = 0
         touched_dirs = 0
         for folder in paths:
             if not folder.exists():
                 continue
             folder.mkdir(parents=True, exist_ok=True)
-            files, touched = self._clear_directory_contents(folder)
+            files, touched = self._clear_directory_contents(folder, failures=failures)
             total_files += files
             touched_dirs += touched
         return total_files, touched_dirs
 
-    def _clear_directory_contents(self, root: Path) -> tuple[int, int]:
+    def _clear_directory_contents(
+        self, root: Path, *, failures: List[str] | None = None
+    ) -> tuple[int, int]:
         files_deleted = 0
         touched_dirs = 0
         for child in list(root.iterdir()):
@@ -550,12 +624,14 @@ class LocalStorageCleanupManager:
                     child.unlink(missing_ok=True)
                     files_deleted += 1
                 elif child.is_dir():
-                    file_count = sum(1 for p in child.rglob("*") if p.is_file())
+                    file_count = self._directory_metrics(child)[1]
                     shutil.rmtree(child, ignore_errors=False)
                     files_deleted += file_count
                     touched_dirs += 1
             except Exception as exc:
                 logger.warning(f"Failed deleting {child}: {exc}")
+                if failures is not None:
+                    failures.append(f"could not remove one managed folder: {exc}")
         return files_deleted, touched_dirs
 
     def _clear_printing_filming_folders(self) -> tuple[int, int]:
@@ -575,7 +651,7 @@ class LocalStorageCleanupManager:
         for fpath in filming_paths:
             try:
                 if fpath.exists() and fpath.is_dir():
-                    count = sum(1 for p in fpath.rglob("*") if p.is_file())
+                    count = self._directory_metrics(fpath)[1]
                     shutil.rmtree(fpath, ignore_errors=False)
                     files_deleted += count
                     touched_dirs += 1
@@ -583,17 +659,14 @@ class LocalStorageCleanupManager:
                 logger.warning(f"Failed deleting filming folder {fpath}: {exc}")
 
         # 2) Defensive fallback: any attachment/**/Filming folders
-        if ATTACHMENT_PATH.exists():
-            for fpath in ATTACHMENT_PATH.rglob("Filming"):
-                if not fpath.is_dir():
-                    continue
-                try:
-                    count = sum(1 for p in fpath.rglob("*") if p.is_file())
-                    shutil.rmtree(fpath, ignore_errors=False)
-                    files_deleted += count
-                    touched_dirs += 1
-                except Exception as exc:
-                    logger.warning(f"Failed deleting fallback filming folder {fpath}: {exc}")
+        for fpath in self._find_named_directories(ATTACHMENT_PATH, "Filming"):
+            try:
+                count = self._directory_metrics(fpath)[1]
+                shutil.rmtree(fpath, ignore_errors=False)
+                files_deleted += count
+                touched_dirs += 1
+            except Exception as exc:
+                logger.warning(f"Failed deleting fallback filming folder {fpath}: {exc}")
 
         return files_deleted, touched_dirs
 
@@ -602,8 +675,12 @@ class LocalStorageCleanupManager:
             cur = conn.cursor()
             rows = 0
 
-            cur.execute("DELETE FROM patients")
-            rows += int(cur.rowcount or 0)
+            # Keep this correct even if a legacy or test connection has SQLite
+            # foreign_keys disabled. The filtered path follows the same explicit
+            # child-to-parent order.
+            for table in ("instances", "series", "studies", "patients"):
+                cur.execute(f"DELETE FROM {table}")
+                rows += int(cur.rowcount or 0)
 
             cur.execute("DELETE FROM download_progress")
             rows += int(cur.rowcount or 0)
@@ -672,11 +749,28 @@ class LocalStorageCleanupManager:
             return 0
 
     @staticmethod
-    def _parse_study_epoch(study_date, study_time, dp_created_at) -> int | None:
-        """Resolve a study's 'age' epoch, preferring the DICOM StudyDate/Time and
-        falling back to the local download timestamp. Returns None when the study
-        cannot be dated at all (so date-based strategies can KEEP it — we never
-        delete data whose age is unknown)."""
+    def _parse_study_epoch(
+        imported_at, dp_created_at, study_date, study_time
+    ) -> int | None:
+        """Resolve local-retention age without confusing it with acquisition age.
+
+        ``studies.imported_at`` is the canonical time the study first entered this
+        workstation.  ``download_progress.created_at`` is the compatibility source
+        for older rows.  DICOM StudyDate/Time is only a final legacy fallback; it
+        describes image acquisition, not local storage age.
+        """
+        for local_value in (imported_at, dp_created_at):
+            value = str(local_value or "").strip()
+            if not value:
+                continue
+            try:
+                return int(datetime.fromisoformat(value).timestamp())
+            except Exception:
+                try:
+                    return int(float(value))
+                except Exception:
+                    continue
+
         sd = str(study_date or "").strip()
         if len(sd) >= 8 and sd[:8].isdigit():
             try:
@@ -691,16 +785,7 @@ class LocalStorageCleanupManager:
                         ss = int(st[4:6])
                 return int(datetime(year, month, day, hh, mm, ss).timestamp())
             except Exception:
-                pass  # malformed date/time -> try the download-time fallback
-        dp = str(dp_created_at or "").strip()
-        if dp:
-            try:
-                return int(datetime.fromisoformat(dp).timestamp())
-            except Exception:
-                try:
-                    return int(float(dp))  # tolerate an epoch stored as text
-                except Exception:
-                    pass
+                pass
         return None
 
     def _gather_patient_age_index(self) -> List[Dict[str, Any]]:
@@ -709,7 +794,7 @@ class LocalStorageCleanupManager:
 
         Built off the REAL schema (patients.patient_pk + studies + download_progress).
         The patients table has no timestamp of its own, so age is derived from each
-        study's StudyDate (download time as fallback). Disk folders are keyed by
+        study's local import/download time (StudyDate is a legacy fallback). Disk folders are keyed by
         study_uid (studies.study_path when set), NOT by patient — matching how the
         rest of the app stores DICOM under SOURCE_PATH/<study_uid>/.
         """
@@ -718,10 +803,13 @@ class LocalStorageCleanupManager:
             cur = conn.cursor()
             cur.execute("PRAGMA table_info(download_progress)")
             dp_cols = {r[1] for r in cur.fetchall()}
+            cur.execute("PRAGMA table_info(studies)")
+            study_cols = {r[1] for r in cur.fetchall()}
+            imported_expr = "s.imported_at" if "imported_at" in study_cols else "NULL"
             if "created_at" in dp_cols:
                 cur.execute(
                     "SELECT p.patient_pk, p.patient_id, s.study_uid, s.study_path, "
-                    "       s.study_date, s.study_time, dp.created_at "
+                    f"       s.study_date, s.study_time, {imported_expr}, dp.created_at "
                     "FROM patients p "
                     "LEFT JOIN studies s ON s.patient_fk = p.patient_pk "
                     "LEFT JOIN download_progress dp ON dp.study_uid = s.study_uid"
@@ -729,11 +817,14 @@ class LocalStorageCleanupManager:
             else:
                 cur.execute(
                     "SELECT p.patient_pk, p.patient_id, s.study_uid, s.study_path, "
-                    "       s.study_date, s.study_time, NULL "
+                    f"       s.study_date, s.study_time, {imported_expr}, NULL "
                     "FROM patients p "
                     "LEFT JOIN studies s ON s.patient_fk = p.patient_pk"
                 )
-            for pk, pid, study_uid, study_path, study_date, study_time, dp_created in cur.fetchall():
+            for (
+                pk, pid, study_uid, study_path, study_date, study_time,
+                imported_at, dp_created,
+            ) in cur.fetchall():
                 rec = records.get(pk)
                 if rec is None:
                     rec = {
@@ -747,7 +838,9 @@ class LocalStorageCleanupManager:
                 if study_uid:
                     rec["study_uids"].append(str(study_uid))
                     rec["study_paths"].append(str(study_path) if study_path else "")
-                    epoch = self._parse_study_epoch(study_date, study_time, dp_created)
+                    epoch = self._parse_study_epoch(
+                        imported_at, dp_created, study_date, study_time
+                    )
                     if epoch is not None and (
                         rec["newest_epoch"] is None or epoch > rec["newest_epoch"]
                     ):
@@ -759,10 +852,16 @@ class LocalStorageCleanupManager:
 
         - "keep_recent_days" / "older_than_days": delete patients whose newest study
           is KNOWN to be older than the cutoff. Undatable patients are kept (safe).
-        - "delete_oldest_count": oldest-first, datable patients before undatable ones,
-          then take the first `value`.
+        - "delete_oldest_count": oldest-first among patients with a known age.
+          Undatable patients are never guessed into an "oldest" selection.
         """
         records = self._gather_patient_age_index()
+        return self._select_records_for_strategy(records, strategy, value)
+
+    @staticmethod
+    def _select_records_for_strategy(
+        records: List[Dict[str, Any]], strategy: str, value: int
+    ) -> List[Dict[str, Any]]:
         value = int(value)
         if strategy in ("older_than_days", "keep_recent_days"):
             cutoff_ts = int(time.time()) - (value * 86400)
@@ -772,19 +871,88 @@ class LocalStorageCleanupManager:
             ]
         if strategy == "delete_oldest_count":
             ordered = sorted(
-                records,
-                key=lambda r: (0, r["newest_epoch"]) if r["newest_epoch"] is not None else (1, 0),
+                (r for r in records if r["newest_epoch"] is not None),
+                key=lambda r: r["newest_epoch"],
             )
             return ordered[: max(0, value)]
         raise ValueError(f"Unknown cleanup strategy: {strategy}")
 
     def count_patients_to_delete(self, strategy: str, value: int) -> int:
         """Count how many patients would be deleted with the given strategy."""
+        return len(self._select_patients_for_strategy(strategy, value))
+
+    def build_patient_cleanup_preview(self, strategy: str, value: int = 0) -> Dict[str, Any]:
+        """Build one worker-safe snapshot for confirmation and progress UX."""
+        records = self._gather_patient_age_index()
+        selected = (
+            list(records)
+            if strategy == "all"
+            else self._select_records_for_strategy(records, strategy, value)
+        )
+        estimated_bytes = 0
+        invalid_paths = 0
+        seen: set[Path] = set()
+        for record in selected:
+            paths = record.get("study_paths", [])
+            for index, study_uid in enumerate(record.get("study_uids", [])):
+                stored_path = paths[index] if index < len(paths) else ""
+                folder, error = self._resolve_managed_study_folder(study_uid, stored_path)
+                if error:
+                    invalid_paths += 1
+                    continue
+                if folder is None:
+                    continue
+                resolved = folder.resolve(strict=False)
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                estimated_bytes += self._directory_metrics(folder)[0]
+
+        unknown_dates = sum(1 for record in records if record.get("newest_epoch") is None)
+        cutoff_epoch = None
+        if strategy in ("older_than_days", "keep_recent_days"):
+            cutoff_epoch = int(time.time()) - (int(value) * 86400)
+        return {
+            "strategy": strategy,
+            "value": int(value),
+            "total_patients": len(records),
+            "selected_patients": len(selected),
+            "kept_patients": len(records) - len(selected),
+            "unknown_date_patients": unknown_dates,
+            "estimated_bytes": estimated_bytes,
+            "invalid_paths": invalid_paths,
+            "cutoff_epoch": cutoff_epoch,
+        }
+
+    @staticmethod
+    def _path_is_within(candidate: Path, root: Path) -> bool:
+        """True only for a descendant of *root* after link-aware resolution."""
         try:
-            return len(self._select_patients_for_strategy(strategy, value))
-        except Exception as e:
-            logger.error(f"Failed to count patients: {e}", exc_info=True)
-            return 0
+            resolved_candidate = candidate.resolve(strict=False)
+            resolved_root = root.resolve(strict=False)
+            return resolved_candidate != resolved_root and resolved_candidate.is_relative_to(
+                resolved_root
+            )
+        except (OSError, RuntimeError, ValueError):
+            return False
+
+    def _resolve_managed_study_folder(
+        self, study_uid: str, stored_path: str
+    ) -> tuple[Path | None, str | None]:
+        """Resolve one deletable study folder or return a fail-closed reason."""
+        fallback = SOURCE_PATH / str(study_uid)
+        candidate = Path(stored_path) if str(stored_path or "").strip() else fallback
+        if not self._path_is_within(candidate, SOURCE_PATH):
+            return None, "stored study path is outside managed patient storage"
+        try:
+            if candidate.exists() and candidate.is_dir():
+                return candidate, None
+            if candidate != fallback and self._path_is_within(fallback, SOURCE_PATH):
+                if fallback.exists() and fallback.is_dir():
+                    return fallback, None
+        except OSError as exc:
+            return None, f"could not inspect a managed study folder: {exc}"
+        return None, None
 
     @staticmethod
     def _chunks(seq: List[Any], size: int = 400):
@@ -862,51 +1030,83 @@ class LocalStorageCleanupManager:
         folders_touched = 0
         patient_pks: List[Any] = []
         all_study_uids: List[str] = []
+        warnings: List[str] = []
+        skipped_patients = 0
 
         for rec in selected:
-            patient_pks.append(rec["patient_pk"])
             study_paths = rec.get("study_paths", [])
+            resolved_studies: List[tuple[str, Path | None]] = []
+            patient_errors: List[str] = []
             for idx, study_uid in enumerate(rec.get("study_uids", [])):
-                all_study_uids.append(study_uid)
-
-                # DICOM folder: prefer studies.study_path, else SOURCE_PATH/<study_uid>.
-                folder: Path | None = None
                 sp = study_paths[idx] if idx < len(study_paths) else ""
-                if sp:
-                    cand = Path(sp)
-                    if cand.exists() and cand.is_dir():
-                        folder = cand
+                folder, error = self._resolve_managed_study_folder(study_uid, sp)
+                if error:
+                    patient_errors.append(error)
+                resolved_studies.append((study_uid, folder))
+
+            # Resolve every path before touching any of this patient's data. A
+            # stale/corrupt DB path therefore fails closed without a partial delete.
+            if patient_errors:
+                skipped_patients += 1
+                warnings.extend(patient_errors)
+                continue
+
+            patient_delete_failed = False
+            seen_folders: set[Path] = set()
+            for _study_uid, folder in resolved_studies:
                 if folder is None:
-                    cand = SOURCE_PATH / study_uid
-                    if cand.exists() and cand.is_dir():
-                        folder = cand
-                if folder is not None:
-                    try:
-                        count = sum(1 for p in folder.rglob("*") if p.is_file())
-                        shutil.rmtree(folder, ignore_errors=False)
-                        files_deleted += count
-                        folders_touched += 1
-                    except Exception as exc:
-                        logger.warning(f"Failed deleting study folder {folder}: {exc}")
+                    continue
+                try:
+                    resolved_folder = folder.resolve(strict=False)
+                    if resolved_folder in seen_folders:
+                        continue
+                    seen_folders.add(resolved_folder)
+                    count = self._directory_metrics(folder)[1]
+                    shutil.rmtree(folder, ignore_errors=False)
+                    if folder.exists():
+                        raise OSError("folder still exists after removal")
+                    files_deleted += count
+                    folders_touched += 1
+                except Exception as exc:
+                    patient_delete_failed = True
+                    warnings.append(f"could not remove one managed study folder: {exc}")
+                    logger.warning("Failed deleting a managed study folder: %s", exc)
 
-                # Best-effort thumbnail folder (THUMBNAIL_PATH/<study_uid>).
+            if patient_delete_failed:
+                skipped_patients += 1
+                warnings.append(
+                    "patient database was kept because its image removal was incomplete"
+                )
+                continue
+
+            patient_pks.append(rec["patient_pk"])
+            patient_uids = [uid for uid, _folder in resolved_studies]
+            all_study_uids.extend(patient_uids)
+
+            # Thumbnails are derived cache. Their failure is visible, but it does
+            # not justify retaining a patient whose authoritative DICOM tree was
+            # removed successfully.
+            for study_uid in patient_uids:
                 thumb_dir = THUMBNAIL_PATH / study_uid
-                if thumb_dir.exists() and thumb_dir.is_dir():
-                    try:
-                        shutil.rmtree(thumb_dir, ignore_errors=True)
-                    except Exception:
-                        pass
+                if not self._path_is_within(thumb_dir, THUMBNAIL_PATH):
+                    warnings.append("thumbnail path escaped managed cache storage")
+                    continue
+                try:
+                    if thumb_dir.exists() and thumb_dir.is_dir():
+                        shutil.rmtree(thumb_dir, ignore_errors=False)
+                except Exception as exc:
+                    warnings.append(f"could not remove one thumbnail cache folder: {exc}")
 
-        warnings: List[str] = []
         db_rows = 0
-        try:
-            db_rows = self._delete_patients_db(patient_pks, all_study_uids)
-        except Exception as exc:
-            warnings.append(f"patient files deleted but DB cleanup failed: {exc}")
-            logger.error(
-                "[storage-cleanup] filtered patient DB cleanup failed after file deletion: %s",
-                exc, exc_info=True,
-            )
+        if patient_pks:
+            try:
+                db_rows = self._delete_patients_db(patient_pks, all_study_uids)
+            except Exception as exc:
+                warnings.append(f"patient files deleted but DB cleanup failed: {exc}")
+                logger.error(
+                    "[storage-cleanup] filtered patient DB cleanup failed after file deletion: %s",
+                    exc, exc_info=True,
+                )
 
         # Cleared patients' cached thumbnail bytes must not survive in RAM.
         self._clear_thumbnail_store(warnings)
@@ -918,8 +1118,12 @@ class LocalStorageCleanupManager:
             files_deleted=files_deleted,
             db_rows_affected=db_rows,
             message=(
-                f"Cleaned {len(selected)} patients matching the filter criteria."
-                + ("" if not warnings else " WARNING: DB cleanup failed — run the storage consistency check.")
+                f"Cleaned {len(patient_pks)} patients matching the filter criteria."
+                + (
+                    ""
+                    if not warnings
+                    else f" Skipped {skipped_patients} patients that could not be removed safely."
+                )
             ),
             warnings=warnings,
         )

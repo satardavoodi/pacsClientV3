@@ -667,6 +667,9 @@ class FilterConfigWidget(QWidget):
         }
         """)
 
+        from Qss.numeric_controls import numeric_control_style
+        self.setStyleSheet(self.styleSheet() + numeric_control_style('#FilterConfigWidget '))
+
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(12)

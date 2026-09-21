@@ -14,10 +14,10 @@ WHAT THE AUDIT FOUND. An install with nothing entered, and an install with junk 
 settings, were already denied everywhere — the premise that Turbo was wide open was
 not true through those routes. Two things were real:
 
-  * THE TEST ACCOUNT. `validate_key(<TEST key>)` returned ok=True/code=TEST and the
-    company key then resolved — full backend and Turbo. That key is a literal string
-    in the shipped binary and `validate_key` is a purely local lookup, so `strings`
-    on the exe was enough to licence yourself.
+  * THE DEMO ACCOUNT. TEST is an owner-approved end-user demo center. Its provider
+    credential remains protected by the same encrypted-envelope mechanism as every
+    other center. It must authenticate by default, while an explicit runtime opt-out
+    can disable it for a restricted deployment.
   * `is_active_backend_configured()` measured "is a string stored", so it said True
     for unvalidated junk and False for a key validated in memory but not yet saved.
 
@@ -83,6 +83,8 @@ def _isolate(monkeypatch):
     """The manager is a process-wide singleton and the registry is module state.
     Both are restored, or these tests would licence (or de-licence) the rest of the
     suite depending on ordering."""
+    monkeypatch.delenv("AIPACS_ENABLE_DEMO_CENTER", raising=False)
+    monkeypatch.delenv("AIPACS_ALLOW_TEST_CENTER", raising=False)
     mgr = APIKeyManager.instance()
     saved = (
         mgr._current_api_key,
@@ -135,53 +137,63 @@ def test_entitlement_self_heals_from_storage(_isolate):
     assert APIKeyManager.instance().is_validated() is True
 
 
-# ── the TEST account is not a licence ────────────────────────────────────────
+# ── the TEST account is an owner-approved end-user demo ─────────────────────
 
-def test_the_test_centre_is_absent_from_a_shipped_registry(_isolate):
-    assert am.test_center_enabled() is False
-    assert "TEST" not in am._CENTERS_BY_CODE
+def test_the_demo_centre_is_available_in_the_default_registry(_isolate):
+    assert am.test_center_enabled() is True
+    assert "TEST" in am._CENTERS_BY_CODE
 
 
-def test_the_test_key_no_longer_validates(_isolate):
+def test_the_demo_key_validates_by_default(_isolate):
     k = _test_key()
     if not k:
         pytest.skip("no TEST centre defined")
     ok, code, _err = APIKeyManager.instance().validate_key(k)
-    assert ok is False and code is None
+    assert ok is True and code == "TEST"
 
 
-def test_the_test_key_grants_no_entitlement(_isolate):
+def test_the_demo_key_can_use_the_company_backend(_isolate):
     k = _test_key()
     if not k:
         pytest.skip("no TEST centre defined")
     _isolate["v"] = k
-    assert ent.company_entitled() is False
+    assert ent.company_entitled() is True
 
 
-def test_the_dev_flag_restores_it_for_local_testing(_isolate, monkeypatch):
+def test_an_explicit_runtime_opt_out_disables_the_demo(_isolate, monkeypatch):
     k = _test_key()
     if not k:
         pytest.skip("no TEST centre defined")
-    monkeypatch.setenv("AIPACS_ALLOW_TEST_CENTER", "1")
+    monkeypatch.setenv("AIPACS_ENABLE_DEMO_CENTER", "0")
     am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE = am._build_registry_maps(am.CENTERS)
-    assert am.test_center_enabled() is True
-    assert "TEST" in am._CENTERS_BY_CODE
+    assert am.test_center_enabled() is False
+    assert "TEST" not in am._CENTERS_BY_CODE
     ok, code, _e = APIKeyManager.instance().validate_key(k)
-    assert ok is True and code == "TEST"
+    assert ok is False and code is None
 
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
-def test_the_dev_flag_is_off_for_every_falsey_spelling(_isolate, monkeypatch, value):
-    monkeypatch.setenv("AIPACS_ALLOW_TEST_CENTER", value)
+def test_the_demo_opt_out_accepts_every_falsey_spelling(_isolate, monkeypatch, value):
+    monkeypatch.setenv("AIPACS_ENABLE_DEMO_CENTER", value)
     assert am.test_center_enabled() is False
 
 
-def test_the_real_centres_are_untouched(_isolate):
-    """Excluding TEST must not cost a paying centre its licence."""
+def test_disabling_demo_does_not_change_real_centres(_isolate, monkeypatch):
+    """The demo kill switch must not cost a paying centre its licence."""
+    monkeypatch.setenv("AIPACS_ENABLE_DEMO_CENTER", "0")
+    am._CENTERS_BY_CODE, am._KEY_TO_CENTER_CODE = am._build_registry_maps(am.CENTERS)
     codes = set(am._CENTERS_BY_CODE)
     expected = {c.center_code.upper() for c in am.CENTERS if c.center_code != "TEST"}
     assert codes == expected
     assert codes == {"UNIT"}
+
+
+@pytest.mark.parametrize("value,expected", [("0", False), ("1", True)])
+def test_legacy_test_center_flag_remains_compatible(
+    _isolate, monkeypatch, value, expected
+):
+    monkeypatch.setenv("AIPACS_ALLOW_TEST_CENTER", value)
+    assert am.test_center_enabled() is expected
 
 
 # ── the chokepoint protects all eleven call sites ────────────────────────────
@@ -222,7 +234,10 @@ def test_openai_works_with_no_company_authorisation(_isolate, monkeypatch):
     """EchoMind installed + the user's own key is the whole requirement."""
     monkeypatch.setattr(llm_client, "_active_backend", lambda: "openai")
     monkeypatch.setattr(llm_client, "get_openai_settings",
-                        lambda: {"api_key": "sk-the-users-own-key"})
+                        lambda: {
+                            "api_key": "sk-the-users-own-key",
+                            "base_url": "https://unit.invalid/v1",
+                        })
     assert ent.company_entitled() is False
     assert llm_client.is_active_backend_configured() is True
 

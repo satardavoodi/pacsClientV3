@@ -8,6 +8,8 @@ initialization; changing the preference therefore applies on next launch.
 
 from __future__ import annotations
 
+from copy import deepcopy
+from threading import RLock
 from typing import Any
 
 from aipacs_runtime import load_runtime_profile, resolve_graphics_profile, save_runtime_profile
@@ -21,6 +23,54 @@ GPU_BOOST_PREFERRED_MODE = "prefer_gpu"
 GPU_BOOST_CPU_MODE = "cpu_safe"
 
 _GPU_CAPABLE_VIEWER_BACKENDS = {BACKEND_VTK}
+
+_PROFILE_CACHE_LOCK = RLock()
+_GPU_RUNTIME_STATUS_CACHE: dict[str, Any] | None = None
+_RESOLVED_GRAPHICS_PROFILE_CACHE: dict[str, Any] | None = None
+
+
+def clear_gpu_boost_profile_cache() -> None:
+    """Forget the process snapshot after a persisted graphics preference changes."""
+    global _GPU_RUNTIME_STATUS_CACHE, _RESOLVED_GRAPHICS_PROFILE_CACHE
+    with _PROFILE_CACHE_LOCK:
+        _GPU_RUNTIME_STATUS_CACHE = None
+        _RESOLVED_GRAPHICS_PROFILE_CACHE = None
+
+
+def prime_gpu_boost_profile_cache(graphics_profile: dict[str, Any] | None) -> None:
+    """Reuse the graphics probe already completed during process bootstrap.
+
+    Viewer construction happens on the Qt thread. Re-reading the runtime JSON and
+    repeating the graphics probe there caused a measurable first-viewer stall. The
+    bootstrap result is immutable for this process (the setting requires restart),
+    so it is the authoritative snapshot for every viewer created afterward.
+    """
+    global _GPU_RUNTIME_STATUS_CACHE, _RESOLVED_GRAPHICS_PROFILE_CACHE
+    profile = deepcopy(dict(graphics_profile or {}))
+    software = dict(profile.get("software_rendering") or {})
+    with _PROFILE_CACHE_LOCK:
+        _RESOLVED_GRAPHICS_PROFILE_CACHE = profile
+        _GPU_RUNTIME_STATUS_CACHE = {
+            "requested_gpu": bool(profile.get("requested_gpu", False)),
+            "preferred_mode": str(profile.get("preferred_mode") or GPU_BOOST_CPU_MODE),
+            "last_detected_gpu": bool(profile.get("detected_gpu", False)),
+            "last_probe_backend": str(profile.get("detector") or ""),
+            "last_probe_device": str(profile.get("device_name") or ""),
+            "last_probe_utc": "",
+            "last_execution_mode": str(profile.get("execution_mode") or ""),
+            "last_software_rendering_status": str(software.get("status") or ""),
+            "last_software_rendering_warning": str(software.get("warning") or ""),
+        }
+
+
+def _resolved_graphics_profile_snapshot() -> dict[str, Any]:
+    global _RESOLVED_GRAPHICS_PROFILE_CACHE
+    with _PROFILE_CACHE_LOCK:
+        if _RESOLVED_GRAPHICS_PROFILE_CACHE is None:
+            _RESOLVED_GRAPHICS_PROFILE_CACHE = deepcopy(
+                dict(resolve_graphics_profile() or {})
+            )
+        return deepcopy(_RESOLVED_GRAPHICS_PROFILE_CACHE)
 
 
 def load_gpu_boost_enabled(default: bool = False) -> bool:
@@ -36,7 +86,7 @@ def load_gpu_boost_enabled(default: bool = False) -> bool:
 def save_gpu_boost_enabled(enabled: bool) -> dict[str, Any]:
     """Persist the viewer GPU preference into the runtime graphics profile."""
     requested = bool(enabled)
-    return save_runtime_profile(
+    saved = save_runtime_profile(
         {
             "graphics": {
                 "user_declared_gpu": requested,
@@ -44,26 +94,36 @@ def save_gpu_boost_enabled(enabled: bool) -> dict[str, Any]:
             }
         }
     )
+    clear_gpu_boost_profile_cache()
+    return saved
 
 
 def load_gpu_runtime_status() -> dict[str, Any]:
     """Return the cached runtime graphics status saved by the bootstrap path."""
-    try:
-        profile = load_runtime_profile()
-    except Exception:
-        profile = {}
-    graphics = profile.get("graphics") or {}
-    return {
-        "requested_gpu": bool(graphics.get("user_declared_gpu", False)),
-        "preferred_mode": str(graphics.get("preferred_mode") or GPU_BOOST_CPU_MODE),
-        "last_detected_gpu": bool(graphics.get("last_detected_gpu", False)),
-        "last_probe_backend": str(graphics.get("last_probe_backend") or ""),
-        "last_probe_device": str(graphics.get("last_probe_device") or ""),
-        "last_probe_utc": str(graphics.get("last_probe_utc") or ""),
-        "last_execution_mode": str(graphics.get("last_execution_mode") or ""),
-        "last_software_rendering_status": str(graphics.get("last_software_rendering_status") or ""),
-        "last_software_rendering_warning": str(graphics.get("last_software_rendering_warning") or ""),
-    }
+    global _GPU_RUNTIME_STATUS_CACHE
+    with _PROFILE_CACHE_LOCK:
+        if _GPU_RUNTIME_STATUS_CACHE is None:
+            try:
+                profile = load_runtime_profile()
+            except Exception:
+                profile = {}
+            graphics = profile.get("graphics") or {}
+            _GPU_RUNTIME_STATUS_CACHE = {
+                "requested_gpu": bool(graphics.get("user_declared_gpu", False)),
+                "preferred_mode": str(graphics.get("preferred_mode") or GPU_BOOST_CPU_MODE),
+                "last_detected_gpu": bool(graphics.get("last_detected_gpu", False)),
+                "last_probe_backend": str(graphics.get("last_probe_backend") or ""),
+                "last_probe_device": str(graphics.get("last_probe_device") or ""),
+                "last_probe_utc": str(graphics.get("last_probe_utc") or ""),
+                "last_execution_mode": str(graphics.get("last_execution_mode") or ""),
+                "last_software_rendering_status": str(
+                    graphics.get("last_software_rendering_status") or ""
+                ),
+                "last_software_rendering_warning": str(
+                    graphics.get("last_software_rendering_warning") or ""
+                ),
+            }
+        return dict(_GPU_RUNTIME_STATUS_CACHE)
 
 
 def _task(
@@ -98,7 +158,11 @@ def resolve_gpu_boost_plan(
     - ``fallback_reason`` explains why CPU fallback is active when relevant.
     """
     runtime_status = load_gpu_runtime_status()
-    profile = dict(graphics_profile or resolve_graphics_profile() or {})
+    profile = (
+        dict(graphics_profile)
+        if graphics_profile is not None
+        else _resolved_graphics_profile_snapshot()
+    )
 
     requested_gpu = bool(profile.get("requested_gpu", runtime_status["requested_gpu"]))
     detected_gpu = bool(profile.get("detected_gpu", runtime_status["last_detected_gpu"]))

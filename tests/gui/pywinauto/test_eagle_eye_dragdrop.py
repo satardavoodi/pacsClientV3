@@ -70,24 +70,19 @@ else:
 LOGS_DIR = PROJECT_ROOT / "user_data" / "logs"
 NATIVE_FAULT = LOGS_DIR / "native_fault.log"
 COM_CRASH_CODE = "0x8001010d"
+sys.path.insert(0, str(PROJECT_ROOT))
+from tools.diagnostics.native_fault_probe import NativeFaultWindow
 
 
 # ── helpers ─────────────────────────────────────────────────────────────
 
-def _snapshot_native_fault() -> tuple[int, int]:
-    """Return (byte_size, count_of_0x8001010d_lines)."""
-    if not NATIVE_FAULT.exists():
-        return 0, 0
-    text = NATIVE_FAULT.read_text(encoding="utf-8", errors="replace")
-    bytes_ = len(text.encode("utf-8"))
-    com_lines = sum(1 for line in text.splitlines() if COM_CRASH_CODE in line)
-    return bytes_, com_lines
-
-
-def _diff_native_fault(pre_bytes: int, pre_com: int) -> tuple[int, int]:
-    """Return (byte_delta, new_com_inhibit_crashes_since_snapshot)."""
-    cur_bytes, cur_com = _snapshot_native_fault()
-    return cur_bytes - pre_bytes, cur_com - pre_com
+def _diff_native_fault(window: NativeFaultWindow) -> tuple[int, int]:
+    """Check all native sources, including children born during the GUI test."""
+    result = window.check()
+    assert result["ok"], "Native evidence unavailable or rewritten"
+    assert result["data"]["total"] == 0, "New native exception record during drag/drop"
+    assert result["data"]["watchdog_dumps"] == 0, "New watchdog dump during drag/drop"
+    return result["data"]["bytes_observed"], result["data"]["com_inhibit"]
 
 
 def _connect_aipacs():
@@ -134,9 +129,9 @@ def test_eagle_eye_drag_drop_no_com_crash():
     """
     _maybe_skip_if_not_source_build()
 
-    pre_bytes, pre_com = _snapshot_native_fault()
-    print(f"[pre] native_fault.log = {pre_bytes} bytes, "
-          f"{pre_com} '0x8001010d' lines")
+    native_window = NativeFaultWindow(NATIVE_FAULT)
+    assert native_window.error is None, "Native evidence unavailable before GUI test"
+    print("[pre] Native byte-window baseline captured")
 
     _, window = _connect_aipacs()
 
@@ -204,7 +199,7 @@ def test_eagle_eye_drag_drop_no_com_crash():
         time.sleep(2.0)
 
         # Sample log: any new 0x8001010d entry is an instant fail.
-        bytes_delta, com_delta = _diff_native_fault(pre_bytes, pre_com)
+        bytes_delta, com_delta = _diff_native_fault(native_window)
         assert com_delta == 0, (
             f"DRAG #{i+1}: native_fault.log gained {com_delta} new "
             f"0x8001010d (RPC_E_CANTCALLOUT_ININPUTSYNCCALL) crashes — "
@@ -214,7 +209,7 @@ def test_eagle_eye_drag_drop_no_com_crash():
         print(f"[drop {i+1}/{n_drops}] OK — log delta={bytes_delta} bytes, "
               f"0 new COM crashes")
 
-    final_bytes_delta, final_com_delta = _diff_native_fault(pre_bytes, pre_com)
+    final_bytes_delta, final_com_delta = _diff_native_fault(native_window)
     assert final_com_delta == 0, (
         f"After {n_drops} drag-drops: {final_com_delta} new 0x8001010d "
         f"crashes appeared in native_fault.log "

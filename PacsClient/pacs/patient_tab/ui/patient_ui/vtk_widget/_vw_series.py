@@ -477,7 +477,7 @@ class _VWSeriesMixin:
             # Re-enable updates
             self.setUpdatesEnabled(True)
             # Hide spinner with small delay to allow final render
-            QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+            self.viewport_spinner.hide_loading_after(_SPINNER_HIDE_DELAY_MS)
 
         # Ensure spinner is properly positioned after viewer is created
         if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
@@ -644,7 +644,7 @@ class _VWSeriesMixin:
             except Exception as e:
                 logger.error("[IMAGE RESET] Qt path failed: %s", e)
             finally:
-                QTimer.singleShot(300, self.viewport_spinner.hide_loading)
+                self.viewport_spinner.hide_loading_after(300)
             return
 
         # Extract series info for logging
@@ -724,7 +724,7 @@ class _VWSeriesMixin:
             raise
         finally:
             # Hide spinner after reset is complete
-            QTimer.singleShot(300, self.viewport_spinner.hide_loading)
+            self.viewport_spinner.hide_loading_after(300)
 
         # Ensure spinner is properly positioned during reset
         if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:
@@ -900,6 +900,13 @@ class _VWSeriesMixin:
             # (e.g., preview → full data refresh).  The viewer's internal
             # slice range is stale and needs SetInputData via reset_image_viewer.
             _skip_switch = True
+            # The first image always has depth one for a presentation sequence.
+            # Equal dimensions cannot prove that a newly prepared frame tuple
+            # (including a later download batch) is already displayed.
+            _incoming_frames = (metadata or {}).get('_advanced_presentation_frames')
+            _current_frames = (getattr(self.image_viewer, 'metadata', None) or {}).get('_advanced_presentation_frames')
+            if (_incoming_frames is not None or _current_frames is not None) and _incoming_frames is not _current_frames:
+                _skip_switch = False
             try:
                 if vtk_image_data is not None and self.image_viewer is not None:
                     _new_dims = vtk_image_data.GetDimensions()
@@ -996,7 +1003,7 @@ class _VWSeriesMixin:
                 logger.error(traceback.format_exc())
                 raise
             finally:
-                QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+                self.viewport_spinner.hide_loading_after(_SPINNER_HIDE_DELAY_MS)
             return True
 
         # ── VTK path: ensure Qt bridge is deactivated ──────────────────
@@ -1022,13 +1029,8 @@ class _VWSeriesMixin:
         # ┘ï┌║┌ء┬ش SHOW SPINNER WITH SMART MESSAGE BASED ON SERIES SIZE
         spinner_message = self._get_smart_spinner_message(vtk_image_data, metadata)
         self.viewport_spinner.show_loading(spinner_message)
-        # Force-paint the spinner overlay BEFORE disabling widget updates.
-        # Without this, setUpdatesEnabled(False) blocks the spinner from
-        # being painted and the user briefly sees the old image.
-        try:
-            self.viewport_spinner.spinner.repaint()
-        except Exception:
-            pass
+        # show_loading paints the active branded overlay synchronously before
+        # updates are disabled; the legacy spinner may legitimately be None.
         
         # =====================================================
         # ANTI-FLICKERING: Block slider signals AND disable widget updates during switch
@@ -1128,7 +1130,7 @@ class _VWSeriesMixin:
                             self.setUpdatesEnabled(True)
                             if hasattr(self, 'slider') and self.slider is not None:
                                 self.slider.blockSignals(False)
-                            QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+                            self.viewport_spinner.hide_loading_after(_SPINNER_HIDE_DELAY_MS)
                             log_stage_timing(
                                 logger,
                                 component="viewer",
@@ -1285,7 +1287,7 @@ class _VWSeriesMixin:
                 self.slider.blockSignals(False)
             
         # Hide spinner with delay to allow render to complete
-        QTimer.singleShot(_SPINNER_HIDE_DELAY_MS, self.viewport_spinner.hide_loading)
+        self.viewport_spinner.hide_loading_after(_SPINNER_HIDE_DELAY_MS)
 
         # Ensure spinner is properly positioned after viewer is created
         if hasattr(self, 'viewport_spinner') and self.viewport_spinner.spinner:

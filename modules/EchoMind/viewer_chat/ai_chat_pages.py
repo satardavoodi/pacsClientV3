@@ -2791,6 +2791,7 @@ class OneChatPage(QWidget):
         self._set_modality_text(modality)
 
     def _set_modality_text(self, modality):
+        self.composer._selected_modality = modality
         short_text = modality[:4] + "..." if len(modality) > 4 else modality
         self.composer.btn_modality.setText(f"{short_text}")
 
@@ -7385,6 +7386,75 @@ class OneChatPage(QWidget):
             items2 = to_items(val)
             return "<br>".join(items2) if items2 else ""
 
+        def render_pathology(val: object) -> str:
+            """Keep finding groups while presenting sentences on separate lines."""
+            from html import escape as escape_text
+
+            def lines(value):
+                if isinstance(value, dict):
+                    return [line for name, content in value.items() if content is not None
+                            for line in [str(name).rstrip(":") + ":", *lines(content)]]
+                sequence = _maybe_parse_listish(value)
+                if sequence is not None:
+                    return [line for item in sequence for line in str(item).replace("\\n", "\n").splitlines()]
+                return str(value or "").replace("\\n", "\n").splitlines()
+
+            def sentences(text):
+                # Split only at whitespace after terminal punctuation. Decimal
+                # points have no such whitespace. Preserve common abbreviations
+                # and initials rather than splitting clinical measurements/names.
+                abbreviations = {"e.g.", "i.e.", "cf.", "vs.", "dr.", "mr.",
+                                 "mrs.", "ms.", "prof.", "fig.", "no.", "approx.",
+                                 "ref.", "st."}
+                result, start = [], 0
+                for match in re.finditer(r"[.!?][\"')\]]*\s+", text):
+                    end = match.start() + len(match.group().rstrip())
+                    prefix = text[:end].rstrip("\"')]")
+                    token = prefix.rsplit(None, 1)[-1].lower()
+                    if token in abbreviations or re.fullmatch(r"(?:[a-z]\.)+", token):
+                        continue
+                    result.append(escape_text(text[start:end]))
+                    start = match.end()
+                result.append(escape_text(text[start:]))
+                return "<br>".join(part for part in result if part)
+
+            output, findings = [], []
+            marked_group = False
+            marker = re.compile(r"^\s*(?:\d+[.)]|[\u2022\u25cf\-*\u00b7])\s+")
+
+            def flush():
+                if findings:
+                    margin = "margin:4px 24px 8px 0;" if is_rtl else "margin:4px 0 8px 24px;"
+                    output.append(f"<ol style='{margin} padding:0;'>")
+                    for finding in findings:
+                        output.append("<li style='margin-top:2px; margin-bottom:8px; line-height:150%;'>"
+                                      + sentences(finding) + "</li>")
+                    output.append("</ol>")
+                    findings.clear()
+
+            for raw_line in lines(val):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                matched = marker.match(line)
+                if not matched and line.endswith(":") and len(line) <= 80:
+                    flush()
+                    marked_group = False
+                    output.append("<div style='margin:6px 0 4px 0; font-size:16px; font-weight:bold;'>"
+                                  + escape_text(line) + "</div>")
+                elif matched:
+                    marked_group = True
+                    content = line[matched.end():].strip()
+                    if content:
+                        findings.append(content)
+                elif marked_group and findings:
+                    # Wrapped text belongs to its explicitly numbered finding.
+                    findings[-1] += " " + line
+                else:
+                    findings.append(line)
+            flush()
+            return "".join(output)
+
         def parse_headed_bullets(val: object):
             groups: list[tuple[str, list[str]]] = []
             lone: list[str] = []
@@ -7459,19 +7529,19 @@ class OneChatPage(QWidget):
                 # --- Report Title ---
                 if key_norm in ("report title", "title"):
                     html_parts.append(
-                        "<h2 style='margin:0 0 8px 0; font-size:20px; color:#1f3b77;'>"
-                        f"{esc(raw_val)}</h2>"
+                        "<div style='margin:0 0 8px 0; font-size:22px; font-weight:bold; color:#1f3b77;'>"
+                        f"{esc(raw_val)}</div>"
                     )
                     continue
 
                 # --- Pathological Findings ---
-                if key_norm.startswith("pathological"):
-                    inner = to_paragraph_with_breaks(raw_val)
+                if key_norm.startswith(("pathological", "pathologic", "pathology")):
+                    inner = render_pathology(val)
                     if not inner:
                         continue
                     html_parts.append(
                         "<div style='margin-top:8px;'>"
-                        "<div style='font-weight:bold; margin-bottom:4px; color:#b00020;'>"
+                        "<div style='font-size:18px; font-weight:bold; margin-bottom:4px; color:#b00020;'>"
                         f"{esc(str(key))}:</div>"
                         f"<div style='{inner_margin}'>{inner}</div>"
                         "</div>"
@@ -7483,12 +7553,12 @@ class OneChatPage(QWidget):
                     groups, lone = parse_headed_bullets(raw_val)
                     section: list[str] = [
                         "<div style='margin-top:8px;'>",
-                        "<div style='font-weight:bold; margin-bottom:4px; color:#00695c;'>"
+                        "<div style='font-size:18px; font-weight:bold; margin-bottom:4px; color:#00695c;'>"
                         f"{esc(str(key))}:</div>",
                     ]
 
                     for title, bullets in groups:
-                        section.append(f"<div style='margin:4px 0 0 0;'><b>{title}</b></div>")
+                        section.append(f"<div style='margin:4px 0 0 0; font-size:16px;'><b>{title}</b></div>")
                         if bullets:
                             section.append(f"<ul style='{ul_margin_0}'>")
                             for b in bullets:
@@ -7521,7 +7591,7 @@ class OneChatPage(QWidget):
 
                     html_parts.append(
                         "<div style='margin-top:8px;'>"
-                        "<div style='font-weight:bold; margin-bottom:4px; color:#6d4c41;'>"
+                        "<div style='font-size:18px; font-weight:bold; margin-bottom:4px; color:#6d4c41;'>"
                         f"{esc(str(key))}:</div>"
                     )
                     if len(items_clean) == 1:
@@ -7544,7 +7614,7 @@ class OneChatPage(QWidget):
 
                     html_parts.append(
                         "<div style='margin-top:8px;'>"
-                        "<div style='font-weight:bold; margin-bottom:4px; color:#283593;'>"
+                        "<div style='font-size:18px; font-weight:bold; margin-bottom:4px; color:#283593;'>"
                         f"{esc(str(key))}:</div>"
                         f"<div style='{inner_margin}'>{inner}</div>"
                         "</div>"
@@ -7558,15 +7628,16 @@ class OneChatPage(QWidget):
 
                 if len(items_clean) == 1:
                     html_parts.append(
-                        "<p style='margin:6px 0 4px 0;'>"
-                        "<b style='color:#37474f;'>"
-                        f"{esc(str(key))}:</b> {items_clean[0]}"
-                        "</p>"
+                        "<div style='margin-top:8px;'>"
+                        "<div style='font-size:18px; font-weight:bold; margin-bottom:4px; color:#37474f;'>"
+                        f"{esc(str(key))}:</div>"
+                        f"<div style='{inner_margin}'>{items_clean[0]}</div>"
+                        "</div>"
                     )
                 else:
                     html_parts.append(
                         "<div style='margin-top:8px;'>"
-                        "<div style='font-weight:bold; margin-bottom:4px; color:#37474f;'>"
+                        "<div style='font-size:18px; font-weight:bold; margin-bottom:4px; color:#37474f;'>"
                         f"{esc(str(key))}:</div>"
                         f"<ul style='{ul_margin_0}'>"
                     )

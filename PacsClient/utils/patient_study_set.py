@@ -144,6 +144,19 @@ class PatientStudySet:
         return None
 
 
+@dataclass(frozen=True)
+class OpenStudyIdentity:
+    """Final, immutable identity admitted to the patient-open pipeline.
+
+    ``study_uids`` must already come from the canonical owner-filtered resolver.
+    This contract only finalizes which admitted study is primary; it never widens
+    the set from cache, disk, or UI fallbacks.
+    """
+
+    selected_study_uid: str
+    study_uids: tuple[str, ...]
+
+
 def _clean(value) -> str:
     return str(value or "").strip()
 
@@ -304,6 +317,38 @@ def resolve_study_uids(
         sanctioned_uids=sanctioned_uids)
 
 
+def finalize_open_study_identity(
+    selected_study_uid: str,
+    resolved_study_uids: Iterable[str],
+) -> Optional[OpenStudyIdentity]:
+    """Finalize one fail-closed OPEN identity from the resolved patient set.
+
+    A sparse Local row may not carry a primary Study UID even though the shared
+    resolver found owner-filtered studies. In that case the first resolved study
+    becomes primary. A non-empty selected UID that is absent from the resolved
+    set is rejected rather than silently admitting a foreign/stale identity.
+    """
+    selected = _clean(selected_study_uid)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in resolved_study_uids or ():
+        uid = _clean(value)
+        if uid and uid not in seen:
+            seen.add(uid)
+            ordered.append(uid)
+
+    if not ordered:
+        return None
+    if selected:
+        if selected not in seen:
+            return None
+        ordered.remove(selected)
+        ordered.insert(0, selected)
+    else:
+        selected = ordered[0]
+    return OpenStudyIdentity(selected_study_uid=selected, study_uids=tuple(ordered))
+
+
 def build_download_payload(study_uid, patient_id, patient_name, study_info) -> dict:
     """Canonical Download Manager ``add_downloads`` payload for ONE study, built
     from server study-info.
@@ -390,7 +435,9 @@ def persisted_series_folder_key(series_number, series_path="") -> str:
     return raw_number
 
 
-def allocate_series_display_keys(series_records: Iterable[dict]) -> list[dict]:
+def allocate_series_display_keys(
+    series_records: Iterable[dict], *, existing_records: Iterable[dict] = ()
+) -> list[dict]:
     """Return shallow-copied series records with drag-safe numeric UI keys.
 
     DICOM ``SeriesNumber`` is not unique inside a study, while the persisted
@@ -403,6 +450,14 @@ def allocate_series_display_keys(series_records: Iterable[dict]) -> list[dict]:
     that number receive deterministic aliases from the existing reserved
     ``900001..999999`` band.  Raw metadata, SeriesInstanceUID, folder key, and
     exact series path are preserved; only ``display_key`` is synthetic.
+    Raw numbers at or above 1_000_000 also require aliases: that range belongs
+    to multi-study offset handles, not study-local display identities.
+
+    A patient-tab owner may supply its previously admitted, study-local records.
+    Those handles remain reserved for that owner's lifetime, and matching UID
+    pairs keep their handle even when a refresh contains only part of the set.
+    Do not pass another owner's keys or already-offset multi-study projections.
+    Previously admitted valid study-local handles are never renumbered.
     """
     rows = [dict(record) for record in (series_records or []) if isinstance(record, dict)]
     if not rows:
@@ -412,6 +467,16 @@ def allocate_series_display_keys(series_records: Iterable[dict]) -> list[dict]:
         """Return immutable DICOM identity even after a UI rendering pass."""
         original = _clean(row.get("_orig_series_number"))
         return original or _clean(row.get("series_number"))
+
+    def _owner(row: dict) -> tuple:
+        study = _clean(row.get("study_uid"))
+        uid = _clean(row.get("series_uid") or row.get("series_instance_uid"))
+        if uid:
+            return (study, uid)
+        # Repeat a legacy UID-less record only at its exact existing location.
+        # This never promotes a missing UID to a known series or crosses studies.
+        return (study, None, _raw_series_number(row),
+                _clean(row.get("folder_key")), _clean(row.get("series_path")))
 
     try:
         from modules.network.series_identity import (
@@ -434,16 +499,40 @@ def allocate_series_display_keys(series_records: Iterable[dict]) -> list[dict]:
         for parsed in (parse_series_number(_raw_series_number(row)) for row in rows)
         if parsed is not None and 0 <= parsed < 1_000_000
     }
+    previous_keys = {}
+    reserved = {}
+    for previous in existing_records or ():
+        if not isinstance(previous, dict):
+            continue
+        study = _clean(previous.get("study_uid"))
+        key = _clean(previous.get("display_key"))
+        parsed = parse_series_number(key)
+        if parsed is None or not 0 <= parsed < 1_000_000:
+            raise ValueError("Prior series display keys must be study-local numeric handles")
+        identity = _owner(previous)
+        slot = (study, parsed)
+        if slot in reserved and reserved[slot] != identity:
+            raise ValueError("Conflicting prior series display identities")
+        reserved[slot] = identity
+        if identity in previous_keys and previous_keys[identity] != key:
+            raise ValueError("One prior series identity has multiple display keys")
+        previous_keys[identity] = key
+        taken.add(parsed)
+
     groups: dict[tuple[str, str], list[int]] = {}
     for index, row in enumerate(rows):
         raw = _raw_series_number(row)
         study_uid = _clean(row.get("study_uid"))
+        previous_key = previous_keys.get(_owner(row))
+        if previous_key is not None:
+            row["display_key"] = previous_key
+            continue
         groups.setdefault((study_uid, raw), []).append(index)
 
     alias_targets: list[int] = []
     for (_study_uid, raw), indices in sorted(groups.items()):
         parsed = parse_series_number(raw)
-        if parsed is None or parsed < 0:
+        if parsed is None or not 0 <= parsed < 1_000_000 or (_study_uid, parsed) in reserved:
             alias_targets.extend(indices)
             continue
 
@@ -518,6 +607,7 @@ class PatientStudySetService:
     merge_study_uids = staticmethod(merge_study_uids)
     diff_study_uids = staticmethod(diff_study_uids)
     resolve_study_uids = staticmethod(resolve_study_uids)
+    finalize_open_study_identity = staticmethod(finalize_open_study_identity)
     build_download_payload = staticmethod(build_download_payload)
     resolve_series_folder_key = staticmethod(resolve_series_folder_key)
     persisted_series_folder_key = staticmethod(persisted_series_folder_key)

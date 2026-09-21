@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from pathlib import Path
+
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 
 from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
 
@@ -17,6 +19,58 @@ class ThumbnailImageSourceService:
     1. In-memory/disk-backed `ThumbnailStore`
     2. Explicit thumbnail file path passed by the caller
     """
+
+    @staticmethod
+    def prepare_home_image(thumb: dict, file_path=None) -> QImage:
+        """Detached Home policy: explicit file first, then embedded PNG bytes.
+
+        Unlike the patient sidebar, Home already has a resolved source projection;
+        do not reinterpret its ordinal as a ThumbnailStore key. No QPixmap/widget
+        access, clinical writes or placeholder painting on this worker boundary.
+        """
+        import base64
+
+        path = str(file_path or thumb.get('file_path') or thumb.get('thumbnail_path') or '').strip()
+        image = QImage(path) if path else QImage()
+        if not image.isNull():
+            return image
+        raw = next((thumb.get(key) for key in (
+            'thumbnail_data', 'thumbnail_base64', 'thumbnailBase64',
+            'thumbnailData', 'image_data', 'imageBase64',
+        ) if thumb.get(key)), '')
+        if isinstance(raw, str) and raw:
+            payload = raw.strip()
+            if payload.startswith('data:') and ',' in payload:
+                payload = payload.split(',', 1)[1]
+            payload = payload.replace('\n', '').replace('\r', '')
+            try:
+                image.loadFromData(base64.b64decode(payload))
+            except Exception:
+                try:
+                    image.loadFromData(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+                except Exception:
+                    pass
+        elif isinstance(raw, (bytes, bytearray)):
+            image.loadFromData(bytes(raw))
+        return image
+
+    @staticmethod
+    def prepare_image(study_uid: str, folder_key: str, file_path: str) -> QImage:
+        """Worker-only read/decode; storage identity is never a viewer offset key.
+
+        Return an owned QImage, never a QPixmap or a reference to widget state.
+        Preserve memory-first and exact-file fallback, including corrupt cache data.
+        """
+        image = QImage()
+        data = ThumbnailStore.instance().get_bytes(str(study_uid), str(folder_key))
+        if data and image.loadFromData(data) and not image.isNull():
+            return image
+        try:
+            if file_path:
+                image.loadFromData(Path(file_path).read_bytes())
+        except OSError:
+            pass
+        return image
 
     @staticmethod
     def _resolve_study_uid(parent_widget) -> str:

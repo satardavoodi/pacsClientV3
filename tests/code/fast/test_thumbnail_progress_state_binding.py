@@ -81,6 +81,8 @@ def test_real_thumbnail_manager_progress_is_deferred_until_admitted(monkeypatch)
 
     scheduled = []
     fake_tm = SimpleNamespace(
+        # Model a live manager under the existing terminal-disposal contract.
+        _disposed=False,
         _resolve_series_key=lambda sn: str(sn),
         _progress_update_last_ts={},
         _progress_update_pending={},

@@ -382,7 +382,9 @@ class SettingsTabWidget(QTabWidget):
                 width: 0px;
             }
         """
-        self.setStyleSheet(style.replace("__ARROW__", arrow_icon))
+        from Qss.numeric_controls import numeric_control_style
+        self.setStyleSheet(style.replace("__ARROW__", arrow_icon)
+                          + numeric_control_style('QTabWidget#SettingsTabWidget '))
 
         # V2 parallel design (opt-in, default OFF): replace the scoped sheet with the
         # token version (accent tabs, ghost buttons, calm GroupBox title). No-op unless

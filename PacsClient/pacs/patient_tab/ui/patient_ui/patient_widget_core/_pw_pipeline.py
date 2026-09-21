@@ -102,8 +102,109 @@ class _PWPipelineMixin:
             self.setUpdatesEnabled(True)  # Re-enable on error
             self._hide_init_overlay()
 
-    def _run_pipeline_safely(self):
+    async def _prepare_pipeline_thumbnails(self, study_uid, folder_path):
+        """Prepare only the cache listing in the existing asyncio worker pool.
+
+        Keep the exact count for the legacy startup decision; unknown is never
+        interpreted as a cache miss. Only enumeration enters the worker; UI
+        construction and application remain on the owning event-loop thread.
+        """
+        try:
+            from shiboken6 import isValid
+            if (getattr(self, '_pipeline_prepare_retired', False)
+                    or getattr(self, '_pw_close_handled', False)
+                    or self.study_uid != study_uid
+                    or self.import_folder_path != folder_path
+                    or not isValid(self)):
+                return
+            # A first-series/download signal can arrive during the await.
+            # Build its owner on GUI now; never rebuild it on scan completion.
+            self._prepare_pipeline_layout(self._get_default_layout_from_config())
+            self.setUpdatesEnabled(True)
+            started = time.perf_counter()
+            grouped = (getattr(self, '_is_multistudy_hint', False)
+                       or len(getattr(self, '_studies_series', {}) or {}) > 1)
+            if grouped and not self._local_thumbnail_workflow():
+                # The original early single-study renderer returns zero here;
+                # do not introduce a new disk wait for grouped server patients.
+                thumbnails = ()
+                scan_ms = 0.0
+                queue_ms = delivery_ms = 0.0
+                resumed = time.perf_counter()
+            else:
+                def scan_cache():
+                    scan_start = time.perf_counter()
+                    files = tuple(check_and_get_thumbnails(folder_path, study_uid) or ())
+                    return files, scan_start, time.perf_counter()
+
+                thumbnails, scan_start, scan_done = await asyncio.to_thread(scan_cache)
+                resumed = time.perf_counter()
+                queue_ms = (scan_start - started) * 1000
+                scan_ms = (scan_done - scan_start) * 1000
+                delivery_ms = (resumed - scan_done) * 1000
+            if (getattr(self, '_pipeline_prepare_retired', False)
+                    or getattr(self, '_pw_close_handled', False)
+                    or self.study_uid != study_uid
+                    or self.import_folder_path != folder_path):
+                return
+            if not isValid(self):
+                return
+            self._log_open_thumbnail_trace(
+                'patient_tab_thumb_prepare',
+                scan_ms=round(scan_ms, 2),
+                queue_ms=round(queue_ms, 2),
+                delivery_ms=round(delivery_ms, 2),
+                prepare_wait_ms=round((resumed - started) * 1000, 2),
+                thumbnail_count=len(thumbnails),
+            )
+            self.setUpdatesEnabled(False)
+            self._run_pipeline_safely(thumbnail_files=thumbnails, layout_prepared=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Thumbnail startup preparation failed')
+            # A failed preparation is not an empty cache: do not start another
+            # import/download route with a fabricated zero count.
+            if not (getattr(self, '_pipeline_prepare_retired', False)
+                    or getattr(self, '_pw_close_handled', False)):
+                from shiboken6 import isValid
+                if isValid(self):
+                    self._pipeline_running = False
+                    self._is_initializing = False
+                    self.setUpdatesEnabled(True)
+                    self._hide_init_overlay()
+
+    def _run_pipeline_safely(self, thumbnail_files=None, *, layout_prepared=False):
         """Run pipeline safely, handling async context properly"""
+        if (getattr(self, '_pipeline_prepare_retired', False)
+                or getattr(self, '_pw_close_handled', False)):
+            return
+        if thumbnail_files is None:
+            pending = getattr(self, '_pipeline_thumbnail_task', None)
+            if pending is not None and not pending.done():
+                return
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Preserve the explicit no-async-loop compatibility fallback.
+                # Normal source/frozen startup uses qasync and never enters it.
+                loop = None
+            if loop is not None:
+                task = loop.create_task(self._prepare_pipeline_thumbnails(
+                    self.study_uid, self.import_folder_path
+                ))
+                self._pipeline_thumbnail_task = task
+                self._background_tasks.add(task)
+
+                def finished(completed):
+                    self._background_tasks.discard(completed)
+                    if getattr(self, '_pipeline_thumbnail_task', None) is completed:
+                        self._pipeline_thumbnail_task = None
+
+                task.add_done_callback(finished)
+                # Let the loading overlay paint while disk preparation waits.
+                self.setUpdatesEnabled(True)
+                return
         try:
             # ✅ RUN PIPELINE SYNCHRONOUSLY - AVOID ASYNC LOCK CONFLICTS
             # Pipeline is already synchronous at its core, so no need for async wrapper
@@ -111,7 +212,9 @@ class _PWPipelineMixin:
             try:
                 self.pipeline_manager(
                     self._deferred_caller,
-                    self._deferred_size
+                    self._deferred_size,
+                    thumbnail_files=thumbnail_files,
+                    layout_prepared=layout_prepared,
                 )
                 print("✅ Pipeline completed successfully")
             except Exception as e:
@@ -400,7 +503,16 @@ class _PWPipelineMixin:
         finally:
             self._init_overlay = None
 
-    def pipeline_manager(self, caller, size_init_viewers=(1, 1)):
+    def _prepare_pipeline_layout(self, size_init_viewers):
+        """GUI-only layout setup shared by prepared and compatibility startup."""
+        try:
+            self.apply_multi_viewer(size_init_viewers, modify_by_user=False)
+            self._show_viewer_loading_all()
+        except Exception:
+            logger.exception('Pipeline viewer layout creation failed')
+
+    def pipeline_manager(self, caller, size_init_viewers=(1, 1), *, thumbnail_files=None,
+                         layout_prepared=False):
         _t0 = time.perf_counter()
         size_init_viewers = self._get_default_layout_from_config()
         local_thumbnail_workflow = bool(
@@ -415,16 +527,21 @@ class _PWPipelineMixin:
             # allocates digit-only display keys, and supplies authoritative
             # per-series object/frame counts before creating the cards.
             count_exist_thumbnails = len(
-                check_and_get_thumbnails(self.import_folder_path, self.study_uid) or []
+                (check_and_get_thumbnails(self.import_folder_path, self.study_uid) or [])
+                if thumbnail_files is None else thumbnail_files
             )
-            # A new single-study Import has no server metadata handoff to call
-            # set_server_series_info(), so merely counting cached PNGs leaves the
-            # sidebar at zero series. Start the existing database/disk projection;
-            # the entry builder runs in its worker and marshals only rendering to Qt.
-            if caller == CallerTypes.IMPORT:
+            # Start Local as well as Import before Home finishes its whole-study
+            # metadata scan. Only the single-study owner admits streamed cards;
+            # grouped multi-study rendering retains its existing ownership.
+            if (not getattr(self, '_is_multistudy_hint', False)
+                    and len(getattr(self, '_studies_series', {}) or {}) <= 1
+                    and not getattr(self, '_local_thumbnail_startup_started', False)):
                 self._load_server_thumbnails()
         else:
-            count_exist_thumbnails = self.show_exist_thumbnails()
+            if thumbnail_files is None:
+                count_exist_thumbnails = self.show_exist_thumbnails()
+            else:
+                count_exist_thumbnails = self.show_exist_thumbnails(thumbnail_files=thumbnail_files)
         print(f"[PROFILE] pipeline_manager: show_exist_thumbnails={count_exist_thumbnails} in {(time.perf_counter() - _t0)*1000:.1f}ms (study={self.study_uid})")
         print(f"🔍 [PIPELINE] count_exist_thumbnails = {count_exist_thumbnails}")
 
@@ -442,15 +559,8 @@ class _PWPipelineMixin:
         # ✅ CRITICAL: CREATE VIEWERS FIRST (before loading any series)
         # This ensures the UI is ready with loading indicators
         print(f"🔨 [PIPELINE] Creating viewers upfront with layout {size_init_viewers}...")
-        try:
-            self.apply_multi_viewer(size_init_viewers, modify_by_user=False)
-            self._show_viewer_loading_all()
-            print(f"✅ [PIPELINE] Viewers created successfully")
-            print(f"[PROFILE] pipeline_manager: viewers created in {(time.perf_counter() - _t0)*1000:.1f}ms (study={self.study_uid})")
-        except Exception as e:
-            print(f"❌ [PIPELINE] Error creating viewers: {e}")
-            import traceback
-            traceback.print_exc()
+        if not layout_prepared:
+            self._prepare_pipeline_layout(size_init_viewers)
 
         if not has_running_loop:
             print("⚠️ Pipeline manager called without running event loop - using fallback")

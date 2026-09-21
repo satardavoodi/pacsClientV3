@@ -1,6 +1,15 @@
-# Workstation Loops & Cycles
+# Workstation Loops & Cycles (historical inventory)
 
-> **Version:** v2.2.3.4.0 | **Updated:** 2026-03-10
+> **Historical version:** v2.2.3.4.0 | **Original date:** 2026-03-10
+>
+> **Current-status correction:** 2026-09-13
+
+This document preserves the original loop inventory and early targets. Its concrete backend,
+transport, cleanup-status, and memory-tolerance statements are not current acceptance criteria.
+Use `docs/architecture/workstation-lifecycle.md` for the current Fast/Advanced/MPR/VTK ownership
+model and `docs/pipelines/download-pipeline.md` for the active socket download route. The current
+thumbnail-manager disposal and outward-callback ownership gap is tracked as OPT-60; current Qt
+probes do not support treating the theme signal alone as a deterministic retainer.
 
 ## Purpose
 
@@ -88,7 +97,7 @@ START: Login (auth + socket connect)
 ```
 OPEN:
   ├─ Create PatientWidget tab
-  ├─ Allocate VTK render windows
+  ├─ Allocate the selected viewer domain (Fast remains VTK-free)
   ├─ Create thumbnail manager
   ├─ Start ZetaBoost engine instance
   └─ Wire signal connections
@@ -100,7 +109,7 @@ USE:
 
 CLOSE:
   ├─ Stop ZetaBoost engine
-  ├─ Release VTK render windows
+  ├─ Release each viewer domain; MPR/VTK native resources before Qt deletion
   ├─ Clear L1 cache for this study
   ├─ Shutdown thread executors
   ├─ Disconnect signals
@@ -109,8 +118,10 @@ CLOSE:
 
 **Stability guarantee:**
 - After closing a patient tab, ALL resources allocated for that patient must be freed
-- No VTK objects, timers, threads, or cache entries may survive tab closure
-- Memory after close must return to pre-open baseline (±1MB tolerance)
+- No patient-owned VTK objects, timers, workers, signals, or callbacks may survive tab closure.
+  Shared bounded caches may survive only under their documented process owner.
+- Memory must be evaluated across repeated cycles after a settle interval against a measured
+  baseline; a universal ±1 MB single-cycle tolerance is not a valid acceptance rule.
 
 **What gets cleaned:**
 | Resource | Cleanup method | Verified |
@@ -151,7 +162,7 @@ SELECT: User clicks series thumbnail
   │
   └─ UNLOAD (when switching to another series):
       ├─ Previous VTK data dereferences
-      └─ Python GC handles actual cleanup
+      └─ The owning viewer domain releases native/mutable state; GC handles only unreachable Python objects
 ```
 
 **Stability guarantee:**
@@ -206,13 +217,13 @@ QUEUE: Study download requested
   ├─ VALIDATE: Rule engine checks permissions, disk space
   │
   ├─ PREPARE:
-  │   ├─ Fetch metadata (gRPC)
+  │   ├─ Fetch metadata through the socket-backed compatibility adapter
   │   ├─ Create DB records
   │   └─ Notify global download counter (blocks ZetaBoost warmup)
   │
   ├─ DOWNLOAD (subprocess, own GIL):
   │   ├─ Per-series loop:
-  │   │   ├─ Download DICOM files via gRPC stream
+  │   │   ├─ Download DICOM files through socket `GetSeriesImages`
   │   │   ├─ Save to disk
   │   │   ├─ Insert instance records to DB
   │   │   └─ Progress signal → UI
@@ -226,7 +237,8 @@ QUEUE: Study download requested
 
 **Stability guarantee:**
 - Download state persists across app restart (DB-backed)
-- Subprocess isolation: cannot crash the viewer
+- Subprocess isolation contains a worker interpreter failure, but failures and resource pressure
+  must still be propagated and bounded; isolation is not a guarantee that the UI is unaffected.
 - Global counter prevents CPU contention with warmup
 - Network errors → retry with exponential backoff (3 attempts)
 
@@ -306,7 +318,7 @@ These loops run concurrently and must not interfere:
 │ VIEWER LOOP     │         │ DOWNLOAD LOOP   │
 │ (main process)  │         │ (subprocess)    │
 │                 │         │                 │
-│ scroll → render │  ───X──▶│ gRPC → disk     │
+│ scroll → render │  ───X──▶│ socket → disk   │
 │ 60 Hz, <16ms   │  no     │ own GIL         │
 │                 │  block  │                 │
 └────────┬────────┘         └────────┬────────┘
@@ -316,7 +328,7 @@ These loops run concurrently and must not interfere:
     ┌─────────────────────────────────────┐
     │ DATABASE (WAL mode)                  │
     │ concurrent read + write              │
-    │ no blocking                          │
+    │ WAL readers coexist; writer locks remain bounded/observable │
     └─────────────────────────────────────┘
 ```
 

@@ -12,6 +12,9 @@ import pydicom
 from pathlib import Path
 from PySide6.QtCore import QTimer
 from PacsClient.pacs.patient_tab.utils.advanced_geometry_contract import get_series_geometry_index
+from PacsClient.pacs.patient_tab.utils.advanced_payload_integrity import (
+    is_advanced_metadata, advanced_payload_matches_frames,
+)
 from modules.zeta_boost import ZetaBoostEngine
 from modules.viewer.pipeline import PipelineState
 import logging
@@ -167,6 +170,9 @@ class _VCCacheMixin:
         self._last_user_interaction_ts = time.time()
         self._boostviewer_enabled = self._is_boostviewer_enabled_runtime()
         self._zeta_manual_triggered = False
+        # Explicit loads completed while hidden are independent of proactive
+        # caching/warmup preferences. Resume their original requests in either mode.
+        self._replay_deferred_interactive_completions()
 
         if not self._boostviewer_enabled:
             # Manual-trigger mode: no proactive activation/warmup until drag/drop.
@@ -378,6 +384,10 @@ class _VCCacheMixin:
             if vtk_image_data is None or not isinstance(metadata, dict):
                 return False
             if bool(metadata.get('preview_only', False)):
+                return False
+            if metadata.get('_advanced_presentation_frames') is not None:
+                return False  # Independent frames are never a spatial full-volume cache entry.
+            if not advanced_payload_matches_frames(vtk_image_data, metadata):
                 return False
 
             dims = vtk_image_data.GetDimensions() if hasattr(vtk_image_data, 'GetDimensions') else (0, 0, 0)
@@ -596,6 +606,10 @@ class _VCCacheMixin:
             metadata = item.get("metadata")
             if not isinstance(metadata, dict):
                 return
+            # Decoded Advanced metadata belongs to these exact pixels. Disk
+            # growth must publish a replacement volume/metadata pair instead.
+            if is_advanced_metadata(metadata):
+                return
             if get_series_geometry_index(metadata) is not None:
                 logger.error(
                     "[ADVANCED_ORDER_CONTRACT_ERROR] caller=_refresh_stored_metadata_instances reason=attempted_cache_mutation series=%s",
@@ -769,6 +783,8 @@ class _VCCacheMixin:
                     continue
                 iv_meta = getattr(iv, "metadata", None)
                 if not isinstance(iv_meta, dict):
+                    continue
+                if is_advanced_metadata(iv_meta):
                     continue
                 if get_series_geometry_index(iv_meta) is not None:
                     continue

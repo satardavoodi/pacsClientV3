@@ -10,6 +10,31 @@ documents explain implementation details and historical recovery, but they do no
 replace this procedure. If another build document conflicts with this file, stop
 and update the conflicting document before building.
 
+## Non-negotiable interpretation of a build request
+
+An unqualified owner request such as "build", "make a new build", or "build the
+current version" always means exactly six installers: three PyInstaller editions
+and three Nuitka editions. The lane changes prerequisites and promotion status; it
+never changes that matrix or its final destinations. Do not ask whether the owner
+wants one backend, silently select one edition, or report an internal diagnostic
+artifact as a completed build.
+
+The only exception is an explicit request containing words such as "diagnostic",
+"one backend", or a named single edition. That request may use the internal lane
+and remains non-promotable. If a full build is interrupted, continue or recover
+the same immutable candidate according to this runbook; do not switch to a backend
+script or invent a new output route.
+
+Final deliverables have exactly two writable destinations:
+
+- `builder/output/installer/` for the three PyInstaller installers.
+- `builder nuitka/output/installer/` for the three Nuitka installers.
+
+The coordinator CLI intentionally has no final-output-directory override. `C:\b`,
+`C:\ap-stage`, backend `dist`/`stage` trees, logs, checkpoints, and `_superseded`
+are scratch or evidence only. A human or agent must not copy, rename, deliver, or
+describe files from those locations as the requested build.
+
 ## Canonical six-installer command
 
 When the owner asks to "make a build", this is the required workflow. After
@@ -68,8 +93,12 @@ remote branch and its fresh receipt is available.
 
 ## 1. Supported deliverables
 
-Eagle Eye asset update (2026-09-07): its payload now requires both Brain and
-Lumbar. Brain preparation, distribution-evidence requirements and remaining clean
+Eagle Eye asset update (2026-09-14): its payload requires Brain volumetry,
+Brain MS lesion analysis and Lumbar. The lesion bundle defaults to
+`generated-files/eagle-eye/brain-lesions`; set `AIPACS_EAGLE_EYE_LESION_SOURCE`
+for an explicit prepared source. Standard/ARM exclude the lesion model/runtime.
+See [lesion payload evidence](docs/modules/EAGLE_EYE_BRAIN_MS_LESION_DESIGN.md).
+Brain preparation, distribution-evidence requirements and remaining clean
 Windows acceptance are documented in
 [Eagle Eye Brain delivery](docs/modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md).
 The earlier lumbar-only asset cache does not satisfy this new contract. The
@@ -97,11 +126,16 @@ Each backend installer folder must also contain its current release metadata,
 and `SHA256_FA.txt`. A folder named `_superseded` contains historical evidence;
 never distribute from it.
 
-## 2. One workflow, three lanes
+## 2. One fixed matrix, three validation lanes
 
 Do not build six installers after every source edit. Select the narrowest lane
 that answers the current question. An artifact may move only from a stricter lane,
 never from a faster lane by renaming it.
+
+Lane selection is not edition selection. Both the receipt-backed release lane and
+the local install-QA lane always produce the same six-file matrix in the same two
+repository folders. Only the explicitly requested internal diagnostic lane may
+produce fewer files, and those files never enter the canonical installer folders.
 
 | Lane | When to use it | Output | Release status |
 |---|---|---|---|
@@ -113,6 +147,20 @@ On the 2026-09-06 reference machine, the complete 3.6.5 matrix took about
 2 hours 54 minutes. PyInstaller took about 62 minutes and Nuitka about 112 minutes.
 The six Inno compression passes consumed about 96 minutes in total; Nuitka Stage 6
 consumed about 49 minutes. These are measurements, not universal promises.
+
+The completed 3.6.6 local install-QA run on 2026-09-10 provides a second baseline.
+Exact-input PyInstaller repackaging took about 49 minutes. Nuitka took about 3 hours
+15 minutes, including about 54 minutes for Stage 6 and about 63 minutes for Stage
+10. The three Nuitka Inno compiles themselves consumed about 60 minutes. Recovery
+overhead makes this a conservative comparison, but it confirms that native compile
+and repeated standalone-installer compression remain the dominant costs.
+
+The completed 3.6.7 local install-QA run on 2026-09-21 used the canonical recovery
+route after an infrastructure interruption. PyInstaller took about 69 minutes,
+Nuitka Stage 6 took about 41 minutes, and the successful resumed Stage 10 took about
+62 minutes. Recovery reused the completed PyInstaller backend and valid same-snapshot
+Nuitka checkpoints; it did not recompile Stage 6. Interruption overhead is excluded
+from those stage measurements.
 
 The safe immediate speed improvement is procedural: perform source validation on
 every change, use a single isolated edition only when installer behavior needs
@@ -204,9 +252,14 @@ provider envelopes, never plaintext provider keys or center access codes. Keep
 `credential_envelope.py` and `center_registry.py` in the EchoMind package and retain
 the `cryptography` runtime dependency. Do not copy the administrator's `API.md`,
 development credentials, or authenticated local settings into installer inputs.
-The TEST center remains disabled by default. During human-operated clean-machine
-install QA, enter an authorized center code and verify the matching active center
-and a synthetic model response; never include credentials in QA evidence.
+The owner-approved TEST center is the end-user demo and is enabled by default. A
+restricted deployment can remove demo access by setting
+`AIPACS_ENABLE_DEMO_CENTER=0`; the legacy `AIPACS_ALLOW_TEST_CENTER` flag remains
+readable for compatibility. During human-operated clean-machine install QA, enter
+the authorized demo code and verify the matching active center and a synthetic
+model response; never include credentials in QA evidence. Provider-side quota,
+billing, monitoring, and rotation are owned by GapGPT and are intentionally outside
+the desktop client's activation contract.
 Client-side encryption raises extraction effort but cannot hide an authorized
 center's decrypted key from someone controlling that running workstation.
 
@@ -296,16 +349,71 @@ toolchain identity. Do not transplant checkpoints between candidates. A recovere
 backend is not complete until all selected stages, installer metadata, hashes, and
 cross-backend coherence pass and the recovery is recorded.
 
+Resume through the same root coordinator, never by choosing a backend command:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
+  --resume-workspace C:\b\<exact-candidate-directory>
+```
+
+The coordinator infers the recorded release/local-QA lane, revalidates the immutable
+source and external asset locations, refuses a still-running recorded process,
+skips a backend only when it completed with exit code 0 and all three of its
+canonical installers still exist, and resumes Nuitka only across the release stages
+`0, 6, 7, 8, 9, 10`. It then reruns cross-backend coherence. It
+must never enter diagnostic stages 1-5 while recovering a full candidate. Do not
+start a fresh candidate merely because the controlling terminal or agent stopped;
+use this command after confirming the recorded child process is no longer active.
+
+### 5.6 Reuse and compression decision
+
+The build already avoids compiling the application six times. Each backend creates
+one core and stages three edition views from it. The immutable Slicer, Brain,
+Lumbar, Qt, codec, and other dependency inputs also come from verified local caches;
+they are not downloaded again for every edition.
+
+The remaining repetition is mostly Inno Setup compression. Because the contract is
+six standalone EXE installers and the edition payloads or architecture rules differ,
+Inno must currently read and compress each complete edition separately. Inno Setup
+does not provide a safe incremental block cache for rebuilding one monolithic EXE.
+Unchanged DLLs therefore do not, by themselves, make an old installer reusable.
+A version, source, manifest, installer-script, dependency, profile, or payload change
+invalidates the corresponding final artifact.
+
+Use the following decision table instead of guessing:
+
+| Situation | Safe action | What may be reused |
+|---|---|---|
+| Normal source development | Source tests and Developer Run | Existing environments and immutable asset cache; no installer |
+| One installer/profile investigation | Explicit internal diagnostic lane | Verified assets and that isolated diagnostic workspace only |
+| Packaging retry with byte-identical PyInstaller core inputs | `--reuse-python-source` with its fail-closed input map | Validated PyInstaller core; gates and installers run again |
+| Infrastructure interruption in the current full candidate | Root coordinator `--resume-workspace` | Completed backend plus validated same-candidate Nuitka checkpoints/objects |
+| New version or changed core inputs | Fresh full matrix after source freeze | Toolchain and immutable asset cache only |
+
+Do not manually copy a DLL tree or decide reuse from modification times. Reuse is
+valid only when a checked content manifest covers source, dependency lock, build
+toolchain, spec/configuration, runtime resources, edition profile, and installer
+script inputs.
+
+The next safe implementation target is content-addressed Nuitka Stage 6 reuse with
+fail-closed invalidation and a new coherence guard. After that, benchmark a faster
+compression profile for non-promotable internal diagnostics. Bounded parallel Inno
+compilation may be evaluated only on a dedicated machine with measured RAM and disk
+headroom. None of these experiments changes the current release default until a
+before/after six-artifact run passes every existing content, hash, version, size,
+Qt/ICU, codec, DICOM Flow, and installability guard.
+
 ## 6. Expected sizes and content checks
 
-Size is an anomaly signal, not proof of completeness. The 3.6.5 r15 reference is:
+Size is an anomaly signal, not proof of completeness. The completed 3.6.7 local
+install-QA evidence is:
 
 | Backend | Eagle Eye | Standard | ARM64 emulation |
 |---|---:|---:|---:|
-| Python/PyInstaller | 1,156,051,065 bytes | 634,708,026 bytes | 634,708,231 bytes |
-| Nuitka | 1,117,929,527 bytes | 596,594,493 bytes | 596,594,689 bytes |
+| Python/PyInstaller | 1,785,526,154 bytes | 635,475,974 bytes | 635,476,107 bytes |
+| Nuitka | 1,749,308,055 bytes | 599,265,245 bytes | 599,265,466 bytes |
 
-Expected review bands for the current dependency family are 1.0–1.3 GB for Eagle
+Expected review bands for the current dependency family are 1.65–1.85 GB for Eagle
 Eye and 0.55–0.70 GB for Standard/ARM. Stop and investigate any result outside its
 band. Do not remove Slicer, codecs, Qt, legal files, or modules to satisfy a size
 target. The compact-edition hard maximum is 700,000,000 bytes; content gates remain
@@ -392,8 +500,9 @@ Record accepted optimization work under the existing OPT-53 item in
 
 ## 10. Supporting references
 
-- `docs/releases/VERSION_3.6.6_BUILD.md` — current candidate preparation and artifact evidence.
-- `docs/releases/VERSION_3.6.5_BUILD.md` — previous measured artifact baseline.
+- `docs/releases/VERSION_3.6.7_BUILD.md` — current candidate preparation and artifact evidence.
+- `docs/releases/VERSION_3.6.6_BUILD.md` — previous measured artifact baseline.
+- `docs/releases/VERSION_3.6.5_BUILD.md` — earlier measured artifact baseline.
 - `builder/docs/DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md` — edition payloads.
 - `builder/docs/INSTALLER_QA_CHECKLIST.md` — clean-machine installer QA.
 - `builder/docs/AI_AGENT_BUILD_RUNBOOK.md` — historical PyInstaller details.

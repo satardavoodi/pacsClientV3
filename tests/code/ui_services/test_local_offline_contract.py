@@ -243,9 +243,17 @@ def test_local_thumbnail_projection_excludes_non_pixel_dicom_objects():
         _function_source(HP_SEARCH, "_build_local_series_thumbnail_payload"),
         _function_source(PW_THUMBS, "_build_local_thumbnail_entries"),
     ):
-        assert "inspect_series_pixel_inventory" in body
+        assert "resolve_series_pixel_inventories" in body
         assert "if not pixel_inventory.has_pixel_data" in body
         assert "pixel_inventory.pixel_instance_count" in body
+
+    # The trusted producer summary is an acceleration only. Unknown, legacy or
+    # revision-mismatched rows must still reach the original header verifier.
+    resolver = _function_source(
+        REPO / "PacsClient/utils/dicom_displayability.py",
+        "resolve_series_pixel_inventory",
+    )
+    assert "inspect_series_pixel_inventory" in resolver
 
 
 def test_local_pixel_inventory_counts_cine_frames_not_only_dicom_objects(tmp_path):

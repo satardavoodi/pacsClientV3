@@ -59,6 +59,32 @@ Post-build evidence:
 - Eagle Eye staging contains Advanced MPR/Slicer, offline Lumbar weights, and the
   validated Brain/SynthSeg payload. Compile-only TensorFlow headers were excluded.
 
+## Build-time measurement and reuse conclusion
+
+The successful candidate workspace recorded about 49 minutes for exact-input
+PyInstaller repackaging and about 3 hours 15 minutes for Nuitka. Nuitka Stage 6
+took about 54 minutes. Its three Inno Setup compiles took 1,934.390, 876.625, and
+771.484 seconds respectively, or about 60 minutes in aggregate; Stage 10 including
+staging and verification took about 63 minutes.
+
+Both backends already compile one application core and derive all three editions
+from that core. The repeated cost is therefore not six full Python/native builds;
+it is the required edition staging and compression of six standalone installers.
+The current safe accelerators are the immutable asset cache, source-only validation
+during development, explicit single-edition diagnostics, fail-closed PyInstaller
+core reuse for exact inputs, and same-candidate Nuitka checkpoint recovery. A new
+version or changed core input still requires a fresh final matrix. Cross-candidate
+Nuitka core reuse and faster diagnostic compression remain guarded experiments,
+not release defaults.
+
+The recovery issue observed during this run is now covered by the canonical
+coordinator's `--resume-workspace` path. A resumed full candidate skips a backend
+already recorded complete, limits Nuitka recovery to release stages, and reruns
+coherence instead of requiring an operator to improvise backend commands.
+A real recovery exercise against the completed 3.6.6 workspace skipped both
+completed backends and passed cross-backend coherence without compilation or
+installer compression.
+
 The first synchronized candidate was created at
 `C:\b\aipacs-3.6.6-20260909-195559`. Its PyInstaller core, Qt/ICU hygiene, frozen
 MPR geometry gate, version stamp, and Lite Viewer build/self-test passed. Packaging
@@ -132,3 +158,15 @@ must use the receipt-backed release lane and its publication approvals.
 On failure, preserve the isolated candidate evidence and discard only that named
 candidate when it is no longer needed. Do not alter previous installers, shared
 Git history, or the immutable release tag.
+
+## Pending source amendment for the next candidate (2026-09-13)
+
+The EchoMind typography and pathology-organization changes were made after the
+completed September 10 candidate above. They are **not claimed present in those
+existing installers**. Include the current canonical `ai_chat_pages.py` and
+`ai_chat_widgets.py` plus regenerated EchoMind payloads in the next authorized
+candidate snapshot. The shared renderer covers all six current modalities and
+specialty headings; ordered pathology, sentence breaks, margins and font scale
+survive Reception export. Reporting and edition-stage checks: 164 passed, exit 0;
+all 462 mirrors match. No new build or publication was performed for this change.
+Details: `../echomind/REPORT_TYPOGRAPHY_2026-09-13.md`.

@@ -106,6 +106,7 @@ def _throttle_background_threads(throttle: bool) -> None:
             pass
 
 
+# Registration is lifecycle bookkeeping, never permission to suspend a download.
 _active_download_pids: set = set()
 
 
@@ -118,31 +119,17 @@ def unregister_download_subprocess(pid: int) -> None:
 
 
 def _nt_suspend_download_subprocesses() -> None:
-    if sys.platform != 'win32' or not _active_download_pids:
-        return
-    desired = 0x0800
-    for pid in list(_active_download_pids):
-        try:
-            handle = ctypes.windll.kernel32.OpenProcess(desired, False, pid)
-            if handle:
-                ctypes.windll.ntdll.NtSuspendProcess(handle)
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception:
-            pass
+    """Compatibility no-op; same OPT-04 download-liveness policy as _vw_globals.
+
+    The download child's existing BELOW_NORMAL priority remains in force. Do not
+    reintroduce whole-process suspension through the legacy A/B viewer route.
+    """
+    return
 
 
 def _nt_resume_download_subprocesses() -> None:
-    if sys.platform != 'win32' or not _active_download_pids:
-        return
-    desired = 0x0800
-    for pid in list(_active_download_pids):
-        try:
-            handle = ctypes.windll.kernel32.OpenProcess(desired, False, pid)
-            if handle:
-                ctypes.windll.ntdll.NtResumeProcess(handle)
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception:
-            pass
+    """Compatibility no-op: no download suspension is owned by this viewer."""
+    return
 
 _RENDER_THROTTLE_MS = 16  # ~60fps max render rate
 _SPINNER_HIDE_DELAY_MS = 50  # Delay before hiding spinner to allow final render
@@ -3579,18 +3566,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return
 
         self._drop_hover_inside = True
-        if self._is_internal_series_drop_payload(event.mimeData()):
-            # Internal thumbnail drag should be immediately droppable.
-            self._drop_hover_started_ms = now_ms()
-            self._drop_hover_armed = True
-            self._drop_hover_anchor_pos = self._drag_event_point(event)
-            try:
-                self._drop_hover_timer.stop()
-            except Exception:
-                pass
-            self._show_drop_highlight(True)
-        else:
-            self._restart_drop_dwell(anchor_point=self._drag_event_point(event))
+        self._restart_drop_dwell(anchor_point=self._drag_event_point(event))
         event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
@@ -3599,19 +3575,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
             return
 
         point = self._drag_event_point(event)
-        if self._is_internal_series_drop_payload(event.mimeData()):
-            self._drop_hover_inside = True
-            self._drop_hover_armed = True
-            self._drop_hover_anchor_pos = point
-            self._drop_hover_started_ms = now_ms()
-            try:
-                self._drop_hover_timer.stop()
-            except Exception:
-                pass
-            self._show_drop_highlight(True)
-            event.acceptProposedAction()
-            return
-
         anchor = self._drop_hover_anchor_pos
         if anchor is None:
             self._restart_drop_dwell(anchor_point=point)

@@ -83,16 +83,23 @@ def _load_center_records(raw_centers) -> List[CenterRecord]:
 
 CENTERS: List[CenterRecord] = _load_center_records(ENCRYPTED_CENTERS)
 
-#: Development-only records remain encrypted and are omitted from both runtime maps unless
-#: explicitly enabled. No shipped build sets this environment variable.
-_DEV_ONLY_CENTER_CODES = ("TEST",)
-_ENV_ALLOW_TEST_CENTER = "AIPACS_ALLOW_TEST_CENTER"
+#: TEST is an owner-approved end-user demo center. It uses the same protected
+#: credential envelope as production centers and is available by default. A
+#: restricted deployment can explicitly remove demo access without changing
+#: any paying-center record. The legacy flag remains readable for compatibility.
+_DEMO_CENTER_CODES = ("TEST",)
+_ENV_ENABLE_DEMO_CENTER = "AIPACS_ENABLE_DEMO_CENTER"
+_ENV_LEGACY_ALLOW_TEST_CENTER = "AIPACS_ALLOW_TEST_CENTER"
 
 
 def test_center_enabled() -> bool:
-    """Whether development-only centers are part of the runtime registry."""
-    raw = os.environ.get(_ENV_ALLOW_TEST_CENTER)
-    return bool(raw) and str(raw).strip().lower() not in ("0", "false", "no", "off")
+    """Whether the owner-approved demo center is part of the runtime registry."""
+    raw = os.environ.get(_ENV_ENABLE_DEMO_CENTER)
+    if raw is None:
+        raw = os.environ.get(_ENV_LEGACY_ALLOW_TEST_CENTER)
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in ("", "0", "false", "no", "off")
 
 
 def _build_registry_maps(
@@ -101,10 +108,10 @@ def _build_registry_maps(
     """Build center and access-code lookup maps without retaining plaintext secrets."""
     centers_by_code: Dict[str, CenterRecord] = {}
     lookup_to_center_code: Dict[str, str] = {}
-    allow_dev = test_center_enabled()
+    allow_demo = test_center_enabled()
     for center in centers:
         code = str(center.center_code or "").strip().upper()
-        if not code or (code in _DEV_ONLY_CENTER_CODES and not allow_dev):
+        if not code or (code in _DEMO_CENTER_CODES and not allow_demo):
             continue
         credentials = tuple(center.credentials or ())
         if not credentials:

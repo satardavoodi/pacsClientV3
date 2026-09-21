@@ -19,6 +19,7 @@ from .advanced_geometry_contract import (
     stamp_metadata_with_geometry_index,
 )
 from .image_filters import apply_filters
+from .advanced_nonspatial import NonSpatialUSPlan, nonspatial_us_plan
 
 # import utils
 sitk.ProcessObject.SetGlobalWarningDisplay(False)
@@ -244,15 +245,27 @@ def _get_or_build_series_geometry_index(
 ):
     cache_key = _geometry_index_cache_key(dicom_files)
     cached_payload = _series_geometry_index_cache.get(cache_key)
-    geometry_index, cache_hit = build_series_geometry_index(
-        [str(path) for path in (dicom_files or [])],
-        patient_code=patient_code,
-        study_uid_hint=study_uid,
-        series_uid_hint=series_uid,
-        series_number_hint=series_number,
-        source=source,
-        cache_payload=cached_payload,
-    )
+    try:
+        geometry_index, cache_hit = build_series_geometry_index(
+            [str(path) for path in (dicom_files or [])],
+            patient_code=patient_code,
+            study_uid_hint=study_uid,
+            series_uid_hint=series_uid,
+            series_number_hint=series_number,
+            source=source,
+            cache_payload=cached_payload,
+        )
+    except ValueError:
+        # A sequence of US screenshots has frame order, not a patient affine.
+        # Keep it out of the spatial-index cache and revalidate each load.
+        plan = nonspatial_us_plan(
+            dicom_files or [], study_uid_hint=study_uid, series_uid_hint=series_uid,
+        )
+        if plan is None:
+            raise
+        logger.info("[ADVANCED_NONSPATIAL_US] frames=%d spatial_geometry=False",
+                    len(plan.dicom_files_for_itk))
+        return plan, False
     if not cache_hit:
         if len(_series_geometry_index_cache) >= _cache_max_size:
             _series_geometry_index_cache.pop(next(iter(_series_geometry_index_cache)))
@@ -1435,6 +1448,9 @@ def _apply_geometry_index_metadata(metadata: dict, geometry_index):
     if not isinstance(metadata, dict) or geometry_index is None:
         return metadata
 
+    if isinstance(geometry_index, NonSpatialUSPlan):
+        return geometry_index.stamp_metadata(metadata)
+
     stamp_metadata_with_geometry_index(metadata, geometry_index)
 
     series_meta = metadata.get("series")
@@ -1448,6 +1464,18 @@ def _apply_geometry_index_metadata(metadata: dict, geometry_index):
         series_meta["display_convention"] = geometry_index.display_convention
         if geometry_index.modality:
             series_meta["modality"] = geometry_index.modality
+
+    # These values came from source headers on this worker, not stale DB defaults.
+    # Retain that provenance so scrolling need not reopen every DICOM file.
+    from .dicom_windowing import normalize_window_level
+    for instance in metadata.get("instances", ()):
+        ww, wc = normalize_window_level(
+            instance.get("window_width"), instance.get("window_center"),
+            treat_legacy_placeholder_as_missing=True,
+            treat_mg_full_range_placeholder_as_missing=False,
+            modality=geometry_index.modality)
+        if ww is not None and wc is not None:
+            instance["_advanced_header_window"] = (float(ww), float(wc), "dicom_tag")
 
     return metadata
 
@@ -3061,6 +3089,23 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
     resolution = resolve_viewer_backend(metadata=None, settings=selected_backend)
     active_backend = str(resolution.get("backend", BACKEND_VTK))
 
+    if active_backend == BACKEND_VTK:
+        from .advanced_presentation import load_presentation_sequence
+        presentation = load_presentation_sequence(
+            _list_unique_dicom_files(series_path), series_number=series_number,
+            max_itk_threads=max_itk_threads,
+        )
+        if presentation is not None:
+            image, metadata = presentation
+            logger.info(
+                "[ADVANCED_PRESENTATION] frames=%d rgb_frames=%d overlay_frames=%d spatial_geometry=False",
+                len(metadata['instances']),
+                sum(bool(item.get('is_rgb')) for item in metadata['instances']),
+                sum(item is not None for item in metadata['_advanced_presentation_overlays']),
+            )
+            yield image, metadata, (patient_pk, study_pk)
+            return
+
     # Lazy PyDicom path: header/metadata only + on-demand slice decode.
     if active_backend == BACKEND_PYDICOM:
         global _DECODER_PREFLIGHT_LOGGED
@@ -3549,7 +3594,32 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
     if not dicom_files:
         return None
     total_files = len(dicom_files)
-    preview_files = dicom_files[: max(1, int(max_files or 1))]
+    from .advanced_presentation import contains_presentation_frames
+    if contains_presentation_frames(dicom_files):
+        # A prefix may mix report dimensions or RGB with scalar MR. Let the
+        # atomic per-frame worker path prepare the complete sequence instead.
+        logger.info("[ADVANCED_PREVIEW_DEFERRED] reason=presentation_sequence")
+        return None
+    # Choose the preview from the same cached ordering authority as the full
+    # worker. Filesystem order must never determine the initial scroll direction.
+    from .advanced_geometry_contract import SeriesGeometryIndex, preview_geometry_prefix
+    try:
+        full_index, _ = _get_or_build_series_geometry_index(
+            list(map(str, dicom_files)), source="preview", series_number=str(series_number))
+        if not isinstance(full_index, SeriesGeometryIndex):
+            return None
+        preview_index = preview_geometry_prefix(full_index, max_files or 1)
+    except ValueError:
+        logger.info("[ADVANCED_PREVIEW_DEFERRED] reason=unresolved_geometry")
+        return None
+    preview_files = [Path(path) for path in preview_index.dicom_files_for_itk]
+
+    # Describe exactly the selected decode sequence; DB order is not pixel order.
+    instances = [_build_instance_header_stub(path, index + 1)
+                 for index, path in enumerate(preview_files)]
+    if any(item is None or item.get('number_of_frames', 1) != 1 for item in instances):
+        logger.warning("[ADVANCED_PREVIEW_DEFERRED] reason=unsupported_or_missing_frame_metadata")
+        return None
 
     try:
         if len(preview_files) == 1:
@@ -3568,55 +3638,33 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
 
     vtk_image_data = utils.convert_itk2vtk(itk_image)
 
+    if vtk_image_data.GetDimensions()[2] != len(instances):
+        logger.warning("[ADVANCED_PREVIEW_DEFERRED] reason=decoded_frame_count_mismatch")
+        return None
+
     series_meta = None
-    instances = []
     if study_pk:
         try:
             from PacsClient.utils.database import find_series_pk_by_number
             series_pk = find_series_pk_by_number(series_number, study_pk)
             if series_pk:
                 series_meta = get_series_by_series_pk(series_pk)
-                instances_full = get_instances_by_series_pk(series_pk, group_id=0) or []
-                instances = instances_full[: len(preview_files)]
-                # Backfill NULL IOP/IPP for preview (same fix as full load path)
-                try:
-                    _backfill_instance_orientation(instances)
-                except Exception:
-                    pass
         except Exception:
             series_meta = None
 
-    if not instances:
+    if not series_meta:
         try:
             first_dcm = utils._safe_dcmread(preview_files[0], stop_before_pixels=True)
-            _iop_raw = first_dcm.get('ImageOrientationPatient', None)
-            _ipp_raw = first_dcm.get('ImagePositionPatient', None)
-            _ps_raw = first_dcm.get('PixelSpacing', None)
-            instances = [
-                {
-                    'instance_number': 1,
-                    'instance_path': str(preview_files[0]),
-                    'rows': int(first_dcm.get('Rows', 512)),
-                    'columns': int(first_dcm.get('Columns', 512)),
-                    'window_width': first_dcm.get('WindowWidth', None),
-                    'window_center': first_dcm.get('WindowCenter', None),
-                    'is_rgb': first_dcm.get('PhotometricInterpretation', '') in ['RGB', 'YBR_FULL', 'YBR_FULL_422'],
-                    'image_orientation_patient': [float(v) for v in _iop_raw] if _iop_raw is not None else None,
-                    'image_position_patient': [float(v) for v in _ipp_raw] if _ipp_raw is not None else None,
-                    'pixel_spacing': [float(v) for v in _ps_raw] if _ps_raw is not None else None,
-                }
-            ]
-            if not series_meta:
-                series_meta = {
-                    'series_number': str(series_number),
-                    'series_name': str(series_number),
-                    'series_description': first_dcm.get('SeriesDescription', f'Series {series_number}'),
-                    'series_thk': str(first_dcm.get('SliceThickness', '1.0')),
-                    'modality': first_dcm.get('Modality', 'CT'),
-                    'protocol_name': first_dcm.get('ProtocolName', ''),
-                    'body_part_examined': first_dcm.get('BodyPartExamined', ''),
-                    'main_thumbnail': True,
-                }
+            series_meta = {
+                'series_number': str(series_number),
+                'series_name': str(series_number),
+                'series_description': first_dcm.get('SeriesDescription', f'Series {series_number}'),
+                'series_thk': str(first_dcm.get('SliceThickness', '1.0')),
+                'modality': first_dcm.get('Modality', 'CT'),
+                'protocol_name': first_dcm.get('ProtocolName', ''),
+                'body_part_examined': first_dcm.get('BodyPartExamined', ''),
+                'main_thumbnail': True,
+            }
         except Exception:
             pass
 
@@ -3627,6 +3675,8 @@ def load_series_preview(study_path, series_number, patient_pk=None, study_pk=Non
         'preview_total_instances': total_files,
     }
     _annotate_backend_metadata(metadata, BACKEND_VTK, "")
+
+    _apply_geometry_index_metadata(metadata, preview_index)
 
     itk_image = None
 

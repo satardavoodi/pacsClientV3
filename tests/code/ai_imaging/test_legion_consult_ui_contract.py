@@ -107,7 +107,7 @@ def test_disarming_the_owned_roi_returns_the_coordinator_to_idle(qapp, monkeypat
     patient_widget.close()
 
 
-def test_toolbar_routes_eagle_eye_click_through_function_picker():
+def test_toolbar_navigates_before_workspace_function_picker():
     source = Path(
         "PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py"
     ).read_text(encoding="utf-8")
@@ -115,11 +115,12 @@ def test_toolbar_routes_eagle_eye_click_through_function_picker():
         "    def _on_upload_menu_clicked", 1
     )[0]
 
-    assert "choose_eagle_eye_function" in handler
-    assert "LegionConsultCoordinator" in handler
-    assert handler.index("choose_eagle_eye_function") < handler.index(
-        "_trigger_eagle_eye_analysis_pipeline"
-    )
+    assert "open_eagle_eye_workspace" in handler
+    assert "choose_eagle_eye_function" not in handler
+    from modules.ai_imaging.eagle_eye_workspace import EagleEyeWorkspaceController
+    import inspect
+    choose = inspect.getsource(EagleEyeWorkspaceController.choose_function)
+    assert choose.index("choose_eagle_eye_function") < choose.index("self._start_legion()")
 
 
 def test_retry_retains_source_candidates_when_evidence_preparation_failed(

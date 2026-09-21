@@ -112,7 +112,7 @@ class AIPatientWidget(PatientWidget):
             logger.debug(f'[MG][INIT] ║ ❌ Error in override patient widget: {e}')
             import_folder_path = sample_study
 
-        if self.eagle_eye_mode == "bone_age":
+        if self.eagle_eye_mode in ("bone_age", "brain_mri"):
             initial_layout = (1, 1)
         elif self.eagle_eye_mode == "lumbar_mri":
             initial_layout = LUMBAR_LAYOUT
@@ -144,6 +144,8 @@ class AIPatientWidget(PatientWidget):
           - Right viewer: without boxes (fixed_viewer) to see original image
         For other modalities: 1x1 layout
         """
+        if self.eagle_eye_mode == "brain_mri":
+            return (1, 1)
         modality = metadata.get('series', {}).get('modality', '').upper()
         logger.debug(f"[MG][LAYOUT] ╔═══════════════════════════════════════")
         logger.debug(f"[MG][LAYOUT] ║ get_optimal_layout_for_series called")
@@ -215,6 +217,8 @@ class AIPatientWidget(PatientWidget):
         Override default layout for AI imaging tab.
         We always start with 1×2 layout and hide/show viewers based on modality
         """
+        if self.eagle_eye_mode == "brain_mri":
+            return (1, 1)
         if self.eagle_eye_mode == "bone_age":
             logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: mode=bone_age, returning (1, 1)")
             return (1, 1)

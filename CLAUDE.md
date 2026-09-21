@@ -928,6 +928,19 @@ Key invariants that must not be broken:
   (memory-first) but must fall back to the canonical PNG file; the DB
   `series.thumbnail_path` column is a hint only — never the sole source.
 - `make_pixmap_from_bytes` is Qt-main-thread only.
+- **Thumbnail lifetime correction (2026-09-13 / OPT-60):** current `ThumbnailManager` has no
+  manager-level cleanup/dispose, but real-PySide6 probes disproved the stronger claim that its
+  `ThemeManager.themeChanged` connection alone retains a standalone manager. Immediate
+  right-panel managers are released after their cards are deleted. The confirmed retention edge
+  is the patient-tab priority signal connected to an external lambda that captures the patient
+  widget/home owner; disconnecting that edge releases the synthetic ownership graph. The May P1
+  change landed as misplaced dead code in `CircularProgressborder.cleanup()`. First add
+  fail-before lifetime guards, then disconnect outward callbacks, use one idempotent owner-driven
+  disposal path, and cancel/generation-gate delayed work. Preserve `series_uid` / `folder_key` /
+  digit-only `display_key`, card counts, drag payloads, Local hard-offline behavior, and the
+  Fast/Advanced/MPR domain boundaries. Full GC is not teardown and must not run on a worker.
+  Before consolidating any parallel thumbnail or priority route, read
+  `docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`.
 
 #### Per-series download progress bar inside each card (2026-06-28)
 Each series/thumbnail card carries a thin themed `QProgressBar`
@@ -1511,6 +1524,22 @@ morning whole-PC unexpected reboot + large-MPR freezes on the Intel UHD 630.)
   force-KILLed GUI can't run its `finally`, so a parent-death watchdog in the subprocess is the robust fix.
 
 ### Download-manager reliability + smoothness (2026-06-02)
+
+**September 15 completion/retry follow-up (OPT-04):** read
+`docs/reports/DOWNLOAD_FILE_COUNT_GATE_2026-09-15.md`. End-of-pagination must not
+complete a known-count series with fewer resume-eligible files; duplicates must
+not inflate progress. Retry must reuse the first SeriesInstanceUID-scoped folder,
+not rebuild a bare series-number path. 23 new guards / 217 focused-builder passes;
+source GUI pending. The count gate is NOT a durable SOP-manifest/pixel certificate.
+
+**September 15 receive-boundary update (OPT-04):** before changing socket retry,
+encoding or UI progress, read `docs/reports/DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md`.
+Exact prefix reads, elapsed broadcast waiting and reentrant request/connect
+serialization now have 38 wire guards. Do not restore a fixed ten-notification
+failure or introduce a whole-large-body deadline. Overall Progress/UI untouched;
+189 adjacent + 5 builder passes, but known historical encoding/payload failures,
+disk-manifest completion, final IPC delivery and fresh-source GUI remain open.
+
 See `docs/reports/AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity verified sound
 (atomic `.part`→`os.replace`, resume rejects partials, DB-lock retry). Applied + test-verified:
 - **DM-H4** `DownloadProcessWorker.ensure_subprocess_dead()` called from
@@ -3062,6 +3091,15 @@ Before touching the show-a-series path, **read
   (9 flags → 1). NEEDS live verify on 50238 / 49836 / 48912 / a single-study patient.
 
 ### Two main-thread freezes: web-browser prewarm (OPT-22) + EchoMind import (OPT-23) (2026-07-08)
+
+**Current OPT-22 override (2026-09-15):** the timing-only recommendation below is
+historical. The August 16 incident made prewarm opt-in; keep that default OFF.
+User-initiated opening now has a painted child header notice and an app-local
+input gate, preserving synchronous Widget-or-None callers and avoiding nested
+event pumping. It does not remove atomic Qt startup blocking. See
+`docs/reports/WEBENGINE_OPEN_WAIT_STATUS_2026-09-15.md` for 12 guards, 160 adjacent
+passes, packaging parity, pending fresh-source GUI gate and rollback.
+
 Regression review of two reported UI-thread freezes (report
 `docs/reports/REGRESSION_REVIEW_STARTUP_AND_ECHOMIND_FREEZE_2026-07-08.md`; master plan OPT-22/OPT-23).
 Both were **main-thread blocking, NOT the unified-pipeline / series-identity work** (neither appears in
@@ -3230,6 +3268,12 @@ editing EchoMind, know these five rules — each replaced a real defect:
   provider-credential envelope. This prevents casual extraction from packaged Python payloads;
   it does not claim to defeat a determined runtime debugger. Generate updates only with
   `tools/security/generate_echomind_center_registry.py` and keep its plaintext input outside Git.
+  TEST is the owner-approved end-user demo center and must be present in the default
+  runtime registry. Restricted deployments may explicitly opt out with
+  `AIPACS_ENABLE_DEMO_CENTER=0`; the legacy `AIPACS_ALLOW_TEST_CENTER` flag remains
+  readable. Do not change, print, or document its access code or provider credential.
+  Provider-side quota, billing, monitoring, and rotation are GapGPT responsibilities;
+  the desktop client must not block a valid demo code based on those concerns.
 - **Send-to-Reception must be fed FULLY-INLINE HTML.** EchoMind reports arrived at Reception
   stripped of colour/font/size while the Medical Report Editor's arrived intact — even though
   both build the same payload and both call `prepare_report_html_for_server()`. The transfer
@@ -3354,6 +3398,18 @@ cross-links the runbook and `.github/prompts/`. There are **two testing lanes**:
   build + logs in + positions on Monitor 1; the agent tests from the open app). Procedure:
   `docs/AIPACS_LAUNCH_CONTROL_RUNBOOK.md`. Source build only — never the frozen exe, never the
   black taskbar icon, never multiple instances.
+
+**Mandatory two-gate acceptance (user decision, 2026-09-14):** each runtime fix/Unify slice
+requires both focused automated code tests and a live source-GUI workflow check. Keep their
+statuses separate; blocked/skipped live testing cannot close the slice. Persistent operating
+instructions, current MCP/CLI command mapping, reception-based case discovery, privacy, and
+evidence requirements are in `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` section 0.
+Discover `aipacs-control` first; its existing `client.py` is the same-pipe fallback when MCP tools
+are unavailable. The human bootstraps one source instance; test connectivity with `ping` and
+`list_actions`. MCP `drag_series` does not exercise Home-card clicks or Windows OLE drag, and
+`scroll_slices` does not exercise wheel input. Verify those input boundaries and actual rendered
+pixels separately when affected. Never run the external-brain clinical demo on patient data as
+an incidental regression test. Documentation-only work needs document checks, not a live pass.
 
 **Fastest way to CONTROL the app (not pixel-clicking):** the in-app command surface the
 maintainers built — the `aipacs-control` MCP (`tools/testing/aipacs_control_mcp/`) → Test Control

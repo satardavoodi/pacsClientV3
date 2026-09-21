@@ -4299,20 +4299,7 @@ class ToolbarManager:
             return
 
 
-        if self.tool_selected == self.tool_access.AI_CHAT:  # deactivate tool
-            self.tool_selected = None
-
-            selected_widget.restore_default_interactorstyle()
-            self.handle_buttons_checked()
-
-        else:
-            self.check_and_deactivate_tools()
-            selected_widget.set_new_interactorstyle(AIChatInteractorStyle)
-            selected_widget.current_style.check_status(self.patient_widget)
-
-            self.tool_selected = self.tool_access.AI_CHAT
-            self.handle_buttons_checked()
-            self.check_and_deactivate_tools()
+        self._on_ai_analysis_clicked()
 
     def toggle_mip(self, selected_widget):
         """Apply Maximum Intensity Projection - Simple Pure NumPy approach"""
@@ -6164,6 +6151,13 @@ class ToolbarManager:
         vtk_image_data = series_data.get('vtk_image_data')
 
         instances = []
+        if isinstance(thumb_metadata, dict) and thumb_metadata.get("spatial_geometry_available") is False:
+            self._emit_mpr_launch_route(
+                source_backend=source_backend, mpr_path=mpr_path,
+                series_number=series_number, status="blocked",
+                reason="nonspatial_frame_sequence",
+            )
+            return None, {"source_backend": source_backend, "reason": "nonspatial_frame_sequence"}
         if isinstance(thumb_metadata, dict):
             instances = list(thumb_metadata.get('instances', []) or [])
         first_instance = instances[0] if instances else {}
@@ -6204,6 +6198,27 @@ class ToolbarManager:
                     needs_full_vtk_for_mpr = True
             except Exception:
                 needs_full_vtk_for_mpr = True
+
+        if not needs_full_vtk_for_mpr:
+            # Existing Advanced pixels can still be a preview, including a stale
+            # preview whose metadata was extended after download completion.
+            # Never launch anatomical reconstruction with that partial payload.
+            blocked_reason = None
+            if isinstance(thumb_metadata, dict) and thumb_metadata.get("preview_only", False):
+                blocked_reason = "incomplete_source_volume"
+            elif hasattr(vtk_image_data, "GetDimensions"):
+                try:
+                    depth = int(vtk_image_data.GetDimensions()[2])
+                    if depth <= 0 or len(instances) > depth:
+                        blocked_reason = "inconsistent_source_volume"
+                except Exception:
+                    blocked_reason = "inconsistent_source_volume"
+            if blocked_reason:
+                self._emit_mpr_launch_route(
+                    source_backend=source_backend, mpr_path=mpr_path,
+                    series_number=series_number, status="blocked", reason=blocked_reason,
+                )
+                return None, {"source_backend": source_backend, "reason": blocked_reason}
 
         if needs_full_vtk_for_mpr:
             # S4b-2: route the full-volume build through the shared VtkVolumeService — built ONCE per
@@ -6265,6 +6280,22 @@ class ToolbarManager:
 
     @staticmethod
     def _mpr_route_block_message(reason):
+        if reason == "incomplete_source_volume":
+            return (
+                "The full image volume is still loading.\n\n"
+                "Please wait until loading finishes, then open MPR again."
+            )
+        if reason == "inconsistent_source_volume":
+            return (
+                "The image volume does not match the series metadata.\n\n"
+                "Please reload the series and wait for loading to finish before opening MPR."
+            )
+        if reason == "nonspatial_frame_sequence":
+            return (
+                "MPR is not available for this ultrasound sequence.\n\n"
+                "These images have no patient-space positions or orientations. "
+                "Use the 2D viewer to view and scroll through the individual images."
+            )
         if reason == "no_vtk_data":
             return (
                 "MPR cannot be opened because the current series has no image volume data.\n\n"
@@ -9014,54 +9045,9 @@ class ToolbarManager:
             return False
 
     def _on_ai_analysis_clicked(self):
-        from modules.ai_imaging.eagle_eye_function_dialog import (
-            active_viewer_context,
-        )
+        from modules.ai_imaging.eagle_eye_workspace import open_eagle_eye_workspace
 
-        context = active_viewer_context(self.patient_widget)
-        modality = str(context.get("modality", "") or "").upper()
-
-        # Brain has its own segmentation/lesion chooser in the native flow.
-        # Preserve the existing Legion picker for other MRI examinations.
-        if modality == "MR" and context.get("eagle_eye_mode") != "brain_mri":
-            from modules.ai_imaging.eagle_eye_function_catalog import (
-                FUNCTION_LEGION_CONSULT,
-                FUNCTION_NATIVE_ANALYSIS,
-            )
-            from modules.ai_imaging.eagle_eye_function_dialog import (
-                choose_eagle_eye_function,
-            )
-
-            choice = choose_eagle_eye_function(
-                modality,
-                parent=self.patient_widget,
-            )
-            if choice is None:
-                return
-
-            if choice == FUNCTION_LEGION_CONSULT:
-                from modules.ai_imaging.legion_consult.workflow import LegionConsultCoordinator
-
-                coordinator = getattr(self.patient_widget, "_legion_consult_coordinator", None)
-                if coordinator is None:
-                    coordinator = LegionConsultCoordinator(self.patient_widget)
-                    self.patient_widget._legion_consult_coordinator = coordinator
-                coordinator.start()
-                return
-
-            if choice != FUNCTION_NATIVE_ANALYSIS:
-                logger.warning("Unknown Eagle Eye function selection")
-                return
-
-        pipeline_started = self._trigger_eagle_eye_analysis_pipeline()
-
-        if not pipeline_started:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self.patient_widget,
-                "Eagle Eye",
-                "Eagle Eye analysis could not start. Please ensure an MG, DX, brain MR or lumbar MR series is loaded and selected."
-            )
+        open_eagle_eye_workspace(self.patient_widget)
 
     def _on_upload_menu_clicked(self, _checked=False, *, button=None):
         if button is not None:

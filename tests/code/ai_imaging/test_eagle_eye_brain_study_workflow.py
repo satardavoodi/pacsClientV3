@@ -27,7 +27,7 @@ def test_failed_brain_process_keeps_local_diagnostics_without_exposing_them(tmp_
 @pytest.mark.parametrize('modality,description,picker_expected', [
     ('MR', 't1_mprage_sag', False), ('MR', 'MRI LUMBAR SPINE', True),
     ('MR', 'MRI KNEE', True), ('MG', 'Mammography', False), ('DX', 'Hand', False)])
-def test_brain_toolbar_enters_native_flow_without_lumbar_picker(monkeypatch, modality, description, picker_expected):
+def test_toolbar_enters_workspace_without_any_analysis_picker(monkeypatch, modality, description, picker_expected):
     """Execute the real click handler without constructing the workstation."""
     import ast
     from modules.ai_imaging import eagle_eye_function_dialog as entry
@@ -39,19 +39,17 @@ def test_brain_toolbar_enters_native_flow_without_lumbar_picker(monkeypatch, mod
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), namespace)
     viewer = SimpleNamespace(metadata={'series': {'modality': modality,
         'series_description': description, 'study_uid': 'synthetic-study'}})
-    patient = SimpleNamespace(selected_widget=SimpleNamespace(vtk_widget=SimpleNamespace(image_viewer=viewer)))
     called = []
+    patient = SimpleNamespace(selected_widget=SimpleNamespace(vtk_widget=SimpleNamespace(image_viewer=viewer)),
+        method_add_new_tab=lambda **kwargs: called.append(("workspace", kwargs["study_uid"])))
     toolbar = SimpleNamespace(patient_widget=patient,
         _trigger_eagle_eye_analysis_pipeline=lambda: called.append('native') or True)
     def choose(*args, **kwargs):
-        if not picker_expected:
-            pytest.fail('Native-only examination reached the lumbar function picker')
-        called.append('picker')
-        return None
+        pytest.fail('Opening Eagle Eye must not select or run a function')
     monkeypatch.setattr(entry, 'choose_eagle_eye_function',
                         choose)
     namespace['_on_ai_analysis_clicked'](toolbar)
-    assert called == (['picker'] if picker_expected else ['native'])
+    assert called == [('workspace', 'synthetic-study')]
 
 
 @pytest.mark.parametrize('modality,text,expected', [('MR','MRI BRAIN','brain_mri'),
@@ -139,7 +137,7 @@ def test_sequence_popup_requires_explicit_selection_before_running(monkeypatch):
     app=QApplication.instance() or QApplication([])
     widget=BrainVolumetryWidget(study_uid='1.2')
     called=[]
-    monkeypatch.setattr(widget,'_start',lambda:called.append(widget._selected_series))
+    monkeypatch.setattr(widget,'_load_demographics',lambda:called.append(widget._selected_series))
     row=dict(series_uid='1.2.3',number='9',description='t1_mprage_sag',image_count=176,
              path='synthetic',preferred=True,available=True)
     observed=[]
@@ -160,7 +158,22 @@ def test_sequence_popup_requires_explicit_selection_before_running(monkeypatch):
     widget.deleteLater();app.processEvents()
 
 
-def test_lesion_option_is_unavailable_and_cancel_starts_no_work(monkeypatch):
+def test_study_pipeline_passes_verified_flair_to_service(tmp_path, monkeypatch):
+    from modules.ai_imaging.eagle_eye_brain import patient_context, service, study_workflow
+    def context(source):
+        return dict(study_uid='study', series_uid=source, patient_id='synthetic')
+    monkeypatch.setattr(patient_context, 'dicom_context', context)
+    calls = []
+    monkeypatch.setattr(service, 'run_analysis', lambda *a, **k: calls.append(a))
+    study_workflow.run_study_analysis('t1', 'study', 't1', root=tmp_path,
+                                      flair_source='flair', flair_series_uid='flair')
+    assert calls[0][1] == 'flair'
+    with pytest.raises(BrainError):
+        study_workflow.run_study_analysis('t1', 'study', 't1', root=tmp_path,
+                                          flair_source='flair', flair_series_uid='wrong')
+
+
+def test_lesion_option_available_and_cancel_starts_no_work(monkeypatch):
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QPushButton
     from modules.ai_imaging.eagle_eye_brain.widget import BrainVolumetryWidget
@@ -170,10 +183,44 @@ def test_lesion_option_is_unavailable_and_cancel_starts_no_work(monkeypatch):
     def cancel():
         dialog=app.activeModalWidget()
         lesion=next(button for button in dialog.findChildren(QPushButton) if 'Lesion' in button.text())
-        observed.append(not lesion.isEnabled())
+        observed.append(lesion.isEnabled())
         dialog.reject()
     QTimer.singleShot(0,cancel)
     widget.choose_study_workflow()
     assert observed==[True] and widget._future is None
     widget._executor.shutdown(wait=False,cancel_futures=True)
     widget.deleteLater();app.processEvents()
+
+
+def test_flair_popup_requires_distinct_confirmed_series(monkeypatch):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QComboBox, QCheckBox, QListWidget, QDialogButtonBox
+    from modules.ai_imaging.eagle_eye_brain.widget import BrainVolumetryWidget
+    app = QApplication.instance() or QApplication([])
+    widget = BrainVolumetryWidget(study_uid='study')
+    rows = [dict(series_uid=str(i), number=str(i), description=name, image_count=100,
+                 path=name, preferred=i == 1, available=True)
+            for i, name in ((1, 'T1 MPRAGE'), (2, '3D FLAIR'))]
+    called = []
+    monkeypatch.setattr(widget, '_load_demographics', lambda: called.append(widget._selected_flair))
+    observed = []
+    def select():
+        dialog = app.activeModalWidget()
+        QTimer.singleShot(2000, dialog.reject)
+        dialog.findChild(QListWidget).setCurrentRow(0)
+        checks = dialog.findChildren(QCheckBox)
+        checks[0].setChecked(True)
+        combo = dialog.findChild(QComboBox, 'brainFlairSeries')
+        ok = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        combo.setCurrentIndex(1)
+        checks[1].setChecked(True)
+        observed.append(not ok.isEnabled())
+        combo.setCurrentIndex(2)
+        observed.append(ok.isEnabled())
+        ok.click()
+    QTimer.singleShot(0, select)
+    widget._choose_t1_series(rows)
+    assert observed == [True, True] and called == [rows[1]]
+    assert widget.flair.text() == rows[1]['path'] and widget.flair.isReadOnly()
+    widget._executor.shutdown(wait=False, cancel_futures=True)
+    widget.deleteLater(); app.processEvents()

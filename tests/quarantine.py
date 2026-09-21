@@ -51,8 +51,6 @@ QUARANTINE = {
         ("UNTRIAGED", "assert (False is True)"),
     "tests/code/test_notify_malformed_dispatch_guard.py::test_malformed_dispatch_returns_false_not_raise":
         ("UNTRIAGED", "assert 'raise' not in 'if _malform...           ''"),
-    "tests/code/test_right_panel_input_sync_guard.py::test_immediate_renderer_defers_under_gate":
-        ("UNTRIAGED", "ValueError: substring not found"),
     "tests/code/ui_services/test_pin_overlay.py::test_patient_table_overlay_wired":
         ("UNTRIAGED", "assert 'from PacsClient.utils.local_reminders import get_pinned_rows' in 'from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,/n       "),
     "tests/code/ui_services/test_pin_overlay.py::test_pinned_top_enforcement_wired":

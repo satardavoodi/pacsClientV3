@@ -7,6 +7,11 @@ implemented 2026-06-17. Design background + evaluations:
 `docs/reports/MULTI_STUDY_UNIFIED_PIPELINE_FULL_RECHECK_2026-06-17.md`,
 `docs/reports/MULTI_STUDY_UNRESOLVED_RISK_CURRENT_RECHECK_2026-06-17.md`.
 
+This document remains authoritative for the patient-study-set identity contract, but
+it is not the current roadmap for all shared Unify work. Continue broader catalog,
+download, state and invalidation work only through the
+[U0-U5 execution ledger](../plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#current-execution-ledger---2026-09-18).
+
 > Read this before editing the home-panel study-resolution / open / back-fill paths,
 > `PacsClient/utils/patient_study_set.py`, or the viewer canonical series resolver.
 
@@ -32,6 +37,12 @@ unit-testable in isolation.
 
 - `PatientStudySetRequest` / `SeriesDescriptor` / `StudyDescriptor` / `PatientStudySet`
   — the immutable data contract (frozen dataclasses) + `Intent` / `Freshness` vocab.
+- `OpenStudyIdentity` / `finalize_open_study_identity(selected_study_uid,
+  resolved_study_uids)` — the final admission contract after source gathering and
+  patient-owner filtering. It promotes the first resolved study when a Local row has
+  no primary UID, preserves selected-first order, rejects a selected UID outside the
+  resolved owner set, and fails closed when the set is empty. Downstream catalog,
+  thumbnail, download and viewer setup must never receive an empty Study UID.
 - `merge_study_uids(sources, selected, owner_of, patient_id) -> (ordered, dropped)` —
   the canonical union + dedup + **selected-first** ordering + **cross-patient owner
   filter** (positively-foreign dropped, selected always kept, unknown-owner kept). This
@@ -47,6 +58,11 @@ unit-testable in isolation.
   `description` and `study_description` (the DM queue reads `study_description`).
 - `PatientStudySetService` — thin facade grouping the above as the named API to migrate
   callers to.
+
+Patient-tab capacity is a separate lifecycle admission owned by `HomeTabService`.
+Capacity is reserved before `PatientWidget` construction so a rejected request cannot
+start catalog/download/viewer callbacks. `CustomTabManager` retains a final defensive
+check at registration; it is not a second construction path.
 
 ## 3. Implemented stages + flags (all default to the safe/correct behavior)
 
@@ -64,6 +80,12 @@ Key methods:
   (`_schedule_ui_coro`) so it never delays the grouped render.
 - `_enqueue_missing_series_for_open_study` — open-intent, missing/partial-only download
   via `build_download_payload` + DM, with stale-terminal-state reset.
+- The patient-tab sink now treats each grouped sidebar as an immutable identity/order
+  generation. If this back-fill grows the Study set during prefetch or card preparation,
+  the existing bounded builder is superseded and one follow-up prefetch/render commits
+  the complete latest set. This closes the former gap where metadata reached
+  `set_server_series_info` but the already-open tab retained its earlier two-study
+  snapshot. Unchanged generations remain no-ops.
 - `_vc_load.py::_resolve_canonical_series_identity` — now reads
   `entry.get('series_uid') or entry.get('series_instance_uid')`.
 - Three enqueue sites (back-fill, resync, single-click reconcile) build their DM payload

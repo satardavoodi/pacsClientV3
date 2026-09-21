@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current project version:** v3.6.6. Production acceptance is recorded separately
+> **Current project version:** v3.6.7. Production acceptance is recorded separately
 > from the project version and must not be inferred from this heading.
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
@@ -31,6 +31,8 @@ Once oriented, the existing per-task table below still applies.
 | Debug a download issue | `.github/copilot-instructions.md` â†’ "Common debugging patterns" |
 | Understand the download pipeline | [Download Pipeline](pipelines/download-pipeline.md) |
 | Understand the viewer pipeline | [Viewer Pipeline](pipelines/viewer-pipeline.md) |
+| Continue shared Unify work without creating a parallel plan | [Canonical U0-U5 execution ledger](plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#current-execution-ledger---2026-09-18) + [Optimization master plan](OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md#2026-09-18-canonical-unify-continuation-queue-and-evidence-baseline) |
+| Understand why thumbnail/priority paths coexist | [Thumbnail and Priority Parallel-Path Provenance](plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md) |
 | Understand the official Eagle Eye MRI pipeline | [Eagle Eye MRI Canonical Pipeline](pipelines/eagle-eye-mri.md) |
 | Find config for a specific module | [Module Catalog](modules/README.md) â†’ "Module Configuration Reference" |
 | Find where a signal is emitted/handled | [Module Connections](architecture/module-connections.md) â†’ "Inter-Module Signal Connections" |
@@ -50,7 +52,7 @@ Once oriented, the existing per-task table below still applies.
 
 ### Pipelines
 - [Image Pipeline Reference](pipelines/IMAGE_PIPELINE_REFERENCE.md) â€” DICOMâ†’ITKâ†’VTK coordinate transforms (essential)
-- [Download Pipeline](pipelines/download-pipeline.md) â€” Socketâ†’gRPCâ†’Executorâ†’DBâ†’Disk flow
+- [Download Pipeline](pipelines/download-pipeline.md) — active socket worker, progress, resume, and completion boundaries
 - [Viewer Pipeline](pipelines/viewer-pipeline.md) â€” DBâ†’ImageIOâ†’ITK filtersâ†’VTKâ†’Display flow
 - [Eagle Eye MRI Canonical Pipeline](pipelines/eagle-eye-mri.md) — geometry, anatomy, task-specific screening cards, diagnostic cards, classification, and the central template registry
 - [Viewer Docs Hub](viewer/README.md) â€” Canonical FAST vs ADVANCED architecture/debug map
@@ -64,11 +66,13 @@ Once oriented, the existing per-task table below still applies.
 - [Pipeline Optimization Research](pipelines/PIPELINE_OPTIMIZATION_RESEARCH_REPORT.md) â€” Filter alternatives and optimization analysis
 
 ### Stability & Reliability
-- [Stability Architecture](stability/STABILITY_ARCHITECTURE.md) â€” Resource lifecycle, cache management, loop stability patterns
-- [Workstation Loops & Cycles](stability/WORKSTATION_LOOPS.md) â€” Repeating operation cycles and their stability guarantees
+- [Workstation Lifecycle](architecture/workstation-lifecycle.md) — current startup, execution-domain, Qt/VTK ownership, and shutdown rules
+- [Stability Architecture](stability/STABILITY_ARCHITECTURE.md) — historical v2.2.3.4 baseline; reconcile through the current lifecycle and master plan
+- [Workstation Loops & Cycles](stability/WORKSTATION_LOOPS.md) — historical loop inventory; current ownership rules are in Workstation Lifecycle
 
 ### Performance
-- [Performance Status](performance/PERFORMANCE_STATUS.md) â€” **Start here** â€” current metrics, open issues, key files
+- [Optimization, Stability & Reliability Master Plan](OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md) — current status, open items, and evidence
+- [Performance Status](performance/PERFORMANCE_STATUS.md) — historical 2026-04-18 KPI snapshot, not the current global status
 - [FAST Viewer Performance Roadmap](plans/performance/FAST_VIEWER_PERFORMANCE_ROADMAP.md) â€” ordered KPI-driven phases, dependencies, stop/go checkpoints
 - [FAST Viewer KPI Catalog](performance/FAST_VIEWER_KPI_CATALOG.md) â€” component vs system KPI definitions and capture rules
 - [FAST Viewer Test Scenarios](performance/FAST_VIEWER_TEST_SCENARIOS.md) â€” scenario matrix, setup, pass/fail signals

@@ -537,6 +537,10 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
                 "transfer_syntax_uid": tsuid,
                 "is_compressed": is_compressed,
                 "has_pixel_data": has_pixel_data,
+                "frame_count": (
+                    max(1, _safe_int(getattr(dataset, "NumberOfFrames", None), 1))
+                    if has_pixel_data else 0
+                ),
             }
         )
         series["instance_count"] += 1
@@ -744,23 +748,40 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
                     _safe_text(item.get("source_path")).lower(),
                 ),
             )
+            local_instance_count = 0
+            local_pixel_instance_count = 0
+            local_frame_count = 0
+            local_inventory_verified = bool(ordered_files)
+
+            def _record_published_file(file_info):
+                nonlocal local_instance_count, local_pixel_instance_count, local_frame_count
+                local_instance_count += 1
+                if bool(file_info.get("has_pixel_data")):
+                    local_pixel_instance_count += 1
+                    local_frame_count += max(1, _safe_int(file_info.get("frame_count"), 1))
 
             for index, file_info in enumerate(ordered_files, start=1):
                 src = Path(file_info["source_path"]).expanduser()
                 if not src.exists():
                     errors.append(f"Missing source file: {src}")
+                    local_inventory_verified = False
                     continue
 
                 dest = target_series_dir / _build_destination_name(file_info, index)
                 try:
                     if src.resolve() == dest.resolve():
                         skipped_files += 1
+                        _record_published_file(file_info)
                         continue
                 except Exception:
                     pass
 
                 if dest.exists():
+                    # A pre-existing destination was not produced by this copy
+                    # generation. Preserve it, but require the legacy verifier
+                    # before publishing a producer-trusted summary.
                     skipped_files += 1
+                    local_inventory_verified = False
                     continue
 
                 # Decompress-on-import: decodable compressed sources are
@@ -782,10 +803,19 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
                 if converted:
                     converted_files += 1
                     copied_files += 1
+                    _record_published_file(file_info)
                     continue
 
                 shutil.copy2(src, dest)
                 copied_files += 1
+                _record_published_file(file_info)
+
+            series["local_instance_count"] = local_instance_count
+            series["local_pixel_instance_count"] = local_pixel_instance_count
+            series["local_frame_count"] = local_frame_count
+            series["local_inventory_verified"] = bool(
+                local_inventory_verified and local_instance_count == len(ordered_files)
+            )
 
         imported_studies.append(study)
 

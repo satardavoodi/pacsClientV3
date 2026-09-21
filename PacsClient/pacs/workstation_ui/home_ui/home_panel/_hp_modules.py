@@ -41,6 +41,30 @@ class _HPModulesMixin:
     def set_mainwindow(self, MainWindow):
         self.mainwindow = MainWindow
 
+    def _defer_patient_tab_limit_warning(self, max_tabs):
+        """Show the existing capacity warning after the active async step returns."""
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import (
+                MAX_PATIENT_TABS,
+            )
+            max_tabs = MAX_PATIENT_TABS
+        except Exception:
+            max_tabs = int(max_tabs or 4)
+
+        def _show():
+            try:
+                if is_widget_alive(self):
+                    QMessageBox.warning(
+                        self,
+                        "Maximum Patient Tabs Reached",
+                        f"You can only open a maximum of {max_tabs} patient tabs at once.\n\n"
+                        "Please close one of the existing patient tabs before opening a new one.",
+                    )
+            except RuntimeError:
+                pass
+
+        QTimer.singleShot(0, _show)
+
     def open_download_manager(self):
         """Open download manager - switches to existing tab if available, otherwise creates new one - Uses Zeta with v1.0.6 UI"""
         print("[HomePanelWidget] open_download_manager called (Zeta Download Manager with v1.0.6 UI)")
@@ -89,25 +113,10 @@ class _HPModulesMixin:
                     QMessageBox.information(self, "Web Browser Module",
                                             "The Web Browser module is not installed for this workstation.")
                 return None
-            from modules.web_browser import WebBrowserWidget
-            widget = activate_or_create_module_tab(
-                self.tab_widget, self.custom_tab_manager,
-                tab_flag_key='is_web_browser_tab',
-                widget_factory=WebBrowserWidget,
-                add_tab_method_name='add_web_browser_tab',
-                fallback_label='Web Browser',
-            )
-            # Remember the browser was opened so future sessions can adaptively
-            # pre-warm QtWebEngine at idle → near-instant subsequent opens.
-            try:
-                from modules.web_browser.prewarm import mark_browser_used
-                mark_browser_used()
-            except Exception:
-                pass
-            return widget
-        except Exception as e:
-            print(f"[HomePanelWidget] Error opening web browser: {e}")
-            import traceback; traceback.print_exc()
+            from modules.web_browser.launch import open_browser_tab
+            return open_browser_tab(self, self.tab_widget, self.custom_tab_manager)
+        except Exception:
+            logger.exception("[WEB_BROWSER_LAUNCH] phase=failed")
             return None
 
     def open_consultation_source(self):
@@ -426,83 +435,76 @@ class _HPModulesMixin:
                                     print(f"⚠️ Error switching to existing tab: {e}")
                                 return w
 
+            # Reserve capacity before PatientWidget construction. Widget init starts
+            # thumbnail/pipeline work, so checking only in CustomTabManager is too
+            # late and leaves an orphan task when the fifth tab is rejected.
+            admission = self.tab_service.reserve_patient_tab(study_uid)
+            if not admission.admitted:
+                if admission.status == 'capacity':
+                    self._defer_patient_tab_limit_warning(admission.max_tabs)
+                elif admission.status == 'existing':
+                    existing = self.tab_service.find_widget_by_study_uid(study_uid)
+                    if existing is not None:
+                        return existing
+                elif admission.status == 'invalid_identity':
+                    logger.error('[PATIENT_TAB_ADMISSION] result=invalid_identity')
+                return None
+
             # Create new widget if not found or existing was invalid
             if not enable_progressive_mode and study_uid and caller == CallerTypes.SERVER:
                 from PacsClient.pacs.patient_tab.utils import check_study_complete
                 is_complete = check_study_complete(study_uid)
                 enable_progressive_mode = not is_complete
-            
-            widget = _ensure_patient_widget()(
-                import_folder_path=folder_path, 
-                caller=caller, 
-                study_uid=study_uid, 
-                patient_id=patient_id,
-                enable_progressive_mode=enable_progressive_mode,
-                report_status=report_status,
-                viewer_backend_override=viewer_backend_override,
-            )
-            widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
-            
-            # Connect signals
-            if hasattr(widget, 'thumbnail_manager') and widget.thumbnail_manager is not None:
-                widget.thumbnail_manager.set_current_study_uid(study_uid)
 
-                def on_priority_download_requested(series_number, study_uid_param):
-                    print(f"🎯 [HomeUI] Priority download requested: series={series_number}, study={study_uid_param}")
-                    self._handle_priority_download_from_thumbnail(series_number, study_uid_param, widget)
-
-                widget.thumbnail_manager.priority_download_requested.connect(on_priority_download_requested)
-                print(f"✅ Connected priority download signal for study {study_uid}")
-                        
-            if study_uid:
-                download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
-                if download_manager:
-                    download_manager.download_completed.connect(
-                        lambda completed_study_uid: widget.refresh_after_download(completed_study_uid)
-                        if completed_study_uid == study_uid else None
-                    )
-
-            # Add to tab widget
-            if self.custom_tab_manager:
-                tab_index = self.custom_tab_manager.add_patient_tab(
-                    patient_name=patient_name,
-                    patient_id=patient_id or "N/A",
-                    thumbnail_path=None,
-                    widget=widget,
+            widget = None
+            try:
+                widget = _ensure_patient_widget()(
+                    import_folder_path=folder_path,
+                    caller=caller,
                     study_uid=study_uid,
-                    activate=False
+                    patient_id=patient_id,
+                    enable_progressive_mode=enable_progressive_mode,
+                    report_status=report_status,
+                    viewer_backend_override=viewer_backend_override,
                 )
-                
-                # Check if tab addition failed due to max patient tabs limit
-                if tab_index == -1:
-                    # 2026-05-29: read the live limit from custom_tab_manager
-                    # instead of hardcoding a stale literal. The message used to
-                    # say "3" even after MAX_PATIENT_TABS was bumped to 4.
-                    # Lazy import keeps this module's import surface unchanged.
-                    try:
-                        from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import (
-                            MAX_PATIENT_TABS as _max_tabs,
-                        )
-                    except Exception:  # pragma: no cover — defensive
-                        _max_tabs = 4
-                    # Show error message
-                    QMessageBox.warning(
-                        self,
-                        "Maximum Patient Tabs Reached",
-                        f"You can only open a maximum of {_max_tabs} patient tabs at once.\n\n"
-                        f"Please close one of the existing patient tabs before opening a new one."
+                widget.set_method_open_ai_module_tab(self.add_new_tab_widget)
+
+                # Connect signals
+                relay = self.tab_service.bind_patient_signals(self, widget, study_uid)
+                if study_uid:
+                    download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
+                    relay.connect_download_manager(download_manager)
+
+                # Add to tab widget. This remains a defensive capacity check, but
+                # every normal creator already holds the service reservation.
+                if self.custom_tab_manager:
+                    tab_index = self.custom_tab_manager.add_patient_tab(
+                        patient_name=patient_name,
+                        patient_id=patient_id or "N/A",
+                        thumbnail_path=None,
+                        widget=widget,
+                        study_uid=study_uid,
+                        activate=False,
                     )
-                    # Clean up the widget
+                    if tab_index == -1:
+                        self._defer_patient_tab_limit_warning(admission.max_tabs)
+                        return None
+                    widget.set_tab_manager(self.custom_tab_manager)
+                    widget.update_tab_manager(patient_name=patient_name, patient_id=patient_id)
+                else:
+                    tab_index = self.tab_widget.addTab(widget, patient_name)
+            except Exception:
+                if widget is not None:
                     widget.deleteLater()
-                    return
-                
-                widget.set_tab_manager(self.custom_tab_manager)
-                widget.update_tab_manager(patient_name=patient_name, patient_id=patient_id)
-            else:
-                tab_index = self.tab_widget.addTab(widget, patient_name)
+                raise
+            finally:
+                # The slot is needed only until registration returns. Commit below
+                # performs cache registration; abort is idempotent on success.
+                self.tab_service.abort_patient_tab(study_uid)
 
             if study_uid:
                 self.dict_tabs_widget[study_uid] = widget
+            self.tab_service.commit_patient_tab(study_uid, widget)
 
             # Notify priority manager
             if study_uid and PRIORITY_MANAGER_AVAILABLE:
@@ -736,24 +738,9 @@ Study UID: {study_uid}
             study_thumbs = []
 
             # Prefer any existing local cache immediately (complete or partial).
-            cached_paths = get_all_series_thumbnail_from_study_folder(study_uid)
-            for series_path in cached_paths:
-                series_number = get_name_file_from_path(series_path)
-                series_info = self.get_series_info_from_database(study_uid, series_number)
-                study_thumbs.append(
-                    {
-                        'file_path': series_path,
-                        'series_number': series_number,
-                        'modality': series_info.get('modality', 'Unknown'),
-                        'series_description': series_info.get('series_description', f'Series {series_number}'),
-                        'image_count': series_info.get('image_count', 0),
-                        'protocol_name': series_info.get('protocol_name', ''),
-                        'body_part_examined': series_info.get('body_part_examined', ''),
-                        'study_uid': study_uid,
-                        'study_label': study_label,
-                        '_study_order': index,
-                    }
-                )
+            cached = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
+            for thumb in cached.get('thumbnails', []):
+                study_thumbs.append(dict(thumb, study_label=study_label, _study_order=index))
 
             if _local_only and not study_thumbs:
                 local_payload = await asyncio.to_thread(

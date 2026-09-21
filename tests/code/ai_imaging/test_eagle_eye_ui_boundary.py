@@ -88,7 +88,8 @@ def test_imaging_tab_delegates_the_eagle_eye_workflow_to_the_feature_package():
 
     assert workflow_methods.isdisjoint(tab_methods)
     assert "EagleEyeWorkflowCoordinator" in tab_source
-    assert "self._eagle_eye_workflow.start_capture" in tab_source
+    workspace_source = (REPO_ROOT / "modules/ai_imaging/eagle_eye_workspace.py").read_text(encoding="utf-8")
+    assert "tab._eagle_eye_workflow.start_capture" in workspace_source
     assert "self._eagle_eye_workflow.open_result" in tab_source
     assert "self._eagle_eye_workflow.teardown" in tab_source
     for feature_internal in (

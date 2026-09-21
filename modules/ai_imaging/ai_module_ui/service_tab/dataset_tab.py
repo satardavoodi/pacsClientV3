@@ -564,7 +564,13 @@ class DataSetTab(AbstractTab):
         self._data_provider = data_provider  # optional callable -> list[dict]
         self._rows_cache = []
 
-        self.add_section("Data Set", self._build_main_layout())
+        from modules.ai_imaging.eagle_eye.datasets.workspace import DatasetWorkspace
+        self.workspace = DatasetWorkspace(study_uid=study_uid, parent=self)
+        workspace_layout = QVBoxLayout()
+        workspace_layout.addWidget(self.workspace)
+        self.add_section("Datasets", workspace_layout, show_title=False)
+        self.add_section("AI Result Tables", self._build_main_layout())
+        self.get_stacked_layout().currentChanged.connect(self._dataset_section_changed)
 
         if csv_paths:
             self.set_csv_paths(csv_paths, refresh=False)
@@ -623,7 +629,7 @@ class DataSetTab(AbstractTab):
             QPushButton:hover { background: #2d3748; }
             QPushButton:pressed { background: #0b1015; }
         """)
-        self.refresh_btn.clicked.connect(self.refresh)
+        self.refresh_btn.clicked.connect(self._refresh_results)
         header_layout.addWidget(self.refresh_btn)
 
         # Column visibility menu button
@@ -686,7 +692,7 @@ class DataSetTab(AbstractTab):
             self._csv_paths = [str(p) for p in csv_paths]
 
         if refresh:
-            self.refresh()
+            self._refresh_results()
 
     def _guess_attachment_dir(self):
         """
@@ -821,6 +827,16 @@ class DataSetTab(AbstractTab):
         self._update_status("Data cleared", "info")
 
     def refresh(self):
+        """Refresh the visible workspace without scanning legacy files on entry."""
+        if self.get_stacked_layout().currentIndex() == 0:
+            self.workspace.refresh()
+        else:
+            self._refresh_results()
+
+    def _dataset_section_changed(self, index):
+        self.refresh()
+
+    def _refresh_results(self):
         try:
             # Update status
             self._update_status("Loading data...", "loading")

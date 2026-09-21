@@ -70,7 +70,7 @@ def test_viewer_write_actions_registered_and_present():
         assert required in TEST_WRITE_ACTIONS
 
 
-def test_command_adapter_select_patient_resolves_from_rows():
+def test_command_adapter_select_patient_delegates_current_row_resolution():
     from modules.EchoMind.secretary.adapters.home_command_adapter import HomeCommandAdapter
     from modules.EchoMind.secretary.command_envelope import CommandPlan
 
@@ -81,14 +81,16 @@ def test_command_adapter_select_patient_resolves_from_rows():
             return True
 
         def read_patient_rows(self):
-            return [{"patient_id": "44866", "patient_name": "manijeh",
-                     "study_uid": "uidX"}]
+            raise AssertionError("Accumulated search cache is not current-row authority")
 
         def select_patient(self, pid, name, uid):
             calls["args"] = (pid, name, uid)
+            return {"patient_id": pid, "patient_name": "Synthetic patient",
+                    "study_uid": "current-study", "selection_state": "queued"}
 
     adapter = HomeCommandAdapter(_FakeLegacy())
     res = adapter.select_patient(
-        CommandPlan(action="select_patient", entities={"patient_id": "44866"}), {})
+        CommandPlan(action="select_patient", entities={"patient_id": "CASE-A"}), {})
     assert res.ok, res.message
-    assert calls["args"] == ("44866", "manijeh", "uidX")
+    assert calls["args"] == ("CASE-A", "", "")
+    assert res.data["study_uid"] == "current-study"

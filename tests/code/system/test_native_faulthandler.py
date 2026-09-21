@@ -34,7 +34,8 @@ def test_enable_writes_marker_and_enables_faulthandler(tmp_path, monkeypatch):
         path = nfl.enable_native_fault_log(tmp_path)
         assert path is not None
         log = Path(path)
-        assert log.name == "native_fault.log"
+        assert nfl.native_fault_log_pid(log) == __import__("os").getpid()
+        assert log.name != "native_fault.log"
         assert log.parent == tmp_path
         assert faulthandler.is_enabled()
         content = log.read_text(encoding="utf-8")

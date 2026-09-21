@@ -30,7 +30,9 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "tests" / "gui" / "live_walkthroughs"))
+from tools.diagnostics.native_fault_probe import NativeFaultWindow
 
 try:
     import pytest
@@ -146,7 +148,8 @@ def test_no_cross_patient_thumbnail_pixel_overlap():
     # Snapshot pre-test native-fault count so we also catch any crash
     # induced by clicking through patients.
     native_fault = PROJECT_ROOT / "user_data" / "logs" / "native_fault.log"
-    pre_size = native_fault.stat().st_size if native_fault.exists() else 0
+    native_window = NativeFaultWindow(native_fault)
+    assert native_window.error is None, "Native evidence unavailable before GUI test"
 
     # Click N patient rows; capture thumbnails after each.
     n_patients = 3
@@ -197,14 +200,13 @@ def test_no_cross_patient_thumbnail_pixel_overlap():
     )
 
     # Crash check: any new fatal exceptions during the click-through?
-    post_size = native_fault.stat().st_size if native_fault.exists() else 0
-    assert post_size == pre_size, (
-        f"native_fault.log grew by {post_size - pre_size} bytes during "
-        f"patient row click-through — a crash was logged."
-    )
+    native_result = native_window.check()
+    assert native_result["ok"], "Native evidence lost or incomplete during GUI test"
+    assert native_result["data"]["total"] == 0, "New native exception records during GUI test"
+    assert native_result["data"]["watchdog_dumps"] == 0, "New watchdog dump during GUI test"
 
     print(f"[done] {n_patients} patients, no thumbnail hash overlap, "
-          f"no new crashes (native_fault delta=0)")
+          f"no new recorded native exceptions/watchdogs in the observed window")
 
 
 if __name__ == "__main__":

@@ -290,6 +290,7 @@ class AiPacsLoadingOverlay(QWidget):
         minimal: bool = False,
         pass_through: bool = False,
         child_mode: Optional[bool] = None,
+        opaque_native_background: bool = False,
     ):
         # ── Dead-anchor guard (2026-08-26) ─────────────────────────────────
         # EVERY line below touches the anchor — `_anchor_has_native_render_window`
@@ -394,9 +395,13 @@ class AiPacsLoadingOverlay(QWidget):
             except Exception:
                 pass
 
-        # Semi-transparent dark backdrop (painted via paintEvent for
-        # true translucent background on a top-level window)
-        self._bg_color = QColor(10, 14, 20, 210)
+        # Native viewport replacement needs a solid cover. Other overlays,
+        # including the Fast child overlay, retain their translucent backdrop.
+        self._bg_color = (
+            QColor(0, 0, 0, 255)
+            if opaque_native_background and not self._child_mode
+            else QColor(10, 14, 20, 210)
+        )
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -623,6 +628,16 @@ class AiPacsLoadingOverlay(QWidget):
         except Exception:
             pass
 
+    def show(self):
+        """A background load may request a cover after its viewport has hidden."""
+        if getattr(self, "_scoped", False):
+            anchor = self._anchor
+            if (not getattr(self, "_intended_visible", True)
+                    or not _widget_is_alive(anchor) or not anchor.isVisible()):
+                super().hide()
+                return
+        super().show()
+
     # ── helpers ──────────────────────────────────────────────────────
     def _tick_dots(self):
         self._dots_n = (self._dots_n + 1) % 4
@@ -687,6 +702,7 @@ class AiPacsLoadingOverlay(QWidget):
         subtitle: str = "",
         minimal: bool = False,
         pass_through: bool = False,
+        opaque_native_background: bool = False,
     ) -> "AiPacsLoadingOverlay":
         """Create, paint, and return the overlay (already visible).
 
@@ -703,6 +719,7 @@ class AiPacsLoadingOverlay(QWidget):
             subtitle=subtitle,
             minimal=minimal,
             pass_through=pass_through,
+            opaque_native_background=opaque_native_background,
         )
         overlay.show()
         overlay.raise_()

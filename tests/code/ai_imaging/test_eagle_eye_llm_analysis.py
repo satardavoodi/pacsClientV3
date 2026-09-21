@@ -731,10 +731,10 @@ def test_each_stage_names_its_OWN_model_slot():
     """The two passes are separately swappable - that is what makes a
     single-stage A/B possible without disturbing the report."""
     assert prompts.LUMBAR_SCREENING.model_feature == "eagle_eye_screening"
-    assert prompts.LUMBAR_SCREENING.model_default == "gemini-3.1-pro-preview"
+    assert prompts.LUMBAR_SCREENING.model_default == "gpt-6-astra"
     # Diagnosis uses the same company model with its independent Settings slot.
     assert prompts.LUMBAR_VERIFICATION.model_feature == "eagle_eye"
-    assert prompts.LUMBAR_VERIFICATION.model_default == "gemini-3.1-pro-preview"
+    assert prompts.LUMBAR_VERIFICATION.model_default == "gpt-6-astra"
     # ...and the model travels with the stored provenance, or a later
     # comparison cannot tell two runs apart.
     for entry in prompts.LUMBAR_PATHOLOGY.as_dict()["stages"]:
@@ -944,25 +944,25 @@ def test_the_model_is_resolved_PER_STAGE_not_once_per_run(session, monkeypatch):
 
     backend.run_analysis(session, call=_capture)
 
-    assert seen == [("screening", "gemini-3.1-pro-preview"),
-                    ("verification", "gemini-3.1-pro-preview")]
+    assert seen == [("screening", "gpt-6-astra"),
+                    ("verification", "gpt-6-astra")]
 
     record = astore.read_record(session)
     # The per-stage audit remains complete even when the summary collapses.
     assert record.stage_models == [
+        "gpt-6-astra",
         "gemini-3.1-pro-preview",
-        "gemini-3.1-pro-preview",
-        "gemini-3.1-pro-preview",
+        "gpt-6-astra",
     ]
     assert "gemini-3.1-pro-preview" in record.model
-    assert record.model == "gemini-3.1-pro-preview"
+    assert record.model == "gpt-6-astra -> gemini-3.1-pro-preview -> gpt-6-astra"
     # Each stage's request document records the model IT was sent with.
     first = json.loads((session / "llm_stage1_request.json").read_text("utf-8"))
     second = json.loads((session / "llm_stage2_request.json").read_text("utf-8"))
     third = json.loads((session / "llm_stage3_request.json").read_text("utf-8"))
-    assert first["model"] == "gemini-3.1-pro-preview"
+    assert first["model"] == "gpt-6-astra"
     assert second["model"] == "gemini-3.1-pro-preview"
-    assert third["model"] == "gemini-3.1-pro-preview"
+    assert third["model"] == "gpt-6-astra"
 
 
 def test_ONE_stage_can_be_pinned_in_the_field_without_touching_the_other(
@@ -978,11 +978,11 @@ def test_ONE_stage_can_be_pinned_in_the_field_without_touching_the_other(
         return _ok()(package, backend_name, model, stage, header)
 
     backend.run_analysis(session, call=_capture)
-    assert seen == [("screening", "gpt-5.6-sol"), ("verification", "gemini-3.1-pro-preview")]
+    assert seen == [("screening", "gpt-5.6-sol"), ("verification", "gpt-6-astra")]
     assert astore.read_record(session).stage_models == [
         "gpt-5.6-sol",
         "gemini-3.1-pro-preview",
-        "gemini-3.1-pro-preview",
+        "gpt-6-astra",
     ]
 
 
@@ -1284,7 +1284,7 @@ def test_a_successful_run_stores_the_text_and_the_provenance(session):
     # traceable to a named revision, so bumping the pipeline is a deliberate
     # edit here too. 8.1.0 keeps geometry grouping workstation-owned while
     # sequence and anatomical-level semantics are assigned by Gate 1.
-    assert reread.prompt_version == "8.6.0"
+    assert reread.prompt_version == "8.7.0"
     assert reread.stage_count == 3
     assert reread.document["pipeline_fingerprint"] == prompts.LUMBAR_PATHOLOGY.fingerprint
     assert reread.document["image_count"] == 7
@@ -1521,8 +1521,9 @@ def test_every_stage_is_preserved_for_evaluation(session):
     assert "NO CLINICAL CONTEXT DOCUMENT" in req3["sent"]["context"]
 
 
+@pytest.mark.parametrize("selected_backend", ["openai", "company"])
 def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
-    session, monkeypatch,
+    session, monkeypatch, selected_backend,
 ):
     from modules.ai_imaging.eagle_eye_lumbar import (
         anatomy_cards, atomic_pipeline, focus_evidence, screening_evidence,
@@ -1658,6 +1659,10 @@ def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
 
     def call(_package, _backend_name, _model, stage, _header):
         calls.append((stage.name, _package.image_count))
+        if _backend_name == "company":
+            assert _model == (
+                "gemini-3.1-pro-preview" if stage.name == "anatomy_mapping" else "gpt-6-astra"
+            )
         if stage.name == "anatomy_mapping":
             return {"content": json.dumps({
                 "schema_version": "1.0.0",
@@ -1734,7 +1739,7 @@ def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
         raise AssertionError(f"unexpected model call: {stage.name}")
 
     record = backend.run_analysis(
-        session, backend="openai", call=call, package=base,
+        session, backend=selected_backend, call=call, package=base,
     )
 
     assert record.state == astore.STATE_COMPLETE
@@ -1773,6 +1778,9 @@ def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
     aggregate_verification = json.loads(
         (session / "llm_stage3_request.json").read_text(encoding="utf-8")
     )
+    if selected_backend == "company":
+        assert aggregate_screening["atomic_dispatch"]["anatomy_mapping_model"] == "gemini-3.1-pro-preview"
+        assert json.loads((atomic_root / "stage1/anatomy_mapping_request.json").read_text())["model"] == "gemini-3.1-pro-preview"
     for aggregate in (aggregate_screening, aggregate_verification):
         assert aggregate["sent"] == {
             "header": "LOCAL AGGREGATE ONLY - NOT SENT TO A MODEL",
@@ -1794,7 +1802,7 @@ def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
         return call(request_package, backend_name, model_name, stage, header)
 
     failed_record = backend.run_analysis(
-        session, backend="openai", call=call_with_failed_diagnosis, package=base,
+        session, backend=selected_backend, call=call_with_failed_diagnosis, package=base,
     )
 
     assert failed_record.state == astore.STATE_FAILED
@@ -2336,9 +2344,9 @@ def test_screening_and_clinical_context_run_in_parallel_before_verification(
     assert calls[-1][0] == "verification"
     call_map = {name: (model, count) for name, model, count in calls}
     assert call_map == {
-        "screening": ("gemini-3.1-pro-preview", 7),
+        "screening": ("gpt-6-astra", 7),
         "clinical_context": ("gemini-3.1-pro-preview", 1),
-        "verification": ("gemini-3.1-pro-preview", 7),
+        "verification": ("gpt-6-astra", 7),
     }
     assert "broad_based_disc_bulge" not in verification_headers[0]
     assert '"structure": "disc"' in verification_headers[0]

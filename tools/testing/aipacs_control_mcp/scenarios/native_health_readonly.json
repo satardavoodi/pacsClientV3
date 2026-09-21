@@ -1,0 +1,10 @@
+{
+  "name": "Native evidence read-only smoke (not patient acceptance)",
+  "loop": 1,
+  "max_new_native_faults": 0,
+  "max_new_watchdog_dumps": 0,
+  "steps": [
+    {"action": "assert_health"},
+    {"action": "assert_health"}
+  ]
+}

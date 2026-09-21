@@ -33,6 +33,12 @@ def test_canonical_runbook_defines_the_complete_release_contract():
         "--local-install-qa",
         "not a third output hierarchy",
         "request is complete only when the six versioned files",
+        "Non-negotiable interpretation of a build request",
+        "always means exactly six installers",
+        "The coordinator CLI intentionally has no final-output-directory override",
+        "Reuse and compression decision",
+        "--resume-workspace",
+        "must never enter diagnostic stages 1-5",
         "Never do these",
     )
     for value in required_contract:
@@ -99,6 +105,9 @@ def test_source_level_entrypoints_route_to_release_and_build_documentation_hub()
         "builder/output/installer/",
         "builder nuitka/output/installer/",
         "Direct backend scripts are implementation interfaces",
+        "An unqualified request to make a build always means the complete six-installer",
+        "no supported final-output redirect",
+        "Recover an interrupted full build",
     ):
         assert required in hub
 
@@ -152,6 +161,13 @@ def test_runbook_rejects_known_unsafe_speed_shortcuts():
         "Do not launch an installer or the frozen workstation automatically",
     ):
         assert prohibited in text
+
+
+def test_coordinator_cli_cannot_redirect_final_installer_outputs():
+    source = _read("tools/build/build_local_candidate.py")
+
+    assert '"--final-repo"' not in source
+    assert "args.final_repo" not in source
 
 
 def test_release_runbook_is_the_only_multi_remote_push_route():

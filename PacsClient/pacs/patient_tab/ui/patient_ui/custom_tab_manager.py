@@ -527,6 +527,22 @@ class CustomTabManager:
                    }
                """)
     
+    def patient_tab_count(self):
+        """Return the authoritative number of registered patient tabs."""
+        return sum(
+            1 for tab_data in self.patient_tabs.values()
+            if tab_data.get('is_patient_tab', True)
+            and not tab_data.get('is_download_manager_tab', False)
+            and not tab_data.get('is_education_tab', False)
+            and not tab_data.get('is_web_browser_tab', False)
+        )
+
+    def can_add_patient_tab(self, study_uid=None, *, reserved=0):
+        """Capacity decision shared by pre-construction and final registration."""
+        if study_uid and study_uid in self.study_uid_to_tab:
+            return True
+        return self.patient_tab_count() + max(0, int(reserved or 0)) < MAX_PATIENT_TABS
+
     def add_patient_tab(self, patient_name, patient_id, thumbnail_path=None, widget=None, study_uid=None, activate=True):
         """
         Add a new patient tab with custom UI
@@ -559,15 +575,8 @@ class CustomTabManager:
             
             return existing_tab_index
         
-        # Count current patient tabs (exclude service tabs like download manager, education, etc.)
-        current_patient_tabs = sum(1 for tab_data in self.patient_tabs.values() 
-                                   if tab_data.get('is_patient_tab', True) and 
-                                   not tab_data.get('is_download_manager_tab', False) and 
-                                   not tab_data.get('is_education_tab', False) and
-                                   not tab_data.get('is_web_browser_tab', False))
-        
         # Enforce maximum patient tabs limit
-        if current_patient_tabs >= MAX_PATIENT_TABS:
+        if not self.can_add_patient_tab(study_uid):
             logger.warning(f"Cannot add more patient tabs. Maximum limit of {MAX_PATIENT_TABS} reached.")
             return -1
         

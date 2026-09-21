@@ -1552,10 +1552,10 @@ LUMBAR_SCREENING = AnalysisStage(
     version="2.7.0",
     label="Lumbar MRI - abnormality localization and routing (parallel branch 1 of 2)",
     text=_LUMBAR_SCREENING_PACKAGE + _LUMBAR_SCREENING_BODY,
-    # Company stages use the reviewed Gemini Pro endpoint. Per-stage model
-    # overrides remain available for explicit, traceable comparisons.
+    # Saved company candidate (2026-09-20); not a clinical accuracy claim.
+    # Anatomy has a separate Gemini default. Explicit model pins still win.
     model_feature="eagle_eye_screening",
-    model_default="gemini-3.1-pro-preview",
+    model_default="gpt-6-astra",
     temperature=1.0,
     # Historical broad-screening output reached 8848 tokens and a 4000-token
     # ceiling truncated valid JSON. Contract 2.7.0 remains bounded,
@@ -1642,14 +1642,14 @@ LUMBAR_VERIFICATION = AnalysisStage(
     # 5.1.0: makes verification card-first, records exact card identity in each
     # decision, and replaces incompatible whole-package/context-only sweeps
     # with bounded card-local adjudication.
-    # 5.2.0: Gemini Pro also owns diagnosis; preserve card and grading contracts.
-    version="5.2.0",
+    # 5.3.0: persist the Astra company candidate; card/grading contracts unchanged.
+    version="5.3.0",
     label="Lumbar MRI - targeted verification and final report (fusion pass 3 of 3)",
     text=(_LUMBAR_VERIFICATION_PACKAGE + _LUMBAR_DIAGNOSTIC_CRITERIA + "\n"
           + grading.LUMBAR_STENOSIS_GRADING_PROMPT + _LUMBAR_VERIFICATION_BODY),
-    # Same reviewed company endpoint as anatomy, screening and context.
+    # Keep the single-model diagnostic candidate; no experimental Sol audit.
     model_feature="eagle_eye",
-    model_default="gemini-3.1-pro-preview",
+    model_default="gpt-6-astra",
     temperature=1.0,
     # Raised with screening for the same reason: this pass must echo EVERY
     # candidate back with a status and a reason, so its output grows with pass
@@ -1761,7 +1761,8 @@ LUMBAR_PATHOLOGY = AnalysisPipeline(
     # shifting lumbar labels or assigning out-of-scope diagnoses.
     # 8.5.0: verifies physical side and complete paired neural compartment coverage.
     # 8.6.0: Gemini Pro throughout; atomic stages inherit recorded sampling.
-    version="8.6.0",
+    # 8.7.0: saved company model/transport profile, not an anatomy schema change.
+    version="8.7.0",
     label="Lumbar MRI - anatomy-gated screening and card-bound diagnosis",
     stages=(LUMBAR_SCREENING, LUMBAR_CLINICAL_CONTEXT, LUMBAR_VERIFICATION),
     parallel_stage_names=(STAGE_SCREENING, STAGE_CLINICAL_CONTEXT),

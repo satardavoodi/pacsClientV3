@@ -141,7 +141,10 @@ def test_ui_is_lazy_and_existing_tabs_remain_available():
     tree = ast.parse(path.read_text(encoding="utf-8"))
     owner = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AiMainWindow")
     lazy = next(node for node in owner.body if isinstance(node, ast.FunctionDef) and node.name == "_ensure_lazy_tab")
-    assert "BrainVolumetryWidget" in ast.unparse(lazy)
+    assert "BrainVolumetryWidget" not in ast.unparse(lazy)
+    from modules.ai_imaging.eagle_eye_workspace import EagleEyeWorkspaceController
+    import inspect
+    assert "BrainVolumetryWidget" in inspect.getsource(EagleEyeWorkspaceController.open_brain)
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             assert "eagle_eye_brain" not in ast.unparse(node)

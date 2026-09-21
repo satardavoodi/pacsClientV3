@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.6.6",
-    "build_date": "2026-09-09",
-    "release_date": "2026-09-09",
+    "version": "3.6.7",
+    "build_date": "2026-09-21",
+    "release_date": "2026-09-21",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Printing layouts now keep diagnostic capacity independent of the Scout image",
-        "Scout reference labels remain readable and preserve source image numbering",
-        "Preview and exported films share visible grid geometry in every background mode",
-        "Printing transport reports real submission status without blocking the interface",
-        "Includes all imaging, DICOM Flow export, Eagle Eye, and viewer work from 3.6.5",
+        "Home, patient, study, series, and thumbnail state now use stricter shared identity rules",
+        "Viewer loading, caching, GPU setup, and series switching include new stability guards",
+        "Storage cleanup and metadata refresh operations now avoid blocking the interface",
+        "Eagle Eye and EchoMind workflows include the latest reviewed analysis and reporting updates",
+        "The installer matrix is built from one source snapshot for PyInstaller and Nuitka",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }

@@ -1,6 +1,29 @@
 # Eagle Eye development contract
 
+Total Spine amendment (2026-09-17): [Total Spine Alignment](EAGLE_EYE_TOTAL_SPINE_ALIGNMENT.md)
+adds a separate coronal/lateral DX/CR function, local ISBI-2020 corner proposals,
+manual sagittal/rotation review and private reports. It remains an existing Eagle
+Eye/Advanced MPR feature and reuses Alignment's isolated CPU runtime. Clinical and
+fresh-source GUI acceptance remain pending; it is not a new installer module.
+
+Alignment amendment (2026-09-14): [Alignment View implementation and evidence](EAGLE_EYE_ALIGNMENT_VIEW.md)
+defines local SGR inference, geometry, calibration, manual correction, private
+reports and existing Advanced MPR ownership. Live GUI acceptance is separate.
+
 Updated 2026-09-07. Applies to Brain, Lumbar and future anatomy features.
+
+Dataset integration review (2026-09-13): [native dataset workspace proposal](EAGLE_EYE_DATASET_WORKSPACE_DESIGN_2026-09-13.md).
+This is a source-reviewed design for modality/anatomy collections, case review and
+versioned server export; it is not an implemented runtime capability.
+
+The subsequent [native template and case form delivery](EAGLE_EYE_DATASET_TEMPLATES_AND_CASES_2026-09-13.md)
+implements the collection/template/enrollment/editing subset in source. Image-review
+migration, cohort import, server transfer and training activation remain separate.
+
+Workspace entry amendment (2026-09-11): [workspace-first UI contract](EAGLE_EYE_WORKSPACE_ENTRY_2026-09-11.md).
+Opening or revisiting Eagle Eye never selects or starts a function. Use the
+in-workspace Choose Function action; Brain tools open in an owned popup while
+the common imaging workspace and lazy data/training/reception tabs remain available.
 
 ## Ownership and installation
 
@@ -20,6 +43,13 @@ The Eagle Eye edition installs both feature payloads and shared Slicer. Standard
 and ARM retain Slicer and exclude the Eagle Eye model assets. Future anatomy
 features must join the same edition policy and have explicit manifests, runtime
 lookup, package allowlists, dependency notices and synthetic packaging guards.
+
+2026-09-14 amendment: Brain white-matter lesion analysis is a separate Eagle Eye
+function using T1 + 3D FLAIR and an isolated LST-AI payload at
+`advanced_mpr/eagle_eye/brain-lesions`. Standard/ARM exclude these assets too.
+See [MS lesion implementation and acceptance](EAGLE_EYE_BRAIN_MS_LESION_DESIGN.md).
+This adds lesion candidate burden, not an automatic MS diagnosis or a normative
+volumetry extension. Customer release requires the model-bound acceptance record.
 
 ## Brain contract
 

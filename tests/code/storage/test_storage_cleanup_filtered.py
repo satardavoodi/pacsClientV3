@@ -180,4 +180,88 @@ def test_clear_all_patients_db_is_committed(tmp_path, monkeypatch):
     assert rows > 0
     with sqlite3.connect(db) as c:
         assert c.execute("SELECT COUNT(*) FROM patients").fetchone()[0] == 0
+        assert c.execute("SELECT COUNT(*) FROM studies").fetchone()[0] == 0
+        assert c.execute("SELECT COUNT(*) FROM series").fetchone()[0] == 0
+        assert c.execute("SELECT COUNT(*) FROM instances").fetchone()[0] == 0
         assert c.execute("SELECT COUNT(*) FROM download_progress").fetchone()[0] == 0
+
+
+def test_recent_local_import_is_not_deleted_because_acquisition_is_old(tmp_path, monkeypatch):
+    """Retention is about local storage age, not DICOM acquisition age."""
+    db, src, _thumb = _setup(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as c:
+        c.execute("ALTER TABLE studies ADD COLUMN imported_at TEXT")
+    _add_patient(db, src, "RECENT-IMPORT", "1.2.recent", days_ago=200)
+    recent_import = time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 2 * 86400)
+    )
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "UPDATE studies SET imported_at = ? WHERE study_uid = ?",
+            (recent_import, "1.2.recent"),
+        )
+
+    mgr = lscm.LocalStorageCleanupManager()
+    assert mgr.count_patients_to_delete("older_than_days", 30) == 0
+
+
+def test_delete_oldest_never_guesses_the_age_of_undatable_patients(tmp_path, monkeypatch):
+    db, src, _thumb = _setup(tmp_path, monkeypatch)
+    _add_patient(db, src, "DATED", "1.2.dated", days_ago=200)
+    _add_patient(db, src, "UNKNOWN", "1.2.unknown", days_ago=None)
+
+    mgr = lscm.LocalStorageCleanupManager()
+    selected = mgr._select_patients_for_strategy("delete_oldest_count", 2)
+
+    assert [record["patient_id"] for record in selected] == ["DATED"]
+
+
+def test_filtered_cleanup_rejects_external_study_path_and_keeps_database(
+    tmp_path, monkeypatch
+):
+    db, src, _thumb = _setup(tmp_path, monkeypatch)
+    _add_patient(db, src, "EXTERNAL", "1.2.external", days_ago=200, with_files=False)
+    outside = tmp_path / "outside-managed-storage"
+    outside.mkdir()
+    (outside / "must-stay.dcm").write_bytes(b"protected")
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "UPDATE studies SET study_path = ? WHERE study_uid = ?",
+            (str(outside), "1.2.external"),
+        )
+
+    result = lscm.LocalStorageCleanupManager().cleanup_patients_folder_filtered(
+        "older_than_days", 30
+    )
+
+    assert result.success is False
+    assert (outside / "must-stay.dcm").read_bytes() == b"protected"
+    with sqlite3.connect(db) as c:
+        assert c.execute(
+            "SELECT COUNT(*) FROM patients WHERE patient_id = 'EXTERNAL'"
+        ).fetchone()[0] == 1
+
+
+def test_filtered_cleanup_keeps_database_when_file_deletion_fails(
+    tmp_path, monkeypatch
+):
+    db, src, _thumb = _setup(tmp_path, monkeypatch)
+    _add_patient(db, src, "LOCKED", "1.2.locked", days_ago=200)
+    real_rmtree = lscm.shutil.rmtree
+
+    def _fail_selected(path, *args, **kwargs):
+        if Path(path).name == "1.2.locked":
+            raise PermissionError("synthetic file lock")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(lscm.shutil, "rmtree", _fail_selected)
+    result = lscm.LocalStorageCleanupManager().cleanup_patients_folder_filtered(
+        "older_than_days", 30
+    )
+
+    assert result.success is False
+    assert (src / "1.2.locked" / "a.dcm").exists()
+    with sqlite3.connect(db) as c:
+        assert c.execute(
+            "SELECT COUNT(*) FROM patients WHERE patient_id = 'LOCKED'"
+        ).fetchone()[0] == 1

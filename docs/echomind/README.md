@@ -1,6 +1,23 @@
-# EchoMind — architecture documentation
+# EchoMind â€” architecture documentation
 
-**Last updated:** 2026-08-09 · **Owner modules:** `modules/EchoMind/`, `modules/EchoMind/viewer_chat/`
+## Fresh restart and native input staging (2026-09-11)
+
+[Verified restart and complete MONAI input loading](ECHOMIND_RESTART_AND_INPUT_STAGING_2026-09-11.md):
+EchoMind restored in 47 seconds; all 1,885 staged candidate inputs loaded through
+the Linux worker. Clinical image-reference labels remain pending.
+
+## EchoMind runtime and isolated training environment (2026-09-11)
+
+[Verified endpoint repair, isolated environment and stop/test/restore](ECHOMIND_RUNTIME_AND_TRAINING_ENV_2026-09-11.md):
+health/status ok, chat closure repaired, training dependencies isolated and synthetic
+full-backbone optimizer/checkpoint checks passed. Reviewed patient labels remain pending.
+
+Operational reference: [A100 stop/start, MONAI capacity test and verified
+restoration (2026-09-10)](ECHOMIND_GPU_MAINTENANCE_2026-09-10.md).
+This covers the separate Linux service on port 8082 and its external control
+tools; it does not change the workstation prompt architecture below.
+
+**Last updated:** 2026-08-09 آ· **Owner modules:** `modules/EchoMind/`, `modules/EchoMind/viewer_chat/`
 
 This set exists so that the prompt system, the region gate and the chat metadata record
 can be reproduced on Android and iOS without re-deriving them from Windows source, and
@@ -20,32 +37,32 @@ so that a new modality or region can be added without touching anything unrelate
 ## The one-page mental model
 
 ```
-                    ┌─────────────── DICOM (local DB + file header)
-   chat created ────┤
-                    ├─────────────── reception booking (cached, prefetched during dictation)
-                    └─────────────── the modality the physician picked
+                    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ DICOM (local DB + file header)
+   chat created â”€â”€â”€â”€â”¤
+                    â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ reception booking (cached, prefetched during dictation)
+                    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ the modality the physician picked
 
-                                   ↓  build_auto_from_context()
+                                   â†“  build_auto_from_context()
 
-              ┌──────────────────────────────────────────────┐
-              │  CHAT METADATA   ai_session_meta(sid)         │
-              │    auto   what detection produced             │
-              │    user   only what the physician edited      │
-              │    effective = deep_merge(auto, user)         │
-              └──────────────────────────────────────────────┘
-                       │                          │
-        shown as the first card in the chat       │  _build_gate_profile()
-        (editable — an edit writes `user`)        ▼
-                                          ┌───────────────┐
-                                          │  REGION GATE  │  case.regions → modules
-                                          └───────────────┘
-                                                  ▼
+              â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”گ
+              â”‚  CHAT METADATA   ai_session_meta(sid)         â”‚
+              â”‚    auto   what detection produced             â”‚
+              â”‚    user   only what the physician edited      â”‚
+              â”‚    effective = deep_merge(auto, user)         â”‚
+              â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”ک
+                       â”‚                          â”‚
+        shown as the first card in the chat       â”‚  _build_gate_profile()
+        (editable â€” an edit writes `user`)        â–¼
+                                          â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”گ
+                                          â”‚  REGION GATE  â”‚  case.regions â†’ modules
+                                          â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”ک
+                                                  â–¼
                                       selected region packages
                                    (pathology + normal + terms + notes)
-                                                  ▼
+                                                  â–¼
                                           PROMPT ASSEMBLY
                                     shared slots + study facts + gated context
-                                                  ▼
+                                                  â–¼
                                                  LLM
 ```
 
@@ -60,7 +77,7 @@ facts and those packages into a fixed slot order. The LLM sees only what the gat
 These are the things that break the system if you change them without reading the
 document that owns them.
 
-1. **The gate reads only `effective` metadata** — the same record shown on the card. What
+1. **The gate reads only `effective` metadata** â€” the same record shown on the card. What
    the gate acts on is exactly what the physician was shown and could have corrected.
    (doc 3)
 2. **There is one region layer.** The gate is the sole source of region content in the
@@ -73,7 +90,7 @@ document that owns them.
    `datas.append(...)` for every non-`.py` file; storing prompts as `.md` or `.json`
    silently ships an app whose prompts are missing. (doc 6)
 6. **Turbo is pinned to the company backend.** The `llm_backend` setting switches Send,
-   not Turbo — including the correction path.
+   not Turbo â€” including the correction path.
 8. **A gated prompt is never NARROWER than the shared one on failure.** Every degraded
    path sends more, not less. (doc 3)
 9. **Mammography is gated by prefix, never by template.** Its schema is regex-locked.
@@ -90,9 +107,9 @@ document that owns them.
 | Region gate (span narrowing) | **on** by default; `AIPACS_TURBO_PROMPT=0` reverts |
 | Template v2 (whole-prompt) | **on** by default since 2026-08-09; `AIPACS_TURBO_PROMPT_V2=0` reverts |
 | Modalities with region modules | **All five.** CT, MRI, radiography and ultrasound by template; mammography by prefix (its schema is regex-locked) |
-| Regions with modules | CT 21 · MRI 19 · X-ray 19 · US 12 |
-| Study-type packages | X-ray 18 · ultrasound 9 · mammography 5 (the second gate axis) |
-| Clinical review | the 10 literature-sourced CT regions, all 19 MRI pathology sets and **nearly all of the X-ray library** are not yet reviewed — see doc 6 |
+| Regions with modules | CT 21 آ· MRI 19 آ· X-ray 19 آ· US 12 |
+| Study-type packages | X-ray 18 آ· ultrasound 9 آ· mammography 5 (the second gate axis) |
+| Clinical review | the 10 literature-sourced CT regions, all 19 MRI pathology sets and **nearly all of the X-ray library** are not yet reviewed â€” see doc 6 |
 
 ---
 
@@ -101,6 +118,6 @@ document that owns them.
 - [`docs/pipelines/echomind-reporting-prompts.md`](../pipelines/echomind-reporting-prompts.md)
   (2026-07-09) is still correct about the per-modality prompt bodies, the preservation
   rule and the validator. Its statement that the prompt is selected *by modality only* is
-  no longer true for Turbo on CT — see doc 2.
+  no longer true for Turbo on CT â€” see doc 2.
 - `modules/EchoMind/viewer_chat/prompts/*.json` are stale snapshots. Not loaded, not
   authoritative. Prompts are Python.

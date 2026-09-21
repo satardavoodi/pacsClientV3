@@ -1,0 +1,7 @@
+SGR model architectures, Sebastian Amador Sanchez / Vrije Universiteit Brussel (VUB), 2026.
+Source: https://github.com/ETRO-MIT/LowerLimbMalalignment-SGR
+Revision: 64b292e6398803082e0bd7535774efa2792c6a4b
+Apache License 2.0 for source. Model weights: CC BY-NC-SA 4.0.
+BaseModels attributes adaptations to https://github.com/ternaus/robot-surgery-segmentation.
+AI-PACS modifications disable pretrained downloads and remove TLS overrides.
+Commercial distribution requires separate review of weights and upstream notices.

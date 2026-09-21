@@ -257,3 +257,22 @@ def test_the_plain_text_getter_is_what_reaches_the_model():
     assert src.count("get_normal_template_plain_text()") >= 3, (
         "every reporter path should read the template through the plain-text getter"
     )
+
+
+@pytest.mark.parametrize('modality', ['MRI', 'CT', 'US', 'MG', 'CR', 'DX'])
+def test_named_code_contract_is_template_scoped(rep, modality):
+    prompt = rep.build_report_system_prompt(modality, 'Synthetic template')
+    assert 'ON-REQUEST TEMPLATE CODES AND FIELDS' in prompt
+    assert 'Never manufacture a missing code' in prompt
+    assert 'negated/cancelled instruction' in prompt
+    assert 'numbered with one finding per paragraph' in prompt
+    assert 'ON-REQUEST TEMPLATE CODES AND FIELDS' not in rep.build_report_system_prompt(modality, '')
+
+
+def test_template_merge_checks_each_dictated_fact_and_each_normal_source(rep):
+    prompt = rep.build_report_system_prompt('MAMOGRAPHY', 'Synthetic template with choices and fields')
+    assert 'TEMPLATE MERGE FIDELITY CHECK' in prompt
+    assert 'Benign positive findings are still positive findings' in prompt
+    assert 'Do not use a generic label to replace' in prompt
+    assert 'Only two dictated dimensions must remain two dimensions' in prompt
+    assert 'TEMPLATE MERGE FIDELITY CHECK' not in rep.build_report_system_prompt('MAMOGRAPHY', '')

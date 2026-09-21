@@ -1,6 +1,18 @@
 # AIPacs Performance Status
 **Version:** v2.3.4 | **Branch:** main | **Updated:** 2026-04-18
 
+> **Current Unify qualification — 2026-09-14:** See the
+> [OPT-60 path cost/stall audit](../reports/UNIFY_PATH_COST_AND_STALL_AUDIT_2026-09-14.md).
+> Lifecycle guards pass, but live GUI filesystem/status stalls remain (81 recorded events,
+> max 4116.3 ms in the scoped source window). Synthetic scheduling is cheap; complete latency,
+> concurrent-download interference and stress stability are not accepted. Do not reuse the
+> historical measurements below as current pass criteria or evidence of a measured improvement.
+
+> **Historical snapshot notice — 2026-09-13:** The measurements and conclusions below describe
+> the 2026-04-18 source state; this is not the current global performance status for version
+> 3.6.6. Start with `docs/OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md` and current dated
+> reports. Reuse an old KPI only with the exact scenario, build, hardware, and fresh capture.
+
 > **2026-04-18 current KPI extract (latest live-overlap artifact):**
 > - Captured current artifact: `generated-files/benchmarks/aipacs_live_overlap_fresh.json`
 > - Block summary artifact: `generated-files/benchmarks/aipacs_live_overlap_blocks_fresh.json`
@@ -93,7 +105,7 @@ User double-clicks study
 
 ---
 
-## 2. Current Performance Numbers (v2.2.3.4.0, PC A)
+## 2. Historical Performance Numbers (v2.2.3.4.0, PC A)
 
 ### Mode A — No download active
 

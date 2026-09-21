@@ -1,3 +1,8 @@
+param([switch]$TestServer)
+
+# Normal launches use all default features without the automation test endpoint.
+$env:AIPACS_TEST_SERVER = if ($TestServer) { '1' } else { '0' }
+
 Set-Location -Path $PSScriptRoot
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)

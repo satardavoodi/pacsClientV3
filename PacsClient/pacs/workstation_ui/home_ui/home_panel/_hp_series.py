@@ -189,8 +189,20 @@ class _HPSeriesMixin:
     def _mark_active_patient_selection(self, patient_id, study_uid):
         """Track the latest patient/study selection for stale-response guards."""
         try:
+            changed = (str(patient_id or '').strip(), str(study_uid or '').strip()) != (
+                getattr(self, '_active_thumb_patient_id', ''),
+                getattr(self, '_active_thumb_study_uid', ''))
+            panel = getattr(self, 'right_panel_widget', None)
+            if changed and panel is not None:
+                # An old card must not open against the newly selected row while
+                # replacement thumbnails are still in flight.
+                panel._active_action_token = None
+                panel._last_render_signature = None
+                panel._display_generation += 1
+                panel._cancel_thumbnail_timer()
             self._active_thumb_patient_id = str(patient_id or '').strip()
             self._active_thumb_study_uid = str(study_uid or '').strip()
+            self._active_thumb_selection_retired = False
             self._active_thumb_selection_ts = time.monotonic()
             self._active_thumb_request_id = int(getattr(self, '_active_thumb_request_id', 0) or 0) + 1
         except Exception:
@@ -199,6 +211,8 @@ class _HPSeriesMixin:
     def _is_active_patient_selection(self, patient_id, study_uid) -> bool:
         """Return True when response still belongs to the latest selected patient."""
         try:
+            if getattr(self, '_active_thumb_selection_retired', False):
+                return False
             active_pid = str(getattr(self, '_active_thumb_patient_id', '') or '').strip()
             active_uid = str(getattr(self, '_active_thumb_study_uid', '') or '').strip()
             expected_pid = str(patient_id or '').strip()
@@ -1030,8 +1044,11 @@ class _HPSeriesMixin:
             except Exception:
                 _server_grew = False
 
-            # First check if we have complete series info in database
-            if (check_study_complete(study_uid) or self.source_of_patient_load == SourceOfPatientLoad.DB) and not _server_grew:
+            # Local metadata already selects the DB route, regardless of download
+            # completeness. Short-circuit before the manifest's filesystem scan
+            # on this GUI path; this is not a downloaded-state verdict. Preserve
+            # the Server completeness check and server-growth override unchanged.
+            if (self.source_of_patient_load == SourceOfPatientLoad.DB or check_study_complete(study_uid)) and not _server_grew:
                 _t_db = time.perf_counter()
 
                 # Get series info from database
@@ -1162,59 +1179,14 @@ class _HPSeriesMixin:
         """
         try:
             _t0 = time.perf_counter()
-            from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
-            from pathlib import Path
-            
-            thumbnail_dir = THUMBNAIL_PATH / study_uid
-            
-            if not thumbnail_dir.exists():
-                print(f"[WARNING] No thumbnail cache found for study {study_uid}")
-                return False
-            
-            # Get all thumbnail files once (faster than repeated lookups)
-            thumbnail_files = {f.stem: str(f) for f in thumbnail_dir.glob('*.jpg')}
-            thumbnail_files.update({f.stem: str(f) for f in thumbnail_dir.glob('*.png')})
-            
-            if not thumbnail_files:
-                print(f"[WARNING] No thumbnail images found in {thumbnail_dir}")
-                return False
-            
-            # Build thumbnails list from series info and cached files
-            thumbnails = []
-            
-            for series in series_list:
-                series_number = str(series.get('series_number', ''))
-                series_uid = series.get('series_uid', '')
-                
-                # Try to find thumbnail by series_number
-                thumb_file_path = None
-                
-                # Direct match by series number
-                if series_number in thumbnail_files:
-                    thumb_file_path = thumbnail_files[series_number]
-                # Try with leading zeros (001, 01, etc)
-                elif series_number.lstrip('0') in thumbnail_files:
-                    thumb_file_path = thumbnail_files[series_number.lstrip('0')]
-                
-                # If not found, skip this series
-                if not thumb_file_path:
-                    continue
-                
-                thumbnails.append({
-                    'file_path': thumb_file_path,
-                    'series_uid': series_uid,
-                    'series_number': series_number,
-                    'series_description': series.get('series_description', ''),
-                    'modality': series.get('modality', ''),
-                    'image_count': series.get('image_count', 0)
-                })
+            payload = await asyncio.to_thread(
+                self._build_cached_thumbnail_payload, study_uid, series_list)
+            thumbnails = payload.get('thumbnails', [])
             
             # Display thumbnails if found
             if thumbnails and hasattr(self, 'right_panel_widget'):
                 if not self._is_active_patient_selection(expected_patient_id, study_uid):
                     return
-                # Use await to yield control and prevent blocking
-                await asyncio.sleep(0)
                 # progressive=False: render all-at-once into the final state. The
                 # main-page right panel must load calmly and consistently; progressive
                 # mode pops series in one-by-one (120 ms each), which the cache-gate
@@ -1519,85 +1491,57 @@ class _HPSeriesMixin:
     def _thumbnail_task_cleanup(self, task):
         """Clean up completed thumbnail task"""
         try:
-            if task.exception():
-                self._current_thumbnail_task = None
+            task.exception()
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             print(f"Error in thumbnail task cleanup: {str(e)}")
+        finally:
+            if getattr(self, '_current_thumbnail_task', None) is task:
+                self._current_thumbnail_task = None
 
     def _on_thumbnail_clicked(self, series_number):
         """Handle thumbnail click"""
 
-    def _on_right_panel_thumbnail_clicked(self, series_number):
-        """Handle thumbnail click - prioritize this series for download"""
-        action_id = self._trace_action_start(
-            "thumbnail_click",
-            context={'series_number': str(series_number)}
-        )
-        print(f"\n{'='*80}")
-        print(f"🎯 [HIGH PRIORITY] User clicked series {series_number} - IMMEDIATE DOWNLOAD REQUEST")
-        print(f"{'='*80}\n")
-        
-        # بررسی کنید که آیا این متد اصلاً فراخوانی می‌شود
-        print(f"📢 DEBUG: _on_right_panel_thumbnail_clicked CALLED with series: {series_number}")
-        
-            
-        # Immediate debug logging
-        print(f"📊 Checking right panel state...")
-        if not hasattr(self, 'right_panel_widget'):
-            print(f"❌ Right panel widget not available")
-            return
-        
-        # Get current study information
-        study_info = getattr(self.right_panel_widget, '_current_study_info', None)
-        if not study_info or 'series' not in study_info:
-            print(f"❌ No study info available or no series list")
-            return
-        
-        series_list = study_info['series']
-        study_uid = study_info.get('study_uid', 'unknown')
-        print(f"✅ Found study: {study_uid}")
-        print(f"✅ Available series: {[s.get('series_number', '?') for s in series_list]}")
-        
-        # Find the widget for this study
-        widget = self._find_widget_by_study_uid(study_uid)
-        if not widget:
-            self._trace_action_done(action_id, phase='thumbnail_widget_not_found', extra={'study_uid': str(study_uid)})
-            print(f"❌ Widget not found for study {study_uid}")
-            return
-        
-        print(f"✅ Widget found: {type(widget).__name__}")
-        self._attach_action_to_widget(widget, action_id, series_number=str(series_number))
-        
-        # Get server connection
-        server = self.data_access_panel_widget.get_server_selected()
-        if not server:
-            self._trace_action_done(action_id, phase='thumbnail_no_server', extra={'study_uid': str(study_uid)})
-            print(f"❌ No server selected")
-            return
-        
-        # Start IMMEDIATE priority download
-        output_dir = str(SOURCE_PATH / study_uid)
-        print(f"🎯 Starting IMMEDIATE download for series {series_number}...")
-        
-        # Create and start immediate download task
-        task = asyncio.create_task(
-            self._download_single_series_immediate(
-                widget=widget,
-                study_uid=study_uid,
-                series_list=series_list,
-                base_output_dir=output_dir,
-                server=server,
-                target_series=series_number
+    def _on_right_panel_thumbnail_clicked(self, action):
+        """Explicit thumbnail double-click: open normally, then place by UID."""
+        try:
+            from PacsClient.utils.series_identity import SeriesActionIdentity
+            if not isinstance(action, SeriesActionIdentity):
+                return
+            row = self.patient_table_widget.results_table.currentRow()
+            data = dict(self.patient_table_widget.get_patient_data_by_row(row) or {})
+            patient_id = str(data.get('patient_id') or '')
+            primary_uid = str(data.get('study_uid') or '')
+            if not patient_id or not primary_uid or not self._is_active_patient_selection(patient_id, primary_uid):
+                return
+            source = self.source_of_patient_load
+
+            async def open_patient():
+                return await self._on_patient_double_clicked_async(
+                    patient_id, data.get('patient_name', ''), primary_uid,
+                    data.get('report_status', 'pending'))
+
+            async def route():
+                try:
+                    if (self.source_of_patient_load != source
+                            or not self._is_active_patient_selection(patient_id, primary_uid)):
+                        return
+                    await self.tab_service.open_series_action(
+                        action, open_patient, open_key=primary_uid)
+                except Exception:
+                    _print_logger.exception('[HOME-SERIES-ACTION] result=open_error')
+
+            coro = route()
+            accepted = self._schedule_ui_coro(coro) is not None
+            if not accepted:
+                coro.close()
+            _print_logger.info(
+                "[HOME-SERIES-ACTION] result=%s",
+                "requested" if accepted else "not_routed",
             )
-        )
-        
-        # Store task reference
-        if not hasattr(self, '_priority_tasks'):
-            self._priority_tasks = {}
-        self._priority_tasks[series_number] = task
-        
-        # Add cleanup callback
-        task.add_done_callback(lambda t: self._cleanup_priority_task(series_number))
+        except Exception:
+            _print_logger.exception("[HOME-SERIES-ACTION] result=error")
 
     def _on_right_panel_series_clicked(self, series_number):
         """Handle series click from right panel"""

@@ -858,24 +858,8 @@ class ReportEditorDialog(QDialog):
     
     def _get_spin_style(self) -> str:
         """Get style for spin boxes."""
-        return f"""
-            QSpinBox {{
-                background-color: {COLORS['bg_lighter']};
-                color: {COLORS['text_primary']};
-                border: 1px solid {COLORS['border_medium']};
-                border-radius: 3px;
-                padding: 4px;
-                font-size: {FONT_SIZES['sm']}px;
-            }}
-            QSpinBox:hover {{
-                border-color: {COLORS['info']};
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                width: 16px;
-                background: {COLORS['bg_card']};
-                border: none;
-            }}
-        """
+        from Qss.numeric_controls import numeric_control_style
+        return numeric_control_style()
     
     def _create_editor_area(self) -> QWidget:
         """Create the main editor area."""

@@ -152,16 +152,9 @@ class _PWPanelsMixin:
         self.switch_right_panel("ai_chat", force=True)
 
     def _on_sidebar_ai_module_clicked(self):
-        # User-initiated Eagle Eye click should go through the analysis pipeline
-        # (retry/sensitivity first), not direct tab opening.
-        tm = getattr(self, 'toolbar_manager', None)
-        if tm is not None and hasattr(tm, '_on_ai_analysis_clicked'):
-            try:
-                tm._on_ai_analysis_clicked()
-                return
-            except Exception:
-                pass
-        self.switch_right_panel("ai_module", force=True)
+        from modules.ai_imaging.eagle_eye_workspace import open_eagle_eye_workspace
+
+        open_eagle_eye_workspace(self)
 
     def _on_sidebar_advanced_tools_clicked(self):
         self.switch_right_panel("advanced_tools", force=True)
@@ -534,7 +527,7 @@ class _PWPanelsMixin:
         return thumbnail_panel
 
     def add_thumbnail_to_thumbnail_layout(self, thumb_index, file_path_thumbnail, key_thumbnail, metadata=None,
-                                          series_info=None):
+                                          series_info=None, *, prepared_pixmap=None):
         # بهینه‌سازی: کاش نتایج گذشتهٔ get_name_file_from_path
         cached_name = getattr(self, '_cached_series_names', {})
         
@@ -594,24 +587,50 @@ class _PWPanelsMixin:
         if _thumb_src is None:
             _thumb_src = ThumbnailImageSourceService()
             self._thumbnail_image_source_service = _thumb_src
-        pixmap = _thumb_src.load_pixmap(self, canonical_series_key, file_path_thumbnail)
-        thumb_widget = self.thumbnail_manager.create_thumbnail_widget(
-            # pixmap=pixmap, label_text=series_name, sop_instance_uid='test uid', thumbnail_index=thumb_index,
-            pixmap=pixmap, label_text=series_name, sop_instance_uid='test uid', thumbnail_index=key_thumbnail,
-            series_info=series_info)
-        
-        # Add thumbnail widget to grid layout
-        self.thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 2)
-        self.thumb_count_label.setText(f"{thumb_index + 1} series")
+        pixmap = (prepared_pixmap if prepared_pixmap is not None else
+                  _thumb_src.load_pixmap(self, canonical_series_key, file_path_thumbnail))
+        # Commit a card atomically with respect to painting. In particular a
+        # QScrollArea must grow before the next card is shown, rather than paint
+        # a new child at (0, 0) and defer its geometry to a later LayoutRequest.
+        container = self.thumb_grid.parentWidget()
+        paint_enabled = container is not None and container.updatesEnabled()
+        if paint_enabled:
+            container.setUpdatesEnabled(False)
+        try:
+            thumb_widget = self.thumbnail_manager.create_thumbnail_widget(
+                pixmap=pixmap, label_text=series_name, sop_instance_uid='test uid',
+                thumbnail_index=key_thumbnail, series_info=series_info)
+            self.thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 2)
+            # Explicit show occurs only after layout parenting, while painting
+            # is suppressed. Hidden children otherwise have no layout geometry.
+            thumb_widget.show()
+            self.thumb_grid.invalidate()
+            if container is not None and not getattr(self, '_sidebar_reserved_rows', None):
+                # Wrapped study headers need height-for-width, not only the
+                # layout's smaller generic minimum. Measure the fixed card
+                # column, not spare viewport width that a scrollbar can remove.
+                container.setMinimumHeight(max(
+                    self.thumb_grid.minimumSize().height(),
+                    self.thumb_grid.totalHeightForWidth(self.thumb_grid.minimumSize().width()),
+                ))
+            self.thumb_grid.activate()
+            count = getattr(self, '_sidebar_expected_count', None)
+            if count is None:
+                count = len(self.thumbnail_manager.series_widgets)
+            self.thumb_count_label.setText(f"{count} series")
 
-        # وضعیت نوار:
-        series_no_str = str(series_name)  # یا str(key_thumbnail)
-        if metadata is None:
-            # هنوز vtk_image_data برای این سری نداریم → Pending
-            self.thumbnail_manager.set_series_pending(series_no_str)
-        else:
-            # سری همراه با metadata (و vtk_image_data) آمده → Ready
-            self.thumbnail_manager.set_series_ready(series_no_str)
+            series_no_str = str(series_name)
+            if metadata is None:
+                if prepared_pixmap is None:
+                    self.thumbnail_manager.set_series_pending(series_no_str)
+                # Prepared cards already replay the manager's current state in
+                # create_thumbnail_widget. Do not erase a download that started
+                # while the image was being prepared on the worker.
+            else:
+                self.thumbnail_manager.set_series_ready(series_no_str)
+        finally:
+            if paint_enabled:
+                container.setUpdatesEnabled(True)
 
         return thumb_index + 1
 

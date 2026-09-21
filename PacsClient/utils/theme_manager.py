@@ -381,8 +381,9 @@ class ThemeManager(QObject):
         return theme
 
     def build_application_stylesheet(self, theme: dict[str, str] | None = None) -> str:
+        from Qss.numeric_controls import numeric_control_style
         t = theme or self.current_theme()
-        return f"""
+        return numeric_control_style() + f"""
         QMessageBox {{
             background-color: {t['panel_bg']};
         }}

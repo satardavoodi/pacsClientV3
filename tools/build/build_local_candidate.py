@@ -49,6 +49,46 @@ def resolve_brain_source(configured: Path | None, root: Path = REPO) -> Path:
     return (root / "generated-files/eagle-eye/brain-tf212-py310").resolve()
 
 
+def resolve_lesion_source(root: Path = REPO) -> Path:
+    configured = os.environ.get('AIPACS_EAGLE_EYE_LESION_SOURCE', '').strip()
+    return Path(configured).resolve() if configured else (root / 'generated-files/eagle-eye/brain-lesions').resolve()
+
+
+def resolve_alignment_source(root: Path = REPO) -> Path:
+    configured = os.environ.get("AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE", "").strip()
+    return (
+        Path(configured).resolve()
+        if configured
+        else (root / "generated-files/eagle-eye/alignment").resolve()
+    )
+
+
+def resolve_total_spine_source(root: Path = REPO) -> Path:
+    configured = os.environ.get("AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE", "").strip()
+    return (
+        Path(configured).resolve()
+        if configured
+        else (root / "generated-files/eagle-eye/total-spine").resolve()
+    )
+
+
+def preflight_lesion_payload(*, for_distribution: bool) -> None:
+    from builder.eagle_eye_lesion_payload import validate_payload
+    validate_payload(resolve_lesion_source(), for_distribution=for_distribution)
+
+
+def preflight_alignment_payload(*, for_distribution: bool) -> None:
+    from builder.eagle_eye_alignment_payload import validate_payload
+
+    validate_payload(resolve_alignment_source(), for_distribution=for_distribution)
+
+
+def preflight_total_spine_payload(*, for_distribution: bool) -> None:
+    from builder.eagle_eye_total_spine_payload import validate_payload
+
+    validate_payload(resolve_total_spine_source(), for_distribution=for_distribution)
+
+
 def preflight_brain_payload(source: Path, *, for_distribution: bool) -> None:
     """Fail before any core compilation when the requested Brain payload cannot ship."""
     source = source.resolve()
@@ -168,9 +208,40 @@ def expected_release_installers(final_repo: Path, version: str) -> dict[str, lis
     }
 
 
+def _pid_is_alive(pid: object) -> bool:
+    try:
+        value = int(pid or 0)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    try:
+        os.kill(value, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _recorded_python_reuse_source(status: dict) -> Path | None:
+    configured = status.get("reuse_python_source")
+    if configured:
+        return Path(str(configured)).resolve()
+    command = status.get("backends", {}).get("python", {}).get("command", [])
+    if isinstance(command, list) and "--previous-source" in command:
+        index = command.index("--previous-source") + 1
+        if index < len(command):
+            return Path(str(command[index])).resolve()
+    return None
+
+
+def _completed_backend_outputs_exist(status: dict, backend: str) -> bool:
+    paths = status.get("expected_release_installers", {}).get(backend, [])
+    return len(paths) == 3 and all(Path(path).is_file() for path in paths)
+
+
 def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source: Path | None = None,
                final_repo: Path = REPO, brain_source: Path | None = None,
-               local_install_qa: bool = False) -> int:
+               local_install_qa: bool = False, resume: bool = False) -> int:
     root = workspace / "source"
     identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
     if local_install_qa:
@@ -184,14 +255,34 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         raise ValueError("Candidate Git synchronization version does not match the build")
     installer_dirs = canonical_installer_dirs(final_repo, version)
     status_path = workspace / "build_status.json"
-    if status_path.exists():
+    if status_path.exists() and not resume:
         raise ValueError("This build workspace already has a run; preserve it and prepare a fresh candidate")
-    status = {"version": version, "status": "running", "pid": os.getpid(),
-              "lane": "local-install-qa" if local_install_qa else "release-candidate",
-              "published": False, "distribution_approved": not local_install_qa,
-              "production_accepted": False,
-              "expected_release_installers": expected_release_installers(final_repo, version),
-              "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
+    if resume:
+        if not status_path.is_file():
+            raise ValueError("Resume workspace has no build_status.json")
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        expected_lane = "local-install-qa" if local_install_qa else "release-candidate"
+        if status.get("version") != version or status.get("lane") != expected_lane:
+            raise ValueError("Resume workspace version or lane does not match the requested build")
+        for backend, record in status.get("backends", {}).items():
+            if record.get("status") == "running" and _pid_is_alive(record.get("pid")):
+                raise ValueError(f"Cannot resume while the recorded {backend} build process is still active")
+        status["status"] = "recovering"
+        status["pid"] = os.getpid()
+        status["recovery_started_at_utc"] = datetime.now(timezone.utc).isoformat()
+    else:
+        status = {"version": version, "status": "running", "pid": os.getpid(),
+                  "lane": "local-install-qa" if local_install_qa else "release-candidate",
+                  "published": False, "distribution_approved": not local_install_qa,
+                  "production_accepted": False,
+                  "asset_root": str(assets.resolve()),
+                  "brain_source": str(brain_source.resolve()) if brain_source else None,
+                  "reuse_python_source": str(reuse_python_source.resolve()) if reuse_python_source else None,
+                  "expected_release_installers": expected_release_installers(final_repo, version),
+                  "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
+    if resume and reuse_python_source is None:
+        reuse_python_source = _recorded_python_reuse_source(status)
+    status["expected_release_installers"] = expected_release_installers(final_repo, version)
 
     def save_status():
         temporary = status_path.with_suffix(".tmp")
@@ -208,6 +299,15 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     env["AIPACS_UPDATE_REMOTE_PUBLISH"] = "0"
     if brain_source is not None:
         env["AIPACS_EAGLE_EYE_BRAIN_SOURCE"] = str(brain_source.resolve())
+    env['AIPACS_EAGLE_EYE_LESION_SOURCE'] = str(resolve_lesion_source(final_repo))
+    env["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"] = str(resolve_alignment_source(final_repo))
+    env["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"] = str(resolve_total_spine_source(final_repo))
+    status["eagle_eye_external_sources"] = {
+        "brain": env.get("AIPACS_EAGLE_EYE_BRAIN_SOURCE"),
+        "brain_lesions": env["AIPACS_EAGLE_EYE_LESION_SOURCE"],
+        "alignment": env["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"],
+        "total_spine": env["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"],
+    }
     workspace_anchor = Path(workspace.resolve().anchor)
     packaging_stage_root = (workspace_anchor / "ap-stage" if workspace_anchor
                             else workspace.resolve().parent / "ap-stage")
@@ -230,18 +330,60 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     if reuse_python_source is not None:
         commands["python"] = [sys.executable, "-u", "tools/build/repackage_candidate.py",
                               "--previous-source", str(reuse_python_source.resolve()), "--version", version]
+    try:
+        identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
+        source_matches = source_fingerprint(root) == identity["source_sha256"]
+    except Exception:
+        source_matches = False
+    if not source_matches:
+        status.update(status="failed", error="Candidate source drift detected")
+        save_status()
+        return 1
     for name, command in commands.items():
-        try:
-            identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
-            source_matches = source_fingerprint(root) == identity["source_sha256"]
-        except Exception:
-            source_matches = False
-        if not source_matches:
-            status.update(status="failed", error="Candidate source drift detected")
-            save_status()
-            return 1
+        previous_record = dict(status.get("backends", {}).get(name, {}) or {})
+        if (
+            previous_record.get("status") == "completed"
+            and previous_record.get("exit_code") == 0
+            and _completed_backend_outputs_exist(status, name)
+        ):
+            print(f"Reusing completed {name} backend from this immutable candidate.", flush=True)
+            continue
+        if resume and name == "nuitka" and (root / "builder nuitka/output/build_state.json").is_file():
+            nuitka_state_path = root / "builder nuitka/output/build_state.json"
+            nuitka_state = json.loads(nuitka_state_path.read_text(encoding="utf-8"))
+            release_stages = {0, 6, 7, 8, 9, 10}
+            interrupted_stage = nuitka_state.get("current_stage")
+            if interrupted_stage is not None:
+                interrupted_stage = int(interrupted_stage)
+                if interrupted_stage not in release_stages:
+                    raise ValueError("Interrupted Nuitka stage is outside the release pipeline")
+                stage_record = nuitka_state.setdefault("stages", {}).setdefault(
+                    str(interrupted_stage), {}
+                )
+                stage_record.update(
+                    status="failed",
+                    error="Recorded build process ended before the stage completed",
+                    finished_at_utc=datetime.now(timezone.utc).isoformat(),
+                )
+                nuitka_state["failed_stage"] = interrupted_stage
+                nuitka_state["current_stage"] = None
+                temporary_state = nuitka_state_path.with_suffix(".tmp")
+                temporary_state.write_text(json.dumps(nuitka_state, indent=2), encoding="utf-8")
+                temporary_state.replace(nuitka_state_path)
+            failed_stage = nuitka_state.get("failed_stage")
+            if failed_stage is None or int(failed_stage) not in release_stages:
+                raise ValueError("Nuitka resume has no failed release-pipeline stage")
+            # The backend's --release switch means "fresh complete run" and is
+            # intentionally incompatible with --resume. The validated failed
+            # stage above keeps this recovery inside the release-stage set.
+            command = [item for item in command if item != "--release"]
+            command.append("--resume")
+        attempts = list(previous_record.get("attempts", []))
+        if previous_record.get("started_at_utc"):
+            attempts.append({key: value for key, value in previous_record.items() if key != "attempts"})
         record = {"status": "running", "started_at_utc": datetime.now(timezone.utc).isoformat(),
-                  "log": str(workspace / (name + ".log")), "command": command}
+                  "log": str(workspace / (name + ".log")), "command": command,
+                  "attempts": attempts}
         status["backends"][name] = record
         save_status()
         print(f"Starting {name} {version}: {record['log']}", flush=True)
@@ -326,6 +468,9 @@ def run_internal_build(
             env.pop(name)
     if brain_source is not None:
         env["AIPACS_EAGLE_EYE_BRAIN_SOURCE"] = str(brain_source.resolve())
+        env['AIPACS_EAGLE_EYE_LESION_SOURCE'] = str(resolve_lesion_source(REPO))
+        env["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"] = str(resolve_alignment_source(REPO))
+        env["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"] = str(resolve_total_spine_source(REPO))
 
     commands = {
         "python": [
@@ -398,6 +543,11 @@ def main():
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--run-prepared", action="store_true")
     parser.add_argument(
+        "--resume-workspace",
+        type=Path,
+        help="Resume the recorded failed full candidate in this existing C:\\b workspace",
+    )
+    parser.add_argument(
         "--git-sync-receipt",
         type=Path,
         help="Fresh receipt created by tools/git/release_manager.py publish",
@@ -425,9 +575,50 @@ def main():
     parser.add_argument("--brain-source", type=Path,
                         help="Approved Eagle Eye Brain payload; auto-discovered when omitted")
     parser.add_argument("--reuse-python-source", type=Path, help="Repackage a matching, validated previous Python stage")
-    parser.add_argument("--final-repo", type=Path, default=REPO,
-                        help="Repository whose existing builder output/installer folders receive final files")
     args = parser.parse_args()
+    if args.resume_workspace:
+        if any((args.workspace, args.prepare_only, args.run_prepared, args.internal,
+                args.local_install_qa, args.git_sync_receipt, args.reuse_python_source)):
+            parser.error("--resume-workspace cannot be combined with a new-build or lane option")
+        workspace = args.resume_workspace.resolve()
+        status_path = workspace / "build_status.json"
+        manifest_path = workspace / "source/build_source_manifest.json"
+        if not status_path.is_file() or not manifest_path.is_file():
+            parser.error("Resume workspace must contain build_status.json and source/build_source_manifest.json")
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        identity = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = args.version or str(identity.get("version") or "")
+        if not version or version != current_version(REPO):
+            parser.error("Resume candidate version must match the current repository version")
+        local_install_qa = status.get("lane") == "local-install-qa"
+        if status.get("lane") not in {"local-install-qa", "release-candidate"}:
+            parser.error("Only a recorded six-installer candidate can be resumed")
+        recorded_assets = Path(status.get("asset_root") or (REPO / "generated-files/distribution-assets")).resolve()
+        assets = (args.asset_root or recorded_assets).resolve()
+        if assets != recorded_assets:
+            parser.error("Resume asset root must match the original candidate")
+        recorded_brain = status.get("brain_source")
+        brain_source = resolve_brain_source(
+            Path(recorded_brain) if recorded_brain else args.brain_source,
+            REPO,
+        )
+        if recorded_brain and args.brain_source and brain_source != Path(recorded_brain).resolve():
+            parser.error("Resume Brain source must match the original candidate")
+        preflight_brain_payload(brain_source, for_distribution=not local_install_qa)
+        preflight_lesion_payload(for_distribution=not local_install_qa)
+        preflight_alignment_payload(for_distribution=not local_install_qa)
+        preflight_total_spine_payload(for_distribution=not local_install_qa)
+        recorded_reuse = _recorded_python_reuse_source(status)
+        return run_builds(
+            workspace,
+            assets,
+            version,
+            recorded_reuse,
+            REPO,
+            brain_source,
+            local_install_qa=local_install_qa,
+            resume=True,
+        )
     version = args.version or current_version(REPO)
     workspace = (
         args.workspace
@@ -454,6 +645,9 @@ def main():
             brain_source,
             for_distribution=not (args.internal or args.local_install_qa),
         )
+        preflight_lesion_payload(for_distribution=not (args.internal or args.local_install_qa))
+        preflight_alignment_payload(for_distribution=not (args.internal or args.local_install_qa))
+        preflight_total_spine_payload(for_distribution=not (args.internal or args.local_install_qa))
     if not args.run_prepared:
         if workspace.exists():
             raise ValueError("Build workspace already exists; use a fresh directory")
@@ -475,7 +669,7 @@ def main():
         assets,
         version,
         args.reuse_python_source,
-        args.final_repo.resolve(),
+        REPO,
         brain_source,
         local_install_qa=args.local_install_qa,
     )

@@ -25,6 +25,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QMimeData, QObject, QPoint, QPointF  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -63,6 +64,126 @@ def _meta(series_number, series_path=""):
 
 def _bridge(series_number, series_path=""):
     return SimpleNamespace(metadata=_meta(series_number, series_path))
+
+
+class _DragEvent:
+    """Small Qt drag-event double for exercising the real hover handlers."""
+
+    def __init__(self, mime_data, x=12, y=12):
+        self._mime_data = mime_data
+        self._point = QPoint(x, y)
+        self.accepted = False
+        self.ignored = False
+
+    def mimeData(self):
+        return self._mime_data
+
+    def position(self):
+        return QPointF(self._point)
+
+    def pos(self):
+        return QPoint(self._point)
+
+    def acceptProposedAction(self):
+        self.accepted = True
+
+    def setDropAction(self, action):
+        self.drop_action = action
+
+    def accept(self):
+        self.accepted = True
+
+    def ignore(self):
+        self.ignored = True
+
+
+def _internal_series_mime(series_number=1):
+    from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
+        _SERIES_DROP_MIME,
+    )
+
+    mime = QMimeData()
+    mime.setData(_SERIES_DROP_MIME, str(series_number).encode("ascii"))
+    return mime
+
+
+def test_fast_internal_drag_highlight_waits_for_stable_hover(container, monkeypatch):
+    """Crossing a FAST pane must not flash/activate it before hover dwell."""
+    highlights = []
+    monkeypatch.setattr(
+        container, "_show_drop_highlight", lambda visible: highlights.append(bool(visible))
+    )
+
+    event = _DragEvent(_internal_series_mime())
+    container.dragEnterEvent(event)
+
+    assert event.accepted is True  # quick drop remains available
+    assert container._drop_hover_armed is False
+    assert True not in highlights
+    assert container._drop_hover_timer.isActive()
+
+    container._arm_drop_target()
+    assert container._drop_hover_armed is True
+    assert highlights[-1] is True
+
+
+def test_advanced_internal_drag_highlight_waits_for_stable_hover(qapp):
+    """Advanced and FAST use the same hover-dwell policy for thumbnail drags."""
+    from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_dragdrop import (
+        _VWDragDropMixin,
+    )
+
+    class _Harness(_VWDragDropMixin, QObject):
+        def __init__(self):
+            QObject.__init__(self)
+            self._init_drop_hover_dwell()
+            self.highlights = []
+
+        def _show_drop_highlight(self, visible):
+            self.highlights.append(bool(visible))
+
+    harness = _Harness()
+    event = _DragEvent(_internal_series_mime())
+    harness.dragEnterEvent(event)
+
+    assert event.accepted is True
+    assert harness._drop_hover_armed is False
+    assert True not in harness.highlights
+    assert harness._drop_hover_timer.isActive()
+
+    harness._arm_drop_target()
+    assert harness._drop_hover_armed is True
+    assert harness.highlights[-1] is True
+
+
+def test_fast_quick_drop_is_not_blocked_by_visual_dwell(container, qapp):
+    """Dwell suppresses traversal feedback, never a deliberate quick drop."""
+    calls = []
+    container.method_change_series_on_viewer = lambda **kwargs: calls.append(kwargs)
+    event = _DragEvent(_internal_series_mime(7))
+
+    container.dragEnterEvent(event)
+    assert container._drop_hover_armed is False
+    container.dropEvent(event)
+    qapp.processEvents()
+
+    assert event.accepted is True
+    assert len(calls) == 1
+    assert calls[0]["series_index"] == 7
+    assert calls[0]["force_reload"] is True
+    assert container._drop_hover_timer.isActive() is False
+
+
+def test_active_viewers_share_one_hover_policy_and_legacy_matches_behavior():
+    """Do not reintroduce backend-specific immediate-hover branches."""
+    qfc = (VTK_WIDGET_DIR / "qt_fast_container.py").read_text(encoding="utf-8")
+    dragdrop = (VTK_WIDGET_DIR / "_vw_dragdrop.py").read_text(encoding="utf-8")
+    legacy = (VTK_WIDGET_DIR / "_legacy_widget.py").read_text(encoding="utf-8")
+
+    assert "class QtFastContainer(_DropHoverDwellMixin, QWidget):" in qfc
+    assert "class _VWDragDropMixin(_DropHoverDwellMixin):" in dragdrop
+    for source in (qfc, dragdrop, legacy):
+        assert "Internal thumbnail drag should be immediately droppable" not in source
 
 
 def test_aliased_index_still_replaces_different_series(container):

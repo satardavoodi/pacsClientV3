@@ -1400,6 +1400,12 @@ def get_all_series_thumbnail_from_study_folder(study_uid):
     """
     import time
 
+    study_uid = str(study_uid or "").strip()
+    if not study_uid:
+        # Never reinterpret a missing clinical identity as THUMBNAIL_PATH itself.
+        # The root can contain thousands of study directories and is not a study.
+        return []
+
     # Check cache first with TTL
     if study_uid in _thumbnail_cache:
         if is_cache_valid(study_uid):

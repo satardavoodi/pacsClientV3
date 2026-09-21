@@ -1,6 +1,6 @@
 # Network & Server Communication Architecture
 
-> **Version:** v2.4.0 | **Updated:** 2026-05-23
+> **Historical version:** v2.4.0 | **Transport correction reviewed:** 2026-09-13
 >
 > **2026-05-23 refresh:** Added the REST / Workflow API channel (previously
 > undocumented), corrected the socket channel's role (it does **not** own
@@ -111,13 +111,13 @@ The REST API is the authoritative source for reception/workflow metadata.
 
 | File | Responsibility | Singleton? |
 |------|---------------|------------|
-| `socket_service.py` | **Facade** — all server calls go through here | Yes (`get_socket_service()`) |
+| `socket_service.py` | Main-process imaging-service facade; the Download Manager worker owns its dedicated socket client | Yes (`get_socket_service()`) |
 | `socket_client.py` | Patient list queries, report status, generic `send_request` | No (pooled) |
 | `socket_config.py` | Config loader: host, port, timeouts, TCP tuning | Yes (`get_socket_config()`) |
 | `socket_token_manager.py` | JWT token storage, thread-safe | Yes (double-check locking) |
 | `socket_patient_service.py` | Higher-level patient search wrapper | No |
 | `socket_report_status_service.py` | Report status update/query wrapper | No |
-| `grpc_client.py` | Thumbnail + DICOM image fetching via gRPC | No (per-use) |
+| `grpc_client.py` | Legacy gRPC implementation retained in the tree; not the active patient/thumbnail/DICOM download route | No (per-use) |
 | `dicom_service.proto` | Protobuf schema for gRPC service | — |
 | `dicom_service_pb2.py` | Generated Protobuf Python bindings | — |
 | `dicom_service_pb2_grpc.py` | Generated gRPC stub/servicer | — |
@@ -133,6 +133,7 @@ The REST API is the authoritative source for reception/workflow metadata.
 | File | Responsibility |
 |------|---------------|
 | `socket_client.py` | `SocketDicomClient` — production DICOM downloader with retry, batch, compression |
+| `grpc_client.py` | Socket-backed metadata compatibility adapter; its historical name does not select gRPC transport |
 | `health_monitor.py` | `ConnectionHealthMonitor` (R30-R34) — adaptive throttle, health tracking |
 
 ### Configuration
@@ -188,6 +189,13 @@ Or broadcast (filtered/skipped by client):
 ```
 
 ### Safety guards (v2.3.3)
+
+**Historical table qualification (2026-09-15):** do not apply this old summary
+unchanged to the bulk Download Manager client. Its current ceiling is 500 MiB;
+its prefix is accumulated exactly and broadcast waiting is elapsed-budget-based,
+not capped at ten. Body receive policy is unchanged. See
+[`DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md`](../reports/DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md)
+for the distinct client scope, tests and remaining completion/GUI gates.
 
 | Guard | Purpose |
 |-------|---------|
@@ -483,7 +491,8 @@ ReportStatusWidget.update_status()
 
 ### MUST
 
-- All server communication MUST go through `SocketService` (singleton) — never create raw socket connections in UI code.
+- UI code must use the owning service/facade and must never create raw socket connections. The
+  Download Manager worker uses its dedicated `SocketDicomClient` outside the GUI process.
 - All socket `send()` calls MUST use `sendall()` — partial writes corrupt framing.
 - All socket `recv()` for exact-length data MUST use `_recv_exact()` — partial reads corrupt framing.
 - Response size MUST be validated before allocation (current limit: 50 MB).
@@ -499,7 +508,8 @@ ReportStatusWidget.update_status()
 - Prefer `logger.debug()` for routine I/O (send/recv bytes). Use `logger.info()` only for connection state changes and errors.
 - Use `SocketConnectionPool` for patient-list/report queries. Use `SocketDicomClient` for downloads.
 - Use `ConnectionHealthMonitor` metrics to adapt download behavior (batch size, parallelism).
-- Use `DicomGrpcClient` with `_ensure_stub()` for thumbnail operations — it auto-reconnects.
+- Use the current socket-backed thumbnail/patient service. Do not add new calls to
+  `DicomGrpcClient` or `_ensure_stub()` for the active imaging route.
 
 ### MUST NOT
 

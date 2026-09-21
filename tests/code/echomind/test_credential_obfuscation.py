@@ -83,6 +83,20 @@ def test_center_access_codes_are_not_plaintext_in_packaged_registry_sources():
     assert not findings, f"plaintext center access codes remain in: {findings}"
 
 
+def test_protected_demo_center_is_available_by_default(monkeypatch):
+    monkeypatch.delenv("AIPACS_ENABLE_DEMO_CENTER", raising=False)
+    monkeypatch.delenv("AIPACS_ALLOW_TEST_CENTER", raising=False)
+
+    centers_by_code, lookup_to_center = api_manager_module._build_registry_maps(
+        api_manager_module.CENTERS
+    )
+
+    assert "TEST" in centers_by_code
+    assert centers_by_code["TEST"].center_display == "Test Center"
+    assert centers_by_code["TEST"].credentials
+    assert "TEST" in set(lookup_to_center.values())
+
+
 def test_company_server_3_has_no_independent_embedded_bearer_key():
     source = (REPO_ROOT / "modules/EchoMind/voice_transcription.py").read_text(
         encoding="utf-8"

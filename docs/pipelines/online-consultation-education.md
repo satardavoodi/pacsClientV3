@@ -8,6 +8,21 @@ Builds on `docs/plans/cloud-consultation/GOOGLE_DRIVE_CONSULTATION_PLAN_2026-05-
 (R2) — Phases 0–6 were already implemented; this records **Phase 7: the production
 wiring + the Education ▸ Online Consultation submodule**.
 
+## Poller lifecycle update (2026-09-15, OPT-60)
+
+`stop()` now cancels both timers and invalidates pending deliveries; worker I/O
+remains off-thread with cooperative cancellation between existing stages. Finished
+workers are released on GUI; identity-replaced pollers are disposed only after
+their workers finish. The existing central lifecycle registry requests stop before
+DB cleanup, with an aboutToQuit fallback and terminal autostart gate. Normal polling,
+routing, status/deduplication and offline backoff remain unchanged. Direct manual
+poll before initial start is supported; explicit restart cannot accept old results.
+
+This is not a full application drain or a fix for every native shutdown fault.
+Outgoing DB snapshots and incoming notification persistence remain synchronous
+as before; the older broad nonblocking language does not prove those paths cheap.
+See [the evidence, remaining structural risks and live gate](../reports/QT_POLLER_LIFECYCLE_2026-09-15.md).
+
 ## 1. What changed (2026-06-06)
 
 | Area | Change |

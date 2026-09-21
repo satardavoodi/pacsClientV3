@@ -3,6 +3,58 @@
 **Status:** architecture clarification (authoritative boundary) · **Date:** 2026-06-27
 **Supersedes the over-reach in** `S4B_VTK_CACHE_ARCHITECTURE_2026-06-26.md` §6 rule 1 (see §8 below).
 
+**2026-09-16 clarification:** this document defines architectural responsibility, not
+proof that every proposed service/cutover is active. Current implementation and acceptance
+belong to the dated receipts in the master plan. Sections 0.1 and 7.1 govern all VTK
+cache reuse: per-domain stores are the default, not one mutable cache shared by modules.
+
+**2026-09-17 Local catalog application:** import, download, Home Local and patient
+Local now converge on one immutable pixel/displayability fact contract in the existing
+series index. Geometry-index trust, download lifecycle/completion and UI readiness remain
+separate states. Legacy facts are verified on workers and persisted through one revision-
+checked batch writer; no viewer decode/cache/render domain consumes mutable shared state.
+
+**2026-09-20 viewport input clarification:** drag-hover timing is shared UI coordination,
+not a shared render pipeline. Fast and Advanced consume one immutable dwell/tolerance
+policy for traversal feedback, but keep separate drop dispatch, decode, cache, render and
+lifecycle behavior. The hover timer never gates a deliberate drop and never advances the
+U0-U5 ledger. See the dated OPT-60 receipt in the master plan.
+
+## Current execution ledger - 2026-09-18
+
+This is the only active order for shared Unify work. Historical staged plans and dated
+incident sections remain evidence, but they do not authorize a parallel implementation.
+Only one `U*` slice may change shared-trunk behavior at a time. The next slice starts only
+after the current slice has an explicit code-gate result, source-GUI result, rollback, and
+dated receipt in the master plan.
+
+| Order | Shared-trunk slice | Current state | Exit gate before the next slice |
+|---|---|---|---|
+| **U0** | Accept the already-landed ordered Local catalog owner and completed-load tab handoff | Post-catalog orphan ordering, indexed-Local warm suppression, final open identity and pre-construction tab admission are code-verified; fresh rerun remains open. Import/Download already publish one revision-bound durable DB summary; the disk fact cache is accelerator-only | Previously unopened single- and multi-study Local cases, blank-primary Local promotion, warm reopen, one Server control, first card before `LOCAL_ORPHAN_RECONCILE phase=post_catalog_start`, zero Local whole-series `SERIES_FILE_WARM` reads, exact card identity/order/object/frame counts, no overlap/jump, hidden-tab completion replay, four admitted tabs plus a prompt fifth-tab rejection with no widget/pipeline construction or qasync re-entry, no GUI-thread file read, and a normal exit with session-scoped native evidence |
+| **U1** | Publish one authoritative download-completion fact | Not implemented as a complete shared contract | Completion is emitted only after atomic file publication and required index/state convergence; notification, PNG presence and an inferred count are not completion; retry/resume and already-resident paths agree |
+| **U2** | Make per-series state authoritative for shared decisions | Partial/additive; `SeriesStateStore` is not the sole truth and Download Manager still owns its live queue | Download events and display lifecycle feed one identity-keyed state record; the store becomes primary for shared await/grow/rebuild/settled decisions; Download Manager keeps queue ownership and viewer-private render state stays private |
+| **U3** | Introduce one identity/revision invalidation bus | Target only; invalidation remains scattered | A single server-grow, series-change, re-import or published-download event invalidates every subscribed read model/cache for the canonical key without exposing one viewer's cache to another |
+| **U4** | Route shared entry points through the decision chokepoint and retire parallel branches | Partial; `plan_series_display` is not yet the only acting path | Open/drop, progress, completion and disk-ready resume use the same shared plan; obsolete flags and re-key/count fallbacks are removed only after zero-divergence code and live soak evidence |
+| **U5** | Installed/restart/stress closure | Open | Source and installed behavior agree; cold/warm/restart, interrupted download, repeated open/close, normal shutdown and packaged configuration/mirror gates pass |
+
+### Stop conditions and document ownership
+
+- A native access violation, wrong-patient/study/series identity, lost download, or
+  authoritative count mismatch stops the active slice. Diagnose it in the owning existing
+  record before changing another stage. Do not compensate with a second loader, downloader,
+  cache, timer or fallback.
+- Shutdown/native lifetime is tracked in
+  [`CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md`](../../reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md).
+  It is a release stop condition, not proof that catalog, download or a viewer caused the
+  fault. If a U0-U5 acceptance run faults on exit, pause the queue and close the lifecycle
+  evidence gap first.
+- The optimization master plan owns priority and status; this document owns architecture
+  and order; the UI-stall and crash reports own dated evidence; the regression catalog owns
+  fail-before/pass-after guards. Viewer-private findings stay in their viewer-owner report.
+  Do not copy a repair plan between these documents.
+- `VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md` is implementation history. Where it
+  conflicts with this ledger or current code, this ledger and the master plan win.
+
 ## 0. The principle (as directed)
 
 We unify the **download / file / cache‑coordination / metadata / state / logging** infrastructure
@@ -53,13 +105,52 @@ What "separated, not mixed" means concretely:
   invalidation bus, KPIs — §1). Each domain **calls** the trunk; the trunk **never** exposes one
   domain to another. **Unification happens INSIDE the trunk, never across a domain boundary.**
 - **Through the trunk, only IMMUTABLE, identity-keyed ARTIFACTS may be shared** (the DICOM files; and —
-  only under the strict test in §6.1 — a built VTK volume). Sharing a read-only *artifact* is allowed;
+  only under the strict test in §7.1 — a built VTK volume). Sharing a read-only *artifact* is allowed;
   sharing *implementation, lifecycle, widgets, interactors, or mutable state* is **forbidden**.
 
 Consequences already in force: the Fast "no VTK render windows" rule; the Fast-branch freeze of
 2026-06-27 is fixed **inside the Fast branch** (never by routing Fast through Advanced/VTK machinery);
 module-specific outputs (panoramic, segmentation, resample) stay isolated and are never written back
 into anything shared.
+
+## 0.2 Workstream ownership and two-way handoff (user decision, 2026-09-16)
+
+One shared coordination path feeds two intentionally distinct patient-viewer backends:
+Fast and Advanced. VTK tools remain independent execution domains under section 0.1;
+calling them part of the VTK representation family does not merge their ownership.
+
+| Boundary | Workstream and owning record |
+|---|---|
+| Identity/SeriesRef, catalog and thumbnail mapping/presentation, source-file availability, download/state/progress coordination, cancellation tokens, common cache keys/revisions/invalidation, shared KPIs | Unify workstream: [UI-stall evidence and guarded fixes](../../reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md), under OPT-58 / OPT-60 and the existing master-plan items. Reuse each existing owning service; do not create a second coordinator. |
+| Advanced/VTK load/decode/filter/geometry/render/scroll, decoded-volume stores and native resource lifetime; their runtime/payload parity | Viewer workstream: [VTK-domain review](../../reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md). Unify records evidence there; it does not patch these implementations. |
+| Fast-specific decode/filter/raster/render/cache-store internals | Fast execution-domain owner, not the Unify workstream and not implicitly assigned to VTK. Route an identified branch defect through its subsystem record before implementation. |
+| Shared contract consumed by either viewer | Unify owns the contract; the affected viewer owner owns its adapter and branch changes. Agree on identity, source revision, cancellation and immutable payload semantics before either side changes the interface. |
+
+Handoff procedure, in both directions:
+
+1. Record a PHI-free finding in the **destination owner's existing document**: source
+   session/time, concrete method or boundary, evidence, confirmed versus suspected cause,
+   affected contract, requested owner check and current status. Keep only a backlink in
+   the source report; do not maintain competing repair plans or copy sensitive logs.
+2. Do not implement, hot-reload, change flags or synchronize another owner's in-progress
+   mirrors merely because its code appeared in a shared log. A handoff is not acceptance
+   or an instruction to close a defect without that owner's verification.
+3. The destination owner records diagnosis/fix/verification there and returns a linked
+   summary of any shared-contract impact. Unknown attribution stays **unclassified**;
+   a loading cover, COM frame or long gap alone does not identify the responsible domain.
+4. For an interface change, document the producer/consumer contract and add both-side
+   guards plus affected-workflow source-GUI verification. Do not smuggle another backend's
+   mutable Qt/VTK objects, worker ownership or lifecycle through the common service.
+
+Unification removes duplicate **authority and orchestration**, not legitimate backend
+representations. Cached PNGs and authoritative source files can use shared data services;
+decoded raster/volume stores stay private. Shared download/file availability must not
+turn one consumer's decoded/displayed outcome into another consumer's completion.
+A fallback may remain only for a documented
+capability/failure boundary, with one request owner, explicit handoff and stale-result
+rejection. Retire obsolete routes after contract parity and code/live verification,
+not merely because two call paths exist. This decision does not activate a cache,
+promise a completed migration, or authorize a new raw-pixel producer.
 
 ## 1. The shared trunk — what is genuinely common (ONE implementation)
 
@@ -71,7 +162,7 @@ both viewers. Each line is the real owning code.
 | **Download management** | `modules/download_manager/` (Zeta socket `network/socket_client.py`) | One downloader; writes atomically (`*.part`→`os.replace`). Viewer‑agnostic. |
 | **DICOM File Cache (source of truth)** | disk `SOURCE_PATH/<study_uid>/<series_number>/` (`data_paths.py:DICOM_IMAGES_DIR` ← `config.py:SOURCE_PATH`) | The one authoritative copy of pixels. Both viewers read from here. |
 | **Identity model** | `PacsClient/utils/viewer_identity.py` (`ViewerHandle`, `SeriesRequest`) | `(patient_id, study_uid, series_uid, viewer_handle)`. The cache key + request token for BOTH viewers. |
-| **Per‑series state authority** | `PacsClient/utils/series_state_store.py` (`SeriesStateStore`) | `Requested→Queued→Downloading→PartialOnDisk→Decoding→Displayed`. The shared "where is this series" truth. |
+| **Per-series state target (not fully cut over)** | `PacsClient/utils/series_state_store.py` (`SeriesStateStore`) | Target vocabulary is `Requested→Queued→Downloading→PartialOnDisk→Decoding→Displayed`, but runtime code still labels this S0/shadow and Download Manager retains its live queue authority. Do not treat the planned store as current truth until an explicitly guarded cutover. Producer-verified Local catalog facts are a separate immutable read model, not lifecycle state. |
 | **Pipeline state / orchestration** | `viewer_request_pipeline.py` (`plan_series_display` / `ensure_series_displayed` chokepoint, S3) | Decides *what a viewport must do* (await / grow / rebuild / noop) — backend‑agnostic; only the **execution** differs per viewer. |
 | **Metadata + geometry contract** | series/instance metadata; the `DirectionMatrix` field‑data contract (`pydicom_lazy_volume.py::_attach_direction_field_data`, read by `_mpr_canonicalize.py` and produced compatibly by `utils.convert_itk2vtk`) | Spacing / origin / orientation / slice‑order derived **once, one way** from the headers. Both viewers honor the same patient‑coordinate contract. |
 | **Cache COORDINATION** (not the stores) | the **identity keys** + the **invalidation bus** + eviction‑policy ownership | A server‑grew / series‑changed event invalidates *whatever each viewer cached* for that key. This is the coordination layer — see §7. |
@@ -134,14 +225,17 @@ Optimized for true 3D / reformatting / measurement. Owns the VTK world.
 - **Render:** VTK — `vtkImageSlice` / `vtkGPUVolumeRayCastMapper`; backend `vtk_simpleitk`
   (`viewer_backend_config.py:BACKEND_VTK`, selected via `_vc_backend.py`).
 
-### 4.1 The VTK modules live on THIS branch (not a third thing)
+### 4.1 VTK representation family, independent module execution
+
 MPR (`zeta_mpr/mpr_viewer/widget.py::StandardMPRViewer`), Dental Curve MPR
-(`mpr/zeta_mpr/curved_mpr.py`), Dental Imaging (`modules/dental_imaging/`), Orthogonal MPR, and the
-in‑process VTK/AI tools are **all VTK‑volume consumers**. A VTK volume is a VTK volume regardless of
-which feature asked for it, so they share the **Advanced‑side** VTK Volume Cache — they do **not**
-get a separate pipeline, and they have **nothing to do with the Fast cache**. (Module‑specific
-*outputs* — panoramic reconstructions, segmentation masks, resampled volumes — are isolated Layer‑4
-caches per module; never written back into the shared VTK volume.)
+(`mpr/zeta_mpr/curved_mpr.py`), Dental Imaging (`modules/dental_imaging/`), Orthogonal MPR,
+and in-process VTK/AI tools consume VTK representations, not Fast raster caches. Each
+retains its own execution, store and lifecycle by default. Reuse of an immutable built
+volume is a separate opt-in optimization through the trunk, only after section 7.1's
+five gates pass for every consumer. It is not an unconditional shared cache or pipeline.
+Module outputs (panoramic reconstructions, segmentation masks, resampled volumes) remain
+isolated and never mutate a shared source artifact. This clarification supersedes the
+old "not a third thing" wording, which contradicted section 0.1.
 
 ---
 
@@ -155,13 +249,13 @@ Layer 1  DICOM File Cache        SHARED   SOURCE_PATH/<study_uid>/<series>/     
    ├─► Layer 2  FAST Decoded-2D     FAST-ONLY   memmap + pixmap/frame LRU        (lightweight_2d_pipeline)
    │            (slice-indexed, Qt raster — never VTK)
    │
-   └─► Layer 3  VTK Volume Cache    ADVANCED+MODULES   (study_uid, series_uid)   (volume_cache / VtkVolumeService)
+   └─► Layer 3  VTK Volume Stores   PER-DOMAIN        (study_uid, series_uid)   (volume_cache / VtkVolumeService)
                 │  (full volume + geometry, pin/unpin, coalescing)
                 └─► Layer 4  Module-specific (panoramic / seg / resample)  per-module, isolated
 ```
 
 - **Layer 1** and the **trunk** (identity/state/metadata/bus/KPIs) are the only truly shared pieces.
-- **Layer 2** is Fast‑private. **Layer 3** is Advanced‑private (shared *only* among VTK consumers).
+- **Layer 2** is Fast-private. **Layer 3** is VTK-domain-private; immutable reuse is gated by §7.1.
 - The two viewers meet **only** at Layer 1 + the trunk — never at Layer 2/3.
 
 ---
@@ -194,8 +288,12 @@ The thing that is shared about caching is **coordination, not storage**:
    is ad‑hoc (`_vc_cache._invalidate_series_caches` + `zeta_boost.invalidate_series` +
    `VolumeCache.invalidate`); the unification target is a single `invalidate(study_uid, series_uid)`
    the download/state layer raises, that each cache store subscribes to.
-3. **One state authority:** `SeriesStateStore` is the shared "is this series on disk / complete /
-   displayed" — both viewers read it; neither keeps a private copy of *download/disk* truth.
+3. **One state-authority target:** `SeriesStateStore` is the intended shared "is this
+   series on disk / complete / displayed" contract, but the current runtime cutover is
+   incomplete and remains shadowed in several paths. Download Manager state stays the
+   live download authority until that migration is explicitly guarded. The metadata
+   index may accelerate immutable Local catalog facts; it must not claim download or
+   displayed completion.
 
 What is **NOT** shared: the cache **stores** themselves (Fast's memmap+LRU vs. Advanced's VolumeCache),
 the **decode** that fills them, and the **render**.
@@ -234,18 +332,18 @@ its acceptance gate.)
 
 - The Advanced viewer **decodes its own way from the shared disk files** (SimpleITK → VTK). It does
   **not** read Fast's 2D memmap.
-- The re‑read elimination Advanced *does* get is **build‑once among VTK consumers**: once the VTK
-  volume for `(study_uid, series_uid)` exists (built by the Advanced viewer **or** by an MPR/Dental
-  open), the next VTK consumer reuses it — no second SimpleITK build. That is the legitimate,
-  in‑branch win, and it needs no Fast coupling.
+- A possible re-read elimination is **immutable artifact reuse among VTK consumers**, but
+  only after every gate in §7.1 passes and the relevant optimization is explicitly enabled.
+  A built `(study_uid, series_uid)` volume alone does not authorize reuse. This is a
+  conditional benefit, not a statement that today's consumers share one cache or build.
 - Fast and Advanced decoding the same series independently is **accepted** as the price of clean
   independence (they are different representations for different renderers). If a future measurement
   shows that double‑decode is a real cost worth removing, the *correct* place to do it is a shared
   **raw‑pixel** producer in the trunk that both decoders consume — a deliberate trunk addition, not a
   reach across the branch.
 
-This keeps S4b's value (no triple VTK rebuild across Advanced+MPR+Dental; off‑thread build; one
-invalidation bus) while respecting viewer independence.
+This preserves S4b's conditional reuse goal, off-thread build and invalidation coordination
+while respecting viewer independence; current activation/acceptance requires a dated receipt.
 
 ---
 
@@ -258,7 +356,8 @@ invalidation bus) while respecting viewer independence.
    store / render*, it belongs in **one** branch, not the trunk.
 3. **Branch only where technically justified** — a different decode, cache strategy, or render
    technology. Not "to unify for its own sake."
-4. **VTK modules are Advanced‑branch citizens** — they share the VTK volume cache, never the Fast cache.
+4. **VTK modules are independent domains** — their representations are VTK, never Fast caches;
+   any cross-domain immutable-volume reuse must pass §7.1, not merge stores or lifecycle.
 5. **Module‑specific caches are isolated outputs** — never written back into the shared VTK volume.
 6. **One key + one bus + one state authority** are the shared coordination; the cache **stores** stay
    per‑branch.
@@ -271,8 +370,8 @@ invalidation bus) while respecting viewer independence.
 
 - **Keep (trunk):** S0 identity, S2 state authority, S3 chokepoint, S5 cancellation, the shared
   invalidation‑bus goal, KPIs.
-- **Keep (Advanced branch):** S4a `VolumeCache` + S4b `VtkVolumeService` as the **Advanced/VTK** cache,
-  shared with the VTK modules — exactly where it already sits.
+- **Keep (Advanced/VTK domains):** S4a `VolumeCache` + S4b `VtkVolumeService` as domain-private
+  cache infrastructure by default; cross-domain immutable reuse remains gated by §7.1.
 - **Drop:** the "Advanced reuses Fast slices" idea (§8).
 - **Unchanged Fast branch:** the lazy‑2D decode + raster caches stay Fast‑private and untouched.
 - The patient‑open GUI freeze observed 2026‑06‑27 is a **trunk‑adjacent** concern (the *Fast* full‑series

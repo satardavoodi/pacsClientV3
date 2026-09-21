@@ -70,8 +70,10 @@ def build_report(log_path: Path):
                 f"col={_extract_key(payload, 'col_axis_mismatch_deg')} "
                 f"normal={_extract_key(payload, 'normal_mismatch_deg')}"
             ).strip(),
-            "failure_class": _extract_key(payload, "failure_class") or "?",
+            "failure_class": (_extract_key(payload, "legacy_failure_hint")
+                              or _extract_key(payload, "failure_class") or "?"),
             "orientation_valid": _extract_key(payload, "orientation_valid") or "",
+            "comparison_scope": _extract_key(payload, "comparison_scope") or "legacy_unverified",
         }
         rows.append(row)
 
@@ -85,23 +87,25 @@ def build_report(log_path: Path):
     for r in rows:
         latest[r["viewport"]] = r
 
-    print("\n[ADVANCED_VTK_ORIENTATION_AUDIT] PROOF TABLE\n")
-    print("| viewport | plane | DICOM row/col/normal | SITK direction | VTK direction | actor/camera axes | mismatch_deg | failure_class |")
-    print("|---|---|---|---|---|---|---|---|")
+    print("\n[ADVANCED_VTK_ORIENTATION_AUDIT] DIAGNOSTIC TABLE\n")
+    print("Camera/DICOM basis comparisons are not clinical orientation validation.")
+    print("| viewport | plane | DICOM row/col/normal | SITK direction | VTK direction | actor/camera axes | mismatch_deg | legacy hint | orientation status / scope |")
+    print("|---|---|---|---|---|---|---|---|---|")
 
     for viewport in sorted(latest.keys()):
         r = latest[viewport]
         dicom = f"row={r['dicom_row']} col={r['dicom_col']} normal={r['dicom_normal']}"
         print(
             f"| {r['viewport']} | {r['plane']} | {dicom} | {r['sitk_direction']} | {r['vtk_direction']} | "
-            f"{r['actor_camera']} | {r['mismatch']} | {r['failure_class']} |"
+            f"{r['actor_camera']} | {r['mismatch']} | {r['failure_class']} | "
+            f"{r['orientation_valid']} / {r['comparison_scope']} |"
         )
 
     counts = {}
     for r in latest.values():
         c = r["failure_class"] or "?"
         counts[c] = counts.get(c, 0) + 1
-    print("\nFailure-class counts:")
+    print("\nLegacy diagnostic-hint counts (not confirmed failures):")
     for k in sorted(counts.keys()):
         print(f"  {k}: {counts[k]}")
 

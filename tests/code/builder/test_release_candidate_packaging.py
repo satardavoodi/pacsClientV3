@@ -33,6 +33,33 @@ def test_nuitka_generated_resources_are_curated():
     assert ("browser_bookmarks.json", ".") not in pairs
 
 
+def test_nuitka_avoids_comprehensions_in_async_finally_cleanup():
+    """Keep the patient-sidebar cleanup compilable by Nuitka on Python 3.13."""
+    source = ROOT / "PacsClient/pacs/patient_tab/utils/thumbnail_batch_runner.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    start = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "start_sidebar_build"
+    )
+    run = next(
+        node for node in ast.walk(start)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "run"
+    )
+    comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+    unsafe = [
+        node
+        for statement in ast.walk(run)
+        if isinstance(statement, ast.Try)
+        for final_statement in statement.finalbody
+        for node in ast.walk(final_statement)
+        if isinstance(node, comprehensions)
+    ]
+    assert not unsafe, (
+        "Nuitka 4.1.3/Python 3.13 crashes while cloning a comprehension inside "
+        "an async finally block (listcomp_1__.0_clone)"
+    )
+
+
 def test_nuitka_defaults_to_all_editions(pipeline, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["build"])
     args = pipeline.parse_args()
@@ -43,6 +70,17 @@ def test_nuitka_defaults_to_all_editions(pipeline, monkeypatch):
 def test_nuitka_resume_starts_at_recorded_failed_release_stage(pipeline):
     ctx = SimpleNamespace(state={"completed_stages": [0], "failed_stage": 6})
     assert pipeline.compute_resume_stages(ctx) == [6, 7, 8, 9, 10]
+
+
+def test_nuitka_release_resume_never_enters_diagnostic_stages(pipeline):
+    args = SimpleNamespace(release=True, stage=None, from_stage=None, resume=True)
+    assert pipeline.parse_stage_selection(args) == ([], True)
+
+    ctx = SimpleNamespace(
+        args=args,
+        state={"completed_stages": [0, 6, 7], "failed_stage": None},
+    )
+    assert pipeline.compute_resume_stages(ctx) == [8, 9, 10]
 
 
 def test_nuitka_installer_uses_shared_fail_closed_editions(pipeline, monkeypatch, tmp_path):
@@ -320,10 +358,193 @@ def test_local_install_qa_builds_both_backends_all_editions_to_canonical_folders
         assert invocation["env"]["AIPACS_NUITKA_INSTALLER_OUTPUT_DIR"] == str(
             final_repo / "builder nuitka/output/installer"
         )
+        assert invocation["env"]["AIPACS_EAGLE_EYE_LESION_SOURCE"] == str(
+            final_repo / "generated-files/eagle-eye/brain-lesions"
+        )
+        assert invocation["env"]["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"] == str(
+            final_repo / "generated-files/eagle-eye/alignment"
+        )
+        assert invocation["env"]["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"] == str(
+            final_repo / "generated-files/eagle-eye/total-spine"
+        )
     status = json.loads((workspace / "build_status.json").read_text(encoding="utf-8"))
     assert status["lane"] == "local-install-qa"
     assert status["distribution_approved"] is False
     assert status["published"] is False
+
+
+def test_python_release_materializer_stages_every_eagle_eye_external_payload():
+    source = (ROOT / "builder/build_release.py").read_text(encoding="utf-8")
+
+    for function in (
+        "stage_eagle_eye_brain",
+        "stage_eagle_eye_lesions",
+        "stage_eagle_eye_alignment",
+        "stage_eagle_eye_total_spine",
+    ):
+        assert function in source
+
+
+def test_candidate_resume_skips_completed_python_and_resumes_nuitka(
+    tmp_path, monkeypatch
+):
+    from tools.build import build_local_candidate as candidate
+
+    workspace = tmp_path / "candidate"
+    source = workspace / "source"
+    source.mkdir(parents=True)
+    (source / "build_source_manifest.json").write_text(
+        json.dumps({
+            "source_sha256": "stable",
+            "version": "3.6.6",
+            "github_freshness_verified": False,
+            "release_sync": None,
+        }),
+        encoding="utf-8",
+    )
+    (source / "builder nuitka/output").mkdir(parents=True)
+    (source / "builder nuitka/output/build_state.json").write_text(
+        json.dumps({"completed_stages": [0, 6, 7], "failed_stage": 8}),
+        encoding="utf-8",
+    )
+    (workspace / "build_status.json").write_text(
+        json.dumps({
+            "version": "3.6.6",
+            "status": "failed",
+            "lane": "local-install-qa",
+            "published": False,
+            "distribution_approved": False,
+            "production_accepted": False,
+            "backends": {
+                "python": {
+                    "status": "completed",
+                    "exit_code": 0,
+                    "command": [
+                        sys.executable,
+                        "tools/build/repackage_candidate.py",
+                        "--previous-source",
+                        str(tmp_path / "previous-source"),
+                    ],
+                },
+                "nuitka": {"status": "failed", "exit_code": 1},
+            },
+        }),
+        encoding="utf-8",
+    )
+    final_repo = tmp_path / "final"
+    calls = []
+    monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
+    monkeypatch.setattr(
+        candidate,
+        "canonical_installer_dirs",
+        lambda _root, _version: {
+            "python": final_repo / "builder/output/installer",
+            "nuitka": final_repo / "builder nuitka/output/installer",
+        },
+    )
+    python_output = final_repo / "builder/output/installer"
+    python_output.mkdir(parents=True)
+    for edition in ("eagle-eye", "standard", "arm64-emulated"):
+        (python_output / f"ai-pacs {edition} v3.6.6.exe").write_bytes(b"fixture")
+    monkeypatch.setattr(
+        candidate,
+        "run_logged_build",
+        lambda command, **kwargs: calls.append(command) or 0,
+    )
+
+    assert candidate.run_builds(
+        workspace,
+        tmp_path / "assets",
+        "3.6.6",
+        final_repo=final_repo,
+        local_install_qa=True,
+        resume=True,
+    ) == 0
+    assert len(calls) == 2  # Nuitka recovery, then coherence.
+    assert "builder nuitka/build_nuitka_release.py" in calls[0]
+    assert "--resume" in calls[0]
+    assert "--release" not in calls[0]
+    assert "builder/scripts/check_build_coherence.py" in calls[1]
+    assert calls[1][calls[1].index("--py-stage") + 1] == str(
+        tmp_path / "previous-source/builder/output/stage"
+    )
+
+
+def test_candidate_resume_converts_interrupted_release_stage_to_failed(
+    tmp_path, monkeypatch
+):
+    from tools.build import build_local_candidate as candidate
+
+    workspace = tmp_path / "candidate"
+    source = workspace / "source"
+    state_path = source / "builder nuitka/output/build_state.json"
+    state_path.parent.mkdir(parents=True)
+    (source / "build_source_manifest.json").write_text(
+        json.dumps({
+            "source_sha256": "stable",
+            "version": "3.6.7",
+            "github_freshness_verified": False,
+            "release_sync": None,
+        }),
+        encoding="utf-8",
+    )
+    state_path.write_text(
+        json.dumps({
+            "completed_stages": [0, 6, 7, 8, 9],
+            "failed_stage": None,
+            "current_stage": 10,
+            "stages": {"10": {"status": "running"}},
+        }),
+        encoding="utf-8",
+    )
+    (workspace / "build_status.json").write_text(
+        json.dumps({
+            "version": "3.6.7",
+            "status": "failed",
+            "lane": "local-install-qa",
+            "backends": {
+                "python": {"status": "completed", "exit_code": 0},
+                "nuitka": {"status": "running", "pid": 99999999},
+            },
+        }),
+        encoding="utf-8",
+    )
+    final_repo = tmp_path / "final"
+    python_output = final_repo / "builder/output/installer"
+    python_output.mkdir(parents=True)
+    for edition in ("eagle-eye", "standard", "arm64-emulated"):
+        (python_output / f"ai-pacs {edition} v3.6.7.exe").write_bytes(b"fixture")
+    calls = []
+    monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
+    monkeypatch.setattr(candidate, "_pid_is_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        candidate,
+        "canonical_installer_dirs",
+        lambda _root, _version: {
+            "python": python_output,
+            "nuitka": final_repo / "builder nuitka/output/installer",
+        },
+    )
+    monkeypatch.setattr(
+        candidate,
+        "run_logged_build",
+        lambda command, **kwargs: calls.append(command) or 0,
+    )
+
+    assert candidate.run_builds(
+        workspace,
+        tmp_path / "assets",
+        "3.6.7",
+        final_repo=final_repo,
+        local_install_qa=True,
+        resume=True,
+    ) == 0
+    repaired = json.loads(state_path.read_text(encoding="utf-8"))
+    assert repaired["failed_stage"] == 10
+    assert repaired["current_stage"] is None
+    assert repaired["stages"]["10"]["status"] == "failed"
+    assert "--resume" in calls[0]
+    assert "--release" not in calls[0]
 
 
 def test_internal_standard_one_command_uses_safe_defaults(tmp_path, monkeypatch):

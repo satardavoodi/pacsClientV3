@@ -86,7 +86,7 @@ def active_viewer_context(patient_widget: Any) -> dict[str, Any]:
 class EagleEyeFunctionDialog(QDialog):
     """Ask which Eagle Eye function should run for the active series."""
 
-    def __init__(self, modality: str, parent=None):
+    def __init__(self, modality: str, parent=None, *, mode: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Eagle Eye — Select Function")
         self.setModal(True)
@@ -99,18 +99,19 @@ class EagleEyeFunctionDialog(QDialog):
         prompt = QLabel("Which Eagle Eye function would you like to use?")
         layout.addWidget(prompt)
 
-        hint = QLabel("Legion Consult is currently limited to MRI studies.")
+        hint = QLabel("Choose an operation for the study open in this Eagle Eye workspace.")
         hint.setObjectName("functionHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         self.list = QListWidget()
+        self.list.setWordWrap(True)
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.itemDoubleClicked.connect(lambda _item: self._accept_if_enabled())
         layout.addWidget(self.list)
 
         first_enabled = None
-        for option in function_options_for_modality(modality):
+        for option in function_options_for_modality(modality, mode):
             text = option.label
             if option.reason:
                 text = f"{text}\n{option.reason}"
@@ -125,6 +126,7 @@ class EagleEyeFunctionDialog(QDialog):
             self.list.setCurrentItem(first_enabled)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.button(QDialogButtonBox.Ok).setText("Continue")
         self.buttons.accepted.connect(self._accept_if_enabled)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
@@ -152,5 +154,5 @@ class EagleEyeFunctionDialog(QDialog):
         return self._selected_key()
 
 
-def choose_eagle_eye_function(modality: str, parent=None) -> str | None:
-    return EagleEyeFunctionDialog(modality, parent=parent).choice()
+def choose_eagle_eye_function(modality: str, parent=None, *, mode: str | None = None) -> str | None:
+    return EagleEyeFunctionDialog(modality, parent=parent, mode=mode).choice()

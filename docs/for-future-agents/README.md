@@ -6,6 +6,32 @@ If you're an AI agent (Claude Code, GitHub Copilot, Devin, etc.) opening this re
 
 ## 0. The framework's discipline
 
+**Workstream ownership (user decision, 2026-09-16):** Unify owns shared coordination,
+identity/catalog/thumbnail presentation and data handoff, not viewer-specific decoding,
+filters, rendering or decoded-cache internals. Fast, Advanced and individual VTK tools
+retain separate execution domains. Read the [two-way handoff contract](../plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#02-workstream-ownership-and-two-way-handoff-user-decision-2026-09-16)
+before acting on a finding from another conversation. Record it in the destination
+owner's existing document with a backlink; do not implement competing fixes or sync
+another task's unfinished mirrors. These are shared repository records, not evidence
+that an external cloud document or conversation has automatically synchronized.
+
+**Single active Unify queue (2026-09-18):** continue shared-pipeline work only through
+the [U0-U5 execution ledger](../plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md#current-execution-ledger---2026-09-18).
+The master plan owns priority/status; reports append evidence only. Do not start a new
+plan, skip an acceptance gate, or implement two shared-trunk behavioral slices in
+parallel. A failed gate extends its existing owner and regression guard. Native shutdown
+failure pauses the queue and is routed to the crash audit rather than guessed to be a
+thumbnail, download or viewer cause.
+
+**Persistent verification rule (user decision, 2026-09-14):** every runtime fix/Unify slice
+requires both automated code tests and a live source-GUI pass. Read section 0 of
+[`AGENT_CONTROL_AND_TESTING_GUIDE.md`](./AGENT_CONTROL_AND_TESTING_GUIDE.md) for the current
+MCP/CLI attachment procedure, multi-study case discovery, input-fidelity gaps and evidence
+receipt. Probe the existing bridge before delegating the whole workflow to the human.
+The human bootstraps one source instance; unavailable live control is recorded as BLOCKED,
+not PASS. Older counts, Linux-only assumptions and lifecycle examples below are historical;
+current `AGENTS.md` and the readiness report govern test execution and safety.
+
 Every fix in this repo ships three things together:
 
 1. **The code change itself** (minimal, local, safe).

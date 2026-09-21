@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.viewer.fast.perf_metrics import PerfMetrics
@@ -45,6 +46,7 @@ from modules.viewer.fast.lightweight_2d_pipeline import (
     Lightweight2DPipeline,
     PipelineConfig,
     RenderedFrame,
+    window_differs_substantially,
 )
 from modules.viewer.fast.qt_slice_viewer import (
     QtSliceViewer,
@@ -589,7 +591,18 @@ class QtViewerBridge:
         metadata: Optional[Dict[str, Any]] = None,
         metadata_fixed: Optional[Dict[str, Any]] = None,
         vtk_widget: Optional[Any] = None,
+        *,
+        initial_display_facts=None,
     ):
+        if initial_display_facts is not None:
+            if getattr(pipeline, '_adopted_initial_display_facts', None) is not initial_display_facts:
+                raise ValueError("Initial display facts do not belong to this pipeline")
+            if initial_display_facts.per_instance_window != bool(_FAST_PER_INSTANCE_WINDOW):
+                raise ValueError("Initial display window policy has changed")
+            self._validate_initial_identity(initial_display_facts, metadata)
+            pipeline._adopted_initial_display_facts = None
+        self._initial_display_facts = initial_display_facts
+        self._initial_identity_context = None
         self.qt_viewer = qt_viewer
         self.pipeline = pipeline
         self.vtk_widget = vtk_widget
@@ -645,7 +658,7 @@ class QtViewerBridge:
         self.curved_mpr_centerline_actor = None
 
         # Build mock vtk_image_data from pipeline metadata
-        self._build_mock_vtk_data()
+        self._build_mock_vtk_data(initial_display_facts=initial_display_facts)
 
         # Connect Qt viewer signals
         self.qt_viewer.window_level_changed.connect(self._on_qt_wl_changed)
@@ -897,7 +910,7 @@ class QtViewerBridge:
             except Exception:
                 return
 
-    def _build_mock_vtk_data(self) -> None:
+    def _build_mock_vtk_data(self, *, initial_display_facts=None) -> None:
         """Build a mock vtkImageData from pipeline state."""
         n_slices = self.pipeline.slice_count
         self._slice_count = n_slices
@@ -912,7 +925,9 @@ class QtViewerBridge:
             thk = sm.slice_thickness or 1.0
 
             # Estimate scalar range from first slice
-            scalar_range = self.pipeline.get_scalar_range(0)
+            scalar_range = (initial_display_facts.scalar_range
+                            if initial_display_facts is not None
+                            else self.pipeline.get_scalar_range(0))
 
             self.vtk_image_data = _MockVTKImageData(
                 cols=cols, rows=rows, slices=n_slices,
@@ -931,8 +946,13 @@ class QtViewerBridge:
                 pass
 
             # Set initial W/L
-            ww, wc = self.pipeline.get_default_window_level(0)
-            self.pipeline.set_window_level(ww, wc, trigger_prefetch=False)
+            if initial_display_facts is None:
+                ww, wc = self.pipeline.get_default_window_level(0)
+                self.pipeline.set_window_level(ww, wc, trigger_prefetch=False)
+            else:
+                # Preparation already selected the same initial-display W/L.
+                # Re-applying frame-zero W/L would discard the prepared QImage.
+                ww, wc = initial_display_facts.first_window
             self._sync_window_level_from_pipeline(default=(ww, wc))
 
             # Set initial camera scale based on image size
@@ -1523,15 +1543,7 @@ class QtViewerBridge:
         variation in a normal series returns False, so its window stays stable while
         scrolling (legacy behaviour preserved). Conservative: any None/parse issue
         falls back to an exact-inequality test."""
-        try:
-            ww_a = float(ww_a); wc_a = float(wc_a)
-            ww_b = float(ww_b); wc_b = float(wc_b)
-        except (TypeError, ValueError):
-            return (ww_a, wc_a) != (ww_b, wc_b)
-        lo = max(1e-6, min(abs(ww_a), abs(ww_b)))
-        width_ratio = max(abs(ww_a), abs(ww_b)) / lo
-        level_shift = abs(wc_a - wc_b) / lo
-        return width_ratio >= 1.5 or level_shift >= 0.5
+        return window_differs_substantially(ww_a, wc_a, ww_b, wc_b)
 
     def apply_default_window_level(self, slice_index: int = 0) -> None:
         """Apply default W/L for the given slice."""
@@ -1698,6 +1710,8 @@ class QtViewerBridge:
 
     def cleanup(self) -> None:
         """Clean up resources."""
+        self._initial_display_facts = None
+        self._initial_identity_context = None
         _settle_active = False
         try:
             _settle_active = QtViewerBridge._timer_is_active(getattr(self, '_interaction_settle_timer', None))
@@ -1993,9 +2007,54 @@ class QtViewerBridge:
 
     # ── Private ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _validate_initial_identity(facts, metadata):
+        metadata = metadata or {}
+        series = metadata.get("series") or {}
+        identity = (str(series.get("study_uid") or metadata.get("study_uid") or ""),
+                    str(series.get("series_uid") or ""))
+        if identity != (facts.study_uid, facts.series_uid):
+            raise ValueError("Prepared initial display metadata identity has changed")
+        instances = metadata.get("instances") or []
+        first = instances[0] if instances and isinstance(instances[0], dict) else {}
+        path = str(first.get("instance_path") or "").strip()
+        sources = dict(facts.overlay_sources)
+        if path not in sources:
+            raise ValueError("Prepared initial display overlay source has changed")
+        return sources[path]
+
+    @contextmanager
+    def prepared_initial_presentation(self):
+        """One synchronous GUI commit using the worker's image identity.
+
+        Scope only set_slice + initial W/L application; do not pump events or
+        keep this context across asynchronous work. Always release the snapshot
+        (including on exception). Later refreshes keep the existing mtime-aware
+        reader so local demographic edits are never pinned for the tab lifetime.
+        This is not a file-freshness check: scheduling must validate revision
+        and cancellation before entering this commit.
+        """
+        facts = self._initial_display_facts
+        if facts is None:
+            raise ValueError("Prepared initial presentation already consumed or absent")
+        self._validate_initial_identity(facts, self.metadata)
+        self._initial_display_facts = None
+        self._initial_identity_context = facts
+        try:
+            yield
+        finally:
+            self._initial_identity_context = None
+
     def _build_annotation_metadata(self) -> Dict[str, Any]:
         metadata = self.metadata if isinstance(self.metadata, dict) else {}
         fixed = self.metadata_fixed if isinstance(self.metadata_fixed, dict) else {}
+        # Fail closed if a synchronous callback changed the series while the
+        # initial commit was in progress. Never paint prepared identity on
+        # another image, or conceal that mismatch in the legacy fallback below.
+        prepared_identity = None
+        initial_facts = getattr(self, '_initial_identity_context', None)
+        if initial_facts is not None:
+            prepared_identity = dict(self._validate_initial_identity(initial_facts, metadata))
 
         annotation_metadata: Dict[str, Any] = dict(metadata)
 
@@ -2038,9 +2097,9 @@ class QtViewerBridge:
                     read_series_identity_from_instances,
                 )
                 from PacsClient.utils.overlay_metadata import build_overlay_metadata
-                image_tags = read_series_identity_from_instances(
-                    metadata.get("instances") or []
-                )
+                image_tags = (prepared_identity if prepared_identity is not None
+                              else read_series_identity_from_instances(
+                                  metadata.get("instances") or []))
                 canon = build_overlay_metadata(
                     dicom=image_tags,   # the ACTUAL image tags — top precedence
                     db=fixed,           # local DB row — fallback for absent tags

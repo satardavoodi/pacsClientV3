@@ -23,10 +23,16 @@ continues.
 
 ## Which path do I use?
 
+An unqualified request to make a build always means the complete six-installer
+matrix. Release versus local install-QA changes evidence and promotion status, not
+the number of installers or their destination folders. Fewer than six files are
+permitted only for an explicitly requested non-promotable diagnostic.
+
 | Need | Start here | Result |
 |---|---|---|
 | Test a source change | `BUILD.md` → Source validation | Tests and Developer Run evidence; no installer |
 | Create a requested build | `RELEASE.md`, then `BUILD.md` → Canonical six-installer command | Three PyInstaller and three Nuitka installers in the two existing repository output folders |
+| Recover an interrupted full build | `BUILD.md` → Same-candidate interruption recovery | The same immutable six-installer candidate; completed work is retained |
 | Check one installer/profile when explicitly requested | `BUILD.md` → Optional single-package diagnostic | One non-promotable backend/edition inside temporary compiler scratch space |
 | Publish a release source revision | `RELEASE.md` | One verified SHA/tag on all required remotes plus a receipt |
 | Verify all six candidate installers | `BUILD.md` → Acceptance | Version, hashes, contents, size, install lifecycle, and platform evidence |
@@ -55,6 +61,8 @@ Candidate compilation also disables automatic remote update publication; signing
 install QA, and any later distribution remain separate authorized operations.
 The coordinator supplies safe defaults for version, asset cache, and short workspace;
 it also rejects missing release-only Brain evidence before compiling either backend.
+The coordinator exposes no supported final-output redirect; normal builds always
+write to the two repository folders listed below.
 
 ## Output ownership
 

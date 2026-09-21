@@ -1806,31 +1806,36 @@ def audit_native_footprint(_ctx: BuildContext) -> int:
 
 
 def parse_stage_selection(args: argparse.Namespace) -> tuple[list[int], bool]:
-    if getattr(args, "release", False):
-        return [0, 6, 7, 8, 9, 10], False
     if args.stage is not None:
         return [args.stage], False
     if args.from_stage is not None:
         return [n for n in STAGES if n >= args.from_stage], False
     if args.resume:
         return [], True
+    if getattr(args, "release", False):
+        return [0, 6, 7, 8, 9, 10], False
     return list(STAGES.keys()), False
 
 
 def compute_resume_stages(ctx: BuildContext) -> list[int]:
+    eligible = (
+        [0, 6, 7, 8, 9, 10]
+        if getattr(getattr(ctx, "args", None), "release", False)
+        else list(STAGES.keys())
+    )
     failed = ctx.state.get("failed_stage")
     if failed is not None:
         try:
             failed = int(failed)
         except (TypeError, ValueError):
             failed = None
-        if failed in STAGES:
-            return [n for n in STAGES if n >= failed]
+        if failed in eligible:
+            return eligible[eligible.index(failed):]
 
     completed = set(int(x) for x in ctx.state.get("completed_stages", []))
-    for number in sorted(STAGES.keys()):
+    for number in eligible:
         if number not in completed:
-            return [n for n in STAGES if n >= number]
+            return eligible[eligible.index(number):]
     return []
 
 

@@ -1010,7 +1010,9 @@ def apply_settings_v2(widget, arrow_icon: str = "") -> bool:
             return False
         from PacsClient.utils.theme_manager import get_theme_manager
 
-        widget.setStyleSheet(settings_stylesheet_qss(get_theme_manager().current_theme(), arrow_icon))
+        from Qss.numeric_controls import numeric_control_style
+        widget.setStyleSheet(settings_stylesheet_qss(get_theme_manager().current_theme(), arrow_icon)
+                            + numeric_control_style('QTabWidget#SettingsTabWidget '))
         return True
     except Exception:
         return False

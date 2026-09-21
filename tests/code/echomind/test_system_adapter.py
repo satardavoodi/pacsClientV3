@@ -56,14 +56,12 @@ def test_count_aipacs_processes_returns_counts():
 
 
 def test_count_native_faults_handles_missing_file():
-    """When native_fault.log doesn't exist the adapter returns ok=True
-    with total=0 rather than failing — tests should still get a useful
-    answer in CI sandboxes that have no log directory."""
+    """The retired GUI-thread reader redirects explicitly, never certifies zero."""
     bus = _bus_with_system()
     result = bus.execute(CommandPlan(action="count_native_faults_since"))
-    assert result.ok
-    assert "total" in result.data
-    assert isinstance(result.data["total"], int)
+    assert not result.ok
+    assert result.error_code == "EXTERNAL_NATIVE_PROBE_REQUIRED"
+    assert result.data["total"] is None
 
 
 def test_count_native_faults_filter_by_code():
@@ -72,9 +70,9 @@ def test_count_native_faults_filter_by_code():
         action="count_native_faults_since",
         entities={"code": "0x8001010d"},
     ))
-    assert result.ok
-    # Both counts must be ints; code_filtered ≤ total
-    assert result.data["code_filtered"] <= result.data["total"]
+    assert not result.ok
+    assert result.error_code == "EXTERNAL_NATIVE_PROBE_REQUIRED"
+    assert result.data["code_filtered"] is None
 
 
 def test_probe_idle_cpu_short_window():

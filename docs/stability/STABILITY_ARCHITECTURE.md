@@ -1,6 +1,16 @@
-# Stability Architecture
+# Stability Architecture (historical baseline)
 
-> **Version:** v2.2.3.4.0 | **Updated:** 2026-03-10
+> **Historical version:** v2.2.3.4.0 | **Original date:** 2026-03-10
+>
+> **Current-status correction:** 2026-09-13
+
+This file preserves the early stability model and examples. It is not the current as-built
+authority for paths, implementation status, or teardown completeness. Use
+`docs/architecture/workstation-lifecycle.md`, `CLAUDE.md`, and
+`docs/OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md` for current Qt/VTK execution domains,
+worker ownership, GC policy, and open defects. In particular, Fast Viewer is VTK-free,
+`ThumbnailManager` disposal remains open under OPT-60, the confirmed retention edge is an outward
+priority callback rather than the theme signal alone, and GC does not replace explicit cleanup.
 
 ## Purpose
 
@@ -63,7 +73,7 @@ Every class that creates finite resources MUST implement cleanup:
 | `QMainWindow` | `closeEvent()` | Socket, module manager, DB pool |
 | `QWidget` (tab) | `closeEvent()` | VTK viewers, executors, timers |
 | Service class | `cleanup()` / `shutdown()` | Connections, pools, threads |
-| Cache class | `clear()` / `__del__()` | Memory entries, cleanup threads |
+| Cache class | Explicit `clear()` / `shutdown()` owned by the caller | Memory entries, cleanup threads; never rely on `__del__()` for Qt/native teardown |
 
 ---
 
@@ -230,6 +240,9 @@ Scroll burst (wheelEvent):
 - Re-enable timer is mandatory — never leave GC disabled permanently
 - Do NOT call `gc.collect()` during scroll
 - Do NOT add expensive per-frame operations inside `set_slice()` without `_in_wheel_scroll` guard
+- Do not use full collection to compensate for missing signal/timer/worker/VTK ownership. Current
+  full collections can themselves stall the GUI thread and must be re-measured only after explicit
+  teardown is corrected.
 
 ### WeakRef Usage
 

@@ -1,5 +1,523 @@
 # AI-PACS Regression Catalog
 
+## OPT-60 first-viewer graphics-profile I/O (2026-09-20)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Process graphics bootstrap -> Fast/Advanced viewer policy | Viewer construction repeated `runtime_profile.json` I/O and the graphics resolver on the Qt thread even though startup had already established the immutable process graphics mode; the latest trace sampled 413.6 ms in this path. Startup now primes one lock-protected GPU-policy snapshot. Repeated viewers reuse it, and the existing GPU preference save path invalidates it. Backend selection and the restart-required setting contract are unchanged. | `tests/code/viewer/test_viewer_gpu_boost.py` requires repeated policy resolution to perform one load/probe, requires save invalidation, and proves bootstrap priming permits first-viewer policy resolution with disk/probe functions forbidden. Two guards failed before. Final focused: 9 passed. Adjacent graphics/runtime/build/WoA: 28 passed / 1 unrelated deselected; compilation and 468 mirrors pass. Fresh-source KPI acceptance remains required. |
+
+## OPT-60 shared viewport drag-hover activation (2026-09-20)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Thumbnail drag -> viewport traversal feedback -> backend-owned drop | Advanced bypassed its existing dwell for internal series MIME; Fast highlighted immediately with no dwell state. Every crossed cell could flash as selected before the user reached the intended target. Both production containers now consume one 120 ms / 8 px hover policy. Movement restarts the timer; leave/drop/malformed input clears it. Dwell affects visual hover activation only: a quick deliberate drop remains valid, backend dispatch/render stay separate, and the deferred zero-delay series switch is unchanged. The legacy A/B route matches the behavior. | `tests/code/viewer/test_viewport_drop_replacement.py`: Fast and Advanced behavioral cases failed before; final 22 pass. Guards also prove quick-drop acceptance with `force_reload=True`, stopped timers, one shared production policy and no return of the immediate-internal branch. Adjacent drag/progressive/coalescing/multi-series/stacking selection: 199 passed, 15 native GUI skips, 1 quarantined xfail, 1 unrelated deselected. Fresh native Fast/Advanced traversal acceptance remains required. |
+
+## OPT-55 saved lumbar model and transport profile (2026-09-20)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Private model comparison -> source defaults -> packaged company transport | Experimental Astra settings were not part of the build: runtime defaulted to Gemini and emitted legacy token/temperature keys with high detail. Persist Astra screening/standard diagnosis, retain independently resolved Gemini anatomy/context, and send the tested Astra original-detail/medium-reasoning completion-token profile through the existing company authority. Explicit user/global/stage overrides remain authoritative; no direct endpoint or credential is introduced. | `tests/code/ai_imaging/test_eagle_eye_saved_model_profile.py`: 5 failed / 1 passed before; all 6 pass after. Company and direct synthetic atomic orchestration are covered in `test_eagle_eye_llm_analysis.py`. Final affected/provider/builder selection: 164 passed; 468 mirror pairs match; synthetic real company transport passed. Fresh-source GUI and installer acceptance remain pending. |
+
+Scope and limits: [saved model profile](../../modules/EAGLE_EYE_LUMBAR_SAVED_MODEL_PROFILE_2026-09-20.md).
+
+## OPT-58 / OPT-60 inactive patient-tab thumbnail ownership (2026-09-19)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Active patient tab -> Local inventory producer / prepared sidebar generation | Switching to another patient left the previous tab's Local inventory worker, prepared-image task and Qt card writer active. A cold 23-series owner scanned for 18.475 s while a subsequent indexed 66-series grouped sidebar rendered for 9.169 s, and the hidden grouped owner continued applying cards after a third patient opened. Activation now controls one visibility gate for both existing producers. Deactivation stops the Local GUI timer and pauses the worker at the next bounded series boundary; a currently running read may finish but cannot publish or advance to another inventory. The qasync sidebar may likewise finish one in-flight detached image preparation but cannot mutate hidden Qt widgets. Activation resumes the same generation, identity, row reservation and order. Close/supersession still use the existing cancellation/retirement paths. A bounded 50 ms owner re-check releases a paused coroutine after native destruction. Per-card INFO writes are sampled at card 1 and every tenth card; the terminal marker retains the exact total. `AIPACS_PATIENT_THUMBNAIL_VISIBILITY_GATE=0` restores legacy always-active presentation. No decoder, renderer, download protocol, cache format or DICOM grouping changed. | Two lifecycle guards failed before because no presentation lifecycle hook existed; a third reproduced linear per-card INFO emission and a fourth reproduced an indefinite inactive wait after native deletion. They now prove pause-without-retirement, no hidden disk advance/Qt mutation, exact ordered resume, rollback behavior, bounded progress logging and native-lifetime release. Local/sidebar suites: 66 passed. Adjacent inactive-result, signal-lifetime and lifecycle suites: 64 passed. Fresh-source rapid A -> B -> C single/multi-study GUI/KPI acceptance remains required. |
+
+## OPT-58 / OPT-60 hidden Home thumbnail producer (2026-09-19)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home preview -> patient-tab activation -> shared image-preparation executor | Hiding Home stopped painting but did not stop its qasync image producer or progressive timer. In the live indexed 39-series case, Local inventory completed in tens of milliseconds while the hidden Home producer prepared all 39 images over 15.030 s; the patient sidebar consequently needed 18.822 s even though its maximum per-card GUI apply was 21.17 ms. `RightPanelWidget` now suspends its current generation on `hideEvent`, stops (without deleting) the owned timer, and wakes the same generation on `showEvent`. The worker admits no further file read while hidden; one already-running read may finish. Cards, action identity, render signature, order and prepared pixels are retained. No producer, cache, thread pool, viewer or download path was added. | `test_home_thumbnail_image_preparation.py::test_hidden_home_pauses_image_preparation_and_resumes_without_losing_cards` failed before for both immediate/progressive ownership (the hidden panel admitted every remaining read). It now proves one-read-at-most suspension, zero hidden publication, exact ordered resume and one card per series. Four adjacent Home render/manager suites pass 68 cases; ten broader Home/thumbnail/sidebar suites pass 163. Compilation and scoped diff checks pass. Fresh source GUI/KPI acceptance remains open. |
+
+## OPT-35 / OPT-60 patient-open identity and tab admission (2026-09-19)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home row -> canonical patient-study open identity -> thumbnail/catalog lookup | A Local row could carry an empty primary Study UID while the owner-filtered resolver still found valid studies. The open path kept the empty value, so the thumbnail lookup interpreted the thumbnail root as a study directory, enumerated 2,635 unrelated study folders and returned no cards after 13.825 s. `finalize_open_study_identity` now promotes the first resolved UID, keeps it selected-first, rejects a selected UID outside the resolved owner set and fails closed when no study exists. The thumbnail filesystem helper also rejects an empty UID before path construction. No new resolver, index, cache or fallback was added. | `test_patient_study_set.py` and `test_patient_open_admission.py` failed before the contract existed and now cover blank-primary promotion, dedup/order, foreign/stale selection rejection, no-study rejection and the empty-root filesystem guard. |
+| Patient-tab request -> capacity decision -> widget/pipeline construction | The fifth patient request constructed `PatientWidget` and started its asynchronous catalog/viewer work before `CustomTabManager` rejected the tab limit. The subsequent modal warning entered a nested Qt event loop while qasync tasks were runnable, producing re-entry errors and a 22.823 s failed open. `HomeTabService` now owns one reservation set and reserves capacity before any widget construction. Registration commits the reservation; every failure aborts it. The tab manager keeps its final capacity check as defense, and the warning is deferred until the active async step has returned. | `test_patient_open_admission.py` proves duplicate/capacity/concurrent-last-slot behavior, commit/abort cleanup and that the real patient-widget factory is never called at capacity. The shared opening-study set is service-owned rather than duplicated in the Home widget. |
+
+Fail-before selection: 11 failed / 26 passed, exit 1. Final focused identity/admission
+selection: 41 passed, exit 0. Adjacent Home, Local, sidebar, metadata, lifecycle and
+storage boundaries: 298 passed / 2 documented platform or GUI-tier skips, exit 0.
+Fresh-source single/multi-study and fifth-tab acceptance remains open.
+
+## OPT-58 / OPT-60 indexed-Local patient-open read amplification (2026-09-19)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Patient open -> producer-indexed Local series -> background file warm | A warm multi-study Local open used the O(1) database inventory but simultaneously read 2,398 files / 596.2 MB in 9.843 s; another indexed case read 508 files / 133.2 MB in 5.397 s. The read-only legacy warmer therefore competed with catalog/image preparation after Import/Download had already published exact object/frame counts. Known Local directories now belong exclusively to the catalog owner at patient open. A failed Local catalog lookup remains Local and skips warming rather than falling into the Server raw path. Server/unknown opens retain raw warming. `AIPACS_LOCAL_INDEXED_FILE_WARM=1` is the narrow rollback. No decoder, renderer, download protocol, card order, identity, count or cache format changed. | Two `test_series_file_warm.py` guards failed before and pass after (indexed routing and no empty thread); `test_local_open_inventory_owner.py` separately failed before the fail-closed Local lookup correction. The warmer file's 24 tests preserve budgets, duplicate suppression, Server fallback, unverified ordered ownership and explicit rollback. Import/Download/database/Local projection/open boundary: 150 passed / 1 Windows symlink skip. Fresh source single/multi-study KPI and visual acceptance remain open. |
+
+## Total Spine selected-endplate review (2026-09-18)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Curve geometry / review UI | Two-endplate measurements incorrectly required eight body corners. Two new guards failed before the fix. Measure only the selected two lines; missing body outlines suppress optional apex estimation. Blue superior and yellow inferior lines retain level labels. Bind per-curve review to selected coordinates, spacing, source identity and orientation. | `test_total_spine_endplates.py`: partial geometry, reversed endpoints, confirmation revocation, unused-point isolation, source-coordinate ROI mapping, manual click advancement, candidate preservation, colors/labels, mouse input and partial report rendering. |
+| AI proposal application | Stop automatic sequential anatomical numbering, curve creation and draft generation. Require a spine ROI; expose unnumbered candidates for explicit level assignment or discard without overwriting existing points. | Updated AI completion guard in `test_eagle_eye_total_spine.py`; candidate and region guards in `test_total_spine_endplates.py`. Live source GUI acceptance pending; Test Control ping unavailable during this change. |
+
+## Eagle Eye Total Spine feature guards (2026-09-17)
+
+**2026-09-18 follow-up:** `test_total_spine_assist.py` adds SAM mask fitting,
+explicit preview application, source-coordinate box input, stale image/level
+rejection, cancelled/failed subprocess cleanup, and runtime seal reuse/mutation
+guards. Two review defects reproduced before their fixes: accepted preview lines
+remained over editable endplates, and the review checkbox forwarded a boolean to
+a zero-argument signal, leaving an old report accessible. Preview graphics now
+retire on apply; checkbox changes invalidate reports. The optional assist payload
+has its own integrity and distribution acceptance guards in
+`test_eagle_eye_total_spine_payload.py`. Clinical and live GUI acceptance are still
+pending, separate from code/model execution.
+
+| Boundary | Contract | Regression guard |
+|---|---|---|
+| Total Spine geometry / image / worker / report / packaging | New feature, not a pre-existing bug closure. Preserve severe Cobb angles, spacing, explicit sagittal endplates, reader-confirmed numbering/apex/rotation, Study/Series/SOP ownership, stale-report invalidation and cancelled-result rejection. Sealed model files and existing runtime only; separate customer acceptance. | `test_eagle_eye_total_spine.py`, `test_eagle_eye_total_spine_payload.py`, adjacent Alignment/workspace/background/edition tests: 117 passed. Three-page synthetic PDF and offscreen UI inspected. Test-control ping unavailable; real source GUI and clinical accuracy remain pending. |
+| 2026-09-21 | Six-installer external Eagle Eye payload routing and materialization | A clean local snapshot excluded generated model assets, the coordinator forwarded only Brain and Lesion paths, and the PyInstaller-specific materializer staged only those same two assets. The Eagle Eye edition therefore failed after core compilation when Alignment validation found no staged package. Resolve, preflight, record, and forward all four external sources, and stage Brain, Lesion, Alignment, and Total Spine in the backend materializer. | `tests/code/builder/test_release_candidate_packaging.py::test_local_install_qa_builds_both_backends_all_editions_to_canonical_folders`, `::test_python_release_materializer_stages_every_eagle_eye_external_payload`; the first two v3.6.7 candidates failed before the two-layer fix at Alignment validation. |
+
+## OPT-58 / OPT-60 ordered cold Local inventory ownership (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Patient open file warm -> Local pixel inventory | Two cold readers first caused read amplification; the intermediate shared fact-primer removed duplicate positive probes but still interleaved with the consumer and left 6.950-13.707 s catalog times. The default now delegates known unverified Local directories entirely to one ordered catalog owner. Series are yielded in deterministic order; files within only the current series use a bounded reusable pool and bounded pending queue. Indexed Local and Server/unknown fallback stay raw-warm. Preserve exact revision, non-pixel exclusion, object/cine counts, aliases, multi-study order and DB backfill. `AIPACS_LOCAL_ORDERED_INVENTORY=0` restores the fact-primer path. | New fail-before: 4 failed / 44 passed. `test_local_pixel_inventory_reuse.py` guards bounded file concurrency/queue, no series scan-ahead, exact non-pixel/cine counts and sequential rollback. `test_series_file_warm.py` guards delegation without touching files plus prior budgets/fallbacks. Home/patient/offline/owner projection selection: 129 passed. Direct boundary: 50 passed. Wider UI/storage selection: 1,295 passed, two skips, three quarantined xfails, with two unrelated pre-existing source-spelling assertions red. Fresh-source KPI/visual/crash acceptance remains OPEN. |
+
+## OPT-58 / OPT-60 post-catalog orphan maintenance (2026-09-18)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Local/Server patient open -> verified catalog publication -> orphan self-heal | Moving orphan reconciliation off Qt removed the freeze but still left maintenance ahead of catalog admission. In the fresh U0 run it consumed 6,953/3,822 ms for one grouped open, 3,142/297 ms for another and 6,285 ms for a 31-series single-study open. That last catalog had valid producer-index facts and completed inventory in 899 ms, yet its first card waited 6,318 ms after stream start. The pixel inventory already rejects absent/non-pixel rows, so destructive orphan cleanup is not an admission authority. Single-study Local now publishes the existing bounded stream and persists its counts before reconciling on the same worker. Grouped Local and Server publish their complete metadata before their existing background worker reconciles in `finally`. Cancellation, partial-orphan deletion, stale-instance fallback, pending/evicted/offline safety and card identity/count/order are unchanged. | Behavioral guards failed before: the first Local publish observed an already-completed prune, and grouped metadata observed `prune` before `push`. `test_local_thumbnail_stream.py` now requires a pure catalog builder, retained post-catalog self-heal and worker-only image delivery. `test_local_open_inventory_owner.py` requires grouped Local and Server `push -> prune` ordering. Direct stream/open/prune boundary: 61 passed. Adjacent Local/catalog/offline/sidebar/metadata/file-warm/index boundary: 151 passed. Compilation and diff checks pass. Fresh-source first-card/full-catalog/native acceptance remains OPEN. |
+
+## OPT-58 / OPT-60 Local open orphan maintenance (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Patient open / orphan self-heal / Local catalog workers | A two-study Local open froze Qt for 6.925 s while the async GUI coroutine synchronously enumerated every series directory. Preserve the self-heal but move it to existing workers: patient inventory for single Local, background setup for grouped Local/Server. Prove healthy series by one known instance path; enumerate only on missing/stale evidence. Keep pending, whole-study eviction, offline-root and partial-study safety unchanged. | Fail-before: 2/2 guards failed. `test_orphan_series_prune.py` covers no healthy-directory enumeration, partial orphan, missing sampled instance fallback, pending/evicted/offline/flag behavior and non-GUI ownership. `test_local_open_inventory_owner.py` covers single/grouped/Server routing; Local projection/stream guards retain identity and backfill. Home emits one PHI-free aggregate producer-index marker per study for live acceptance. Direct boundary 67 passed; expanded selection 337 passed / 1 Windows symlink skip. Fresh source KPI pending. |
+
+## OPT-58 / OPT-60 producer-verified Local catalog (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Import/download producer → independent pixel index → Local projections | Cold Local open re-enumerated and re-read every DICOM even when the producer had already verified the exact objects and cine frames. Extend the existing series row with a revision-bound pixel summary independent of geometry-index status. Trust only schema-1 managed rows with valid relationships and unchanged directory revision; otherwise use the original scan. Home and patient workers backfill legacy scans through one batch writer, with compare-and-persist revision rejection. Preserve non-pixel exclusion, object/frame separation, duplicate-number `folder_key`, offline behavior and download/viewer-domain independence. | Fail-before: 3 failed / 1 passed, exit 1. `test_db_first_metadata_index.py`, new `test_local_catalog_producer.py`, `test_local_thumbnail_stream.py`, `test_home_local_thumbnail_projection.py` and `test_local_offline_contract.py` cover migration/idempotence, cine counts, independent state, pre-existing destination fail-closed, exact revision, scan/commit race rejection, no per-file probe on a valid row and scan fallback after change. Exact selection: 76 passed. Expanded boundary: 319 passed / 1 Windows symlink skip; adjacent import/download: 104 passed; 467 mirrors match. Fresh source KPI pending. |
+
+## OPT-58 / OPT-60 Local patient-stream GUI image I/O (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Local inventory worker / bounded mailbox / GUI card drain | The worker published only metadata/path, so the GUI timer reopened ThumbnailStore/disk bytes before each card (413 ms sampled stack). Prepare immutable QImage on the existing worker with exact Study UID + storage `folder_key`; GUI alone converts QPixmap and inserts the same card. Empty/error images retain the Local placeholder. Preserve two-message backpressure, order, aliases, counts, grouped takeover, persistence and cancellation. | `test_local_thumbnail_stream.py`: worker-only preparation failed before (exit 1); 37 final cases include collision storage keys, read-failure placeholder, identity, cine counts, retirement and backpressure. Nine adjacent suites: 212 passed / 1 privilege skip; broader 29-file boundary: 456 passed / same skip, exit 0. Fresh normal-source GUI/KPI pending; no Viewer/download/native-crash closure. |
+
+## OPT-58 / OPT-60 Home thumbnail GUI image I/O (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home image preparation / existing card scheduler | Home QPixmap(path) still blocks GUI despite incremental widgets (1274 ms live gap). Existing shared source/batch services now prepare QImage off GUI; preserve explicit-file then embedded fallback, action identity, grouped rows, input guard, bounded atomic refresh and legacy cadence. Two ready progressive images; clear/destruction reject stale results. No-qasync compatibility remains explicit. | `tests/code/ui_services/test_home_thumbnail_image_preparation.py`: 23 cases, two renderer failures before fix; 214 adjacent plus 24 panel/effect passes, exit 0. 467 mirrors match. Fresh normal-source GUI and same-workload KPI pending; cold DICOM/cache admission not closed. |
+
+## OPT-58 / OPT-60 Local enumeration cost (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Shared Local inventory candidate listing | Path conversion discarded directory-entry type data, adding one Path.stat per DICOM candidate before mandatory version validation. Filter with the retained entry, close the iterator, then preserve sorted paths and fresh cache-version checks. Split cache path/read timings without weakening containment. No grouped identity/count/Ready or viewer change. | `tests/code/ui_services/test_local_inventory_enumeration.py`: two fail-before cost guards; 13 passes / 1 unavailable-symlink skip, including a 192-file cost comparison, change/delete-after-listing, selection/order, handle closure and error compatibility. Expanded 334 passes / 1 skip. Fresh-source GUI/KPI OPEN. |
+
+## OPT-58 / OPT-60 Local setup inventory owner (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home setup / single-study Local patient stream | Home repeated the independently started patient inventory and could push stale preview metadata. Return before setup aggregation for exactly one Local study; keep the existing cancelable patient stream as owner. Preserve grouped full catalog, Server attachments/metadata and viewer file warming. Cold classification and grouped admission remain open. | `tests/code/ui_services/test_local_open_inventory_owner.py`: 4 fail-before / 6 pass-before, 10 pass-after; stale/foreign snapshot rejection, 2/4-study repeated/unnamed/cine identities, partial group coverage, grouped failure visibility and Server parity. 321 expanded passes; fresh-source GUI pending. |
+
+## OPT-58 / OPT-60 Local metadata cache lifetime (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Shared Local pixel inventory / process restart | Short process LRU forces unchanged managed DICOMs through header classification again before grouped admission. Persist only verified positive facts with fresh enumeration, file-version checks and bounded age/size/count; failures fall back to the same classifier. Keep artifacts outside thumbnail folders so no metadata-only presence signal is created. Public probes, DB, source files, UI layout and viewer domains unchanged. | `tests/code/ui_services/test_local_pixel_inventory_persistence.py`: 32 cases; four initial failures and one intermediate-placement failure. Real-process reuse, cine counts, exact path/profile isolation, replace/change/delete, failures/corruption/expiry, atomic/concurrent/nonblocking writes, bounded eviction, no false thumbnail hint. Fresh-source GUI remains OPEN; cold unverified grouped admission is not claimed fixed. |
+
+## OPT-58 / OPT-60 cached-sidebar handler bounds (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Cached single-study / grouped patient sidebar | Whole-catalog synchronous construction, repeated layout measurement and PNG/readiness I/O freeze GUI. Preserve exact startup count; prepare detached data in the existing executor and replace pre-reserved parented rows one card per turn. Keep wrapped headers, study/storage identity, cine/object counts and live download state; reject obsolete results. No Viewer-specific or download-engine change. | `tests/code/ui_services/test_sidebar_bounded_build.py`: two workflow failures before fix; real-Qt geometry/cadence, worker ownership, 141 cards, close/native destruction/supersession, duplicate raw numbers across studies, metadata enrichment versus identity replacement, exact-file fallback and download replay. Source GUI remains pending; synthetic timing is not live acceptance. See canonical OPT-58/60 receipt. |
+
+## OPT-04 download process versus viewport lifetime (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Shared download PID lifecycle / interaction suspension | A prewarmed child registered for shutdown was also suspended by viewer interaction, then adopted while still suspended; alive/Downloading did not mean executable. Retire native suspend/resume through callable compatibility no-ops in current and legacy routes; preserve registration, app shutdown, existing child priority request and DM pause/cancel/priority. No Viewer rendering/decoding edits. | `tests/code/download_manager/test_download_process_interaction_liveness.py`: 16 cases, 14 fail-before / 2 pass-before, all pass-after; actual functions with synthetic native/IPC boundaries. 142 focused passes; expanded 288 pass / 1 independently reproduced existing spinner-double failure; 9 packaging passes, 467 matching mirrors. Fresh source download plus scroll-contention GUI pending; exact missed live release remains unidentified. |
+
+## OPT-58 / OPT-60 grouped header geometry (2026-09-16, 20:51 live follow-up)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Study heading / fixed-width card column / scroll container | Hidden headers were excluded from pre-paint layout; generic minimum height underestimated wrapped text when the scrollbar narrowed the viewport. Parent/show headings before layout, use the existing card width, and reserve content-derived height-for-width before paint. | `test_sidebar_presentation_boundary.py::test_grouped_headers_have_final_geometry_before_paint`: 2/4 studies, short/long/previous-exam headers, unchanged geometry after event delivery, no overlap, correct total. Two initial and expanded four-study failures reproduced before corrections. Final 432 focused passes / 467 mirrors; fresh GUI pending. Late topology promotion remains separate. |
+
+## OPT-23 / OPT-35 preview count and diagnostic truth (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Advanced preview counter | An eight-frame preview appeared to be an eight-frame series. Show loader-known total with ready count; keep actual navigation bounds unchanged; ignore stale totals after completion. | `test_advanced_slice_progress.py`: 5 fail-before cases, 7 final cases including initial VTK text and scroll/full refresh. |
+| Orientation audit / report | Screen-up=-column implied the opposite screen normal from the diagnostic's comparison. Correct only its handedness calculation and stop calling unregistered camera-vs-DICOM agreement clinical orientation validity. | `test_advanced_orientation_audit_basis.py`: 8 real-audit failures before; camera/image state invariant afterward. Ninth report guard removes misleading proof language. Expanded 257 passes / 5 existing xfails; 467 mirrors match; fresh source-GUI gate open. |
+
+## OPT-58 / OPT-60 stable sidebar presentation (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Shared card insertion / scroll grid | A new child retained origin geometry until a later layout event; interim series count included study headers. Suppress painting, parent/show/layout before paint restoration, grow container and count registered cards. | `test_sidebar_presentation_boundary.py`: real-Qt position/height/no-overlap, nested paint/failure restoration, 32 real cards with stable labels, scroll, native parents and cine count. |
+| Queued single/grouped ownership / teardown | Late primary entries rendered before grouped clear/rebuild; retired owners remained reachable; clearing detached native cards. Gate stale delivery, retain explicit primary fallback on grouped failure, invalidate old chunks, retire effects/callbacks and hide/delete while still parented. | Same file: files/entries/chunk takeover, explicit fallback and generation, retired/disposed owners, parent retention. Popup cause remains unconfirmed. |
+| Mixed Local publication / terminal update | Safe subset could overtake earlier aliases; completion moved already-visible cards. Publish ordered verified prefix and append the allocated remainder without terminal repositioning. | `test_local_thumbnail_stream.py`: alias-before-ordinary ordering, retained refresh positions, no terminal access to retiring layout; history/non-pixel/UID/count guards retained. |
+
+Fail-before: ten initial cases, two additional retirement cases; three candidate-fix
+fallback failures caught during review. Final 428 focused passes; initial 466-pair
+parity passed, but final recheck found one unrelated Advanced Viewer payload drift.
+Fresh-source GUI pending. [Evidence, risks and rollback](../../reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-sidebar-presentation-boundary-correction-opt-58--opt-60).
+
+## OPT-23 Advanced drag/drop loading cover (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Native loading cover / overlapping series switches | Semi-transparent backdrop exposed content below; reused branded cover was not synchronously repainted; an older delayed hide could dismiss a newer load. Use opaque native viewport cover, synchronous repaint, and generation-scoped hide timers. Fast child appearance stays unchanged. | `test_advanced_loading_cover.py`: four pre-fix failures, six final cases; `test_advanced_complete_stack.py`: two real loader/VTK first-last-frame cases for 3/30-image MR. Expanded 106 passes, 15 opt-in GUI skips, 1 existing xfail; 466 mirrors match. Native GUI acceptance pending. |
+
+## OPT-58 / OPT-60 large numbers and repeated Local startup (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Shared series allocator / refresh / grouped offset | Initial allocation accepted raw numbers >=1,000,000 as local handles; later validation rejected them, interrupting Local and Home metadata. Use existing alias allocation, retain raw UID/path/counts, and keep strict prior-key validation. | `test_series_metadata_incremental_identity.py`: range boundaries, repeat refresh, reserved-band collision and primary-large/secondary-small isolation. `test_local_thumbnail_stream.py`: real worker-to-GUI admission. |
+| Mixed Local catalog / startup ownership | One alias-requiring row held all safe cards back; completed metadata-started inventory could launch again at prepared startup. Deliver only stable ordinary keys early; defer aliases and unresolved history groups; remember startup without blocking explicit refresh. | Mixed-sibling fail-before guard; startup deduplication fail-before guard; non-pixel aliases, Home interleaving, history, explicit refresh and failed thread launch. Six initial failures plus one later latency failure; 344 final passes, 466 mirrors. Fresh source GUI pending. |
+
+## OPT-58 / OPT-60 Local card delivery barrier (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Local startup / metadata handoff | Local waited for Home's complete inventory before launching its own thumbnail load. Start the single-study Local projection at prepared startup, preserving grouped ownership. | `test_pipeline_thumbnail_preparation.py::test_local_open_starts_inventory_without_waiting_for_home_metadata`: Local branch failed before correction; grouped branch stays unchanged. |
+| Verified Local inventory / GUI cards / retirement | Every series inspection delayed the first card. Reuse the builder/allocator/sink/renderer with bounded per-series delivery for unique canonical sets. Retain full-snapshot collision allocation, cancel retired owners, avoid GUI completion scans and per-card writers. | `test_local_thumbnail_stream.py`: synthetic worker/Qt gates for early delivery, backpressure, native destruction, identity conflicts, grouped transfer, cine counts, failures, repeats and order. First four API contracts failed before; fresh source GUI remains pending. [Receipt](../../reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-local-incremental-card-delivery-opt-58--opt-60). |
+
+## OPT-35 Advanced nonspatial US display (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Advanced US loading / frame identity | Single-frame US without IOP/IPP was rejected by the spatial-volume contract. A separate, uncached, eligibility-checked display plan orders same-study/same-series frames without a patient affine; spatial CT/MR contract is unchanged. | `tests/code/viewer/test_advanced_nonspatial_us.py`: original missing-IPP/IOP failure reproduced; synthetic DB-metadata, filesystem and grouped routes, RGB values, preambleless input, identity and unsupported-input rejection. |
+| Viewport series switch / RGB / MPR | Retire stale geometry registration when binding a new series; suppress nonspatial orientation labels; restore neutral byte-RGB W/L on mapper reuse; reject nonspatial MPR routes. | Stale-affine and RGB pixel failures reproduced before correction; MPR admission guards fail before gating. 17 new cases; expanded suite 245 passed / 5 existing xfailed, exit 0; 466 mirror pairs match. Live source acceptance pending. |
+
+## OPT-23 Advanced VTK construction observability (2026-09-16)
+
+| Boundary | Gap and guarded change | Regression guard |
+|---|---|---|
+| Advanced constructor / first render / camera fit | A 6.1-second sampled gap lacked stage costs. Add one completion summary with disjoint elapsed phases; preserve native-input checks and first Render before zoom-to-fit. Measurement only, no latency-fix claim. | `tests/code/viewer/test_advanced_startup_timing.py`: boundary guard fails before, four final tests pass; 257 expanded passes / 6 existing xfails; 466 mirrors match. Fresh source-GUI measurement pending. |
+
+## OPT-58 / OPT-60 Fast startup preparation prerequisite (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Fast initial pixels / worker-to-GUI ownership | Live bridge startup reads cold DICOM on GUI. Add worker-only preparation and exclusive data adoption without moving QObject/executor ownership, plus an optional bridge input that retains the prepared QImage. Reject stale keys/config, reused/closed targets and changed W/L policy. Scheduling is NOT activated; live/KPI acceptance remains open. | `tests/code/viewer/test_fast_initial_display_preparation.py`: 37 synthetic cases after the overlay extension below. Real Qt pixel parity, cancellation, ownership, cine cache retention and heartbeat checks. Focused totals 335 passed / one existing xfail / three fixture skips; 466 mirrors match. |
+| Prepared Fast overlay / identity and refresh boundary | Initial presentation still reached header/stat I/O despite prepared pixels. Prepare image-owned tags on the worker for the original and possible sorted multiframe first path. Validate Study/Series/source, use immutable tags only inside a one-shot synchronous commit scope, release on error, and retain ordinary mtime-aware refresh after the scope. Advanced/shared reader semantics are unchanged. | Five fail-before cases: two missing scoped-presentation API failures and three wrong-metadata cases accepted by the old bridge. Eight added cases cover no GUI stat/read, image over wrong DB identity, edits after presentation, sorted cine projection, exception expiry, source mutation and failed-read fallback. Complete bridge initial-image guard no longer stubs annotations; tool persistence is still isolated. Activation/freshness scheduling remains pending. |
+
+## OPT-35 / S4B VTK cache prerequisites (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Volume cache build/invalidation and VTK wrapper retention | Invalidated in-flight owners could republish stale results over a fresh entry; wrapper sizing defaulted to zero. Use per-flight completion/cancellation and post-build VTK KiB-to-byte accounting. Deliver oversized results independently of retention; preserve per-domain/default-off behavior. | `tests/code/ui_services/test_volume_cache_generation.py`: four fail-before cases, eight final cases including concurrent waiters, failure, eviction delivery and real VTK/domain checks. Expanded 398 passed, 5 xfailed, 1 xpassed, exit 0; live patch-freshness gate pending. |
+
+## OPT-60 / OPT-35 incremental metadata identity (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Patient metadata sink / owner-local display handles | Independently allocating a subset reused an existing alias: late series disappeared or replaced a sibling; missing folder hints filled the wrong card. Reserve prior study-local handles, reuse exact hints only by UID pair, and reject foreign-study field merges before grouped projection. Do not change count precedence or activate incremental rendering yet. | `tests/code/ui_services/test_series_metadata_incremental_identity.py`: five initial fail-before cases; 15 final real-sink cases for late/raw-alias collisions, subsets, multi-study/primary fallback, exact paths, cine counts, repeat/legacy idempotence, ordering, owner separation and invalid prior maps. 181 focused + 107 adjacent passes; fresh-source GUI pending. |
+
+## OPT-60 / OPT-58 Local metadata routing (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Local Home/patient pixel inventory | Independent projections repeatedly parsed unchanged files before showing cached PNGs; header reader also materialized unrelated values. Retain both projection contracts, selectively read frame facts and coalesce positive probes in one bounded, version-checked worker-only cache. Never cache negative/failure results or use this as completeness authority. Reject blank storage paths. | `tests/code/ui_services/test_local_pixel_inventory_reuse.py`: 6 initial failures; 24 final cases for both real projections, concurrency, identity, invalidation/expiry/eviction, read failures, cine/non-pixel classification, syntax compatibility and PHI-free metrics. 181 adjacent passes / 3 unavailable clinical-fixture skips. Fresh-source GUI pending. |
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home Local metadata gate / GUI I/O | Completeness was evaluated before the Local operand even though Local already selects the DB route. Short-circuit on Local first; preserve Server completeness and growth decisions. No new downloaded-state assertion, cache or worker. | `tests/code/ui_services/test_local_series_info_gate.py`: execute the real AST branch with synthetic probes; mode/completeness/growth matrix, no Local storage dependency and unchanged Server error semantics. |
+
+Five failures before the fix, 18 new cases afterward; combined offline, thumbnail
+projection/preparation, series completeness and manifest suites: 77 passed, exit 0.
+465 mirrors match. Fresh-source Local/Server GUI comparison is pending; other
+Local disk scans and original native-crash acceptance remain open.
+
+## OPT-60 / OPT-21 shutdown admission and completion evidence (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Central lifecycle admission | Nested/concurrent shutdown reset the active guard early and admitted new resources. Ignore overlap; preserve the outer guard and LIFO/error contracts. | `tests/code/system/test_lifecycle_shutdown_observation.py`: real nested/concurrent failure, exceptional unwind, repeated use, probe isolation, duration separation and owner-reference release. |
+| Producer completion evidence | Callback return does not establish scan completion. Sample a nonblocking state probe including retired app-owned pollers; require queued finished delivery. Other owners remain unknown. | `tests/code/cloud_consultation/test_poller_lifecycle.py`: blocked synthetic worker, finished-but-undelivered state, replaced owner and registry wiring. |
+| Final log boundary | Unverified `all cleanup done` claim was emitted after listener shutdown. Record intent before log shutdown, explicitly unverified. | `tests/code/system/test_shutdown_startup_cleanup.py`: structural finalization ordering/claim guard. |
+
+Twelve fail-before cases; 105 focused/adjacent passes, four build-marked deselections,
+exit 0; 465 mirrors match. Source GUI/exit gate pending. This is not established as
+the cause or cure of the historical native exit crashes. No teardown-order change.
+
+## OPT-60 / OPT-21 process-exclusive native evidence (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Native sink ownership | Multiple processes appended one file; adjacent session headers could not identify a dump. Exclusively create PID/session files, retain the handle and preserve old logs; never overwrite a collision. | `tests/code/system/test_native_fault_isolation.py`: six initial failures; same-PID reuse, two real hidden child traces, frozen flag and failure cleanup. |
+| Consumer / evidence lifetime | Shared-only readers missed isolated sources; a child's already observed faults could disappear on truncation. Shared discovery, new-child windows and last-observed prefix checks; reject missing/partial/oversized evidence. | Same file: filter, dashboard, GUI helper, publication/header/budget and repeated-check guards. |
+| Raw command / Qt bus | Native reads on the GUI thread and wrong-path false-zero result. Explicit `EXTERNAL_NATIVE_PROBE_REQUIRED` compatibility response with null counts; external MCP implements the supported read. | Same file plus `test_system_adapter.py`; no-filesystem-I/O guard. Intentional API correction documented in the closure audit. |
+
+19 new isolation cases; 120 focused/adjacent passes, 4 opt-in build cases deselected,
+exit 0. EchoMind mirror synchronized; 465 pairs match. Fresh source capture/Home
+smoke passed before the final guarded enable-before-header ordering hardening;
+that last change requires next-source verification. Application shutdown and
+original crash prevention remain open.
+
+## OPT-60 / OPT-21 control health false acceptance (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| MCP scenario acceptance | Baseline and `assert_health` responses were discarded; unavailable/changed evidence and transport could pass. Enforce cumulative native/watchdog limits, same live PID and fail-closed preflight/final checks. | `tests/code/system/test_control_native_health.py`: 7 initial failures; 15 final control cases. |
+| Evidence read / Qt boundary | Wrong-path, untimed in-app reader could return zero and ran on the GUI command bus. The MCP wrapper now reads externally with a 16 MiB bound, file identity/prefix checks and explicit retrospective uncertainty. Raw in-app adapter remains uncorrected and must not certify health. | `tests/code/system/test_native_fault_probe.py`: 17 synthetic byte-window, source-loss, PID, partial-record, budget and privacy cases. Combined/adjacent suite: 93 passed, exit 0. |
+
+Read-only live tool smoke passed; no runtime/payload, patient GUI, native crash
+prevention or whole-download-soak acceptance claim. See the closure audit.
+
+## OPT-60 / OPT-21 offline native-report integrity (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Native diagnostic filtering | Headers were treated as record endings; COM exclusion could remove an access-violation stack and retain an unrelated stack. Keep following stacks with their headers; split watchdog/Python fatal/session boundaries; do not infer PID or terminality. | `tests/code/system/test_native_fault_filter.py`: synthetic ordering, exclusion, interleaving context, truncated input and CRLF guards. |
+| Source preservation | `--out` could alias `--in` and overwrite original evidence. Reject same resolved file and hard-link aliases before writing. | Same file: alias, hard-link, no/custom exclusion and missing-input guards. 12 initial failures; 20 final cases, 42 adjacent passes, exit 0. |
+
+Offline tool only; no runtime/mirror/GUI change or claim of native crash closure.
+See `docs/reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md`.
+
+## OPT-04 file-count completion and collision-safe retry (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Series result / progress | Early batch termination or skipped/broken payloads still returned success; duplicates inflated skipped counts. Check existing resume-file count once off-loop; fail incomplete positive totals and count each written name once. | `tests/code/download_manager/test_series_file_completion.py`: 12 initial failures; payload/write/scan failures, resume, byte preservation, cancellation and scan ownership. |
+| Retry / series identity | Retry rebuilt a bare-number folder, bypassing first-attempt collision resolution. Reuse the destination recorded by SeriesInstanceUID. This is pre-existing debt exposed by the completion fix, not a new Unify regression. | Same file: 2 coordinator failures before correction; recovering/still-failing same/different-number workflows. 23 final cases; 217 expanded passes, exit 0. |
+
+465 mirror pairs match; fresh GUI pending. This lower-bound file check is not
+SOP/pixel validation or durable manifest proof. See `docs/reports/DOWNLOAD_FILE_COUNT_GATE_2026-09-15.md`.
+
+## OPT-04 socket response framing and reconnect (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Response framing / broadcast burst | Hard ten-broadcast limit rejected healthy pending replies; one recv was assumed to return the entire four-byte prefix. Accumulate exact prefix and use an elapsed between-frame budget; restore ordinary timeout before real body transfer. | `tests/code/download_manager/test_socket_response_framing.py`: fragmented/burst matrix, real socketpair, consecutive replies, flood budget and slow-body preservation. |
+| Stream lifetime / connection lock | Invalid/incomplete response could leave unread data for later reuse; request held a non-reentrant lock while calling lock-owning connect. Retire bad streams and use owner-reentrant serialization. | Same file: cancellation/invalid-frame/reconnect guards; 31 initial failures, 38 final cases. 189 adjacent + 5 builder passes, exit 0. |
+
+Existing encoding/payload-helper failures date to July 25 removals and remain
+separate debt, not regressions introduced here. UI/Overall Progress unchanged;
+fresh GUI and authoritative disk completion pending. See
+`docs/reports/DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md`.
+
+## OPT-22 browser opening input and feedback (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| First browser open / repeated input | Engine import and construction began without painted waiting feedback; reentrant opens could construct duplicates. Paint a child header strip before import and retain a temporary app-local input gate through a nonblocking drain grace. | `tests/code/web_browser/test_browser_launch_notice.py`: four initial failures; 12 final real-Qt cases cover paint, no nested dispatch, duplicate prevention, queued input, error/retry, existing/disabled module, synchronous return and owner deletion. |
+| Adjacent contracts | Preserve OAuth/CommandBus Widget-or-None return, generic tab routing, optional module policy and opt-in prewarm. Native startup still blocks GUI; no performance/crash closure claimed. | 160 focused passes plus one builder mirror guard, exit 0; 465 mirrors match. Fresh source GUI pending. See `docs/reports/WEBENGINE_OPEN_WAIT_STATUS_2026-09-15.md`. |
+
+## OPT-60 consultation poller retirement (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Deferred start / late signals / QThread ownership | stop cancelled only the periodic timer; queued startup/results survived, completed workers and replaced owners accumulated. Owned startup timer, generation invalidation, cooperative stage cancellation, owner-thread completion cleanup and terminal disposal. | `tests/code/cloud_consultation/test_poller_lifecycle.py`: nine initial failures; additional batch-reentrancy failure corrected; queued old-generation and normal GUI delivery preserved. |
+| Application-close integration | Poller was absent from lifecycle registration and could be recreated during close. Existing LIFO registry requests stop before DB cleanup; optional plugin not imported during exit; aboutToQuit fallback and terminal autostart gate. | Same file: three integration failures before correction; 15 final guards overall. 367 adjacent passes, exit 0; 464 mirrors match. Live blocked; native exit crash and whole-app drain not declared fixed. |
+
+## Qt signature mapping and preparation timing (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| PySide6 6.10.2 signature mapping | Failed concurrent imports remove a live registry key after snapshot; version-gated adapter validates snapshot values and keeps mapping/parser bound entry points aligned. No broad exception swallowing or credential changes. | `tests/code/system/test_pyside_signature_guard.py`: two actual installed-code KeyErrors before fix; 12 final guards including isolated real Qt source/simulated-frozen smoke. Native exit faults remain separate. |
+| OPT-60 preparation telemetry | Scan/total fields cannot distinguish worker queue from GUI delivery; add monotonic timestamps without changing executor or routing. | `test_preparation_separates_worker_queue_scan_and_gui_delivery`: failed before, exact synthetic timing decomposition after. |
+
+## Eagle Eye manual review (2026-09-15)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Custom Slicer review controls | Use an explicit nonmodal correction panel, independent of the custom viewer's hidden status bar. Live import also exposed NumPy bool not supported by VTK; convert segment masks to uint8. | Panel structural guard failed before its change; `test_segment_array_uses_vtk_supported_unsigned_bytes` guards the observed import failure. Actual synthetic Erase/Save succeeded after correction. |
+| Corrected measurements | Preserve original inference; reject geometry/label mismatch, serialize recalculation through the Brain lock, publish separate revisions. | `test_manual_brain_review.py`: synthetic boundary, unknown labels, empty mask, missing save, lock and posterior-preservation contracts. |
+
+## OPT-60 startup thumbnail scan boundary (2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Patient startup cache enumeration | GUI called `show_exist_thumbnails -> get_image_files -> iterdir`; repeated live samples accompanied a 4116.3 ms stall. Prepare the same cache listing through the existing executor, retain the exact hit/miss decision and pass the tuple without rescanning. | `tests/code/ui_services/test_pipeline_thumbnail_preparation.py`: five fail-before cases; off-thread/heartbeat, count reuse and coalescing. |
+| Await versus first-series arrival/teardown | The first preparation draft postponed layout until after disk I/O. A failing adversarial guard requires the viewport before await and prohibits rebuilding on delivery. Reject changed/closed/deleted owners and cancel before native teardown; cancellation failure on a closed event loop must not abort cleanup. | Same file: layout timing, real Qt/qasync/native deletion, close/identity/cancel and teardown ordering; 18 total cases. |
+
+Code selection: 170 passed, 6 existing SWIG warnings, exit 0; 462 mirror pairs match.
+Code verification is separate from source-live acceptance. The current source process predates
+the final patch; no whole-pipeline performance or historical crash closure is claimed. Direct
+refresh/Education/no-loop compatibility and grouped/pixel/status I/O remain explicitly staged.
+
+## Eagle Eye Alignment View boundaries (2026-09-14)
+
+Direct-report acquisition provenance: direct service generation previously claimed
+operator-verified standing/orientation without an explicit confirmation. The PDF
+now defaults to unverified acquisition; the UI passes its actual confirmation.
+`test_direct_report_does_not_claim_operator_confirmed_acquisition` fails before
+and passes after correction. No patient data are used in this regression guard.
+
+PDF/series workflow amendment: `test_eagle_eye_alignment_pdf.py` guards selected
+SeriesInstanceUID enforcement, series-switch invalidation, automatic unsigned
+draft generation, shared Brain header/footer, three evidence-bearing pages and
+atomic publication failure. Focused/adjacent 87 passed; source-live gate pending.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| DX/CR function catalog | Alignment was not selectable. Add the owned Alignment View function inside Eagle Eye and preserve other modalities. | Alignment catalog guard failed before wiring and passes afterward. |
+| Single-leg geometry and unverified spacing | Direct single-leg API labeled scaled lengths as pixels. Preserve aspect-aware angles and return native pixel lengths until calibration is verified. | `test_single_leg_unverified_scale_does_not_label_scaled_lengths_as_pixels` failed with 160 versus 800 before correction and passes afterward. |
+| DICOM and model result to review/export | Reject mismatched identity and invalid coordinates; invalidate review after edits and discard cancelled/disposed worker results. | `tests/code/ai_imaging/test_eagle_eye_alignment.py`; 155 focused and adjacent tests pass. Local real-model inference completed; fresh-source live GUI remains pending. See `docs/modules/EAGLE_EYE_ALIGNMENT_VIEW.md`. |
+
+## Eagle Eye lesion integration boundaries (2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Lesion mask -> application burden | Initial implementation depended on SciPy absent from the application runtime; five synthetic guards failed. Use existing SimpleITK connected components with explicit 26-connectivity and validate geometry/binary values before volume output. | `test_eagle_eye_lesions.py`: native voxel burden, disconnected/diagonal components and four invalid-mask cases pass. |
+| Windows path -> LST-AI Greedy | Upstream registration interpolates unquoted path strings. The isolated adapter quotes path parameters without changing transforms or boolean arguments. | Quoting guard plus actual synthetic Greedy transform with spaced Windows paths passed. Full clinical accuracy is not inferred. |
+
+## Card-owned effect retirement (OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Card progress/Ready -> retry, owner reset/dispose | Static Ready/hide callbacks could overwrite newer state. Misplaced missing theme callback aborted cleanup. Own two cancellable timers and native-parent the progress animation; stop all card property animations and reject terminal setters while preserving native children/snapshot. Manager retires effects before map release. Pending/retry must not leave an obsolete Ready label. | `test_thumbnail_card_effect_lifetime.py`: 7 corrected baseline failures / 1 pass, 2 additional stuck-label failures corrected; 14 final Qt guards, 441 adjacent passes / 1 existing skip, exit 0; 462 mirrors match. Fresh-source GUI pending; method defect is not proof of a native crash cause. |
+
+## Manager-owned callback retirement (OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Manager reset/dispose -> delayed work and retained cards | Pending progress survived reset and old same-key cards could still dispatch. Parent/cancel manager timers, gate generations and terminal updates, disconnect owned receivers and release bound callbacks/maps. Patient exit retires independent managers; Home weakly tracks and retires both render schedules without changing native widget deletion. | `test_thumbnail_manager_retirement.py`: 7 initial failures (behavior/contract/wiring), 2 later Home integration failures; adversarial native-deletion guard caught an implementation gap, now corrected. 17 final real-Qt guards; 424 adjacent passes / 1 existing skip, exit 0; 462 mirrors match. Source GUI blocked on fresh bootstrap; not card-animation/native-crash closure. |
+
+## Bounded same-identity Home refresh swap (OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home dispatcher -> small immediate refresh | Early clear created an empty paint interval. Retire callbacks immediately but retain only the same ordered known actions until paint-disabled replacement; preserve cross-identity/large/progressive clearing. Preparation failure clears retained cards and invalidates coalescing for retry. | `test_home_small_refresh_swap.py`: 3 baseline failures; preparation-error guard caught an implementation gap; 16 final guards. 390 expanded passes / 1 existing skip, exit 0; 462 mirrors match. Default-on, live blocked, not native-crash closure. |
+
+## Home render owner retirement (OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home clear/action -> render owner | Clear kept the progressive manager and deleted card wrappers; action callback retained the panel and could queue against its deleted QObject. Release the retired manager reference; weakly reference the panel and validate native lifetime/render token before queue and delivery. Preserve card-owned deferred deletion and normal timer completion. | `tests/code/ui_services/test_home_render_owner_lifetime.py`: 4 failures before, 10 final guards; 374 expanded passes / 1 existing skip, exit 0; 462 mirrors match. Fresh-source live pending; no generic manager-disposal, clinical-crash or performance claim. |
+
+## Patient-tab external signal lifetime (OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Priority/completion publishers -> patient tab | Capturing closures retained a deleted patient wrapper and delivered into closed/deleted tabs. Replace with patient-parented weak-reference QObject relay; reject closing/retired targets and dispose only owned connections before teardown. Preserve raw key, supplied Study UID, primary completion filter and DM lookup order. | `tests/code/ui_services/test_patient_tab_signal_lifetime.py`: 6 fail-before cases, 16 final guards. 364 expanded passes / 1 existing GUI-only skip, exit 0; 462 mirrors match. 17:57 fresh-source sampled native open/close/reopen PASS, same Study/Series and visible pixels. Real priority/completion live checks pending; not full manager disposal or proof of clinical crash causation. |
+
+## Home search preview retirement (OPT-60, 2026-09-14)
+
+**16:35 source-live update:** sampled Server 13-card -> empty/zero -> reselection and native
+new/reused exact-series open PASS (8 slices, no duplicate tab); Local 6-card -> empty/zero PASS.
+No ERROR/CRITICAL or new access violation through 16:41:32. Startup COM event and timer stalls
+remain outside this fix's acceptance. Pins/row-remap, advanced overlap and Offline Cloud are
+code-guarded but not exercised live. This qualifies the original live-pending row below.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Search replacement -> current selection -> Home preview | Existing service cleared rows only, leaving old cards and permissive empty-identity guards. A shared generation-checked clear retires orphaned preview/request state and row debounce, retaining only matching selected pins and rebinding their pending fetch after row movement. Also guards advanced-search clear against supersession. Cancelled/failed old thumbnail task cleanup cannot clear a newer owner. Not an established regression from the prior render fix; no decoder/download/table-teardown change. | `tests/code/ui_services/test_home_search_preview_retirement.py`: 7 fail-before cases plus 2 independently reproduced cleanup failures; 18 final guards. 302 focused/adjacent passes, exit 0; 462 mirrors match. Fresh-source live gate pending. |
+
+## Home queued-render lifecycle (OPT-60, 2026-09-14)
+
+**15:39 source-live receipt:** sampled selection replacement and exact-series open passed.
+An empty server search retains the old preview; its stale-card double-click correctly opens
+no tab. This is an open caller-side retirement gap (search clears the table only), not an
+established regression in panel generation invalidation. The follow-up above is now code-fixed;
+its fresh-source live gate remains pending. See provenance.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Clear/destroy -> deferred Home render | Clear stopped a timer without retiring queued starts/retries; context-free callbacks ran after Qt panel destruction. Clear now advances generation, direct retry entry binds it, single shots carry the panel context and the progressive timer is parented. No UID, cadence, decoder or download changes. | `tests/code/ui_services/test_right_panel_render_lifecycle.py`: 9 failures before; 16 final lifecycle guards. 197 focused/adjacent passes, exit 0; 462 mirrors match. Fresh-source live gate pending; not full manager disposal or a claimed crash/stall fix. |
+
+## Home MCP current-row selection (OPT-35/OPT-60, 2026-09-14)
+
+**Live update:** the 15:15 source session closes the sampled selection gate: no compensating
+native row click, Home new/reused tab with exact Series UID, grouped-member canonical selection,
+nonexistent-ID rejection without a new tab, and native wheel identity retention. Focused rerun:
+99 passed, exit 0; 462 mirror pairs match. Native drag and extended acceptance remain open.
+See the [scoped receipt](../analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md).
+The table's original live-pending status below is superseded by this receipt.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Command -> current Home row -> queued thumbnail selection | Adapter called the Home handler without selecting the Qt row; wrapper guessed missing identity from stale search cache. Resolve exactly one current visible result, select/revalidate that row and reuse the normal debounce timer. Reject ambiguous/foreign/stale identity and non-GUI/in-flight search calls; retain the production Home identity guard. | `tests/code/echomind/test_home_selection_fidelity.py`: 15 fail-before cases, 18 final guards including sorted/grouped rows, rapid supersession, current-name authority, reentrancy and no I/O/event pumping. Final Home/adapter selection 99 passed; live pending new source run. Both EchoMind mirrors synchronized. |
+
+## Home semantic render refresh (OPT-35/OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Same-path metadata -> visible card | Coalescing ignored changed counts/descriptions. Signature and card creation now share metadata normalization; include normalized visual fields and existing immutable action identity without I/O or pixel hashing. Alias-equivalent projections still coalesce. Pixel revision remains a separate pending contract. | Eleven cases in `test_home_series_action.py`: eight visual-field changes, real Qt 2-object/420-frame label refresh, alias equivalence and no-I/O/pixel-payload retention. Before: 9 failed / 2 passed. After: 68 focused passed; 931 expanded passed with the documented baseline exclusions, exit 0. New source-live gate pending. |
+
+## Home thumbnail double-click open (OPT-35/OPT-60, 2026-09-14)
+
+Supersedes the earlier existing-tab-only single-click scope. Code verified; the user-confirmed
+two-study server-open sample is corroborated by the 12:49 source-session request, placement,
+visible-image and no-mismatch records. That session predates the final header correction and
+semantic-refresh patch; fresh-source extended acceptance remains pending. Do not treat the
+historical failure below as a new live result or this sample as the full identity matrix.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Cache -> Home card | Cached payload dropped UIDs and display-frame count; grouped/downloaded/offline producers repeated this projection. Share worker-built cache metadata, retain exact identity and refuse ambiguous number-only cache matches. | `test_home_thumbnail_open.py`: real producer, collision keys, counts, shared worker projection and cached payload -> real Qt double-click -> new tab. UID preservation and worker dispatch failed before correction. |
+| Home input -> normal patient open | Single-click routing could not create a patient tab. Home-only double-click filter delegates to the existing async opener and an event-driven tab service; name-open still leaves manual-placement layouts empty. | `test_home_series_action.py`, `test_home_thumbnail_open.py`: single-click no-op, both renderer schedules, stale render rejection, standard opener, existing-tab reuse, destination-owned keys. |
+| Deferred placement lifetime | Late metadata must not select a different series or steal focus. GUI-owned queued receiver, last-intent-wins/open deduplication, layout readiness, selection cancellation and bounded timeout. | Worker-to-GUI thread test, repeated-open test, missing/foreign/ambiguous identity, tab-change and manual-placement supersession; 57 focused tests pass. |
+| Identity vs presentation | Preserving Study UID must not expose it as a new single-study header. Keep unlabeled single-study previews ungrouped; use explicit labels or `Study N` for multi-study presentation. | Two real-method presentation guards failed before the adapter correction; both pass afterward. |
+
+## Home existing-tab click identity (OPT-35/OPT-60, 2026-09-14)
+
+**Live acceptance update:** FAILED for the Server/Home cache-hit producer on September 14.
+`_hp_search._build_cached_thumbnail_payload` drops both UIDs before the corrected card boundary;
+the card is selected but no typed action is emitted. Synthetic execution of the actual producer
+confirmed UID loss with complete input. The 22 card/action guards below do not cover this upstream
+producer. A producer-to-card integration regression guard and guarded correction remain pending;
+do not mark this end-to-end workflow fixed or relax identity rejection. See the current provenance
+live receipt. Downstream MCP-render and wheel checks passed for the single-study sample only.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Right-panel cards to open patient tab | Ordinal strings discarded study/series identity; the click handler required unassigned state and a nonexistent downloader API. Share one card factory, emit a frozen UID action after input dispatch, reject retired renders, resolve a unique destination-owned key and invoke the existing viewer entry. Do not auto-open or guess a target. | `tests/code/ui_services/test_home_series_action.py`: 22 cases; four behavioral failures plus seven absent-API failures before. Includes duplicates, external paths, primary fallback, missing/ambiguous/closed targets and activation revalidation. |
+| Right-panel render coalescing | Same PNG/raw-number tuple could retain a different captured action. Include the SAME immutable action value in the signature; no I/O or hashes. Full visual semantic refresh is deferred. | Four same-PNG identity-change cases failed before correction; equivalent metadata still coalesces. Final adjacent suite: 238 passed plus 1 stateful test, exit 0. |
+| Windows input-dispatch test reliability | Constructor-text pins broke when creation moved to the common factory; immediate guard was already quarantined. Execute the actual deferral/repost/stale-generation behavior instead. | `tests/code/test_right_panel_input_sync_guard.py`; no runtime guard change. Removed only the obsolete immediate test quarantine after XPASS. No new quarantine entries. |
+
+## Home card metadata boundary (OPT-60, 2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| `RightPanelWidget.extract_series_info_from_thumbnail`, shared by immediate/progressive cards | Projection discarded supplied study/series UIDs, exact storage/UI identity and display-frame count. Preserve a fixed metadata allowlist without changing aliases, object counts, scheduling or action routing. Synthetic two-object cine now labels 420 images, not 2. | `tests/code/ui_services/test_right_panel_metadata_contract.py`: 4 failed and 4 passed before; all 8 pass after, including both production render methods and a real Qt card. Focused suite 205 passed, exit 0; 462 mirrors match. Source-live and installed acceptance pending; Home ordinal/route bug is NOT fixed by this metadata prerequisite. |
+
+## Eagle Eye dataset template/case workflow (2026-09-13)
+
+| Boundary | Behavior and protection | Regression guard |
+|---|---|---|
+| Native dataset creation, enrollment and editing | Versioned templates instantiate independent case forms. Duplicate enrollment opens the saved case, expected revisions reject concurrent overwrite, schema removal preserves old forms, and unknown/complete form values do not activate training supervision. Background jobs cannot update a destroyed workspace. Legacy CSV result APIs remain available. | `tests/code/ai_imaging/test_dataset_workspace_repository.py` and `test_dataset_workspace_ui.py`: 18 synthetic guards. Feature package absence failed the initial repository test collection; final combined dataset/workspace/build selection: 75 passed, exit 0. Native live acceptance pending. |
+
+## Eagle Eye workspace presentation (2026-09-12)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Workspace header, Imaging toolbar and embedded Patient navigation | Choose Function used ordinary button sizing; the Home group title overlapped actions; legacy cleanup left Eagle Eye and Advanced Analysis navigation visible. Promote the primary action to 240 x 52 logical pixels with bold accent styling, omit duplicate Imaging section titles, and hide the embedded navigation container without deleting callback targets. Shared Patient UI is unchanged. | `tests/code/ai_imaging/test_eagle_eye_workspace_entry.py`: primary-action size fails in four modes before fix; duplicate Home title and visible navigation fail independently before fix (exit 1). Synthetic Qt checks cover retained controls and visible thumbnails. |
+
+
+## Eagle Eye workspace-first entry (2026-09-11)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Toolbar/sidebar/image-tool entry, Brain popup, Lumbar activation | Entry requested or ran an analysis before users could access the workspace; Lumbar auto-captured and Brain replaced the common UI. Open the study workspace first, select functions explicitly, keep Brain tools in a reusable popup, preserve native result refresh and study identity, and detach jobs before deleteLater destroys children (OPT-51). | `tests/code/ai_imaging/test_eagle_eye_workspace_entry.py`: 27 guards; seven original behavior failures plus independently reproduced image-tool, teardown and popup-width failures before their fixes. Broader selection: 1165 passed, 8 existing xfails. Final popup selection: 99 passed. See `docs/modules/EAGLE_EYE_WORKSPACE_ENTRY_2026-09-11.md`. |
+
+## Linux EchoMind endpoint maintenance (2026-09-11)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Linux backend chat session closure | A chat-only session lacked optional assistant/report payloads; the tenth message raised KeyError. Initialize the optional assistant field and use safe reads for historical sessions during closure. | `C:\AI-PACS-Datasets\lumbar-mri\v0.1\tools\test_echomind_runtime_maintenance.py`: actual endpoint AST tests reproduce missing defaults and closure failure before repair. Live ten-message cycle: ten HTTP 200 responses and zero remaining sessions. |
+| Linux backend health contract | Health required an obsolete model attribute, and its response schema discarded component information. Inspect the current backend and enabled component flags; declare the returned component map. | Same seven-test runtime suite verifies healthy current models, missing main backend, enabled ASR/database failure and disabled optional MedGemma. Four guards failed before repair; seven passed after. See `docs/echomind/ECHOMIND_RUNTIME_AND_TRAINING_ENV_2026-09-11.md`. |
+
+## External EchoMind GPU maintenance preflight (2026-09-11)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| External Linux maintenance controller, outside the application runtime | A failed NVML query could reach the service interruption path. Validate query exit status and numeric memory/utilization fields and reject stop/test-window before targeting processes. Keep start available for recovery. | `C:\AI-PACS-Datasets\lumbar-mri\v0.1\tools\test_echomind_gpu_preflight.py`: eight passing cases; previous behavior reproduced with isolated AST and fake process functions. No live service interruption. See `docs/echomind/ECHOMIND_GPU_MAINTENANCE_2026-09-10.md`. |
+
+## EchoMind demo-center activation (2026-09-10)
+
+| Date | Module | Defect and correction | Guard |
+|---|---|---|---|
+| 2026-09-10 | EchoMind protected center registry / entitlement / plugin mirror | The existing encrypted TEST record was classified as development-only and omitted from every normal runtime map, so the owner-approved end-user demo code could never authenticate. Make the protected demo available by default, retain an explicit restricted-deployment opt-out and the legacy flag, and leave every encrypted credential and paying-center record unchanged. | `test_entitlement.py` initially failed the three demo behavior guards; `test_credential_obfuscation.py` pins protected default availability without embedding credentials. Focused and adjacent selection: 197 passed, 15 deselected. Complete EchoMind: 2,346 passed, 12 skipped, 15 deselected, 4 pre-existing xfails. Mirror parity: 462/462. |
+
+Evidence and release boundary: `docs/reports/ECHOMIND_DEMO_CENTER_ACTIVATION_2026-09-10.md`.
+
 ## Printing workflow corrections (2026-09-09)
 
 | Date | Module | Defect and correction | Guard |
@@ -39,6 +557,7 @@ See `docs/plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md` §8.
 ## Catalog
 
 | 2026-09-06 | Build documentation and release workflow | Multiple prominent runbooks recommended incompatible legacy PyInstaller, simple Nuitka, resumable, and six-edition paths, allowing humans or agents to write different outputs and mistake diagnostic artifacts for release candidates. Added root `BUILD.md` as the single entry point with measured three-lane policy, exact six-file contract, safety limits, size/content gates, and subordinate-document pointers. | `tests/code/builder/test_canonical_build_runbook.py` pins the authoritative route, all entry-document links, full artifact contract, and unsafe-shortcut prohibitions. The exact documented pre-build selection passes 114 tests. |
+| 2026-09-10 | Canonical build output routing, recovery, and speed contract | The coordinator still exposed a `--final-repo` CLI redirect even though final delivery belongs only in two repository folders. It also rejected an interrupted workspace, forcing manual backend recovery; Nuitka's release-plus-resume argument ordering could then select diagnostic stages 1-5 instead of the remaining release stages. The redirect is removed, an unqualified build is fixed at six outputs, and root `--resume-workspace` now retains completed work, rejects active processes/input drift, constrains Nuitka recovery to release stages, and reruns coherence. Measured reuse/compression boundaries are documented under OPT-53. | Fail-before: `test_coordinator_cli_cannot_redirect_final_installer_outputs`, `test_nuitka_release_resume_never_enters_diagnostic_stages`, and `test_candidate_resume_skips_completed_python_and_resumes_nuitka`. The runbook contract test pins the six-output interpretation, canonical destinations, resume command, and reuse decision. |
 
 | 2026-09-06 | Eagle Eye Brain reference priority | Added requested CentileBrain-first age selection with BrainChart fallback review; preserved actual age and prevented automatic qualification of either candidate. | `test_primary_reference_age_priority_does_not_qualify_a_fallback` (six boundary/missing-age cases). |
 
@@ -474,8 +993,372 @@ hippocampal evidence. Combined Brain selection: 65 passed.
 |---|---|---|
 | Preview/export grid | White/transparent modes preserve black borders; dark retains white. Transparent page interiors remain unpainted. | test_grid_stays_visible_in_preview_and_export_for_all_backgrounds (two fail-before cases) |
 
+## Lumbar partial-review release (2026-09-11)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Protected C-drive dataset export | A mapped but unreviewed level aborted export of its reviewed sibling levels. Skip zero-mask levels while preserving all reference gates. No unknown labels become normal. | `C:/AI-PACS-Datasets/lumbar-mri/v0.1/review_app/test_review_server.py::test_partial_level_review_can_export_without_promoting_unreviewed_mapping` failed before the fix with `no_reviewed_targets`; synthetic train/validation export passes after it. |
+
 ## Eagle Eye local installer path and approval separation (2026-09-10)
 
 | Boundary | Defect and correction | Regression guard |
 |---|---|---|
 | Brain portable runtime / installer staging | Compile-only TensorFlow headers created paths beyond the safe Inno budget, and both internal stage validation and Inno preprocessing incorrectly required a redistribution receipt. Preparation and internal staging now omit the headers, refresh internal integrity metadata, and pass an explicit release-only approval define to Inno. | `test_portable_brain_preparation_removes_compile_only_tensorflow_headers`; `test_internal_eagle_eye_stage_does_not_require_distribution_receipt`; `test_internal_installer_compile_explicitly_disables_distribution_receipt_gate` |
+
+## Viewer Configuration storage cleanup safety and performance (2026-09-12)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Managed storage sizing | `Path.rglob` plus per-entry `is_file`/`stat` made the full scan exceed 90 seconds. One link-safe `os.scandir` pass now supplies byte and file totals; measured full scan is 2.915 seconds. | `tests/code/storage/test_storage_cleanup_consistency.py::test_directory_size_uses_single_pass_scandir_not_path_rglob` |
+| Patient deletion integrity | Filtered cleanup trusted external `study_path` values and swallowed file deletion failures before removing DB rows. Paths must resolve beneath patient storage; failed patients retain their DB index and surface warnings. Full cleanup also preserves the DB after any filesystem failure and explicitly deletes child tables without relying on FK mode. | containment, file-lock, Clear ALL failure, and cascade-independent cases in `test_storage_cleanup_filtered.py` and `test_storage_cleanup_consistency.py` |
+| Retention authority | Acquisition date could delete an old exam imported recently, and unknown ages could be guessed into the oldest set. `studies.imported_at` is primary, with download/acquisition compatibility fallback; undatable rows are kept. | `test_recent_local_import_is_not_deleted_because_acquisition_is_old`; `test_delete_oldest_never_guesses_the_age_of_undatable_patients` |
+| Qt worker and UI-thread boundary | Bare signal lambdas executed cleanup completion UI on the worker; panel-owned running QThreads could be destroyed; Preview, consistency, and drive probes could block the GUI. QObject slots, process-owned jobs, a shutdown boundary, and worker execution correct the ownership. | thread-affinity, parent ownership, preview/consistency, drive-probe and teardown cases in `test_storage_cleanup_panel_async.py` |
+| Concurrent storage users | Cleanup could race import, download, or an open patient viewer. The app owner now injects one fail-closed activity probe and destructive cleanup is refused until the storage boundary is idle. | `test_storage_cleanup_panel_async.py::test_activity_probe_fails_closed_before_destructive_cleanup`; adjacent settings/download-state suites |
+
+## EchoMind report typography (2026-09-13)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| EchoMind display to Reception HTML | A-/A+ changed the display but left outgoing body/list text at 15px; section/organ headings lacked a size hierarchy and semantic headings serialized as relative sizes. Share resolved character/block scaling, emit explicit sizes, and render title/section/organ/body at a 22/18/16/15 baseline. | `tests/code/reporting/test_echomind_font_hierarchy.py`: five original failures before fix (exit 1), eight final guards including legacy/edited/plain content. Reporting, existing export guards and mirror guard: 119 passed, exit 0. See `docs/echomind/REPORT_TYPOGRAPHY_2026-09-13.md`; source Reception/print acceptance pending. |
+
+## EchoMind pathology organization (2026-09-13)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Structured pathology renderer to Qt display and Reception HTML | Shared cleaning removed model numbering; multiline input bypassed sentence splitting. Render organ headings and ordered finding groups with intra-item sentence breaks, conservative abbreviation/decimal handling and 8px item spacing; preserve punctuation and grouped continuations. | `tests/code/reporting/test_echomind_pathology_layout.py`: eight checks failed before repair (exit 1). Reporting/GUI export: 126 passed; builder mirror guard: one passed; all exits 0. Synthetic visual parity checked; live Reception/print acceptance pending. |
+
+## EchoMind all-modality report sections (2026-09-13)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Shared renderer for six report modalities, including specialty sections | Single-value mammography and obstetric sections used inline body-size headings. Separate every generic section heading and apply the same section font as MRI/CT. All report entry points retain the shared renderer; edition stages retain the current source/payload bytes. | `tests/code/reporting/test_echomind_modality_layout.py`: four failures before repair (exit 1), then six schemas at two sizes plus six entry guards. `tests/code/builder/test_distribution_profiles.py::test_every_edition_retains_current_echomind_report_renderers`: all three editions. Final focused selection 164 passed, exit 0; all 462 mirrors match. Full next build remains pending. |
+
+## OPT-35 multi-study projection extraction (2026-09-14)
+
+| Boundary | Preserved failure prevention | Regression guard |
+|---|---|---|
+| Normalized series to patient-tab maps and SeriesRef | Move stable slot/key/path projection to the shared pure identity helper and remove the controller copy. Preserve empty/identical labels, canonical missing numbers, within-study duplicates, external folders, cine counts, leading zeros, late-study slot stability and single-study bypass. Contract-preserving refactor; no new bug-fix claim. | `test_unify_multistudy_projection.py`: 14 cases pass on both original and extracted implementation; 15 final guards. `test_series_ref_stateful.py` now calls production rather than a replica, with independent identity oracles. Focused suite 171 passed plus property test 1 passed, exits 0; source live pending. |
+
+## OPT-60 prerequisite: Home Local series identity (2026-09-14)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Home Local projection to downstream series metadata | Display-key allocation was inside the error handler, so successful projections omitted the key; failures before its import raised `UnboundLocalError`. Run the existing allocator after the error boundary for nonempty successful or partial results. Preserve exact paths, raw labels, pixel eligibility and instance/frame counts. | `tests/code/ui_services/test_home_local_thumbnail_projection.py`: 3 meaningful failures and 2 passes before repair, all 5 pass after; focused adjacent selection 120 passed, exit 0. Mirrors 462/462. Full action routing and source-live verification remain pending; see the 2026-09-14 record in `THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`. |
+
+| 2026-09-14 | Eagle Eye Brain activity feedback | Long stages showed only an unchanged text label | Indeterminate progress bar, monotonic elapsed time and terminal/cancellation feedback | `test_eagle_eye_brain_progress.py` (3 guards fail before, pass after); live GUI gate pending test-server access |
+
+| 2026-09-14 | Brain study FLAIR selection | Study runner discarded optional FLAIR; study UI required folder browsing | Same-study picker with explicit protocol confirmation and service-side identity validation | `test_study_pipeline_passes_verified_flair_to_service` fails before/pass after; `test_flair_popup_requires_distinct_confirmed_series`; live pending |
+
+| 2026-09-14 | Brain multi-T1 and input review | No independent supplementary comparison and unpopulated DICOM fields | Validate at most two supplementary inputs, preserve primary, separate comparison PDF; worker-filled visible demographics and collapsed advanced settings | `test_eagle_eye_brain_multi_t1.py`; study picker and progress guards; live workstation gate pending |
+
+| 2026-09-14 | Eagle Eye background analysis | Closing Brain/lesion/Alignment popups cancelled active jobs; MG/DX used a whole-application modal progress cover. Four pre-fix guards failed. Owned nonmodal dialogs preserve active jobs on dismissal, cancel pending selectors, retain explicit cancellation/teardown, and reopen completed results. Compact MG/DX progress leaves PACS input available. | `tests/code/ai_imaging/test_eagle_eye_background.py` (six guards); 93 adjacent tests and 3 builder inclusion guards pass; 462 mirrors match. Fresh-source UI gate pending until the current real job completes. |
+
+| 2026-09-15 | Eagle Eye lesion clinical context / longitudinal feature | Required clinician-supplied MS/SVD/other context, preserved report revisions, DICOM identity/date gates and experimental previous/current spatial candidates; no inferred disease, Fazekas or normative score | `test_lesion_clinical_context.py`; 64 focused and 3 builder guards pass; source GUI connection unavailable, live and clinical validation pending |
+
+| 2026-09-15 | SVD report specificity | Explicit clinician Fazekas and same-study registered compartment/proximity-region estimates, without inventing age percentiles or dropping non-WM candidates | `test_lesion_clinical_context.py`; 34 focused passes; live source unavailable |
+
+| 2026-09-15 | MS report topography feature | Face-contact candidates, unique component accounting, unavailable anatomy distinct from negative findings and physician-confirmed conditional McDonald brain-region support; no automatic diagnosis | `test_ms_topography.py`, MS pipeline integration guards; 48 focused passes; live and clinical gates pending |
+
+| 2026-09-15 | Eagle Eye SVD reference readiness | Distinguish eligible age from missing SPM12 normalization and fitted model; never infer percentiles from medians | `tests/code/ai_imaging/test_wmh_reference.py` |
+
+| 2026-09-15 | Eagle Eye Choose Function | Refresh initially empty modality from current same-study selection, including Advanced metadata without SeriesInstanceUID; reject cross-study selection. 32 guards pass; fresh source picker and lesion input form verified. | `test_picker_refreshes_brain_type_after_empty_workspace_entry`, `test_picker_rejects_selection_from_another_study` |
+
+| 2026-09-15 | Advanced Analysis display version and repeated title | Match Python/C++/CMake display version to workstation 3.6.6; put case metadata before the application display name | `tests/code/mpr/test_advanced_analysis_brand_version.py`: 7 fail-before cases, 34 final adjacent passes (exit 0), 462 mirrors match; native rebuild and fresh GUI acceptance pending |
+| 2026-09-21 | Version 3.6.7 native Advanced Viewer metadata and expanded Eagle Eye function guard | The release version changed to 3.6.7 while the native Slicer application properties still declared patch 6. The Legion Consult foundation guard also assumed DX had only two choices and rejected the intended Alignment and Total Spine entries. Update the native patch declaration and make the guard assert the complete modality-specific catalogue without changing runtime routing. | `test_advanced_analysis_brand_version.py::test_native_application_properties_match_workstation_version` and `test_legion_consult_foundation.py::test_launcher_offers_native_and_legion_consult_for_supported_modalities` both failed in the 3.6.7 publication gate before the correction. |
+
+| 2026-09-15 | Advanced Analysis header/menu and compact title | Original action dispatch with custom icons; no case identifiers in OS title; monitor-contained resident geometry; preserve hidden startup | `test_analysis_presentation.py`, `test_advanced_analysis_brand_version.py`: 40 final adjacent passes, 463 mirrors; embedded-PythonQt live acceptance pending |
+
+| 2026-09-15 | Advanced Analysis startup timeout after presentation installation | Keep presentation ownership in Python module scope because PythonQt native windows reject arbitrary attributes | `test_install_supports_pythonqt_windows_that_reject_python_attributes`: fails before fix; 41 focused passes after; embedded resident probe exit 0; source-workstation button launches viewer and renders MPR, custom icons and Models dispatch verified; 463 mirrors match |
+
+| 2026-09-15 | Empty Home scaffold and unrestricted module dropdown | Promote the real MPR action as Home; expose installed viewer tools while preserving Eagle Eye programmatic modules | `test_curated_menu_promotes_real_home_preserves_tools_and_hides_pipeline_entries`: fail before, 42 focused passes after; 463 mirrors match; fresh-process GUI acceptance pending |
+
+| 2026-09-15 | Curated dropdown changed label without opening panel | Preserve native action attachment; hide finder toolbar action across window promotion | `test_curating_never_removes_native_actions` fails before correction; 44 final focused passes, exit 0; 463 mirrors; second fresh native launch verifies all eight panels, Home returns to populated MPR with menu bar retained |
+
+| 2026-09-15 | Inconsistent Advanced Analysis panel contrast and missing grid-panel heading | Scope AI-PACS panel styling; add one header while preserving controls and intact native grids | `test_panel_branding_is_scoped_idempotent_and_preserves_controls`, `test_grid_panel_keeps_positions_spans_and_controls_below_brand_header`: fail before correction; 46 focused passes, exit 0; 463 mirrors; fresh native launch verifies all eight styled panels and return Home on primary display |
+
+| 2026-09-15 | Advanced window covers nearly all PACS; invisible numeric arrows across Qt themes | 70% available-screen normal geometry in native/resident paths; shared SVG numeric controls and explicit local-style integrations | Four default-geometry cases fail before; numeric contrast/stepping/limit/asset guards; 60 final launch/theme/package and 150 adjacent UI passes, exit 0; 464 mirrors; resident live size, Maximize/Restore and Up/Down verified; main Settings live and C++ rebuild pending |
+
+| 2026-09-15 | Startup welcome displays native 0.1.0 despite product title 3.6.6 | Correct only the known welcome greeting; preserve disclaimer, OK and checkbox state | `test_startup_notice_uses_product_version_without_changing_warning_or_consent` fails before; 51 focused passes, exit 0; 465 mirrors; live pending (no source/viewer window) |
+
+
+## OPT-35 preview metadata alignment (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Advanced preview file decode / metadata | Filesystem preview kept one record; DB prefix order could differ from pixels. Read selected headers in exact decode order; defer unsupported mapping to full loading. | `test_advanced_preview_metadata.py`: 3 failures before, 6 final guards. Load suite 280 passed / 4 xfailed / 1 xpassed; geometry suite 129 passed / 5 xfailed; fresh source GUI pending. |
+
+
+## OPT-23 background native loading-cover scope (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Native overlay show after viewport Hide | Background loading re-showed an independent opaque window over another page. Check live/visible anchor and loading intent on every scoped show. | `test_advanced_loading_cover.py`: new/reused hidden-anchor cases both failed before; completion while hidden covered; 46 focused tests passed, 467 mirrors match, fresh GUI pending. |
+
+## OPT-23 filter timing observability (2026-09-16)
+
+`test_advanced_filter_timing.py`: two fail-before missing-KPI guards; four final cases preserve synthetic MR/CT pixels and geometry, avoid PHI, and avoid false completion on skip/error. 30 focused passes; live control unavailable. No filter algorithm change.
+
+
+## OPT-35 / OPT-48 partial MPR admission (2026-09-16)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Existing Advanced volume -> MPR route | Explicit previews and 8-slice/104-metadata payloads were admitted as full. Block incomplete/inconsistent reuse with a recovery message and no I/O. | `test_mpr_partial_volume_admission.py`: nine failures before, ten final cases; 192 focused passes, 467 mirrors match, fresh-source GUI pending. |
+
+## OPT-35 decoded cache pairing (2026-09-17)
+
+`test_advanced_cache_integrity.py`: five fail-before cases for cache count mismatch and independent preview metadata growth; eleven final cases preserve Fast and multiframe semantics and full fallback. 391 expanded passes / four existing xfails / one quarantined xpass. Shared tab delivery belongs to Unify; fresh combined GUI gate pending.
+
+## OPT-35 / OPT-60 completed-load tab handoff (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Worker completion -> hidden patient tab -> activation | Successful hidden completion returned False, bypassed normal publication and leaked load ownership; positive preview count could skip full loading. Preserve identity-normalized pair, release owned event on all exits, publish without hidden rendering, replay original request with cancellation/token/liveness guards; clear on close. Old full same-series view cannot suppress a deferred replacement. | `test_inactive_load_result_handoff.py`: corrected clean-HEAD baseline 10 failures / 1 pass, plus follow-up same-series replacement failure; 25 final synthetic cases pass, including both backends, secondary identity and composed handoff. 214 final combined passes / 6 quarantined xfails, 467 mirrors match. Fresh combined GUI pending; release stage-config parity remains red. |
+
+
+## OPT-48 deferred MPR construction after teardown (2026-09-17)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Progress event pump -> deferred 3D construction | Teardown could run while painting the modal, then construction resumed against closed MPR. Recheck closed state before layout/VTK access inside dialog cleanup scope. | `tests/code/mpr/test_mpr_deferred_build_reentrancy.py`: 2 failures before, 4 final cases; 121 focused passes, exit 0. Fresh-source GUI pending. |
+
+
+## OPT-35 Advanced preview counter cold render (2026-09-17)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Generated preview label -> native text render | Pipe separator selects VTK MathText and imports Matplotlib on first render. Parenthesized status preserves counts with plain-text selection. | `test_advanced_counter_text_backend.py`: 3 fail-before, 3 pass-after; 49 combined passes plus builder mirror guard. Fresh-source live gate pending. |
+
+
+## OPT-35 mixed MR/SC presentation frames (2026-09-17)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Advanced whole-series volume -> heterogeneous presentation | Missing SC geometry and mixed dimensions/components caused rejection or grouping loss. Prepare immutable native frames with per-frame VOI/RGB and separate DICOM graphics; block spatial MPR/full-cache admission and Z growth. | `test_advanced_presentation_sequence.py`: loader failure before; 10 final cases, native offscreen switching and RGB assertions. 153 combined passes, exit 0; source GUI pending. |
+| Same-series refresh -> independent frames | Equal first-frame dimensions incorrectly skip a replacement tuple. | Same file: refresh guard fails with prior predicate restored in isolated process and passes with new tuple-identity check. |
+
+
+## OPT-35 DX for-presentation admission (2026-09-18)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Advanced DX admission -> native viewport | Valid projection image without IPP/IOP rejected as spatial stack. Admit exact DX presentation SOP through native nonspatial sequence; preserve full size, pixels, VOI and explicit spacing source. | `tests/code/viewer/test_advanced_presentation_sequence.py`: DX guard failed before; full 4528 x 6869 worker/native render passes. 132 focused + 1 mirror guard passes; GUI pending. |
+| Advanced DX spacing -> ruler label | Detector/uncalibrated coordinates could be labeled as ordinary mm. Label detector mm explicitly and uncalibrated pixels, scoped to presentation metadata. | Same file: two label failures before; three calibration label cases pass. |
+
+## Total Spine annotated measurement evidence (2026-09-19)
+
+| Boundary | Behavior and guard | Verification |
+|---|---|---|
+| Selected endplates -> canvas / export | Source-coordinate colored segments, extensions, explicit level/plate/angle; recalc replaces stale items, invalid geometry clears overlays; aspect-correct PNG and evidence PDF pages. | `tests/code/ai_imaging/test_total_spine_annotations.py`; 71 focused tests passed; synthetic PNG/PDF visually inspected; live GUI pending. |
+| CSVL / reader pedicle grade -> reference proposals | Available-body CSVL apex, stable heuristic and cephalad T11-L5 touched candidate remain separate from reader selections. Neutral requires reader grade zero; missing evidence stays unassessed. | Same synthetic guard file; no patient data in fixtures. |
+
+
+## Total Spine direct correction contract (2026-09-19)
+
+| Boundary | Contract | Evidence |
+| --- | --- | --- |
+| Editable source geometry / numbering / evidence export | Atomic whole-line moves and endpoint rotation; clickable body anchor with collision-safe remapping; visible pedicles and reference outlines; revoke stale grade/review; bounded undo; in-image aspect-correct perpendicular construction retains obtuse angles. | `tests/code/ai_imaging/test_total_spine_editing.py`: four initial failures before implementation, then mouse interaction and undo coverage. Focused Total Spine and builder selection: 84 passed. Mirror verifier: 468 pairs match. Native source workflow blocked before Total Spine entry (empty Advanced render / unavailable picker); not a GUI pass. |
+
+
+## Total Spine classic construction and native tab access (2026-09-19)
+
+| Boundary | Failure and correction | Guard / evidence |
+| --- | --- | --- |
+| Cobb evidence geometry | Detached translated illustration omitted actual endplate extensions. Project an in-image intersection onto original physical endplate lines; draw extensions, normals, right-angle squares and arc without changing measurements. | `test_total_spine_workspace.py::test_cobb_normals_start_on_actual_extended_endplates` failed before; collinearity and anisotropic orthogonality now pass. |
+| Eagle Eye entry / ownership | Popup-only tool hidden behind loaded-viewer modality left the editable UI inaccessible. Direct study-bound header button opens/reuses a native tab; popup remains a no-tab-host fallback. No decoder or shared-pipeline modification. | Two initial failures; direct real-window button, no-viewer entry, ownership/reuse, all-candidate visibility and adjacent suite: 126 passed. Source offscreen UI and private classic image inspected. Human fresh source launch requested; native acceptance pending, not passed. |
+
+
+### Fresh source native entry receipt (2026-09-19)
+
+The user explicitly requested launch with the test flag. No source main.py process
+or application window remained, so one .venv source instance was launched with
+AIPACS_TEST_SERVER=1. Authentication was not automated. Home became ready; fresh
+ping and 77-action discovery succeeded. Native Eagle Eye navigation showed the new
+header button. Clicking it opened the embedded Total Spine tab before Advanced had
+loaded any pixels. Background discovery returned eligible radiographs. Native
+selection/loading rendered both requested coronal and lateral source images, and
+switching projections preserved the loaded coronal image. Patient identifiers and
+receipts remain private. This verifies native entry, independent loading and display;
+it does not certify native endplate dragging, numbering changes, inference or export
+in this run. Those interaction/geometry contracts have automated/offscreen guards.
+The editor remains open for reader correction. No clinical result was signed.
+
+
+### Choose Function and results-first review (2026-09-19)
+
+This supersedes the preceding direct-header-button flow. Total Spine is selected
+through Choose Function alongside the existing DX/CR functions. The picker can
+resolve study modalities from the local catalog on an owned background worker
+before the viewer loads. Mixed-modality catalogs ask which image type to use.
+The separate Total Spine header button is removed.
+
+The preparation window requests a coronal image and a two-corner spine region;
+that second corner automatically runs the local ScolioVis detector. This minimal
+input is still required: projection descriptions alone are not reliable enough,
+and no validated automatic spine-region detector is installed. No acquisition or
+numbering confirmation is fabricated. Results include unnumbered endplates and a
+physical-pixel-aspect maximum-angle proposal with classic Cobb construction.
+Only successful nonempty results reveal the reusable Total Spine Alignment tab,
+appended after Reception Data. Cancellation or failure keeps preparation retryable.
+Lateral angles, rotation and clinical curve selection still require reader input;
+the coronal model does not silently run on a lateral image.
+
+Review controls use collapsible sections: numbering and endplate correction are
+expanded, while detection, calibration and detailed assessment are collapsed.
+Source image switching, report evidence gates and manual corrections are preserved.
+
+Regression: test_total_spine_workspace.py failed three new behavior guards before
+implementation (extra header button, premature tab, missing automatic transition).
+It also covers canceled/empty results, off-thread catalog resolution, physical-angle
+ordering and narrow-sidebar layout. Focused code suite: 131 passed, six third-party
+deprecation warnings. Mirror verification: 468 pairs match, no plugin-only files.
+Private offscreen preview reuses existing source-image proposals and was inspected;
+it is not a new AI inference receipt or live application acceptance. The existing
+source session responds to ping/list_actions but predates this revision. Fresh
+source launch/sign-in and native Choose Function -> preparation -> result-tab
+acceptance remain pending. No process restart or authentication was automated.
+
+
+### Total Spine direct candidate interaction (2026-09-19)
+
+| Defect | Guard | Correction | Evidence |
+| --- | --- | --- | --- |
+| Unnumbered bodies/endplates ignore mouse input; naming is disconnected from image selection | `test_unnumbered_candidate_click_drag_and_undo`, `test_candidate_endpoint_body_and_roi_corner_mouse_edits` | Interactive body, segment and endpoint items route validated edits without assigning anatomy; left naming panel follows selection | Selection failed before; 137 focused tests passed after; native revision test pending |
+| ROI click can invalidate detections without geometry change; invalid resize leaves misplaced handles | `test_roi_click_or_invalid_resize_keeps_candidates_and_restores_handles` | Preserve no-op state; redraw last valid ROI on rejection | Failed before, passed after |
+| Reparented result retains preparation zoom; expanded calibration overflows sidebar | `test_result_reparent_fits_image_to_settled_viewport`, `test_acquisition_controls_fit_when_expanded` | Owned queued fit and vertically stacked spacing controls | Automated and offscreen verification; fresh native test pending |
+
+
+## OPT-35 Advanced DOC/SC admission (2026-09-20)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| DOC/SC worker admission -> independent pages | Document pages without IPP/IOP entered spatial grouping. Admit exact SC/DOC by object type, preserve native RGB and skip enhancement; keep metadata nonspatial. | `tests/code/viewer/test_advanced_presentation_sequence.py`: two failures before at numbers 100000/7; native DOC scroll/reset, unchanged pixels and negative PDF boundary pass. 137 focused/adjacent/parity passes, exit 0; source GUI pending. |
+
+
+## OPT-35 DOC preparation memory estimate (2026-09-20)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Complete DOC page set -> preparation cap | Byte RGB charged as float64; seven modest pages rejected. Count retained native bytes plus bounded largest-page workspace and overlay allowance, keeping cap unchanged. | `test_document_budget_accounts_for_rgb_bytes_and_decode_workspace`: fail-before; seven pages accepted at budget, one byte below rejects before decode. 138 focused/parity passes; full affected seven-page worker/native offscreen pass; GUI pending. |
+
+## Eagle Eye selected-series analysis and progress (2026-09-20)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Viewport -> function input | Study-only handoff re-prompted for the current series and reused the previous series result. Carry exact UID, retain per-series review sessions, refuse missing-input fallback. | `test_eagle_eye_selected_series.py`: workspace identity, preferred spine loading and series-switch guards failed before; pass after. |
+| Worker -> activity UI | Shared preparation popups lacked a common activity bar; Lumbar only updated the host status. Show real stage text with nonmodal indeterminate activity and dispose on completion/teardown. | Common-dialog and Lumbar status guards failed before; pass after. |
+| Confirmed inputs -> computation | Alignment and Brain required redundant Run actions after Function/input preparation. Continue automatically without asserting clinical review. | Alignment auto-proposal and Brain confirmed-input guards failed before; pass after. |
+
+Validation: 12 new synthetic guards; 197 focused/adjacent/builder passes, exit 0;
+468 mirrors match. Fresh-source native acceptance is pending, not passed.
+
+## Eagle Eye preparation/result separation (2026-09-20)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Imaging Tools -> module review | Bone Age/MG result forms occupied the preparation sidebar. Publish available results into reusable module tabs and borrow the existing viewport without duplicating it. | `test_eagle_eye_result_tabs.py`: sidebar and result ownership tests failed before; six tests now cover ownership, cached-result nonactivation, viewer activation, Bone Age payload/feedback preservation and real MG panel construction. 94 related passes, exit 0; 468 mirrors match. Native VTK acceptance pending. |
+
+## Total Spine explicit analysis actions (2026-09-20)
+
+| Boundary | Correction | Guard |
+|---|---|---|
+| Preparation/review -> action discovery | Expose separate top-level ROI, AI detection and angle-measurement actions; explicitly label dismiss as Hide, not an analysis continuation. Preserve automatic ROI start and review flags. | `test_total_spine_analysis_actions.py`: two failures before; pass after. 78 focused/adjacent/builder passes, exit 0; 468 mirrors match. Native gate blocked by unavailable local Test Control. |
+
+
+## Spine progress and assigned-anchor numbering (2026-09-20)
+
+| Boundary | Correction | Guard |
+|---|---|---|
+| Worker -> progress display; assigned body -> sequence | Publish real completed-stage counts for detection/SAM, never time-based invented percentages; include assigned anchors and reviewable exceptions in numbering with one undo. | `test_spine_progress_numbering.py`: three initial failures; count display, assigned L4 propagation, exception/undo, cancellation guards. 81 related passes; native GUI pending unavailable Test Control. |
+
+
+## OPT-35 Advanced CT stack and preview continuity (2026-09-20)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Preview files -> full display order | Filesystem prefix had different direction. Restrict full SeriesGeometryIndex with unchanged anatomical policy and subset-consistent mappings. | `test_advanced_preview_metadata.py`: three fail-before order cases; native preview/full displayed SOP continuity; local two 392-frame CT pixel/order checks. |
+| Worker header -> scroll window resolution | Reopened DICOM despite valid already-read header. Carry and consume source-window provenance. | Same file: resolver spy fails before, returns exact WW/WC without resolver disk call after. |
+| Large Advanced drag -> coalesced target | Per-event cap discarded fast mouse distance and endpoint overshoot. Preserve proportional target and clamp it only in Advanced large stacks. | Same file: three fail-before cases, other-backend negative guard. Broad suite 208 pass/4 existing xfail; native extra guard 1 pass. Live gate open. |
+
+
+OPT-35 large-CT final receipt: `test_older_cached_metadata_resolves_header_only_once`
+failed at three resolver calls before memoization, then passed at one. This complements
+the new worker provenance path for older cached payloads. Combined suite 210 passed /
+4 existing quarantined xfailed, exit 0; source live acceptance still open.
+
+
+## OPT-35 Advanced redundant spatial render (2026-09-20)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Native SetSlice -> visual preparation -> final draw | Native SetSlice rendered before annotations, followed by another Python render. Prepare visuals once at native window StartEvent only in Advanced; clean observer after completion/error. | `test_native_preview_to_full_keeps_display_sop_direction` fails before at 2 draws; verifies 1 draw, captured-pixel equality to legacy, zoom/SOP continuity, fast draw and injected-error recovery. Final 253 passed/4 existing xfailed, exit 0; live gate open. |
+
+
+## Grouped sidebar late-study generation (2026-09-20)
+
+| Boundary | Defect and correction | Guard |
+|---|---|---|
+| Open-tab Study-set back-fill -> grouped thumbnail sidebar | The metadata sink accepted a late study, but `_multistudy_thumbs_rendered` treated an in-flight two-study snapshot as final. A simultaneous prefetch also discarded the newer target set. Compare immutable ordered Study/Series generation signatures, supersede the existing bounded build on topology change, and queue exactly one follow-up prefetch. The existing disk-readiness snapshot rehydrates ready borders for the replacement; unchanged generations remain no-ops. No download, decode, viewer or GUI-thread I/O path changed. | `test_late_study_growth_supersedes_active_grouped_generation_and_rehydrates_ready` and `test_late_study_growth_queues_one_followup_prefetch` both failed before the correction. Final focused boundary: 125 passed; expanded Local/Server/sidebar/identity/lifecycle boundary: 259 passed; exits 0. Fresh-source multi-study GUI verification remains pending. |
+
+
+## Guided spine review dependencies (2026-09-20)
+
+| Boundary | Correction | Guard |
+|---|---|---|
+| Result selection -> required evidence | Per-result status, contextual left controls, missing-reference placement, optional whole-spine naming, geometry proposals with explicit confirmation. | `test_spine_guided_review.py`: two initial failures, four final behavioral guards including affected-only invalidation. |
+| Assessment update -> Cobb approval | Preserve confirmed endplates when only apex/assessment selection changes; invalidate when endplate evidence changes. | `test_apex_update_keeps_confirmed_endplates`: failed before fix, passed after. 82 related tests pass; native gate pending unreachable Test Control. |
+
+
+## EchoMind Reception normal-template import (2026-09-20)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Reception -> template library -> report model | Verified account priority, current-modality/personnel filters, reviewed local copies, bounded off-thread GET/import, stale-session rejection, preserved provenance/edits, explicit template-only normal findings. Unresolved remote modality remains unknown after restart. | `tests/code/echomind/test_reception_templates.py`, `tests/gui/test_reception_template_ui.py`, `tests/live/test_reception_template_reporting.py`; initial five failures and restart regression reproduced before fixes. See `docs/echomind/RECEPTION_NORMAL_TEMPLATES_2026-09-20.md` for synthetic provider evidence and blocked live source acceptance. |
+
+EchoMind template final receipt: 332 focused/offscreen/edition-stage tests passed, exit 0; 470 plugin mirrors matched. Synthetic company-provider tests passed for five modalities plus the scoped obstetric case after correcting its laterality-aware assertion. Native source GUI and authenticated Reception import remain blocked on the documented local control connection.
+
+### Reception organization and final editing (2026-09-20)
+
+| Date | Boundary | Regression and evidence |
+| --- | --- | --- |
+| 2026-09-21 | Choice bank -> organization -> report template | A real mammography source lost its FL parent/child association and classified a BI-RADS choice as baseline normal. Two guards failed before correction. Version 4 preserves explicit conditional options and locally prevents assessment labels from becoming automatic normals. Template-only merging checks measurements, laterality, alternatives and positive benign details. 184 focused/offscreen/edition checks and eight synthetic provider checks pass; real mammography remains physician-review-only. See `docs/echomind/TEMPLATE_MERGE_VALIDATION_2026-09-21.md`. |
+
+| Date | Boundary | Regression and evidence |
+| --- | --- | --- |
+| 2026-09-21 | Template organization -> reviewed library -> template report | Named multi-sentence pathology codes and fillable fields were excluded from the published normal-only draft. Source-ID-based labels and conditional code/field blocks now survive editing and reload. Source-preservation/publish guard failed before the change. Template-scoped prompts require explicit activation and reject invented/ambiguous code expansion. 180 focused/offscreen/edition tests pass; 470 mirrors match; three synthetic live GapGPT activation/cancellation cases pass. Native GUI remains blocked. |
+
+September 21 follow-up: organization explicitly uses `gpt-5.6-sol` through the
+saved EchoMind/GapGPT connection. Two provider-selection/no-fallback guards failed
+with the prior Terra model and now pass. Prompt version 2 preserves source IDs and
+classifies mixed/uncertain blocks conservatively. Combined suite: 170 passed;
+470 mirror pairs match. Synthetic live GapGPT request passed; native GUI blocked.
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Downloaded template -> organizer -> saved draft -> reviewed library | Sequential worker calls; exact source-ID coverage; separate source-preserving drafts; explicit edited publication; idempotent retries; cancellation/session-change discard; stale-edit rejection. HTML conversion preserves table cells, hex entities and numeric inequalities. | `test_template_organization.py`: nine initial failures. Extended `test_reception_template_ui.py` verifies worker execution, edit/publish and cancel after refresh. 149 focused tests and 19 edition-stage tests passed; native source GUI remains pending. |
+
+### Default regional Turbo template retention guards
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Default regional Turbo -> selected normal template | Preserve the shared template-aware prompt when a normal template is supplied; retain V2 generation only for untemplated requests. | `tests/code/echomind/test_turbo_supplied_normal_template.py`: five failures reproduced before correction; six modality guards and unchanged no-template path now pass. Combined prompt/import/offscreen suite: 168 passed; 19 edition-stage tests passed; 470 mirrors match. Native GUI acceptance remains pending. |
+
+### EchoMind bilingual template preservation (2026-09-21)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Source template -> linked storage -> report translation | Preserve authored Persian, reject changed units/slots, prepare before publishing, bind wording to originating report and retain through Correction. | `test_bilingual_templates.py` initially reproduced four missing-behavior failures; independent review reproduced unit/slot acceptance and mixed-language detection failures. 239 focused guards pass; native GUI and clinical acceptance pending. See `docs/echomind/BILINGUAL_TEMPLATE_VALIDATION_2026-09-21.md`. |
+
+### Nuitka Python 3.13 async-finally compatibility (2026-09-21)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Patient sidebar async cleanup -> Nuitka Stage 6 source transformation | Preserve the exact visible-slot cleanup semantics with an explicit loop; avoid the Nuitka 4.1.3/Python 3.13 internal `listcomp_1__.0_clone` assertion caused by a comprehension inside the coroutine's `finally` block. | `tests/code/builder/test_release_candidate_packaging.py::test_nuitka_avoids_comprehensions_in_async_finally_cleanup` failed four times before the correction. The real 3.6.7 candidate failed at Stage 6 with the same compiler assertion, then completed Stages 6-10 after the correction. |
+| Root candidate coordinator -> interrupted Nuitka release checkpoint | Convert a stale `current_stage` to an explicit failed checkpoint only after the recorded child is gone, validate that it belongs to `{0,6,7,8,9,10}`, and resume without the backend's mutually exclusive fresh-run `--release` switch. | `test_candidate_resume_converts_interrupted_release_stage_to_failed` covers the Stage 10 interruption; the real 3.6.7 candidate reproduced the prior `--release requires a fresh complete release pipeline` rejection, then resumed only Stage 10 and completed all three Nuitka installers with coherence exit 0. |
+
+### Breast and Bone Age local engine boundary (2026-09-21)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| MG/DX worker -> prepared Eagle Eye engine | Prefer verified local engine bundles on the server-edition development PC; retain remote route when absent. Reject missing/corrupt model and random FCOS fallback; no Bone API training side effect. | `test_eagle_eye_local_engines.py`: routing guard failed before the UI branches; source/bundle/sex/cancellation guards pass. Live GUI and clinical parity remain separate. |
+| Local bundle -> automatic UI selection | Require a successful synthetic smoke receipt bound to the manifest revision; reject stale/unqualified bundles and mismatched stacker feature counts. Preserve all named ensemble members when adapting serialized tuples. Use the actual attachment-directory constant. | Qualification, tuple-adapter and attachment guards each failed before their correction. The real Breast smoke exposed a nine-versus-four feature mismatch; Breast remains on its existing remote route pending matching source/weights. |

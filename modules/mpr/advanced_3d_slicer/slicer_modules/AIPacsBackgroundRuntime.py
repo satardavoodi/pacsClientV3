@@ -91,6 +91,7 @@ class Runtime:
             spec = importlib.util.spec_from_file_location("aipacs_resident_startup", os.environ["AIPACS_RESIDENT_STARTUP"])
             self.startup = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.startup)
+            self.startup.install_presentation()
         elif window:
             slicer.app.exit(1)
             return
@@ -218,7 +219,9 @@ class Runtime:
                 geometry = [int(value) for value in geometry]
                 if any(abs(value) > 32768 for value in geometry) or min(geometry[2:]) < 100:
                     raise ValueError("Invalid viewport geometry")
-                window.setGeometry(*geometry)
+                self.startup.prepare_window_geometry(geometry)
+            elif not self.guard.promoted:
+                self.startup.prepare_window_geometry()
         self.guard.promote()
         window.showNormal()
         window.raise_()

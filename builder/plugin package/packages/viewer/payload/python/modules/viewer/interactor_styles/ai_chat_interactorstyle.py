@@ -375,6 +375,13 @@ class MamoWorker(QThread):
     def run(self):
         try:
             # URL = f"{self.base_url}/api/v1/run_by_study"
+            from modules.ai_imaging.eagle_eye_engines.service import available, run_study
+            if available('breast'):
+                out = run_study('breast', self.study_uid, threshold=self.det_eval_thr,
+                                cancelled=lambda: self.canceled)
+                if not self.canceled:
+                    self.finished.emit(out)
+                return
             URL = f"{self.breast_url}/api/v1/run_full_analysis"
 
             payload = {
@@ -571,6 +578,19 @@ class BoneAgeWorker(QThread):
 
     def run(self):
         try:
+            from modules.ai_imaging.eagle_eye_engines.service import available, run_study
+            if available('bone-age'):
+                data = run_study('bone-age', self.study_uid, sex=self.sex,
+                                 cancelled=lambda: self.canceled)
+                if self.canceled:
+                    return
+                self.data = data
+                saved = self._save_result_json(data)
+                if saved is None:
+                    raise RuntimeError('The local Bone Age result could not be saved.')
+                data['_json_path'] = str(saved)
+                self.finished.emit(data)
+                return
 
             # endpoint سرویس سن استخوان
             url = f"{self.boneage}/predict"
@@ -1030,7 +1050,11 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             patient_widget._preferred_eagle_eye_mode = mode
             # The chosen study is not necessarily the tab's primary one.
             patient_widget._preferred_eagle_eye_study_uid = resolution.study.study_uid
-            patient_widget.switch_right_panel('ai_module')
+            callback = getattr(self, '_workspace_open_callback', None)
+            if callable(callback):
+                callback()
+            else:
+                patient_widget.switch_right_panel('ai_module')
             return True
         except Exception as exc:
             print(f"[EAGLE-EYE] failed to open the Eagle Eye tab: {exc}")
@@ -1056,6 +1080,10 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             print(f"[EAGLE-EYE] could not log the resolution: {exc}")
 
     def open_ai_module(self):
+        callback = getattr(self, '_workspace_open_callback', None)
+        if callable(callback):
+            callback()
+            return
         if self.patient_widget is not None:
             try:
                 metadata_fixed = getattr(self.image_viewer, 'metadata_fixed', {}) or {}
@@ -1096,7 +1124,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         det_thr = dlg.value()
 
         # 2) Loading overlay (consistent with Eagle Eye tab)
-        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        from modules.ai_imaging.background_analysis import BackgroundProgress as AiPacsLoadingOverlay
         from PySide6.QtCore import Qt as QtCore_Qt, QTimer
         
         main_window = self.image_viewer.vtk_widget.window()
@@ -1106,14 +1134,15 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             status="Processing Mammography Analysis",
             subtitle="Please wait while the AI analyzes the images"
         )
-        loading_overlay.setWindowModality(QtCore_Qt.ApplicationModal)
+        loading_overlay.setWindowModality(QtCore_Qt.NonModal)
         
         # Store reference to overlay for cleanup
         overlay_ref = {'overlay': loading_overlay, 'timer': None}
 
         # 3) Worker
         breast_url = get_server_url('breast')
-        if not breast_url:
+        from modules.ai_imaging.eagle_eye_engines.service import available
+        if not breast_url and not available('breast'):
             show_message(
                 "Breast AI service URL is not configured. "
                 "Go to Settings > Server Settings > AI Service URL, approve, then save URLs."
@@ -1228,7 +1257,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         }
 
         # 1) Loading overlay (consistent with Eagle Eye tab)
-        from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
+        from modules.ai_imaging.background_analysis import BackgroundProgress as AiPacsLoadingOverlay
         from PySide6.QtCore import Qt as QtCore_Qt, QTimer
         
         main_window = self.image_viewer.vtk_widget.window()
@@ -1238,12 +1267,13 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             status="Estimating Bone Age",
             subtitle="Please wait while the AI analyzes the bone structure"
         )
-        loading_overlay.setWindowModality(QtCore_Qt.ApplicationModal)
+        loading_overlay.setWindowModality(QtCore_Qt.NonModal)
         
         # Store reference to overlay for cleanup
         overlay_ref = {'overlay': loading_overlay, 'timer': None}
         boneage_url = get_server_url('boneage')
-        if not boneage_url:
+        from modules.ai_imaging.eagle_eye_engines.service import available
+        if not boneage_url and not available('bone-age'):
             try:
                 AiPacsLoadingOverlay.hide_overlay(loading_overlay, fade_ms=0, delay_ms=0)
             except RuntimeError:

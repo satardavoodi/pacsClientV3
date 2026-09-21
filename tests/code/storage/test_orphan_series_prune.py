@@ -117,6 +117,49 @@ def test_flag_off_is_noop(tmp_path, monkeypatch):
     assert db.find_series_pk("V.2") is not None
 
 
+def test_present_series_uses_known_instance_path_without_listing(tmp_path, monkeypatch):
+    """A healthy series must not enumerate its whole cold directory on open."""
+    db = _setup(tmp_path, monkeypatch)
+    src = tmp_path / "dicom"; src.mkdir()
+    patient_pk = db.insert_patient("P7", "N7")
+    study_pk = db.insert_study("STUDY.FAST", patient_pk)
+    _series_with_rows(
+        db, study_pk, 1, "FAST.1", 40,
+        src / "STUDY.FAST" / "1", with_files=True,
+    )
+    list_calls = []
+    real_listdir = db.os.listdir
+
+    def tracked_listdir(path):
+        list_calls.append(str(path))
+        return real_listdir(path)
+
+    monkeypatch.setattr(db.os, "listdir", tracked_listdir)
+
+    assert db.prune_orphan_series_for_study(
+        "STUDY.FAST", source_root=str(src)
+    ) == []
+    assert list_calls == []
+
+
+def test_missing_sample_path_falls_back_before_any_prune(tmp_path, monkeypatch):
+    """One stale instance row must not hide surviving DICOMs in the folder."""
+    db = _setup(tmp_path, monkeypatch)
+    src = tmp_path / "dicom"; src.mkdir()
+    patient_pk = db.insert_patient("P8", "N8")
+    study_pk = db.insert_study("STUDY.FALLBACK", patient_pk)
+    folder = src / "STUDY.FALLBACK" / "1"
+    series_pk = _series_with_rows(
+        db, study_pk, 1, "FALLBACK.1", 3, folder, with_files=True,
+    )
+    (folder / "Instance_0001.dcm").unlink()
+
+    assert db.prune_orphan_series_for_study(
+        "STUDY.FALLBACK", source_root=str(src)
+    ) == []
+    assert db.find_series_pk("FALLBACK.1") == series_pk
+
+
 def test_find_orphan_series_partial_only(tmp_path, monkeypatch):
     db = _setup(tmp_path, monkeypatch)
     src = tmp_path / "dicom"; src.mkdir()
@@ -142,4 +185,20 @@ def test_source_wiring_present():
     assert "ORPHAN_SERIES_PRUNED" in db
     assert "study_has_files" in db            # the cache-evicted guard
     open_src = (_REPO_ROOT / "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py").read_text(encoding="utf-8", errors="ignore")
-    assert "prune_orphan_series_for_study" in open_src   # hooked at study open
+    assert "prune_orphan_series_for_study" in open_src   # worker-owned study-open self-heal
+
+
+def test_orphan_prune_is_owned_by_existing_workers_not_gui_open():
+    open_src = (_REPO_ROOT / "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    gui_prefix = open_src.split("def _background_setup_thread", 1)[0]
+    assert "prune_orphan_series_for_study" not in gui_prefix
+
+    patient_worker = (_REPO_ROOT / "PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_thumbnails.py").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    assert "prune_orphan_series_for_study" in patient_worker
+    assert "prune_orphan_series_for_study" in open_src.split(
+        "def _background_setup_thread", 1
+    )[1]

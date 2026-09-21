@@ -7,7 +7,12 @@
   "package_kind": "runtime_payload",
   "build_strategy": "runtime_payload",
   "source_paths": [
-    "modules/mpr/advanced_3d_slicer"
+    "modules/mpr/advanced_3d_slicer",
+    "Qss/numeric_controls.py",
+    "Qss/icons/numeric-up.svg",
+    "Qss/icons/numeric-down.svg",
+    "Qss/icons/numeric-up-disabled.svg",
+    "Qss/icons/numeric-down-disabled.svg"
   ],
   "python_paths": [
     "python"

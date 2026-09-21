@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import logging
 import math
@@ -471,6 +471,25 @@ def assert_advanced_order_contract(metadata: dict[str, Any] | None, *, caller: s
             f"[ADVANCED_ORDER_CONTRACT_ERROR] caller={caller} current_hash={current_hash} expected_hash={geometry_index.display_order_hash}"
         )
     return geometry_index
+
+
+def preview_geometry_prefix(index: SeriesGeometryIndex, count: int) -> SeriesGeometryIndex:
+    """Restrict the full display order without recomputing its anatomical policy."""
+    display = index.display_instances_order[:max(1, int(count))]
+    paths = {inst.instance_path for inst in display}
+    geometry = tuple(inst for inst in index.sorted_instances_geometry_order if inst.instance_path in paths)
+    geometry_positions = {inst.instance_path: i for i, inst in enumerate(geometry)}
+    display_positions = {inst.instance_path: i for i, inst in enumerate(display)}
+    return replace(index,
+        sorted_instances_geometry_order=geometry, display_instances_order=display,
+        dicom_files_for_itk=tuple(inst.instance_path for inst in display),
+        sop_uid_by_display_index=tuple(inst.sop_uid for inst in display),
+        ipp_by_display_index=tuple(inst.image_position_patient for inst in display),
+        iop_by_display_index=tuple(inst.image_orientation_patient for inst in display),
+        display_order_hash=_hash_paths([inst.instance_path for inst in display]),
+        geometry_order_hash=_hash_paths([inst.instance_path for inst in geometry]),
+        display_to_geometry_index=tuple(geometry_positions[inst.instance_path] for inst in display),
+        geometry_to_display_index=tuple(display_positions[inst.instance_path] for inst in geometry))
 
 
 def stamp_metadata_with_geometry_index(

@@ -11,9 +11,26 @@
 > note. §1–§12 are the original review (frozen as written); §13–§15 record what
 > was applied, diagnosed, and mapped on 2026-05-24.
 
+> **Current integration correction — 2026-09-13:** The Download Manager and
+> `SeriesIntentCoordinator` remain the priority authority, but the home controller still contains
+> a stranded pre-Zeta right-panel click/direct-downloader cluster. It must not be revived as a
+> fallback or confused with the live worker route. Its Git provenance, API drift, identity defect,
+> and guarded retirement sequence are documented in
+> `docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`.
+
 ---
 
 ## 1. Executive Summary
+
+**September 15 current-source correction:** the historical claim that all
+response reads accumulated an exact length was false for the four-byte header.
+The bounded OPT-04 follow-up fixes partial headers, ten-broadcast false failure,
+invalid-stream retirement and request/connect self-deadlock, without changing UI,
+Overall Progress, encoding or scheduling. Historical tolerant-decode/payload-key
+tests disagree with current source because July 25 removed those helpers; they
+are not silently restored in this slice. See
+`docs/reports/DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md` for evidence, 189
+boundary passes, five builder passes, remaining baseline debt and source GUI gate.
 
 The Zeta Download Manager is a well-layered, recently-hardened subsystem. The core
 runtime path — socket connect → metadata fetch → per-series socket download →
@@ -104,9 +121,11 @@ home_download_service → viewer (progressive load) + thumbnail manager
 ```
 
 **Note on transport:** bulk DICOM bytes travel over the **socket** protocol
-(`SocketDicomClient.download_batch`, endpoint `GetSeriesImages`), not gRPC. Only
-*metadata* uses gRPC. `docs/pipelines/download-pipeline.md` is otherwise accurate
-but its data-flow diagram says "Series downloaded via gRPC stream" — minor drift.
+(`SocketDicomClient.download_batch`, endpoint `GetSeriesImages`), not gRPC. The
+2026-05-24 wording that metadata used gRPC referred to compatibility naming at that time;
+the current `GrpcMetadataClient` adapter is socket-backed. The stale gRPC diagram in
+`docs/pipelines/download-pipeline.md` was replaced by a current-source socket reference on
+2026-09-13.
 
 ---
 
@@ -714,3 +733,13 @@ identified, not yet applied.
 *Document updated 2026-05-24: §1–§12 = original review (frozen); §13–§15 record the
 applied work, the delay diagnosis, and the path map. Optimization paused — resume
 per §13.*
+
+
+## 2026-09-16 Advanced remote-drop handoff
+
+A never-local series remains awaiting download after accepted viewport drop. Intent
+records say Downloading but do not prove worker/network progress. Read-only evidence,
+21:31-21:37 window, owner boundary and next correlation steps are recorded in
+[Download Pipeline](../../pipelines/download-pipeline.md#2026-09-16-vtk-handoff-remote-drop-waits-without-visible-download).
+Keep this separate from the now-guarded VTK floating-cover fix; no download runtime
+change or clinical retry was performed by that task.

@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QVBoxLayout, QTabWidget, QHBoxLayout, QWidget, QLabel
+    QMainWindow, QVBoxLayout, QTabWidget, QHBoxLayout, QWidget, QLabel, QPushButton
 )
 from .service_tab.imaging_tab import ImagingToolsTab
 from PySide6.QtCore import QTimer, Signal, Qt
@@ -94,28 +94,41 @@ class AiMainWindow(QMainWindow):
             self._app_theme_manager.themeChanged.connect(self._on_app_theme_changed)
 
         self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
-
-        if self.eagle_eye_mode == 'brain_mri':
-            from modules.ai_imaging.eagle_eye_brain.widget import BrainVolumetryWidget
-            self.imaging_tab = None
-            self.brain_tab = BrainVolumetryWidget(study_uid=study_uid)
-            self.tab_widget.addTab(self.brain_tab, 'Eagle Eye Brain')
-            QTimer.singleShot(0, self.eagle_eye_ready.emit)
-            QTimer.singleShot(0, self.brain_tab.choose_study_workflow)
-            return
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        actions = QHBoxLayout()
+        actions.addWidget(QLabel("Eagle Eye | Study workspace"))
+        actions.addStretch()
+        self.function_button = QPushButton("Choose Function")
+        self.function_button.setObjectName("eagleEyeChooseFunction")
+        self.function_button.setMinimumSize(240, 52)
+        self.function_button.setCursor(Qt.PointingHandCursor)
+        self.function_button.setToolTip("Choose an analysis for this study. Opening Eagle Eye does not run analysis.")
+        self.function_button.setEnabled(bool(str(study_uid or "").strip()))
+        actions.addWidget(self.function_button)
+        layout.addLayout(actions)
+        layout.addWidget(self.tab_widget)
+        self.setCentralWidget(central)
 
         # Imaging Tools
         self.imaging_tab = ImagingToolsTab(study_uid=study_uid, eagle_eye_mode=self.eagle_eye_mode)
         self.tab_widget.addTab(self.imaging_tab, "Imaging Tools")
+        from modules.ai_imaging.eagle_eye_workspace import EagleEyeWorkspaceController
+        self.workspace_controller = EagleEyeWorkspaceController(self)
+        self.function_button.clicked.connect(self.workspace_controller.choose_function)
+        self.imaging_tab.patient_widget._eagle_eye_function_action = self.workspace_controller.choose_function
 
         self.dataset_tab = None
         self.model_training_tab = None
         self.reception_tab = None
-        self.brain_tab = None
         self._lazy_tab_placeholders = {}
         self._lazy_tab_building = set()
         self._install_lazy_tabs()
+        from modules.ai_imaging.eagle_eye_result_tabs import AnalysisResultTabs
+        self.analysis_result_tabs = AnalysisResultTabs(self)
+        result_signal = getattr(self.imaging_tab, 'analysis_result_ready', None)
+        if result_signal is not None:
+            result_signal.connect(self.analysis_result_tabs.show_result)
 
         # Sync reception context with PACS-backed imaging widget as soon as possible.
         self._sync_reception_patient_context()
@@ -131,7 +144,6 @@ class AiMainWindow(QMainWindow):
 
     def _install_lazy_tabs(self) -> None:
         for key, title in (
-            ("brain", "Brain Volumetry"),
             ("dataset", "Data Set"),
             ("model_training", "Model Training"),
             ("reception", "Reception Data"),
@@ -142,7 +154,6 @@ class AiMainWindow(QMainWindow):
 
     def _ensure_lazy_tab(self, key: str):
         existing = {
-            "brain": self.brain_tab,
             "dataset": self.dataset_tab,
             "model_training": self.model_training_tab,
             "reception": self.reception_tab,
@@ -157,11 +168,7 @@ class AiMainWindow(QMainWindow):
         title = self.tab_widget.tabText(index)
         self._lazy_tab_building.add(key)
         try:
-            if key == "brain":
-                from modules.ai_imaging.eagle_eye_brain.widget import BrainVolumetryWidget
-                widget = BrainVolumetryWidget(study_uid=self._study_uid)
-                self.brain_tab = widget
-            elif key == "dataset":
+            if key == "dataset":
                 from .service_tab.dataset_tab import DataSetTab
                 widget = DataSetTab(
                     study_uid=self._study_uid,
@@ -208,9 +215,6 @@ class AiMainWindow(QMainWindow):
         (see `_hp_modules.add_new_tab_widget`), so every execution shows up as its own
         entry. Never raises into the caller.
         """
-        if getattr(self, 'eagle_eye_mode', None) == 'brain_mri':
-            QTimer.singleShot(0, self.brain_tab.choose_study_workflow)
-            return True
         try:
             imaging_tab = getattr(self, 'imaging_tab', None)
             if imaging_tab is None:
@@ -227,6 +231,7 @@ class AiMainWindow(QMainWindow):
 
     def _on_imaging_tab_ready(self):
         """Called when ImagingToolsTab is fully loaded and rendered."""
+        self.function_button.setEnabled(True)
         self._sync_reception_patient_context()
         print("[AiMainWindow] Imaging tab fully loaded, emitting eagle_eye_ready signal")
         # Emit immediately - no delay needed
@@ -290,7 +295,7 @@ class AiMainWindow(QMainWindow):
             except Exception:
                 pass
         try:
-            if w is self.imaging_tab:
+            if w is self.imaging_tab or getattr(w, 'uses_imaging_viewer', False):
                 self.imaging_tab.patient_widget.on_tab_activated()
             else:
                 self.imaging_tab.patient_widget.on_tab_deactivated()
@@ -325,6 +330,19 @@ class AiMainWindow(QMainWindow):
             QPushButton:hover { background: #2d3748; }
             QPushButton:pressed { background: #0b1015; }
             QPushButton:disabled { color: #6b7280; background: #111827; border-color: #111827; }
+
+            QPushButton#eagleEyeChooseFunction {
+                background: #3182ce;
+                border: 2px solid #3182ce;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 10px 24px;
+            }
+            QPushButton#eagleEyeChooseFunction:hover { background: #2d3748; }
+            QPushButton#eagleEyeChooseFunction:pressed { background: #0b1015; }
+            QPushButton#eagleEyeChooseFunction:disabled {
+                color: #6b7280; background: #111827; border-color: #2d3748;
+            }
 
             QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox {
                 background: #0b1015;

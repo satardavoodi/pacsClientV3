@@ -2,8 +2,11 @@
 
 Every subsystem that owns a thread-pool, daemon thread, cache, subprocess,
 or open connection registers a shutdown callback here.  At application
-close `LifecycleManager.shutdown_all()` drains them in reverse-registration
+close `LifecycleManager.shutdown_all()` invokes them in reverse-registration
 order (LIFO) so dependees are released before dependencies.
+Callbacks run synchronously on the caller's thread. An asynchronous stop callback
+does not imply its workers have drained; timeouts are post-return diagnostics,
+not enforced deadlines. Callers must not register GUI-blocking waits here.
 
 Usage
 -----
@@ -39,6 +42,8 @@ class LifecycleManager:
         self._resources: List[Tuple[str, Callable[[], None], float]] = []
         # name → health_check_callable (returns True if healthy)
         self._health_checks: Dict[str, Callable[[], bool]] = {}
+        self._completion_probes: Dict[str, Callable[[], Optional[bool]]] = {}
+        self._last_shutdown: List[dict] = []
         self._shutting_down = False
 
     # ------------------------------------------------------------------
@@ -60,7 +65,8 @@ class LifecycleManager:
             Zero-arg callable that releases the resource.  Must be safe to
             call more than once (idempotent).
         timeout:
-            Max seconds to wait for the callback before moving on.
+            Advisory duration budget, checked only after the callback returns.
+            Does not interrupt a callback or enforce a deadline.
         """
         with self._lock:
             if self._shutting_down:
@@ -79,48 +85,111 @@ class LifecycleManager:
             self._health_checks[name] = check
 
     def unregister(self, name: str) -> None:
-        """Remove all entries with *name* (resource + health check)."""
+        """Remove all entries with *name*, including its completion probe."""
         with self._lock:
             self._resources = [
                 (n, cb, t) for n, cb, t in self._resources if n != name
             ]
             self._health_checks.pop(name, None)
+            self._completion_probes.pop(name, None)
+
+    def register_completion_probe(
+        self, name: str, probe: Callable[[], Optional[bool]],
+    ) -> None:
+        """Attach a read-only, nonblocking owner-state probe to a resource name.
+
+        Sampled once after its callback, on the shutdown caller's thread. True
+        confirms completion, False means pending, None means unknown. No waits,
+        I/O, event pumping, or Qt construction are allowed in probes. The manager
+        retains only primitive observations after shutdown, not owner closures.
+        """
+        with self._lock:
+            if self._shutting_down:
+                return
+            self._completion_probes[name] = probe
+
+    def last_shutdown_snapshot(self) -> List[dict]:
+        """Return copies of observations at callback return, not a live drain gate."""
+        with self._lock:
+            return [dict(record) for record in self._last_shutdown]
 
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
     def shutdown_all(self) -> Dict[str, Optional[str]]:
-        """Drain every registered resource in LIFO order.
+        """Invoke every registered callback synchronously in LIFO order.
 
         Returns a dict mapping resource name → ``None`` (success) or an
-        error string.  Errors are logged but never propagated — the
+        error string. Success means callback return, not asynchronous completion.
+        Errors are logged but never propagated — the
         shutdown sequence is never aborted by a single failure.
         """
         with self._lock:
+            if self._shutting_down:
+                log.info("[LIFECYCLE_SHUTDOWN] phase=reentrant_call_ignored")
+                return {}
             self._shutting_down = True
             snapshot = list(reversed(self._resources))
             self._resources.clear()
             self._health_checks.clear()
+            probes = dict(self._completion_probes)
+            self._completion_probes.clear()
+            self._last_shutdown = []
 
         results: Dict[str, Optional[str]] = {}
-        for name, callback, timeout in snapshot:
-            t0 = time.monotonic()
-            try:
-                callback()
-                elapsed = time.monotonic() - t0
-                if elapsed > timeout:
-                    msg = f"completed but exceeded timeout ({elapsed:.1f}s > {timeout:.1f}s)"
-                    log.warning("shutdown(%s): %s", name, msg)
-                    results[name] = msg
-                else:
-                    log.debug("shutdown(%s): ok (%.2fs)", name, elapsed)
-                    results[name] = None
-            except Exception as exc:
-                log.warning("shutdown(%s): error – %s", name, exc)
-                results[name] = str(exc)
-
-        with self._lock:
-            self._shutting_down = False
+        observations = []
+        try:
+            for ordinal, (name, callback, timeout) in enumerate(snapshot, 1):
+                log.info("[LIFECYCLE_SHUTDOWN] phase=callback_begin ordinal=%s owner=%s",
+                         ordinal, name)
+                t0 = time.monotonic()
+                outcome = "returned"
+                try:
+                    callback()
+                    elapsed = time.monotonic() - t0
+                    if elapsed > timeout:
+                        outcome = "over_budget"
+                        msg = f"completed but exceeded timeout ({elapsed:.1f}s > {timeout:.1f}s)"
+                        log.warning("shutdown(%s): %s", name, msg)
+                        results[name] = msg
+                    else:
+                        results[name] = None
+                except Exception as exc:
+                    elapsed = time.monotonic() - t0
+                    outcome = "error"
+                    log.warning("shutdown(%s): error – %s", name, exc)
+                    results[name] = str(exc)
+                log.info(
+                    "[LIFECYCLE_SHUTDOWN] phase=callback_return ordinal=%s owner=%s "
+                    "outcome=%s elapsed_ms=%.2f", ordinal, name, outcome, elapsed * 1000,
+                )
+                completion = "unknown"
+                probe_ms = 0.0
+                probe = probes.get(name)
+                if probe is not None:
+                    p0 = time.monotonic()
+                    try:
+                        answer = probe()
+                        if answer is True:
+                            completion = "complete"
+                        elif answer is False:
+                            completion = "pending"
+                    except Exception:
+                        completion = "probe_error"
+                    probe_ms = (time.monotonic() - p0) * 1000
+                observations.append({
+                    "ordinal": ordinal, "name": name, "callback_outcome": outcome,
+                    "callback_ms": elapsed * 1000, "owner_completion": completion,
+                    "probe_ms": probe_ms,
+                })
+                log.info(
+                    "[LIFECYCLE_SHUTDOWN] phase=owner_observation ordinal=%s owner=%s "
+                    "owner_completion=%s probe_ms=%.2f", ordinal, name, completion, probe_ms,
+                )
+        finally:
+            with self._lock:
+                self._last_shutdown = observations
+                self._shutting_down = False
         return results
 
     # ------------------------------------------------------------------

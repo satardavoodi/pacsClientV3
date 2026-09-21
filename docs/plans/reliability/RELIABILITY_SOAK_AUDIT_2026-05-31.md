@@ -1,5 +1,15 @@
 # AI-PACS Reliability / Soak Audit — 2026-05-31
 
+> **Current-source correction — 2026-09-13:** The measurements in this report remain
+> historical evidence for the processes and code exercised on 2026-05-31. The report's
+> statement that `ThumbnailManager.cleanup()` received the P1 theme disconnect is incorrect.
+> AST and current-source review show that the cited `cleanup()` belongs to
+> `CircularProgressborder`; commit `6617bca0` placed the intended manager disconnect there.
+> `ThumbnailManager` still connects `ThemeManager.themeChanged` and has no manager-level
+> disposal method. Therefore the short soak cannot validate manager ownership, and later claims
+> that controller/manager P1 was complete must not be inferred from these numbers. The current
+> issue is diagnosed but not fixed or guarded; see OPT-60 and `workstation-lifecycle.md`.
+
 Scope: reliability, stability and performance of the **repeated session workflow**
 (click patient → download → open → view → annotate/measure → close → repeat) and
 **long-running sessions**. Method: static audit of all major subsystems (four parallel
@@ -74,7 +84,9 @@ guards run via the local MCP on the real `.venv` Python 3.13.5, bypassing the sa
 - **P5** — DB pool dead-thread eviction (`database/_pool.py`).
 - **P2** — per-series `ThreadPoolExecutor` shut down in `_pw_series.py::_load_and_display_series_async` (`finally: executor.shutdown(wait=False)`).
 - **P3** — `_vc_switch.py::_schedule_async_load_and_switch._worker` now wraps the `_queue_on_ui_thread(_finish_on_ui)` marshal in try/except that clears the inflight guards on failure (stops a viewport going permanently dead).
-- **P1 (3 of 10 sites)** — `themeChanged` disconnect added to existing teardown methods: viewer-controller (`_vc_warmup.clear_all_caches_for_close`), patient-widget-core (`_pw_lifecycle.closeEvent`), thumbnail-manager (`thumbnail_manager.cleanup`).
+- **P1 was reported as 3 of 10 sites. Current correction:** the viewer-controller and
+  patient-widget-core teardown edits exist, but the supposed thumbnail-manager edit landed in
+  `CircularProgressborder.cleanup()` and did not create a manager teardown path.
 
 **Verification:** `py_compile` of all 8 edited files → `ALL_OK`; guard suites pass —
 `tests/code/database` + `test_diagnostic_logging_catchall` = **8 passed/0 failed**, and

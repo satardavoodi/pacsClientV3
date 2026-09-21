@@ -560,10 +560,8 @@ class _HPLayoutMixin:
         # Create the right panel widget
         self.right_panel_widget = RightPanelWidget()
 
-        # Connect signals - با لاگ برای تأیید
-        print("🔌 Connecting thumbnailClicked signal...")
-        self.right_panel_widget.thumbnailClicked.connect(self._on_right_panel_thumbnail_clicked)
-        print("✅ thumbnailClicked signal connected!")
+        # Home card ordinals must never cross into a patient tab as series keys.
+        self.right_panel_widget.seriesActionRequested.connect(self._on_right_panel_thumbnail_clicked)
         self.right_panel_widget.seriesInfoRequested.connect(self._on_right_panel_series_clicked)
 
         # Add to main layout

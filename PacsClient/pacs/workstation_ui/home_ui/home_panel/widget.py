@@ -180,8 +180,6 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         
         # ✅ رفع خطای اصلی: ایجاد ویژگی _background_tasks
         self._background_tasks = set()  # مجموعه‌ای برای مدیریت تسک‌های پس‌زمینه
-        # Guard to prevent duplicate patient widget opens
-        self._opening_studies = set()
         self._deferred_patient_studies_refresh = {}
         self._deferred_series_info_refresh = {}
         self._deferred_attachment_downloads = set()
@@ -193,6 +191,9 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         # ── Service Layer (keeps HomePanelWidget as a thin UI facade) ──
         self.db_service = HomeDbService()
         self.tab_service = HomeTabService(tab_widget, self.custom_tab_manager)
+        # Compatibility alias for older readers. HomeTabService is the sole
+        # mutable owner of patient-open admission state.
+        self._opening_studies = self.tab_service.opening_studies
         self.download_service = HomeDownloadService(tab_widget, self.custom_tab_manager)
         self.search_service = HomeSearchService(self)
 

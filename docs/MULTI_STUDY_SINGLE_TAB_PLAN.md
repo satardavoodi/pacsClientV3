@@ -1,5 +1,75 @@
 # Multi-Study Single-Tab Viewer — Implementation Record
 
+**2026-09-17 shared enumeration correction:** grouped Local uses the same exact
+catalog/offset/header contract while its inventory avoids one redundant type-stat
+per candidate. Fresh version validation is preserved. No first-paint latency
+acceptance yet: 334 code passes / 1 synthetic-symlink privilege skip; the 09:13 run
+predates this change. See the enumeration receipt in the UI-stall report. The
+Advanced first-render freeze in that run is a separately assigned owner fix.
+
+**2026-09-17 ownership correction:** duplicate Home setup inventory is removed
+only for single-study Local opens. Grouped Local continues complete aggregation
+and retains headers, study slots and exact-series storage mapping. New worker
+guards cover 2/4-study repeated-number, unnamed and cine records; expanded suite
+321 passes. This is code evidence, not a new multistudy live acceptance or a
+grouped-latency fix. Fresh-source GUI is pending. See the single-study ownership
+receipt in `reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`.
+
+**2026-09-17 Local admission follow-up:** the 23:40 source run has 39/34-card,
+two-study metadata waits of 6.570/27.004 seconds. The new optimization reuses
+version-checked positive pixel facts in the existing shared worker service across
+restart. It does not publish a partial grouped catalog or change study slots,
+duplicate-number allocation, exact paths, history order, cine counts or geometry.
+No facts are stored in thumbnail folders; first uncached classification remains.
+Fresh-source cold/reopen/restart GUI is pending. See the dated OPT-58/60 receipt
+in `reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md` and its 32-case guard.
+
+**2026-09-16 grouped-header follow-up:** show a header only after grid parenting while
+grouped paint is suppressed, constrain it to the existing card-column width and reserve
+its wrapped height before painting. No changes to study slots, previous-exam labeling,
+UID/path mapping or card counts. Four new 2/4-study Qt cases pass; 432 expanded passes /
+467 mirrors. Fresh source GUI is pending. Actual late discovery of a second study still
+causes the existing topology promotion and is not claimed solved by a geometry fix.
+See the 20:51-source/header receipt in the UI-stall report.
+
+**2026-09-16 sidebar ownership correction:** late queued primary files/entries and
+chunks are rejected during grouped ownership; an explicit grouped-render failure
+retains primary-study fallback, and a new grouped attempt cancels older chunks.
+Retiring/disposed owners cannot render. Grouped clear retires effects/callbacks and
+keeps cards parented until deletion; shared insertion establishes geometry before
+paint and counts cards rather than header rows. No study-slot, UID/path, history or
+frame/object identity changes. 428 focused passes; initial 466-pair mirror pass was
+followed by one unrelated Advanced Viewer drift on final recheck. Fresh-source visual
+acceptance pending. Synchronous grouped construction and GUI reads remain separate
+work. See the sidebar presentation receipt in the UI-stall report.
+
+**2026-09-16 partial metadata safety:** the patient metadata sink now reserves
+previously admitted study-local display handles before the unchanged study-offset
+projection. A late same-number series cannot steal a sibling's alias; a partial
+refresh resolves prior folder/path hints by Study/Series UID, not raw number.
+Foreign-study records cannot fill primary metadata before projection. Full initial
+allocation, study slots, count precedence and viewer execution remain unchanged.
+This is a prerequisite for catalog-first delivery, not its activation. Fifteen new
+behavioral guards, 181 + 107 adjacent passes and one existing stateful property
+pass; fresh-source GUI is pending. See the dated catalog-first review in
+`docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`.
+
+**Fresh-source follow-up, 11:52:59:** sampled MCP Local switches displayed exact
+Study/Series identities for a two-study / five-series case. Same-number still/cine
+also retained 25 images versus two objects / 424 frames. This supersedes the
+bootstrap-pending status above, not the remaining native-drag, Server, late-arrival,
+close/reopen or performance gates. See the report's scoped receipt and cine GUI stall.
+
+**2026-09-14 Home explicit-series entry:** double-clicking a Home thumbnail now requests the
+normal patient open/reuse flow, then resolves the selected Study/Series UID pair against the
+destination's current map. Home ordinals/offset keys are not portable. Repeated names/numbers,
+primary-bucket fallback and existing study offsets retain their contracts. Single click remains
+preview-only; name-based open does not automatically place a series. This supersedes the
+earlier existing-tab-only Home click note below. Code acceptance passes; the user's two-study
+server-open sample is log-corroborated. This is not verification of all series across both studies
+or the repeated/unnamed/cine matrix. Final header and semantic-refresh changes still need
+fresh-source live acceptance. See the thumbnail/priority provenance receipt and regression catalog.
+
 **Status:** ✅ Implemented and user-verified (2026-05-24).
 **Verified with:** patients **42471** (KNEE + ANKLE) and **43068** — both
 studies' thumbnails appear grouped in the viewer tab, drag-and-drop of a
@@ -14,7 +84,61 @@ study can be dragged into any viewport. All studies download.
 > thumbnail sidebar, the series-load path, or the right-panel thumbnails, read
 > the **Regression guardrails** section below first.
 
+> **Current integration note — 2026-09-13:** The offset-key viewer contract remains valid. Do not
+> extend it by passing a main-page card ordinal as series identity, and do not change generic
+> `ThumbnailManager` precedence to repair the right panel. The historical reason for the parallel
+> render/action paths and the identity-aware migration sequence are in
+> `docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`.
+
 ---
+
+## 2026-09-14 shared projection extraction
+
+**2026-09-16 presentation cadence:** projection/offset allocation remains unchanged.
+Normal qasync grouped rendering now reserves all known headers and fixed-size card
+slots, then prepares images/readiness off GUI and applies one card per yield through
+the same manager. Duplicate raw numbers use each study's persisted folder/PNG key;
+offsets remain UI-only. See the [bounded-build receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-16-bounded-cached-sidebar-build-opt-58--opt-60).
+Fresh source GUI is pending; late study topology and full inventory admission are
+not certified by the synthetic layout/cancellation guards.
+
+**Later Home click cutover:** main-page clicks now carry immutable study/series
+UIDs into the tab service, which resolves that tab's OWN key from its existing
+projection. Home display hints never become destination keys or storage paths.
+Missing/ambiguous targets fail closed and no tab is auto-created. This does not
+change the multi-study projection below, single-study viewer behavior, or numeric
+drag MIME. Source-live and installed acceptance are pending for this cutover;
+see the latest provenance record and `test_home_series_action.py`.
+
+The historical key, storage and ordering contracts below remain in force. The implementation
+of study-slot assignment and series-entry projection now lives in
+`PacsClient/utils/series_identity.py::build_multistudy_series_projection`; the controller
+`_rebuild_multistudy_series_index` calls that implementation instead of maintaining its own
+loop. The controller still owns its lifetime slot history, single-study bypass and the exact
+clinical-history/numeric sorting policy. The helper returns new owner-local maps and does
+not modify the input records or prior slot list. Cross-domain identity still uses `SeriesRef`.
+
+The guard `tests/code/viewer/test_unify_multistudy_projection.py` exercised 14 scenarios on
+the original implementation before extraction, then the same scenarios on the shared path.
+It now has 15 cases, including input ownership. Missing/identical descriptions do not affect
+identity; missing numbers continue through the existing socket normalizer; same-study
+collisions retain their numeric alias and exact folder. `02` remains the raw label/storage
+key, while multi-study UI keys retain their historical numeric conversion. Adding a later
+study does not reorder the keys of already-admitted studies. Slot-removal/reassignment
+semantics were not changed by this extraction.
+
+The focused adjacent suite is 171 passed, exit 0. The stateful test now consumes the same
+production projection and passes with 150 configured examples and up to 40 steps. Source
+live and packaged-runtime verification remain pending for this September change; the May
+verification above is historical evidence, not validation of the new extraction.
+
+**Source-run update, 2026-09-14:** the inspected run contains secondary-study
+renders and no logged projection rebuild failure. Two UID mismatch attempts were
+blocked before subsequent matching images, so the zero-SKIP oracle is still unmet.
+This is partial live evidence only; the full compatibility matrix and installed
+runtime remain pending. See the provenance document's source-run evidence section.
+Current dispatcher code also clears before the deferred rebuild; the May atomic-swap
+description below is a historical contract, not a verified statement of today's code.
 
 ## Background — how the system is laid out (confirmed by probe + trace)
 

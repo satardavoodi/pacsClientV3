@@ -92,6 +92,18 @@ def test_aipacs_ui_wires_storage_changed_to_home_refresh():
     assert "try:" in handler and "except Exception" in handler
 
 
+def test_aipacs_ui_injects_authoritative_storage_activity_probe():
+    src = _src(_AIPACS_UI)
+    tree = ast.parse(src)
+    wire = _func_body_src(tree, "_wire_modality_grid_config_signal", src)
+    probe = _func_body_src(tree, "_storage_cleanup_activity_reasons", src)
+
+    assert "set_activity_probe(self._storage_cleanup_activity_reasons)" in wire
+    assert "_import_flow_active" in probe
+    assert "get_all_patient_tabs" in probe
+    assert "get_active_downloads" in probe
+
+
 def test_home_refresh_recomputes_status_from_disk():
     """The refresh must invalidate the cache so status is recomputed from disk,
     not served stale (otherwise a cleared study stays green)."""

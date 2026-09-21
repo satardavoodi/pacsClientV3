@@ -11,8 +11,10 @@ import json
 import pytest
 
 from modules.ai_imaging.eagle_eye_function_catalog import (
+    FUNCTION_ALIGNMENT,
     FUNCTION_LEGION_CONSULT,
     FUNCTION_NATIVE_ANALYSIS,
+    FUNCTION_TOTAL_SPINE,
     function_options_for_modality,
 )
 from modules.ai_imaging.eagle_eye_lumbar.series_classifier import SeriesCandidate
@@ -57,22 +59,33 @@ def _series(
 
 
 def test_launcher_offers_native_and_legion_consult_for_supported_modalities():
-    expected_native_labels = {
-        "MG": "Mammography Analysis",
-        "DX": "Bone Age Analysis",
-        "MR": "Lumbar MRI Analysis",
+    expected = {
+        "MG": (
+            "Mammography Pathology Analysis",
+            [FUNCTION_NATIVE_ANALYSIS, FUNCTION_LEGION_CONSULT],
+        ),
+        "DX": (
+            "Bone Age AI",
+            [
+                FUNCTION_NATIVE_ANALYSIS,
+                FUNCTION_ALIGNMENT,
+                FUNCTION_TOTAL_SPINE,
+                FUNCTION_LEGION_CONSULT,
+            ],
+        ),
+        "MR": (
+            "Lumbar Pathology Analysis",
+            [FUNCTION_NATIVE_ANALYSIS, FUNCTION_LEGION_CONSULT],
+        ),
     }
 
-    for modality, native_label in expected_native_labels.items():
+    for modality, (native_label, expected_keys) in expected.items():
         options = function_options_for_modality(modality)
-        assert [option.key for option in options] == [
-            FUNCTION_NATIVE_ANALYSIS,
-            FUNCTION_LEGION_CONSULT,
-        ]
+        assert [option.key for option in options] == expected_keys
         assert options[0].label == native_label
         assert options[0].enabled is True
-        assert options[1].label == "Legion Consult"
-        assert options[1].enabled is (modality == "MR")
+        assert options[-1].label == "Legion Consult"
+        assert options[-1].enabled is (modality == "MR")
 
 
 def test_default_t1_and_t2_prefer_the_source_plane_and_reuse_the_source_role():

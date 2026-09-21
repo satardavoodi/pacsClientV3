@@ -7,6 +7,21 @@ study was also decoded headlessly through the production FAST pipeline. Live UI
 validation is still required; no installed executable or release build was
 launched.
 
+**2026-09-13 integration follow-up:** the storage and patient-viewer identity contract below
+remains authoritative, but the main-page right panel was not migrated to the same action envelope.
+It still passes a card ordinal into generic `ThumbnailManager` action wiring. Do not change the
+generic viewer precedence as a shortcut; repair the right-panel boundary after the healthy Local
+payload path is behaviorally guarded. See
+`docs/plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md`.
+
+**2026-09-14 prerequisite correction:** the healthy Home Local payload now executes the
+existing display-key allocator; partial results remain normalized, and early import failure
+returns the empty payload without an unbound-local exception. Five synthetic behavioral guards
+cover this boundary (three meaningful failures before repair); the focused adjacent suite is
+120 passed, exit 0. This does not close the right-panel action-envelope migration or extend the
+August live confirmation to the September change. See the implementation record in the
+provenance document for validation, rollback and the pending source-live check.
+
 ## Incident shape
 
 One imported ultrasound study contained two image series with distinct

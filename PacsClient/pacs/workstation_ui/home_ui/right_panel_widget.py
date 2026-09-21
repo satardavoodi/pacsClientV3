@@ -2,10 +2,9 @@
 Right Panel Widget for displaying series information and thumbnails
 """
 
-import base64
 import os
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect, QEvent
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout, QSizePolicy
 from PacsClient.utils.scroll_style import get_scroll_area_style
@@ -138,6 +137,7 @@ class RightPanelWidget(QWidget):
     
     # Signals
     thumbnailClicked = Signal(str)  # series_number
+    seriesActionRequested = Signal(object)  # immutable, UID-scoped Home double-click
     seriesInfoRequested = Signal(str)  # series_uid
     
     def __init__(self, parent=None):
@@ -158,6 +158,11 @@ class RightPanelWidget(QWidget):
         self._last_render_signature = None
         self._active_progressive_generation = 0
         self._reserved_thumbnail_count = 0
+        # Hidden Home content must not compete with an active patient viewer for
+        # disk/CPU.  The current generation is suspended (not discarded) so
+        # returning Home can continue without rebuilding already-visible cards.
+        self._home_render_suspended = False
+        self._thumbnail_timer_suspended = False
         
         self.setup_ui()
         
@@ -383,6 +388,7 @@ class RightPanelWidget(QWidget):
             except Exception:
                 pass
         self.thumbnail_timer = None
+        self._thumbnail_timer_suspended = False
 
     @staticmethod
     def calculate_reserved_content_height(item_count: int, *, item_height: int, spacing: int,
@@ -429,18 +435,66 @@ class RightPanelWidget(QWidget):
         # visible (e.g. on entering the main page); a child widget gaining
         # focus can otherwise leave it scrolled mid-way.
         super().showEvent(event)
+        self._home_render_suspended = False
+        state = getattr(self, '_home_image_preparation', None)
+        gate = state.get('visibility_gate') if isinstance(state, dict) else None
+        if gate is not None:
+            gate.set()
+        timer = getattr(self, 'thumbnail_timer', None)
+        if self._thumbnail_timer_suspended and timer is not None:
+            self._thumbnail_timer_suspended = False
+            timer.start(120)
         self._anchor_scroll_top()
         QTimer.singleShot(0, self._anchor_scroll_top)
 
-    def clear_content(self):
-        """Clear all content from the panel"""
+    def hideEvent(self, event):
+        """Pause hidden Home thumbnail work without invalidating its identity."""
+        self._home_render_suspended = True
+        state = getattr(self, '_home_image_preparation', None)
+        gate = state.get('visibility_gate') if isinstance(state, dict) else None
+        if gate is not None:
+            gate.clear()
+        timer = getattr(self, 'thumbnail_timer', None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            self._thumbnail_timer_suspended = True
+        super().hideEvent(event)
+
+    def clear_content(self, *, keep_widgets=False):
+        """Retire render work; optionally retain same-identity cards until replacement."""
+        # Retire queued starts, input-dispatch retries and late progressive ticks,
+        # not just the currently running timer (which may not exist yet).
+        self._display_generation += 1
+        image_task = getattr(self, '_home_image_task', None)
+        if image_task is not None and not image_task.done():
+            image_task.cancel()
+        self._home_image_task = None
+        self._home_image_preparation = None
+        self._input_sync_defer_count = 0
+        self._active_action_token = None
         self._cancel_thumbnail_timer()
+        # Track both scheduling paths weakly: retirement must not itself retain
+        # completed managers or alter ownership of the visible card widgets.
+        for manager in list(getattr(self, '_render_managers', ())):
+            manager.dispose()
+        if hasattr(self, '_render_managers'):
+            self._render_managers.clear()
+        # This reference belongs to the retired render, not the panel lifetime.
+        # Cards retain their manager until Qt processes their deferred deletion.
+        self._progressive_manager = None
         self.current_thumbnail_index = 0
         self.thumbnails_to_display = []
+        self.thumbnail_rows_to_display = []
         # An explicit clear invalidates the anti-flicker signature so the next
         # display always rebuilds (e.g. switching to a patient whose set happens to
         # match the previous one, or a forced "Loading…" reset).
         self._last_render_signature = None
+        self._pending_atomic_generation = self._display_generation if keep_widgets else None
+        if not keep_widgets:
+            self._clear_content_widgets()
+
+    def _clear_content_widgets(self):
+        """Remove cards without changing the already-established render generation."""
         self._reset_reserved_content_height()
         # New content is about to be built - show it from the top.
         self._anchor_scroll_top()
@@ -468,24 +522,34 @@ class RightPanelWidget(QWidget):
         except Exception as e:
             print(f"Error in display_series_info: {str(e)}")
     
-    @staticmethod
-    def _thumbnail_render_signature(thumbnails):
-        """A cheap VISUAL signature of a thumbnail set, used to skip a redundant
-        rebuild when the panel is asked to display exactly what it already shows.
-        Keyed on per-series identity (study_uid + series_number + thumbnail file
-        path) — the thumbnail files fully determine what is drawn, so this matches
-        whether the set came from the socket fetch or the local cache. Any genuine
-        change — new/changed series, a grown study, a different patient, multi-study
-        regrouping — yields a different signature and still renders."""
+    @classmethod
+    def _thumbnail_render_signature(cls, thumbnails):
+        """Coalesce equivalent card projections, not merely equal image paths.
+
+        Rendering and comparison share the same metadata normalization authority.
+        No file stats, pixel reads, content hashes or patient fields are involved.
+        Same-path pixel replacement still requires a producer revision contract.
+        """
+        from PacsClient.utils.series_identity import SeriesActionIdentity
+
         try:
-            return tuple(
-                (
-                    str((t or {}).get('study_uid', '')),
-                    str((t or {}).get('series_number', '')),
-                    str((t or {}).get('file_path', '') or (t or {}).get('thumbnail_path', '')),
-                )
-                for t in (thumbnails or [])
-            )
+            signature = []
+            for thumb in thumbnails or []:
+                thumb = thumb or {}
+                info = cls.extract_series_info_from_thumbnail(thumb)
+                signature.append((
+                    str(info.get('study_uid', '')),
+                    str(info.get('series_number', '')),
+                    str(thumb.get('file_path', '') or thumb.get('thumbnail_path', '')),
+                    SeriesActionIdentity.from_metadata(info),
+                    tuple(str(info.get(key) or '') for key in (
+                        'modality', 'series_description', 'image_count',
+                        'display_image_count', 'pixel_instance_count',
+                        'protocol_name', 'body_part_examined',
+                    )),
+                    str(thumb.get('study_label') or ''),
+                ))
+            return tuple(signature)
         except Exception:
             return None
 
@@ -502,20 +566,28 @@ class RightPanelWidget(QWidget):
             new_sig = self._thumbnail_render_signature(thumbnails)
             if new_sig is not None and new_sig == getattr(self, '_last_render_signature', None):
                 return
-            # Invalidate any previous render pipeline and cleanup old widgets.
-            self._display_generation += 1
+            # Retain pixels only for a bounded refresh of exactly the same known
+            # actions. Changed/unknown identities and large sets still clear now.
+            old_sig = getattr(self, '_last_render_signature', None)
+            keep_widgets = bool(
+                not progressive and new_sig and old_sig
+                and len(new_sig) <= _THUMB_IMMEDIATE_MAX
+                and self.content_grid.count()
+                and all(entry[3] is not None for entry in new_sig)
+                and tuple(entry[3] for entry in new_sig) == tuple(entry[3] for entry in old_sig)
+            )
+            self.clear_content(keep_widgets=keep_widgets)
             generation = self._display_generation
-            self._cancel_thumbnail_timer()
-            self.clear_content()
             # Remember what we are now rendering (clear_content() reset this to None).
             self._last_render_signature = new_sig
-            self._set_reserved_content_height(len(thumbnails))
+            if not keep_widgets:
+                self._set_reserved_content_height(len(thumbnails))
 
             self.count_label.setText(f"Loading {len(thumbnails)} series...")
             if progressive:
-                QTimer.singleShot(50, lambda g=generation: self.display_thumbnails_progressively(thumbnails, g))
+                QTimer.singleShot(50, self, lambda g=generation: self.display_thumbnails_progressively(thumbnails, g))
             else:
-                QTimer.singleShot(0, lambda g=generation: self.display_thumbnails_immediately(thumbnails, g))
+                QTimer.singleShot(0, self, lambda g=generation: self.display_thumbnails_immediately(thumbnails, g))
         except Exception as e:
             print(f"Error in display_thumbnails: {str(e)}")
     
@@ -550,7 +622,9 @@ class RightPanelWidget(QWidget):
     def display_thumbnails_progressively(self, thumbnails, generation=None):
         """Display thumbnails one by one with a small delay for better UX"""
         try:
-            if generation is not None and generation != self._display_generation:
+            if generation is None:
+                generation = self._display_generation
+            if generation != self._display_generation:
                 return
 
             # 0x8001010d guard — see display_thumbnails_immediately.
@@ -558,10 +632,15 @@ class RightPanelWidget(QWidget):
             if defers < 25 and _inside_input_synchronous_dispatch():
                 self._input_sync_defer_count = defers + 1
                 QTimer.singleShot(
-                    16, lambda g=generation: self.display_thumbnails_progressively(thumbnails, g)
+                    16, self, lambda g=generation: self.display_thumbnails_progressively(thumbnails, g)
                 )
                 return
             self._input_sync_defer_count = 0
+
+            from PacsClient.pacs.patient_tab.utils.thumbnail_batch_runner import prepare_home_thumbnails
+            prepared = prepare_home_thumbnails(self, thumbnails, generation, progressive=True)
+            if prepared is not None:
+                thumbnails = prepared
 
             self.hide_loading()
 
@@ -573,13 +652,11 @@ class RightPanelWidget(QWidget):
             self._set_reserved_content_height(len(self.thumbnail_rows_to_display))
 
             # Pre-create the manager once — avoids re-importing on every timer tick.
-            from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-            self._progressive_manager = ThumbnailManager(
-                lambda sn: self.thumbnailClicked.emit(str(sn)))
+            self._progressive_manager = self._new_action_thumbnail_manager()
 
             self.count_label.setText(f"0/{len(thumbnails)} series")
 
-            self.thumbnail_timer = QTimer()
+            self.thumbnail_timer = QTimer(self)
             self.thumbnail_timer.timeout.connect(self.display_next_thumbnail)
             self.thumbnail_timer.start(120)  # 120ms delay between thumbnails
 
@@ -587,14 +664,16 @@ class RightPanelWidget(QWidget):
             print(f"Error in display_thumbnails_progressively: {str(e)}")
             self.hide_loading()
 
-    def display_thumbnails_immediately(self, thumbnails, generation=None):
+    def display_thumbnails_immediately(self, thumbnails, generation=None, *, _prepared=False):
         """Display thumbnails immediately (no progressive delay).
 
         NOTE: for a LARGE set this builds every widget synchronously and blocks the GUI thread
         (patient-open freeze, 2026-06-27). Large sets are delegated to the incremental renderer below.
         """
         try:
-            if generation is not None and generation != self._display_generation:
+            if generation is None:
+                generation = self._display_generation
+            if generation != self._display_generation:
                 return
 
             # [PATIENT-OPEN FREEZE FIX] A large thumbnail set built synchronously here freezes the GUI
@@ -615,24 +694,31 @@ class RightPanelWidget(QWidget):
             if defers < 25 and _inside_input_synchronous_dispatch():
                 self._input_sync_defer_count = defers + 1
                 QTimer.singleShot(
-                    16, lambda g=generation: self.display_thumbnails_immediately(thumbnails, g)
+                    16, self, lambda g=generation: self.display_thumbnails_immediately(thumbnails, g, _prepared=_prepared)
                 )
                 return
             self._input_sync_defer_count = 0
 
+            if not _prepared:
+                from PacsClient.pacs.patient_tab.utils.thumbnail_batch_runner import prepare_home_thumbnails
+                if prepare_home_thumbnails(self, thumbnails, generation, progressive=False) is not None:
+                    return
+
             self.hide_loading()
             total = len(thumbnails)
             rows_to_render = self._build_grouped_thumbnail_rows(thumbnails)
-            self._set_reserved_content_height(len(rows_to_render))
             self.count_label.setText(f"Loading {total} series...")
 
-            from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-            temp_manager = ThumbnailManager(
-                lambda sn: self.thumbnailClicked.emit(str(sn)))
+            temp_manager = self._new_action_thumbnail_manager()
+            atomic_swap = getattr(self, '_pending_atomic_generation', None) == generation
 
             # Suppress repaints while building all widgets — prevents per-addWidget flicker.
             self.content_widget.setUpdatesEnabled(False)
             try:
+                if atomic_swap:
+                    self._pending_atomic_generation = None
+                    self._clear_content_widgets()
+                self._set_reserved_content_height(len(rows_to_render))
                 thumb_index = 0
                 for row_idx, row_entry in enumerate(rows_to_render):
                     if row_entry.get('type') == 'header':
@@ -660,65 +746,41 @@ class RightPanelWidget(QWidget):
                         if pixmap.isNull():
                             continue
 
-                        series_info = self.extract_series_info_from_thumbnail(thumb)
-                        combined_widget = temp_manager.create_thumbnail_widget(
-                            pixmap=pixmap,
-                            label_text=str(series_info.get('series_number', thumb_index + 1)),
-                            thumbnail_index=thumb_index,
-                            series_info=series_info,
-                            show_progress=False
-                        )
+                        combined_widget = self._create_action_thumbnail(
+                            temp_manager, pixmap, thumb, thumb_index)
                         self.content_grid.addWidget(combined_widget, row_idx, 0, 1, 1)
                         thumb_index += 1
                     except Exception as e:
                         print(f"Error displaying thumbnail {thumb_index}: {str(e)}")
             finally:
-                self.content_widget.setUpdatesEnabled(True)
+                try:
+                    if atomic_swap:
+                        self.content_grid.activate()
+                finally:
+                    self.content_widget.setUpdatesEnabled(True)
 
             self.count_label.setText(f"{total} series")
         except Exception as e:
             print(f"Error in display_thumbnails_immediately: {str(e)}")
+            if (generation == self._display_generation
+                    and getattr(self, '_pending_atomic_generation', None) == generation):
+                # Preparation failed before replacement. Do not leave retained
+                # cards indefinitely, or coalesce a later retry as already shown.
+                self.clear_content()
             self.hide_loading()
     
     def _build_pixmap_from_thumb(self, thumb, thumb_path=None):
-        """Build pixmap from file path first, then fallback to embedded base64 data."""
-        pixmap = QPixmap()
-        path = str(thumb_path or '').strip()
-        if path:
-            pixmap = QPixmap(path)
-            if not pixmap.isNull():
-                return pixmap
-
-        raw = (
-            thumb.get('thumbnail_data')
-            or thumb.get('thumbnail_base64')
-            or thumb.get('thumbnailBase64')
-            or thumb.get('thumbnailData')
-            or thumb.get('image_data')
-            or thumb.get('imageBase64')
-            or ''
-        )
-        if isinstance(raw, str) and raw:
-            try:
-                payload = raw.strip()
-                if payload.startswith('data:') and ',' in payload:
-                    payload = payload.split(',', 1)[1]
-                payload = payload.replace('\n', '').replace('\r', '')
-                data = base64.b64decode(payload)
-                pixmap.loadFromData(data)
-            except Exception:
-                try:
-                    padded = payload + ('=' * (-len(payload) % 4))
-                    data = base64.urlsafe_b64decode(padded)
-                    pixmap.loadFromData(data)
-                except Exception:
-                    pass
-        elif isinstance(raw, (bytes, bytearray)):
-            try:
-                pixmap.loadFromData(bytes(raw))
-            except Exception:
-                pass
-
+        """GUI conversion only in the running qasync path; legacy callers share policy."""
+        image = thumb.pop('_home_prepared_image', None)
+        if image is None:
+            # Explicit no-qasync compatibility callers still share the same loader.
+            from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import ThumbnailImageSourceService
+            image = ThumbnailImageSourceService.prepare_home_image(thumb, thumb_path)
+        else:
+            state = getattr(self, '_home_image_preparation', None)
+            if state is not None:
+                state['buffered'] = max(0, state['buffered'] - 1)
+        pixmap = QPixmap.fromImage(image)
         if pixmap.isNull():
             series_number = str(thumb.get('series_number') or '?')
             return self._build_placeholder_pixmap(series_number)
@@ -783,6 +845,8 @@ class RightPanelWidget(QWidget):
                 return
 
             thumb = row_entry.get('thumb') or {}
+            if thumb.get('_home_image_pending', False):
+                return  # Worker still owns this image; never fall back to GUI I/O.
             thumb_path = thumb.get('file_path') or thumb.get('thumbnail_path')
 
             # print('thumb_path:', thumb_path)
@@ -791,21 +855,14 @@ class RightPanelWidget(QWidget):
                 try:
                     pixmap = self._build_pixmap_from_thumb(thumb, thumb_path)
                     if not pixmap.isNull():
-                        series_info = self.extract_series_info_from_thumbnail(thumb)
-
                         # Use the manager that was pre-created in display_thumbnails_progressively
                         mgr = getattr(self, '_progressive_manager', None)
                         if mgr is None:
-                            from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
-                            mgr = ThumbnailManager(lambda x: None)
+                            mgr = self._new_action_thumbnail_manager()
+                            self._progressive_manager = mgr
 
-                        combined_widget = mgr.create_thumbnail_widget(
-                            pixmap=pixmap,
-                            label_text=str(series_info.get('series_number', self.current_displayed_thumbnail_count + 1)),
-                            thumbnail_index=self.current_displayed_thumbnail_count,
-                            series_info=series_info,
-                            show_progress=False
-                        )
+                        combined_widget = self._create_action_thumbnail(
+                            mgr, pixmap, thumb, self.current_displayed_thumbnail_count)
 
                         # Save scroll position before adding widget to prevent jumping
                         vbar = self.scroll_area.verticalScrollBar()
@@ -831,8 +888,74 @@ class RightPanelWidget(QWidget):
             self._cancel_thumbnail_timer()
             self.hide_loading()  # Make sure to hide loading on error
     
-    def extract_series_info_from_thumbnail(self, thumb):
-        """Extract series information from thumbnail data"""
+    def _new_action_thumbnail_manager(self):
+        """One action map per render, invalidated by clear/replacement.
+
+        Keep generic card keys owner-local. Defer the outward click until the
+        native input dispatch returns, then reject callbacks from retired cards.
+        """
+        from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
+        from weakref import ref, WeakSet
+        from shiboken6 import isValid
+
+        token = object()
+        self._active_action_token = token
+        actions = {}
+        owner_ref = ref(self)
+
+        def selected(key):
+            owner = owner_ref()
+            action = actions.get(str(key))
+            if (action is None or owner is None or not isValid(owner)
+                    or owner._active_action_token is not token):
+                return
+
+            def deliver():
+                current_owner = owner_ref()
+                if (current_owner is not None and isValid(current_owner)
+                        and current_owner._active_action_token is token):
+                    current_owner.seriesActionRequested.emit(action)
+
+            QTimer.singleShot(0, owner, deliver)
+
+        # Single click is preview selection only. Patient-panel cards retain
+        # their normal single-click behavior; this adapter is Home-owned.
+        manager = ThumbnailManager(lambda key: None)
+        if not hasattr(self, '_render_managers'):
+            self._render_managers = WeakSet()
+        self._render_managers.add(manager)
+        manager._home_series_actions = actions
+        manager._home_activate_series = selected
+        return manager
+
+    def _create_action_thumbnail(self, manager, pixmap, thumb, ordinal):
+        from PacsClient.utils.series_identity import SeriesActionIdentity
+
+        info = self.extract_series_info_from_thumbnail(thumb)
+        manager._home_series_actions[str(ordinal)] = SeriesActionIdentity.from_metadata(info)
+        card = manager.create_thumbnail_widget(
+            pixmap=pixmap,
+            label_text=str(info.get('series_number', ordinal + 1)),
+            thumbnail_index=ordinal,
+            series_info=info,
+            show_progress=False,
+        )
+        card.image_button._home_activate_series = lambda: manager._home_activate_series(ordinal)
+        card.image_button.installEventFilter(self)
+        return card
+
+    def eventFilter(self, watched, event):
+        activate = getattr(watched, '_home_activate_series', None)
+        if (activate is not None and event.type() == QEvent.MouseButtonDblClick
+                and event.button() == Qt.LeftButton):
+            activate()
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
+
+    @staticmethod
+    def extract_series_info_from_thumbnail(thumb):
+        """Project card metadata without losing supplied identity or frame counts."""
         try:
             # Get series number
             series_number = thumb.get('series_number', 0)
@@ -880,9 +1003,17 @@ class RightPanelWidget(QWidget):
                 'protocol_name': protocol_name,
                 'body_part_examined': body_part
             }
-            
+            # Both render schedules use this boundary. Keep storage, UI and UID
+            # identity separate; never replace the object count with cine frames.
+            # Copy only supplied metadata, not pixels, patient data or widget state.
+            for key in (
+                'study_uid', 'series_uid', 'series_instance_uid',
+                '_orig_series_number', 'display_key', 'folder_key', 'series_path',
+                'display_image_count', 'pixel_instance_count',
+            ):
+                if key in thumb:
+                    extracted_info[key] = thumb[key]
 
-            
             return extracted_info
             
         except Exception as e:
@@ -897,17 +1028,21 @@ class RightPanelWidget(QWidget):
             }
 
     def _build_grouped_thumbnail_rows(self, thumbnails):
-        """Insert study header rows when thumbnail entries include study metadata."""
+        """Group by identity without exposing a UID as a presentation label."""
         rows = []
         last_group_key = None
+        study_order = list(dict.fromkeys(
+            str(thumb.get('study_uid') or '').strip() for thumb in thumbnails or []
+            if thumb.get('study_uid')))
+        titles = {uid: f'Study {index + 1}' for index, uid in enumerate(study_order)}
 
         for thumb in thumbnails or []:
             study_uid = str(thumb.get('study_uid') or '').strip()
             study_label = str(thumb.get('study_label') or '').strip()
-            group_key = study_label or study_uid
+            group_key = (study_uid or study_label) if study_label or len(study_order) > 1 else ''
 
             if group_key and group_key != last_group_key:
-                rows.append({'type': 'header', 'title': group_key})
+                rows.append({'type': 'header', 'title': study_label or titles.get(study_uid, 'Study')})
                 last_group_key = group_key
 
             rows.append({'type': 'thumb', 'thumb': thumb})

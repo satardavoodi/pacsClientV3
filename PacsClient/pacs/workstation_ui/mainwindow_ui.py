@@ -1467,7 +1467,8 @@ class MainWindowWidget(QWidget):
                     )
         except Exception:
             pass
-        # Drain all registered resources in reverse order via lifecycle manager.
+        # Invoke registered stop/cleanup callbacks in reverse order. Callback
+        # return is not proof of asynchronous drain or Qt/native destruction.
         from PacsClient.components.lifecycle_manager import lifecycle_manager
         results = lifecycle_manager.shutdown_all()
         for name, err in results.items():
@@ -1579,10 +1580,37 @@ class MainWindowWidget(QWidget):
 
         lifecycle_manager.register("download_manager.cleanup", _shutdown_download_manager, timeout=10.0)
 
-        # 6. Socket service (highest-level – shuts down last)
+        # 6. Socket service (LIFO: before the consumers/dependencies above)
         def _shutdown_socket():
             from modules.network.socket_service import get_socket_service
             socket_service = get_socket_service()
             socket_service.cleanup()
 
         lifecycle_manager.register("socket_service", _shutdown_socket, timeout=5.0)
+
+        # 7. Retire cloud producers before DB cleanup. Do not load an optional
+        # plugin during shutdown; an active poller has already loaded autostart.
+        # This requests cancellation, not a synchronous worker-drain barrier.
+        def _stop_consultation_poller():
+            import sys
+
+            autostart = sys.modules.get("modules.cloud_consultation.notifications.autostart")
+            if autostart is not None:
+                autostart.stop_consultation_poller()
+
+        lifecycle_manager.register(
+            "consultation_poller.request_stop", _stop_consultation_poller, timeout=1.0,
+        )
+
+        def _consultation_completion():
+            import sys
+
+            autostart = sys.modules.get("modules.cloud_consultation.notifications.autostart")
+            if autostart is None:
+                return True
+            probe = getattr(autostart, "consultation_shutdown_complete", None)
+            return probe() if probe is not None else None
+
+        lifecycle_manager.register_completion_probe(
+            "consultation_poller.request_stop", _consultation_completion,
+        )

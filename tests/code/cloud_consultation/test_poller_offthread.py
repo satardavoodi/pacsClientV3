@@ -81,7 +81,7 @@ def test_poll_once_never_blocks_calling_thread(qapp, monkeypatch):
         "leaked back onto the calling thread"
     )
 
-    assert _wait_until(qapp, lambda: poller._scan is not None and poller._scan.isFinished())
+    assert _wait_until(qapp, lambda: poller._scan is None)
     main = threading.main_thread()
     assert provider_threads and all(t is not main for t in provider_threads), (
         "transport provider (OAuth refresh) ran on the GUI thread"
@@ -114,12 +114,13 @@ def test_scan_results_still_flow(qapp, monkeypatch):
     assert received == [[]]  # empty cloud → empty scan, delivered on GUI thread
 
 
-def test_failed_provider_is_silent_and_nonblocking(qapp):
+def test_failed_provider_is_silent_and_nonblocking(qapp, monkeypatch):
     def provider():
         raise RuntimeError("no identity linked")
 
     poller = ConsultationPoller(provider, "me@example.com", interval_ms=999999)
+    monkeypatch.setattr(poller, "_outgoing_awaiting_response", lambda: [])
     t0 = time.monotonic()
     poller.poll_once()  # must not raise, must not block
     assert time.monotonic() - t0 < 0.1
-    assert _wait_until(qapp, lambda: poller._scan is not None and poller._scan.isFinished())
+    assert _wait_until(qapp, lambda: poller._scan is None)
