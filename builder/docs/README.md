@@ -4,7 +4,7 @@
 >
 > **Canonical current route:** start at [`../../BUILD.md`](../../BUILD.md). It is
 > the only authoritative procedure for the combined PyInstaller + Nuitka,
-> Eagle Eye + Standard + ARM64-emulated release matrix. Commands below describe
+> four-file Client or two-file Server build selection. Commands below describe
 > backend internals and historical recovery only; do not use them as an alternate
 > final-release workflow.
 > A full build also requires the Git synchronization receipt created through
@@ -14,10 +14,12 @@ This repository has **two separate build backends** coordinated by one release
 workflow. They are not interchangeable and they do not share output folders or
 command-line flags.
 
-**2026-08-31 PyInstaller output policy:** the default now prepares Eagle Eye,
-Standard and ARM compatibility outputs with isolated payloads. See
+**Current PyInstaller output policy:** Client selects Standard and ARM compatibility
+outputs; Server selects Eagle Eye separately. See
 [distribution editions and offline assets](DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md)
 for cached inputs, commands, size gates, no-publish behavior, and release blockers.
+For the separate frozen Eagle Eye service dependency and installed acceptance
+gap, read [Server service packaging parity](EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md).
 
 ## 1. PyInstaller Build Chain
 

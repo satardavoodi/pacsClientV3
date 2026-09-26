@@ -108,6 +108,9 @@ def register_previous(previous, current, cancel):
 
 def run_comparison(previous, current, *, root, cancel=None, progress=None, clinical_note=''):
     """Each selection supplies T1 + FLAIR from one examination; lock spans both jobs."""
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        raise BrainError('Server comparison of two examinations is not available in the initial single-study workflow.')
     from .patient_context import dicom_context, require_same_examination
     from .lesions import _run_lesions
     from .service import _ANALYSIS_LOCK

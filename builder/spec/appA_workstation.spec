@@ -128,6 +128,20 @@ hiddenimports = load_hiddenimports(
         "PacsClient.utils.data_paths",
         "PacsClient.utils.theme_manager",
         "modules.zeta_boost",
+        # Early native graphics admission runs in a second copy of this frozen
+        # windowed executable, before Qt GUI startup. Keep its lazy route and
+        # synthetic VTK inputs even when the normal viewer import graph changes.
+        "modules.viewer.native_graphics_probe",
+        "vtkmodules.vtkRenderingOpenGL2",
+        "vtkmodules.vtkInteractionImage",
+        "vtkmodules.vtkCommonDataModel",
+        "vtkmodules.vtkCommonCore",
+        # Both editions use the same role-aware Settings source. Preserve the
+        # lazily opened page and installed-edition resolver in the frozen core.
+        "PacsClient.pacs.workstation_ui.settings_ui.settings_ui",
+        "PacsClient.pacs.workstation_ui.settings_ui.server_settings",
+        "PacsClient.pacs.workstation_ui.settings_ui.eagle_eye_settings",
+        "modules.ai_imaging.eagle_eye_remote.administration",
         # INO internal-assignment + report-status modules are imported LAZILY
         # (inside functions) from core UI, so PyInstaller's static analysis of
         # main.py never discovers them — they must be pinned as hidden imports or

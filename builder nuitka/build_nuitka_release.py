@@ -928,6 +928,22 @@ def create_nuitka_command(
                 "_gdcm.gdcmswig",
             ]
         )
+        # The frozen windowed executable relaunches itself on this private
+        # child route before normal GUI imports. These must fail compilation
+        # if unavailable, not silently disappear from the full-core package.
+        forced.update({
+            "modules.viewer.native_graphics_probe",
+            "vtkmodules.vtkRenderingOpenGL2",
+            "vtkmodules.vtkInteractionImage",
+            "vtkmodules.vtkCommonDataModel",
+            "vtkmodules.vtkCommonCore",
+            # Shared Settings source branches on the installed edition;
+            # these lazily opened modules must exist in both frozen roles.
+            "PacsClient.pacs.workstation_ui.settings_ui.settings_ui",
+            "PacsClient.pacs.workstation_ui.settings_ui.server_settings",
+            "PacsClient.pacs.workstation_ui.settings_ui.eagle_eye_settings",
+            "modules.ai_imaging.eagle_eye_remote.administration",
+        })
         nofollow = set(filtered_nofollow_from_spec)
         append_mesa_runtime_flags(cmd)
 
@@ -1381,7 +1397,7 @@ def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> 
     materialize_plugin_packages(
         include_runtime_payloads=include_slicer,
         build_lite_viewer=True,
-        include_eagle_eye_assets=ctx.args.edition in {"all", "eagle-eye"},
+        include_eagle_eye_assets=ctx.args.edition in {"all", "server", "eagle-eye"},
         for_distribution=not getattr(ctx.args, "internal_build", False),
     )
     plugin_stage = STAGE_DIR / "plugin_packages"
@@ -1892,7 +1908,7 @@ def stage_failure_message(stage: Stage, log_path: Path, report_path: str | None)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Checkpoint-based staged Nuitka release pipeline")
-    parser.add_argument("--edition", choices=["all", "standard", "eagle-eye", "arm"], default="all")
+    parser.add_argument("--edition", choices=["all", "client", "server", "standard", "eagle-eye", "arm"], default="all")
     parser.add_argument("--release", action="store_true", help="Build preflight and full release stages, omitting incremental bootstrap demos")
     parser.add_argument("--asset-root", type=Path, help="Verified offline distribution asset cache")
     parser.add_argument("--gui-smoke", action="store_true", help="Explicitly opt into launching the compiled workstation")
@@ -2089,10 +2105,10 @@ def main() -> int:
     from builder import release_gate
     if not release_gate.report(release_gate.run_pre_build_gate(), label="nuitka pre-build"):
         raise StageError("Nuitka pre-build gate failed")
-    if args.edition in {"all", "standard", "eagle-eye", "arm"}:
+    if args.edition in {"all", "client", "server", "standard", "eagle-eye", "arm"}:
         from tools.build.prepare_distribution_assets import DEFAULT_ROOT, verify
         asset_root = (args.asset_root or DEFAULT_ROOT).resolve()
-        verify(asset_root)
+        verify(asset_root, profile="client" if args.edition in {"client", "standard", "arm"} else "all")
         os.environ["AIPACS_ADVANCED_MPR_RUNTIME_SOURCE"] = str(asset_root / "slicer-runtime")
         os.environ["AIPACS_OFFLINE_LUMBAR_BUNDLE_SOURCE"] = str(asset_root / "offline_lumbar")
         os.environ["AIPACS_ISCC_EXE"] = str(asset_root / "inno-setup/ISCC.exe")

@@ -21,6 +21,7 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
     from PySide6.QtWidgets import QWidget
     from shiboken6 import isValid
     from PacsClient.utils.series_facts import resolve_series_expected_count
+    from PacsClient.utils.series_identity import series_presentation_order_key
     from .thumbnail_image_source_service import ThumbnailImageSourceService
 
     previous = getattr(owner, '_sidebar_build_task', None)
@@ -83,20 +84,35 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
 
     def prepare_plan():
         plan = []
+        history_first = (os.getenv('AIPACS_HISTORY_SERIES_FIRST', '1') or '1').strip() != '0'
+
+        def order_rows(rows):
+            return sorted(
+                rows,
+                key=lambda row: series_presentation_order_key(
+                    row[1], history_first=history_first),
+            )
+
         if grouped:
             for su, slot, group_entries in groups:
                 by_stem = {Path(p).stem: p for p in (list_files(folder, su) or ())}
                 rows = [(key, dict(info), by_stem.get(str(info.get('folder_key')
                         or info.get('_orig_series_number') or ''))) for key, info in group_entries]
-                rows = [row for row in rows if row[2]]
+                rows = order_rows([row for row in rows if row[2]])
                 if rows:
                     plan.append((su, slot, rows))
         elif entries is not None:
-            rows = [(str(info.get('display_key') or info['series_number']), dict(info),
-                     info.get('file_path') or '') for info in entries]
+            rows = order_rows([(str(info.get('display_key') or info['series_number']), dict(info),
+                                info.get('file_path') or '') for info in entries])
             plan.append((study_uid, 0, rows))
         else:
-            rows = [(Path(p).stem, dict(catalog.get(Path(p).stem) or {}), p) for p in files]
+            rows = []
+            for path in files:
+                key = Path(path).stem
+                info = dict(catalog.get(key) or {})
+                info.setdefault('series_number', key)
+                rows.append((key, info, path))
+            rows = order_rows(rows)
             plan.append((study_uid, 0, rows))
         path = snapshot._get_correct_study_path() if hasattr(snapshot, '_get_correct_study_path') else folder
         return plan, path
@@ -167,7 +183,15 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                             header.show()
                             row += 1
                     for key, info, path in rows:
-                        if key not in manager.series_widgets:
+                        existing = manager.series_widgets.get(key)
+                        if existing is not None and isValid(existing):
+                            # A superseding generation owns final geometry too.
+                            # Re-adding moves the retained card atomically while
+                            # painting is disabled; otherwise two cards can share
+                            # one row when producer order changes.
+                            grid.addWidget(existing, row, 0, 1, 2)
+                            existing.show()
+                        else:
                             # Empty layout spacers do not participate in Qt's
                             # inter-widget spacing. Use a cheap parented slot
                             # with the exact card size so replacing it cannot
@@ -180,7 +204,7 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                             pending.append((row, spacer, su, key, info, path))
                         row += 1
                 owner._sidebar_reserved_rows = {item[0] for item in pending}
-                owner._sidebar_expected_count = len(manager.series_widgets) + len(pending)
+                owner._sidebar_expected_count = sum(len(rows) for _, _, rows in plan)
                 owner.thumb_count_label.setText(f'{owner._sidebar_expected_count} series')
                 grid.invalidate()
                 container.setMinimumHeight(max(grid.minimumSize().height(),

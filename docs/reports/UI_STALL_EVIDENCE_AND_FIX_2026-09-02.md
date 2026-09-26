@@ -1,5 +1,152 @@
 # UI Stall Evidence and Guarded Fixes — 2026-09-02
 
+## 2026-09-26 patient-tab representative thumbnail unification (OPT-58 / OPT-60)
+
+The patient title-bar image was not owned by the unified catalog/sidebar route.
+Cached startup called a synchronous setter only when an asyncio loop happened to be
+running; three pipeline locations and the viewer-load adapter also selected the first
+completion independently. Exact history series 100000 could therefore win, no callback
+could leave the plus icon, and a delayed callback used the active tab index instead of
+the PatientWidget which produced it.
+
+Correction is presentation-only. Successful sidebar-card admission is now the single
+producer for cached, Local, Server, Import, legacy and grouped inputs. The sink rejects
+the exact history convention using original series identity, accepts the first ordinary
+series, and schedules one small title-bar update without requiring asyncio. The callback
+resolves its registered PatientWidget first and fails closed if ownership is absent.
+Selection is constant-time over already available metadata and performs no filesystem
+enumeration, DICOM read, database/network request, decode or VTK work. The title widget
+retains its existing one-time small PNG load.
+
+Fail-before: four focused failures. Pass-after: 238 affected/adjacent tests, exit 0;
+42 packaging-input tests, exit 0; Python compilation and diff checks pass. The runtime
+files are core source shared by Standard Client, ARM64-emulated Client and Eagle Eye
+Server packaging; there is no plugin payload mirror for this boundary. No installer or
+frozen candidate was built. Fresh source GUI remains pending for cached/cold, exact
+history, multi-study and rapid tab-switch cases. Rollback is limited to the shared
+card-admission call, document-aware sink, owner-tab resolution and removal of the old
+parallel assignments; keep canonical ordering and viewer-domain work intact.
+
+A source process started after the final runtime edit and remained alive through normal
+patient/viewer activity. Aggregate inspection of that session found zero ERROR, CRITICAL,
+Traceback, deleted-C++-object or access-violation markers. The test-control endpoint was
+not enabled and no attributable visual inspection of the title-bar thumbnail was available,
+so this is a compatibility/liveness observation only and does not close the GUI gate.
+
+## 2026-09-26 canonical per-study thumbnail ordering and row repair (OPT-58 / OPT-60)
+
+The reported document series existed in the authoritative thumbnail inventory and was
+visible on Home, but could disappear from the Patient Tab. PHI-free reproduction found
+the presentation defect: one partial generation applied the retained history card at
+row zero; a superseding generation with a different order skipped that existing manager
+key and inserted an ordinary card at row zero. The resulting overlap also explained why
+the terminal applied count could be one lower than the catalog count. Files, VTK cache
+and decoded pixels were not the cause.
+
+Correction is inside the Unify presentation boundary. `series_identity.py` now owns one
+pure original-number order key and per-study grouping function. Exact series 100000 is
+history; other large values are ordinary, and a multi-study offset can never become the
+classification input. Patient cached-file, admitted-entry and grouped adapters use that
+key; Home applies the same grouping/order before its semantic render signature. The
+bounded scheduler re-adds valid retained cards at their planned row while repaint is
+disabled and derives totals from planned series rows. Study headers receive their own
+group count and do not increment the total. No Study/Series identity, offset allocation,
+storage path, download state machine, viewer decoder/render path or decoded cache changed.
+
+Evidence: two targeted tests failed before (row overlap and inconsistent grouped order)
+and pass after. Final affected/adjacent suite: 230 passed, exit 0; packaging-input suite:
+42 passed, exit 0; Python compilation and diff checks pass. The four runtime sources are
+core-only with no plugin payload mirrors. The repository-wide mirror checker remains red
+for one unrelated existing Download Manager source/payload drift; no mirror was edited by
+this fix. Standard Client, ARM64-emulated Client and Eagle Eye Server share the source
+path in both packagers. No full candidate build or frozen artifact was produced.
+
+Live acceptance remains pending and must use a fresh source process: open/reopen a large
+case and a verified multi-study case, confirm every study header and count, unique stable
+card rows, exact history visibility within each applicable study, and unchanged card
+click/drag/download state. Rollback is the canonical-order calls plus retained-card
+repositioning/count calculation in the four named runtime sources; do not roll back
+identity projection, cache/source services or viewer domains. No clinical identifiers,
+UIDs, paths or pixels are retained in this receipt.
+
+## 2026-09-24 local Enhanced MR thumbnail repair (OPT-60)
+
+September 25 DX follow-up: four single-image DX Presentation series have valid
+stored files and succeed in read-only Advanced presentation preparation, but no
+persisted thumbnails. `load_series_preview` intentionally defers presentation
+objects, while Local repair only supplied a multiframe fallback. The user then
+authorized the shared thumbnail correction after supplying a screenshot showing
+AP/Lateral rendered in Advanced while the thumbnail cards remained empty.
+See the VTK owner report's DX blank-card investigation for technical evidence.
+Status: runtime repair code-verified; fresh source GUI validation pending.
+
+The existing worker adapter now admits one single-frame DX Presentation object,
+checks persisted Study/Series identity, and calls the existing stateless
+presentation preparation function for a worker-owned image. It rechecks returned
+identity before the existing PNG publication. No viewer cache, renderer, spatial
+admission, source DICOM, or download lifecycle changes. Multiple-object DX folders
+remain deferred; the thumbnail path never prepares an entire presentation sequence.
+The decoder's existing memory/layout limits and display transforms remain active.
+
+Evidence: the synthetic DX PNG assertion failed before the runtime edit (1 failed,
+6 passed, exit 1). Final affected/adjacent/builder suite: 116 passed, exit 0,
+including import preparation, identity rejection, collision folder keys, bounded
+single-object preparation, Enhanced MR and unchanged ordinary preview routing.
+Mirror dry-run found zero drift; all 472 pairs match. This shared core change has
+no mapped plugin mirror and applies to Client and Eagle Eye Server workstation
+packaging in both backends. Existing full-build configuration blockers and all
+artifact acceptance gates remain open; no build or release was performed.
+
+Live gate: documented control-client ping still reports no local test endpoint.
+No restart, hot reload, live DB repair or clinical-file write was performed.
+After human fresh source launch/login, reopen the Local DX study and verify four
+image thumbnails plus unchanged AP/Lateral viewport rendering. The pre-fix user
+screenshot confirms viewport rendering only, not this thumbnail correction.
+Rollback: remove only the DX branch in the existing thumbnail adapter.
+
+Bug-fix session `01a0d48f-1b24-7e73-8578-e04d4a22a329`, first report, part A.
+The imported catalog was present, but missing PNG repair delegated to the Advanced
+spatial preview. Enhanced MR with frame-level geometry was rejected as
+`unresolved_geometry`, leaving placeholder cards. This is a thumbnail capability
+boundary, not evidence that files were missing or that the spatial guard was wrong.
+
+`utils._local_multiframe_thumbnail_preview` now validates the exact source
+Study/Series identity and uses SimpleITK/GDCM extraction for one display frame in
+the existing worker-owned PNG repair path. It reads frame/shared VOI metadata;
+ordinary single-frame inputs retain the existing preview path. Import's preview-deferred
+branch calls the same repair owner. No Advanced geometry contract, viewer-private
+cache, download producer or U0-U5 progression changes. Three local Enhanced MR
+samples decoded to one frame in a read-only probe; no PNG/DB writes or clinical
+data were exported by that probe.
+
+Guard: `tests/code/ui_services/test_local_multiframe_thumbnail_repair.py`.
+The Enhanced MR PNG assertion failed before implementation (exit 1); all four
+final guards pass (exit 0), including import preparation, collision storage key,
+identity rejection and single-frame fallback. Source live acceptance remains
+pending: reopen the original Local case in a fresh authorized source session,
+verify image cards/counts and original input workflow. Existing process launch
+has test control disabled. Control findings are in section 0 of the agent guide.
+
+Shared core paths apply to Standard, ARM64-emulated and Eagle Eye Server in both
+backends. No mapped plugin payload changed; 471 mirror pairs match. Selected
+builder/profile/codec/parity checks: 64 passed, one failed for existing staged
+configuration mismatch. Artifact verification is pending for every edition;
+no build/version/release action was performed. Rollback is limited to these
+thumbnail adapter/import hunks, preserving all pre-existing worktree edits.
+Part B is owned by the [VTK report](VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+
+Final combined Local/offline/stream/empty-state selection: **82 passed, one
+existing xfail, two baseline spinner failures explicitly deselected, exit 0**.
+The full empty-state run and isolated HEAD comparison both exposed those two
+baseline failures. Syntax compilation and scoped diff checks pass.
+Dirty-source SHA-256 handoff (recompute when binding a future immutable candidate):
+
+| Source | SHA-256 |
+|---|---|
+| `PacsClient/pacs/patient_tab/utils/utils.py` | `a2d9682322e10e5972f6af64094ec388d6635fe5076b75b9a92b714d3697c130` |
+| `PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_import.py` | `f05e4ed5694cea03e3a12fa94af8935879db27800b8cd1dfea2f1af8ee93fdb8` |
+| `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/_vw_overlay.py` | `0c428927df62d2f16e811600dd0288f32b495a2e26add8860d21500363a38ce1` |
+
 ## 2026-09-20 first-viewer graphics snapshot reuse (OPT-60)
 
 **Fixed and code-verified; fresh-source timing pending.** The current session sampled a
@@ -2856,3 +3003,655 @@ open-tab back-fill, patient Study-set, multi-study projection and progress-state
 and card-lifecycle boundary passed **259 tests, exit 0**. Source GUI verification remains
 pending and must not be reported as passed until the affected multi-study workflow is
 reopened successfully.
+
+## Eagle Eye Server cache-miss acquisition handoff (2026-09-22)
+
+Source: Eagle Eye Server administration/execution work, OPT-51. Status: open;
+producer contract requested, no shared downloader implementation changed.
+
+The Eagle Eye consumer currently reads a completed server workstation cache or
+PACS-mapped storage through `eagle_eye_remote/source.py`. It must next accept a
+reference-only analysis request for an uncached study and obtain selected DICOM
+sources without requiring a manual desktop download.
+
+Inspected existing boundaries: `download_process_entry._run_download_in_process`
+already reuses `DownloadExecutor` in a headless child. Its database is constructed
+from process-global runtime paths, its authentication is restored from parent
+configuration, and `DownloadExecutor.execute_download` obtains a full study
+metadata inventory. `GrpcMetadataClient` is a socket-backed compatibility name,
+not permission to restore retired gRPC. Its socket port is resolved from the
+configured socket profile. `SeriesIntentCoordinator` expects owner-provided
+scheduler/worker/UI callbacks. Calling these pieces with another set of ad hoc
+server globals would not establish selected-series acquisition, shared ownership
+or an authoritative completion contract.
+
+Requested producer contract: a non-GUI consumer can acquire an immutable source
+manifest for an explicit server profile + Study/Series/SOP inventory. It must bind
+PACS identity/authentication and cache/database roots, reuse existing acquisition
+ownership, deduplicate same-source requests, isolate cancellation by waiter, pin
+in-use files against retention and signal completion after atomic file publication
+and verified identities/counts/index state. Return source paths and revision/hash
+facts, never Qt/viewer objects. Eagle Eye owns its adapter and immutable job staging;
+Unify owns changes to the shared acquisition/coordination contract.
+
+Acceptance needs synthetic isolated database guards and one real uncached study
+through the supported socket path, followed by server analysis and derived-result
+retrieval. No live database test fixtures, alternate downloader or completion
+fabrication were introduced. Consumer ledger:
+[server migration plan](../plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md).
+
+
+## 2026-09-23 Razi source Home acceptance: inbound stall evidence
+
+Eagle Eye full-workstation source snapshot `20260923-workstation`, 16:54:57 launch,
+main PID 9472. Owner signed in and reported a freeze while opening the patient list.
+The session F11 sample records a 6050.9 ms GUI gap in
+`patient_table_widget._on_assignments_refreshed -> _set_refresh_result ->
+reception_api_breaker_open` (reception_api_config.py line 367). An earlier 623.3 ms
+sample reaches `_breaker_key`. This is sampled attribution, not exclusive function
+timing or confirmed root cause. Requested shared-owner check: reception-breaker
+lock/config ownership and network work within the lock; preserve existing shared
+contracts and diagnose with a synthetic behavioral guard before changing code.
+A later native Advanced access violation belongs to the
+[viewer owner's dated Razi receipt](VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+No runtime repair, restart, flag change or shared-pipeline workaround was applied.
+Live acceptance failed; study download/display is not certified.
+
+
+### Razi trigger correction, 2026-09-23
+
+The owner clarified that the terminal freeze/crash followed native series drag/drop
+into the viewport, after patient opening and download. The terminal log confirms
+DROP at 17:08:05.042 and Advanced series-switch at 17:08:08.785; the PID 9472 native
+access-violation file was written by 17:08:09.082. See the dated correction in the
+[VTK owner's report](VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+The earlier Reception-breaker GUI gap is a separate sampled stall, not attribution
+of the owner's reported terminal crash. No shared-pipeline repair was made.
+
+## 2026-09-23 first-double-click investigation (OPT-35 / OPT-60)
+
+The user reports first double-click flashes without opening; the second opens,
+on both Razi and the local workstation. Razi's examined session recorded selection
+and thumbnail requests but no open-request marker. Local 19:32-19:35 sessions show
+single-selection activity followed by a later open request; tab creation after the
+request takes about 0.3-0.4 seconds. This does not prove that the earlier graphics
+admission correction caused or did not cause the input loss.
+
+A native mouse double-click through Computer Use on a previously unopened local
+row opened the tab on the first attempt. The intermittent failure was not
+reproduced in that attempt. No clinical identifiers or screenshots are committed.
+
+The input observer was attached to QTableWidget, although mouse events target its
+viewport, and the double-click handler swallowed all exceptions. PHI-free bounded
+press/release/double-click records now include monotonic time, row/column indexes
+and activation state, with explicit handler entry/signal/rejection/type-only error
+records. Events are not consumed or synthesized; navigation is unchanged. This is
+a diagnostic correction, not a claimed fix for the reported user-visible defect.
+
+The new Qt observation guard failed before and passes after; 47 focused guards
+pass, exit 0. Mirror dry-run has no drift. Source is updated locally and on Razi
+with hash verification and backup under backups/patient-input-observation-20260923.
+The already imported running code was not hot-patched and neither UI was restarted.
+A fresh human source launch and repetition is required to capture the decisive
+input boundary. Restore the backed-up table file to roll back the observation.
+
+## 2026-09-23 Razi patient-open / viewport acceptance receipt
+
+The user confirmed opening a patient and importing a series into the viewport.
+Fresh remote log review ties this to the existing source UI PID 17424 (normal
+AIPACS_TEST_SERVER=0 session), not the isolated diagnostic probe or a frozen build.
+Open request: 19:56:07.217; tab created: 19:56:08.384; actual first-image marker:
+19:56:17.617 (Razi local time), backend pydicom_qt. The earlier first_series_visible
+marker is not used as proof of actual pixels. The UI remained responding.
+
+For the 19:55-19:59 workflow interval, app/viewer/download/database logs contain
+zero ERROR/CRITICAL records. Windows Application events 1000/1001/1002 since 19:55:30
+were absent at inspection. The main PID's session-scoped native file contains only
+its session header, no native fatal exception. Worker headers are not crashes.
+The download log reports 12 completed series totalling 111 downloaded files and
+zero skipped, matching its authoritative total of 111. This is a log-level count,
+not a new on-disk/SOP audit. One socket reconnection warning recovered before the
+series completions. Human visual confirmation plus first-image/liveness evidence
+passes this scoped patient-open-to-viewport source workflow, including the earlier
+native-crash path now routed to VTK-free Fast.
+
+Remaining findings: a 1251.1 ms UI stall during first Fast pipeline import/source
+compilation; Download Manager DM-CONVERGE-MISS at Downloading and Completed and
+missing-row/status warnings, so the progress-row acceptance is not clean. The
+FAST_GEOMETRY_ORDER_MISMATCH entries are INFO diagnostics for InstanceNumber vs
+IPP order; existing code uses a separately ordered copy for sync/reference lines.
+They are not proof of corrupted images or a new geometry correctness pass.
+
+No runtime modification or restart was performed for this verification. The
+input-observation source update has not been loaded into this still-running UI.
+Advanced/MPR on Razi, concurrent AI requests, model inference, standard-client
+round trips and frozen/service deployment remain separate acceptance gates.
+
+## 2026-09-25 cross-repository PACS transfer review (OPT-04 / OPT-51)
+
+Scope: current dirty workstation source and `D:/pacs server INO`, at the owner's
+request. Source/offline review only: no runtime repair, deployment, configuration
+change, clinical transfer, or restart. Existing unrelated work was preserved.
+Checked-out source is not proof of the version running on a host. This evidence
+extends Unify U1/OPT-04 and Eagle Eye OPT-51; it does not open a competing plan.
+
+### Actual paths
+
+| Consumer | Actual source path | Behavior |
+|---|---|---|
+| Standard workstation and desktop viewing | DownloadExecutor -> SeriesDownloader -> SocketDicomClient -> PACS DicomSocketServer.get_series_images | Persistent socket, four-byte big-endian length, JSON/Base64 DICOM, sequential series/batches |
+| Download metadata | download_manager/network/grpc_client.py -> PatientListSocketClient | Socket-backed compatibility wrapper; historical gRPC name is not the transport |
+| Standard client remote analysis | eagle_eye_remote/client.py -> Eagle Eye job service | Sends references and retrieves derived artifacts |
+| Eagle Eye Server input | source.py::PacsSource -> /api/ai-patient/by-study/{study_uid} -> accessible storage | REST returns location; local/mapped directory inventory, header validation and immutable job copies |
+| Eagle Eye fallback | PacsWithCacheSource / WorkstationCacheSource | Completed server cache after PACS HTTP 404, or explicitly configured cache source; no automatic Socket download |
+
+Moving Eagle Eye to another machine therefore requires accessible configured
+storage mappings or a completed server cache. A PACS URL/socket port alone does
+not provide its DICOM bytes. Co-location avoids Base64 transfer for Eagle Eye,
+but still incurs staging I/O. Authentication errors and inaccessible directories
+do not trigger the explicit-404 fallback.
+
+### Findings and owner handoff
+
+1. **High: fragmented request prefix breaks the server.**
+   `D:/pacs server INO/servers/socket_server.py:821` calls `recv(4)` once and
+   interprets it immediately. Client response parsing correctly loops at
+   `modules/download_manager/network/socket_client.py:789`. The offline actual
+   server-method probe accepts an ordinary frame but processes zero requests
+   and returns an error for a 2+2-byte prefix. Server owner: exact-length reads,
+   bounded EOF/timeout behavior and fragmented/coalesced-frame regression cases.
+
+2. **High: SOP identity is not the download/resume file contract.**
+   Server sends `sop_instance_uid`, but client `socket_client.py:1384-1410`
+   names/deduplicates files by InstanceNumber. Distinct SOPs with the same number
+   collide and the later object is skipped. Server `get_series_images` sorts
+   only by InstanceNumber, without a stable tie-breaker; ingestion can also
+   shift skip/limit pages. Client completion at lines 1571-1586 is explicitly a
+   lower-bound file count, not exact SOP verification. Existing duplicate guards
+   reject a short count but do not make every valid SOP retrievable. Unify U1:
+   versioned study/series/SOP manifest, deterministic ordering, identity-based
+   filenames/resume, exact completion; retain InstanceNumber for presentation.
+
+3. **Medium: integer batch shrinking can repeat a window.**
+   Client `download_batch:1068` converts offset to `batch_start // batch_size`;
+   server `get_series_images:2215` multiplies back. Halving at client lines 1324
+   and 1542 does not always preserve alignment, contrary to its comment. The
+   actual client-method probe maps requested offset 15, size 2 to server offset
+   14. This proves overlap/extra work, not independently omitted tail files.
+   Unify/server owners: explicit offset or versioned cursor; align resized
+   windows conservatively until the protocol supports that contract.
+
+4. **High for large objects, medium for normal throughput: whole-batch buffering.**
+   Server `get_series_images:2297-2305` reads/encodes files; `send_response:1347-1360`
+   serializes the full JSON before checking its ceiling. Client receives and
+   parses the whole response before saving files. Server `config/config.py:141`
+   sets 500 MiB, matching the client; the method's 200 MiB fallback is not the
+   configured default. Base64 expands 3 MiB to 4 MiB before JSON, confirmed by
+   the probe, and several representations coexist in memory. One uncompressed
+   object around 375 MiB or larger cannot fit the 500 MiB Base64 response with
+   metadata; batch size one cannot solve it. Client `download_batch:1077` sends
+   no compression parameter, so server gzip support is not active on this path.
+   Server/Unify owners: bounded binary object/chunk transfer, backpressure,
+   integrity/resume and negotiated compatibility. Measure compression against
+   CPU/network/transfer syntax; do not blindly enable it for every object.
+
+5. **Medium: conservative client scheduling, no shared server transfer budget.**
+   `series_downloader.py:309-330` uses one connection and sequential series;
+   defaults are one active study and batch size ten. Constants mentioning
+   parallel series do not make this loop parallel. Server `start:745-775`
+   uses backlog five and a thread per accepted connection; no global transfer
+   memory/admission bound was found in that path. Increasing client concurrency
+   first risks multiplying disk/RAM load. Establish a server byte budget, then
+   benchmark bounded independent transfers while preserving interactive priority.
+
+6. **Medium: Eagle Eye repeatedly inventories and stages source.**
+   `eagle_eye_remote/source.py:119-178` walks the study, reads headers beyond
+   selected series, hashes source, copies, hashes destination, then rehashes
+   source. Approximately four full reads plus one write per selected file,
+   excluding headers/cache effects. These checks protect immutability; removing
+   them blindly is incorrect. OPT-51/shared-pipeline owners: selected-SOP
+   manifest and verified immutable staging reuse with revision/invalidation and
+   retention rules. `Jobs.execute:146-163` already has a retrieval semaphore;
+   this finding does not claim unbounded Eagle Eye input preparation. Remote
+   cache-miss acquisition remains a separate shared-pipeline contract gap.
+
+7. **High: Socket read authentication is advisory.**
+   `socket_server.py:1461-1498` continues without a valid authenticated user and
+   dispatches GetSeriesImages. The actual-method offline probe confirms a
+   tokenless request reaches its handler. This path constructs ordinary TCP
+   sockets without a TLS wrapper. This is source evidence, not proof of external
+   firewall exposure. Server owner: enforce authorization with explicit client
+   failures and a coordinated encrypted-transport compatibility rollout.
+
+8. **Lower priority: oversized errors lose correlation.**
+   `send_response:1353-1360` replaces oversized responses without request_id;
+   the actual-method probe confirms it. Preserve request correlation for general
+   clients. Download Manager serializes requests, so this alone is not proven
+   to cause its failures.
+
+The server schema already declares `(SeriesInstanceUID, InstanceNumber)` at
+`database/database_schema.py:204`. Do not call that index missing from source
+alone. Actual installed indexes/query plans were not inspected. Stable SOP
+ordering and a source snapshot still require a separate contract decision.
+
+### Verification and remaining evidence
+
+The [offline probe](../../generated-files/pacs-link-review-20260925/probe.py)
+extracts actual methods with AST and uses fake transports/synthetic bytes. No
+PACS application import, MongoDB access or clinical SQLite access is needed.
+[Results](../../generated-files/pacs-link-review-20260925/probe-results.json):
+normal framing accepted; fragmented prefix rejected; odd-halving overlap;
+compression not requested; unauthenticated dispatch accepted; oversized
+correlation lost. These characterize current defects, not fixed-behavior guards.
+
+Focused pytest used `.venv/Scripts/python.exe -m pytest -p no:debugging`,
+QT_QPA_PLATFORM=offscreen, PYTHONPATH=. and eight files:
+`test_socket_response_framing.py`, `test_series_file_completion.py`,
+`test_pagination_completeness.py`, `test_response_too_large_u1.py`,
+`test_batch_growth.py`, `test_eagle_eye_pacs_identity.py`,
+`test_eagle_eye_pacs_session.py`, `test_eagle_eye_cache_fallback.py`.
+Result: **87 passed, 8 failed, 5 skipped, 24 automatic reruns; exit 1**.
+All eight failures are older pagination structural expectations; all five skips
+hide the absent `_grow_batch_size` helper. Current code has no growth branch and
+does have the newer file-count gate. Do not interpret these failures as proof of
+the retired growth bug, or restore obsolete flags just to pass the tests. Replace
+stale expectations with behavioral client/server contract coverage under U1.
+
+No live GUI acceptance, throughput measurement, active configuration check,
+MongoDB explain, or production load test was performed. No measured speedup is
+claimed. Source/offline review is complete. Subsequent acceptance must measure
+time to first saved/viewable object, total study time, wire/source bytes, peak
+memory, disk/CPU load, priority latency and retry waste for CT/MR, large single
+objects, multiframe, reconnect/resume, and concurrent client/AI work. Start with
+synthetic data and controlled network conditions; preserve the existing human
+source-launch/login rules for separate live-workflow acceptance.
+
+
+## 2026-09-25: client paging correction and PatientID contract (OPT-04 / OPT-51)
+
+Scope: the latest owner instruction authorizes workstation/Eagle Eye changes and
+read-only study of the separate PACS project. No PACS source changes or production
+patient mutations were made in this follow-up. Earlier atomic-storage source work
+is retained, not deployed. Eagle Eye source sharing remains conditional on the
+atomic-write capability; the current Razi deployment continues to copy safely.
+
+### Download correction
+
+The socket protocol maps offset to page index using integer division. Integer
+halving at an odd boundary repeats a previous instance. Consecutive reductions
+can also skip an instance: the synthetic 27-instance workload at initial size 5
+produced 26 files. The existing file-count gate correctly rejected completion.
+Both oversized-response retry and soft-byte-cap reduction now use gcd(offset,
+half-size), so the new size divides the pending offset. At offset zero gcd keeps
+the proposed half-size; minimum size remains one. No wire/server change, growth,
+viewer decode, filenames, completion semantics or scheduling change was made.
+
+The real download_series loop is exercised against a synthetic index-paged server.
+After fixture setup was corrected, the pre-fix eight-case run had five behavioral
+failures and three passes (exit 1). The expanded 16-case guard covers initial
+sizes 3/5/7/10, byte pressure/error reduction and fresh/resumed downloads; every
+successful response contains each pending instance exactly once and retained
+files stay byte-identical. Some odd boundaries necessarily reduce to size one;
+this trades batch throughput for exact paging under the existing server contract.
+
+Verification: initial focused suite 133 passed (exit 0), including source sharing,
+framing, cancellation, retry retention and demographics. After the resume cases
+and revised editor wording, 85 passed (exit 0): paging, demographic edits, PatientID
+overrides and distribution profiles. These overlap and are not additive totals.
+Mirror sync changed only the download_manager socket client; all 472 pairs match.
+Standard Client and Eagle Eye shared download payload receive the same change;
+PyInstaller/Nuitka distribution profile guards pass, but no build/artifact was made.
+Source GUI remains unverified: documented control-client ping cannot reach the
+local listener; no source restart/login or installed executable launch was attempted.
+Next source acceptance must observe an actual download and editor warning; induced
+oversized clinical requests are not required. Revert only the gcd import/two paging
+reductions and matching payload to roll back this slice, preserving other work.
+
+### PatientID correction mismatch
+
+Evidence in the separate PACS source: database/patient_management.py,
+servers/dicomweb_server.py, servers/patient_api.py and
+cornerstone3d-viewer/patients.html. Read-only Razi OpenAPI inspection confirmed
+PUT /api/patients/{patient_id} and PATCH /api/patients/{patient_id}/patient-id
+are registered. This proves route availability, not compiled-handler equivalence.
+
+* Client editor modifies local DICOM headers with UID preservation, then local
+  database/optional display alias. There is no server push. Local DB can reattach
+  studies to an existing local patient, which differs from server rename semantics.
+* PUT explicitly removes PatientID from updates. PATCH accepts string
+  newPatientID/new_patient_id and requires MANAGE_PATIENTS in FastAPI. Web uses
+  the PATCH route; leading zeroes must remain strings end to end.
+* Source rename rejects an already-existing destination PatientID. It renames all
+  studies under the old ID rather than selecting an authoritative StudyInstanceUID.
+  This cannot implement moving one wrongly-labelled study to an existing patient.
+* Source rename changes Mongo patient/study fields and capture metadata/paths.
+  It does not rewrite stored DICOM PatientID tags, invalidate DICOM identity caches,
+  or notify connected workstation caches. Sequential filesystem/database changes
+  have no whole-operation rollback; late failure can leave a partial correction.
+* No evidence establishes a matching reception/RIS correction. Changing a PACS
+  identifier alone must not be described as fixing admission or billing identity.
+
+server_push_supported remains false for these concrete contract gaps. Its obsolete
+claim that no endpoint exists is corrected, together with the dialog guidance.
+The editor now explicitly states no PACS/RIS push or server-study reassignment.
+Existing local UID/backup/rollback and alias behavior is preserved. Wording guards
+now protect scope rather than perpetuating the obsolete endpoint claim.
+
+Required future server contract, before enabling client push: explicit source and
+target identity plus selected StudyInstanceUIDs; authorized destination/person and
+admission verification; conflict/version preconditions; documented existing-target
+merge semantics; transactional/compensated metadata and atomic DICOM changes;
+unchanged Study/Series/SOP UIDs and pixel payload; cache invalidation and authoritative
+read-back receipt; idempotent retries and audit. Never auto-merge by patient name,
+trim leading zeroes or apply a patient-wide rename to a study-only correction.
+Client integration should perform preflight/commit/read-back on a worker and refresh
+only the confirmed identities. Enabling the current PATCH endpoint directly is
+intentionally deferred with the separate PACS work, as instructed by the owner.
+
+
+## 2026-09-26: read-only morning download inventory (OPT-04)
+
+Owner reported a roughly six-thousand-image study showing fewer downloads and
+requested comparison with installed Razi PACS. No runtime change, redownload,
+patient edit, production service change or GUI restart was performed in this audit.
+Identifiers and raw logs are deliberately omitted.
+
+Read-only SQLite connections located the selected study in the default clinical
+partition. Scope was extended to every local study with a DICOM file modified on
+September 26, plus the specifically requested study: 23 studies / 16 patients.
+A bounded SSH/PyMongo read queried their series and instances from installed Razi
+PACS and checked referenced files on that server. Local DICOM headers were read
+without pixels and compared with the authoritative server SOP inventory per study.
+The audit does not infer downloads that never created a local file.
+
+Results: 20,095 local files and 20,095 server instance records; zero missing or extra
+SOP identities, duplicate local/server SOPs, unreadable local headers, incorrect
+local Study/Series identities or missing server files. Every study's local and
+server series count matched; aggregate byte counts also matched for every study.
+This is header/identity/count/size verification, not a pixel decode or byte-hash test.
+
+The requested large study contains 198 series and 6,218 files (6,217 MR plus one
+DOC). All identities match, and there are no duplicate instance numbers in a series.
+Local write timestamps span 10:42:25 to 10:47:17 (291.94 s), totaling 1,122,771,734
+bytes. About 3.67 MiB/s is an observed payload/write-window average, not isolated
+network throughput. At 10:51:30 the source log records download_skipped_complete
+with 198 series. It does not establish what the user saw before completion.
+
+A one-object image/document counting distinction could explain only a difference
+of one; a larger displayed deficit remains unconfirmed. The current source has no
+observed missing-file defect in this workload. Do not diagnose or patch a UI counter
+from this inventory alone. A text clarification about the affected UI/count and
+possible repeated download remains unanswered at the time of this receipt.
+
+GUI verification is unavailable: no control MCP was discoverable and documented
+client.py ping reports an absent local test listener. No GUI acceptance is claimed.
+No new runtime regression tests were needed for this diagnostic/documentation-only
+follow-up. Existing September 25 fix gates remain as recorded, not retroactively
+closed by this inventory. Reusable aggregate-only audit helper and receipt are in
+`generated-files/pacs-link-review-20260925/audit_recent_downloads.py` and
+`recent-download-counts.json`; the helper takes the patient selector at invocation
+and never saves it, names, UIDs, raw clinical logs or server file paths.
+
+
+## 2026-09-26: LAN throughput and load follow-up (OPT-04)
+
+Owner clarified the concern is transfer speed and system load, not missing files.
+The preceding count audit is not evidence of performance acceptance.
+
+Verified client NIC negotiated 1 Gbit/s. Bounded read-only GetSeriesImages probes
+against installed Razi used the same selected series, sizes 10/40/1/40/10, no
+compression and no persisted payloads. Responses were capped at 32 MiB, one socket
+at a time, with 250 ms gaps. Equivalent loopback requests were measured on Razi.
+No services, configurations, installed code or clinical data were changed.
+
+LAN body receive: approximately 4.25 MB in 37.5-38.8 ms and 16.98 MB in
+149.6-151.3 ms, about 107 MiB/s (near gigabit wire capacity). Time to response
+header was 74-75 ms at size 10 and 209-226 ms at size 40. Full transfer/JSON/Base64
+processing took 125-130 ms for 3.18 MB payload and 407-421 ms for 12.72 MB,
+roughly 24-30 MiB/s useful payload. Server-loopback header times (68-73 / 223-227
+ms) remained comparable, implicating application preparation rather than LAN
+capacity alone. These are small repeated warm samples, not historical proof or
+an end-to-end improvement claim. Production client download_batch separately
+measured 110-142 ms at size 10 and 396 ms at size 40; probe behavior is consistent
+with its receive path. A larger count alone is not a safe universal batch policy.
+
+Historical large-study series summaries: 198 records, cumulative elapsed 256.19 s,
+disk writes 12.618 s, Base64 decode 2.527 s, decompression zero. Twenty series took
+at least five seconds and account for 144.65 s; slowest 12.61 s with only 47.63 ms
+file write / 11.51 ms Base64 decode. The complete file-write interval was 291.94 s.
+These totals do not measure receive wait, JSON parsing, normalization, progress
+callbacks or DB work separately; their residual must not be labeled pure network.
+A 40-file local normalization sample took 83.98 ms wall / 93.75 ms CPU, changed
+zero files; it must not be disabled merely for speed.
+
+Historical resource samples in the download interval showed worker RSS around
+302-337 MiB and 30-32 GiB available client RAM. They do not establish historical
+CPU/disk saturation. A separate 2.45-second bounded loopback probe measured the
+two PACS processes consuming 1.031 CPU seconds (42% of one core, NOT 42% of all
+48 logical CPUs). Combined RSS stayed 649.7 MiB and available server RAM was
+25,782 MiB. Concurrent clinical activity was not excluded: this is an interval
+observation, not isolated CPU attribution or a claim of no system impact.
+
+Source constraints explain avoidable overhead: sequential request/read/decode/write,
+Base64 expansion (~one third), JSON copies, fixed 10-instance initial/cap sizing,
+per-batch queries and repeated filesystem work, client pacing and per-series
+metadata/index work. Installed implementation is opaque; source-only internals
+are hypotheses until correlated with installed timing. Present measurements do
+not attribute the twenty 5-13 second stalls to a specific component. Prioritize
+correlated per-request receive/header and normalization/DB/IPC timings, then a
+byte-bounded batch/prefetch experiment on Client while preserving responsiveness,
+cancellation and identity. Do not simply remove throttles or multiply workers.
+Separate PACS serialization/database/streaming changes remain study-only per scope.
+
+Aggregate probe script/results: transfer_timing_probe.py and
+transfer-timing-results.json under generated-files/pacs-link-review-20260925.
+No runtime optimization was applied in this measurement follow-up; no GUI/load
+acceptance is claimed. Source GUI control remains unavailable.
+
+
+## 2026-09-26: deeper timing / Poor Connectivity diagnosis (OPT-04)
+
+Owner explicitly requested diagnosis before batch tuning and preservation of
+single-instance poor-link behavior. No production/runtime/config change was made.
+
+Confirmed independent defect: SocketConfig still resolves the per-host
+poor_connectivity setting and AIPACS_POOR_CONNECTIVITY override, but the current
+Download Manager socket client never invokes that resolver. download_series only
+forces size one for modality/description predicates. Source and payload both lack
+the prior poor-mode wiring. Existing focused tests: 11 passed, five failed (exit 1);
+some source assertions concern retired growth/prime code and should not be restored
+blindly. The defect is independently confirmed behaviorally: actual download_series
+with the environment override ON still requested size 10 five times for 42 MR
+instances. Explicitly setting only the diagnostic client's cap/adaptive size to one
+produced 42 one-image requests. This is not claimed to explain LAN stalls.
+
+Bounded follow-up used two small previously slow series (42 total instances),
+actual SocketDicomClient.download_series, real installed-PACS reads and normal
+atomic local writes. Output used a validated disposable directory directly under
+user_data/cache and was removed on context exit. No patient DB, normal cache,
+server files, viewer or running process settings were modified. Only aggregate
+metrics persist in full_series_timing_probe.py / full-series-timing-results.json.
+
+Normal mode: 1,633 ms wall, 338 ms request total (232 ms header, 93 ms body,
+11 ms JSON), 94 ms normalization, longest single recv 67 ms. The same series
+historically took 8.16 + 12.61 = 20.77 seconds in the morning logs. Current replay
+did not reproduce those stalls. Poor-setting ON: still five size-ten requests;
+2,554 ms wall with 331 ms request total. Forced single: 42 requests, 2,020 ms wall,
+914 ms request total. Larger cap: two requests, 613 ms wall, 285 ms request total.
+The write-stage aggregate in this probe DOUBLE COUNTS the per-batch records and
+series final summaries, and per-batch timers include processing: it must NOT be
+used as isolated disk time or summed with the other stages. Cold/warm order and
+variable local writes confound whole-workflow comparisons; these runs do not prove
+that changing 10 to 40 gives a 2.7x speedup. The measured request savings were only
+about 53 ms for this sample. Historical disk-write summaries remain valid.
+
+Additional historical DB diagnostics for the download worker identify 198
+save_series_instances_total samples totaling 35.041 seconds (max 1.139 s), of
+which actual batch_insert_instances calls total 1.670 s. The broad DB-stage total
+also covers header/inventory preparation and scheduling; do not call all 35 s
+SQLite execution. This accounts for most time outside the 256.19 s network-client
+series loops and cannot explain their twenty 5-13 second stalls.
+
+Limits: fresh standalone probes do not carry the logged-in application's token,
+UI/IPC callback work or concurrent clinical workload. Installed GetSeriesImages
+accepts these read requests, but they cannot exclude authenticated session/user
+lookup delay. Local server source verifies session/user DB lookups for token-bearing
+requests. No credentials/tokens were extracted, forged or changed. Historical
+per-request header/body/parser timings were not retained for the worker in the
+available logs; the server process has no active request log file. The precise
+cause of the historical stalls remains unresolved, not proven to be batch size.
+
+Next correction design: reconnect the existing poor-mode resolver using the actual
+client host, pin size one for the whole series and preserve cancel/retry/resume.
+Guard real requested sizes under env override, per-host flag and normal mode; do
+not restore removed growth or prime machinery. Separately capture aggregate
+per-request timings (including token-bearing real app requests), normalization,
+write, callback and index timing in the affected source workflow before LAN batch
+changes. Use bounded numeric telemetry without patient/token/path/payload values.
+A fresh source GUI/control session is still required; absent test listener prevents
+claiming that the logged-in workflow was reproduced. Do not increase concurrency,
+remove safety normalization or alter Poor Connectivity based on the warm probe.
+
+
+### Poor Connectivity: owner counter-observation and restart scope
+
+Owner reports single-image operation on another PC including the latest installed
+version. Do not explain this away as an older-version deployment. That PC and its
+loaded payload have not yet been identified, so the local-source diagnosis must
+not be generalized to the user's installed artifact.
+
+Settings path: save_server persists the checkbox to servers.json; get_all_servers
+reads the file on each call. Ticking without Save is not a persisted change. In
+historical revision 30969b06 the downloader cached the resolver result per socket
+client, constructed once per study task. An isolated execution of that exact helper
+returned false before setting change, false on the same object after change and
+true on a newly constructed object in the SAME process. This explains why a new
+download task was sufficient in that historical implementation; it does not prove
+that the latest installed artifact needs, or does not need, an application restart.
+Later inspected source revisions lack that helper. No app was restarted to test it.
+
+Additional synthetic real-loop comparison (25 files, no clinical data/network):
+normal MR and poor-resolver-true MR each requested sizes [10,10,10], both emitting
+one progress update per image. Normal DX, MR with adaptive size already one, and
+MR with cap one each requested 25 size-one batches. These are independent reasons
+for real single-image behavior; visual per-image progress alone also cannot certify
+wire batch size. They are possibilities, not an explanation assigned to the user's
+observation. Resolver call count was zero in these current-source executions.
+
+Next decisive evidence must come from the identified PC's actual loaded module
+and request sizes: save OFF, start a fresh MR task; save ON, start another fresh
+MR task; compare requested sizes and config host binding. Use an app restart only
+if task-boundary behavior fails to update, and only through the user's authorized
+source/clinical workflow. Source GUI control remains unavailable locally. An
+asynchronous request for device identity/installed version is pending. Runtime and
+server settings remain unchanged.
+
+
+## 2026-09-26: dual transfer modes implemented (OPT-04)
+
+Owner explicitly authorized optimizing both current paths: robust single-image
+poor-link transfer and larger bounded batches on faster connections. This is a
+bounded Download Manager change, not a U0-U5 completion/state migration. The
+separate PACS project and installed server remain unchanged. Existing local
+Eagle Eye/settings work and earlier pagination fixes were preserved.
+
+### Runtime contract
+
+`SocketDicomClient._poor_connectivity_active` resolves the existing setting with
+the actual client host, rather than an unrelated global host, and caches it for
+that study's client. A new study client reads the saved mode again without an app
+restart. In-flight studies keep their mode. Existing environment override and
+per-server persistence are retained; no new config key, feature flag or runtime
+module was introduced. A direct resolver exception conservatively selects size
+one; the underlying legacy resolver's own false fallback is unchanged.
+
+Poor Connectivity and existing large-frame modality rules force one instance per
+request throughout the series, including retry/resume. Existing atomic publication,
+file retention, cancellation, priority yield, packet framing and completion checks
+are preserved. The settings tooltip explains Save/new-study behavior. The edit
+changes only that tooltip within an already-dirty settings file.
+
+Normal mode retains initial size 10 and gradually grows at aligned page boundaries,
+up to 40 images. The existing AIPACS_DOWNLOAD_BATCH_SIZE_CAP can lower that ceiling
+(including 10 or 1); larger values are now capped at 40. Largest observed Base64
+instance size sets an 8 MiB estimated response target; request duration above
+0.75 seconds reduces the target. Growth is at most 2x per successful batch and the
+chosen size divides the next offset exactly. Thus integer server page indexes
+cannot repeat/skip a window even with odd sizes or resumed offsets. It is an
+estimate from already observed images, NOT a hard bound for unseen larger files
+or a guarantee that the initial request fits 8 MiB. Existing 64 MiB response soft
+cap and frame safety rules remain. After an oversized-response error the current
+series' growth ceiling is lowered so it does not repeatedly regrow into that error.
+One persistent socket remains; no extra downloader/thread or unbounded prefetch.
+
+Numeric-only transfer summaries add request-call time/count/max, slow calls,
+normalization and progress-callback time. Requests >=2 seconds also emit a bounded
+slow-call marker. The call duration includes retries/backoff/post-request yield;
+it is not pure server execution. No new patient/token/path/payload logging was
+added. These observations help isolate the historical intermittent stalls, which
+are still not proven to be fixed by batch tuning.
+
+### Regression and build-input evidence
+
+New actual-loop guards failed before runtime edits: nine failures / three passes,
+exit 1. Failures included poor mode ignored, no growth, byte-budget omission and
+resume policy. Expanded coverage includes actual-host lookup, saved-mode lifetime,
+large-frame modalities, retained files after synthetic connection failure, exact
+server offsets under growth/shrink/resume, response-time reductions, lower caps,
+lookup exception and no regrowth after oversized response.
+
+Final focused run: 175 passed, exit 0, covering transfer modes, odd-size shrink,
+poor resolver/UI persistence, response framing, cancellation, disk count guards,
+retry retention, unstable-link retry, oversized response handling, large batches,
+critical yield and distribution profiles. Two source-text guards still pinned the
+old unsafe integer-halving expression; updated to the already-landed gcd contract
+and reran successfully. Legacy poor-mode pins were updated to actual-host lookup
+and the new growth seam; removed prime/growth implementations were not restored.
+The repository-wide suite was not run and is not claimed green.
+
+Mirror dry-run identified only download_manager/network/socket_client.py; synced
+through the canonical tool, then 472/472 pairs matched. Standard/ARM Client and
+Eagle Eye distributions inherit the same mirrored runtime code; distribution guards
+pass. No PyInstaller/Nuitka artifact was built, deployed or launched. Eagle Eye's
+separate REST source-sharing mechanism is unaffected by these socket changes.
+
+### Bounded installed-PACS comparison
+
+Same 80-image MR series, isolated disposable local output, existing installed
+PACS read API, sequential fixed10/normal/normal/fixed10/poor runs. No live clinical
+DB writes or retained duplicate files. Fixed10 counterfactual disabled only the new
+growth policy inside the probe process; normal used the new policy. All runs
+returned 80 files successfully. No authentication token was extracted; standalone
+API probes do not substitute for the logged-in source GUI/IPC workflow.
+
+| Mode | Requests | Request time (ms) | Receive-and-save wall (ms) |
+|---|---:|---:|---:|
+| Fixed 10, run 1 | 8 | 475.65 | 1246.62 |
+| Normal, run 1 | 4 (10/10/20/40) | 400.00 | 974.30 |
+| Normal, run 2 | 4 (10/10/20/40) | 413.34 | 1002.88 |
+| Fixed 10, run 2 | 8 | 745.31 | 1569.21 |
+| Poor Connectivity | 80 (all size 1) | 1612.26 | 3846.63 |
+
+Normal mean wall time was about 30% lower in this small warm sample, with half the
+request count. Host scheduling/write-cache variation remains; no universal speedup,
+gigabit end-to-end throughput or elimination of morning stalls is claimed. Poor
+mode intentionally exchanges throughput for a smaller retry unit. CPU samples are
+not sufficient to establish reduced system load; no extra parallelism was added.
+Aggregate script/receipt: `generated-files/pacs-link-review-20260925/dual_mode_benchmark.py`
+and `dual-mode-benchmark-results.json` (no clinical identifiers in receipts).
+
+### Remaining gate and rollback
+
+Source GUI is NOT verified. Tool discovery found no callable control MCP and the
+documented client.py ping still cannot reach the local test listener. Per project
+policy a human must launch/sign in to one fresh source test session outside clinical
+reading before Save OFF/ON -> new study, progress, cancel/resume and rendered output
+can be accepted. No production LAN gateway workaround or app restart was performed.
+
+To limit normal-mode growth without rolling back poor mode, set the existing
+AIPACS_DOWNLOAD_BATCH_SIZE_CAP=10 for a subsequently launched process. Poor mode
+continues to pin one. To fully roll back this slice, revert only the new resolver,
+aligned growth policy and timing/tooltip additions with their mirror while retaining
+the prior gcd shrink correction and other worktree changes. A normal restart loads
+source changes; this is distinct from changing the saved mode in an already-updated
+app, which only requires a new study download.

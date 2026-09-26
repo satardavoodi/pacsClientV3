@@ -162,4 +162,6 @@ def test_dialog_has_reception_system_of_record_guidance():
     src = (_repo_root() / "PacsClient" / "pacs" / "workstation_ui" / "home_ui"
            / "patient_edit_dialog.py").read_text(encoding="utf-8")
     assert "system of record" in src
-    assert "reception fix it at admission" in src
+    assert "This editor does not push" in src
+    assert "does not reassign the server study" in src
+    assert "server has no endpoint" not in src

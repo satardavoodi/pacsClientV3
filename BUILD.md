@@ -1,6 +1,6 @@
 # AI-PACS canonical build and installer runbook
 
-Status: authoritative for the current three-edition Windows build matrix.
+Status: authoritative for the role-selected Windows build matrix.
 Audience: human maintainers and AI agents.
 
 Documentation map: [`docs/release-and-build/README.md`](docs/release-and-build/README.md).
@@ -13,11 +13,12 @@ and update the conflicting document before building.
 ## Non-negotiable interpretation of a build request
 
 An unqualified owner request such as "build", "make a new build", or "build the
-current version" always means exactly six installers: three PyInstaller editions
-and three Nuitka editions. The lane changes prerequisites and promotion status; it
-never changes that matrix or its final destinations. Do not ask whether the owner
-wants one backend, silently select one edition, or report an internal diagnostic
-artifact as a completed build.
+current version" means the Standard Client group: Standard and ARM64-emulated in
+both PyInstaller and Nuitka (four installers). An explicit Eagle Eye Server build
+means Eagle Eye in both backends (two installers). Do not silently add the other
+role or report one-backend diagnostic output as a completed build. The two roles
+may use the same version number but have separate build candidates, receipts,
+inventories, and acceptance decisions.
 
 The only exception is an explicit request containing words such as "diagnostic",
 "one backend", or a named single edition. That request may use the internal lane
@@ -27,15 +28,15 @@ script or invent a new output route.
 
 Final deliverables have exactly two writable destinations:
 
-- `builder/output/installer/` for the three PyInstaller installers.
-- `builder nuitka/output/installer/` for the three Nuitka installers.
+- `builder/output/installer/` for the selected PyInstaller editions.
+- `builder nuitka/output/installer/` for the selected Nuitka editions.
 
 The coordinator CLI intentionally has no final-output-directory override. `C:\b`,
 `C:\ap-stage`, backend `dist`/`stage` trees, logs, checkpoints, and `_superseded`
 are scratch or evidence only. A human or agent must not copy, rename, deliver, or
 describe files from those locations as the requested build.
 
-## Canonical six-installer command
+## Canonical role-selected command
 
 When the owner asks to "make a build", this is the required workflow. After
 `RELEASE.md` has produced a fresh synchronization receipt, create the complete
@@ -46,15 +47,27 @@ candidate with one command:
   --git-sync-receipt <receipt-path>
 ```
 
-The official lane always builds both backends and all three editions. It writes
-final files only to the established backend installer folders. Missing Eagle Eye
-Brain approval is checked before the snapshot, asset-cache verification, Lite
-Viewer build, or application compilation begins.
+The official Client lane builds both backends and only Standard plus ARM. It
+does not require or stage the Eagle Eye offline model cache. Add `--target server`
+only for an explicit Eagle Eye Server request; that builds only the two Eagle Eye
+installers. The Server release lane currently fails closed because portable
+Breast/Bone bundles, service installation, and clean-host qualification are not
+finished. `--local-install-qa --target server` can produce non-promotable candidate
+installers only after its required input gates pass. Brain/model preflight applies
+only to Server.
+The unattended service also needs real `pywin32==311` native modules and an
+inventoried offline wheel in a **new immutable** dependency cache.
+`pywin32-ctypes` is not a substitute. The current VC143 Slicer runtime remains
+the shared native baseline, but the current cache is not yet service-qualified
+for a frozen Server installer; the coordinator now stops Server preparation
+before compilation. Client preparation does not require pywin32. See
+[`builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md`](builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md)
+for the gap and installed acceptance gates.
 
 The short timestamped directory under `C:\b` is compiler scratch space only. It
 exists to avoid Windows path-length failures and preserve reproducible logs. It is
 not a third output hierarchy, and no installer may be delivered from it. A build
-request is complete only when the six versioned files and their metadata are in
+request is complete only when the selected role's versioned files and metadata are in
 `builder/output/installer/` and `builder nuitka/output/installer/`.
 
 ### Optional single-package diagnostic
@@ -71,21 +84,61 @@ The diagnostic defaults to Standard PyInstaller. `--backend nuitka` or
 `--edition eagle-eye` / `--edition arm` selects another explicit diagnostic target.
 Its isolated output is deliberately non-promotable.
 
-### Local six-installer install QA
+### Local role-selected install QA
 
 When the owner explicitly requests installable local artifacts before Git or legal
-distribution approval, use the same six-output matrix in local install-QA mode:
+distribution approval, use the same role selection in local install-QA mode:
 
 ```powershell
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
   --local-install-qa
 ```
 
-This mode builds PyInstaller and Nuitka for Eagle Eye, Standard, and ARM64-emulated
-and writes them to the same two canonical repository folders. It validates the
-technical Brain payload but does not claim redistribution approval, publication,
-signing, or production acceptance. Its installers are for local installation QA
-only until the remaining release gates pass.
+The default produces four Client installers. For two Eagle Eye Server candidates,
+append `--target server`. Both modes write only to the same two canonical folders.
+The Server candidate validates available model payloads but does not imply that
+Breast/Bone or service deployment is portable or clinically qualified. Neither
+mode claims redistribution approval, publication, signing, or production acceptance.
+
+Advanced MPR parity preflight first requires `aipacs-native-build.json` in both
+the assembled Developer Run runtime and the immutable asset cache. That record
+binds the custom native Slicer executable to the current C++/CMake/UI-resource
+source hashes. An absent or mismatched record blocks the installer, even if the
+developer runtime and cache contain identical old binaries. The definitive
+native baseline for **both Client and Server** is documented in
+[`docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md`](docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md).
+The coordinator now defaults to the new complete immutable cache at
+`generated-files/distribution-assets-native-3.6.7-vc143-20260923/`; it must never
+fall back to the older `generated-files/distribution-assets/` or the pre-VC143
+`generated-files/distribution-assets-native-3.6.7-20260923/` cache. Normal
+AI-PACS builds reuse the new native executable and **do not rebuild Slicer**.
+Only when native Slicer source/resources change, rebuild the custom SuperBuild,
+run `tools/slicer/assemble_slicer_runtime.py`, and prepare a new immutable
+distribution asset cache before retrying the canonical coordinator. The
+assembly step refuses to replace an existing runtime if the CMake compiler-source
+copy differs from the current repository or its compiled executable predates
+the native source. See the custom Slicer source-build prerequisites in
+`modules/mpr/advanced_3d_slicer/slicer_custom_app/docs/BUILD_FROM_SOURCE.md`.
+If the shared cache is missing, restore the verified baseline or prepare a
+*new* complete cache from current Developer Run; do not point the coordinator
+at an older Slicer. For a Client-only cache when needed, prepare a *new* cache with
+`tools/build/prepare_distribution_assets.py --profile client --root <fresh-cache-path>`
+and verify it with `--check --profile client --root <fresh-cache-path>`.
+Pass the same path to the coordinator with `--asset-root`. This is compiler/input
+cache, not a third installer output location; Client preparation must not stage
+the Eagle Eye offline model. Do not modify a completed cache in place.
+The parity preflight then compares the cached Slicer runtime with the
+assembled runtime used by Developer Run. Packaging overlays the current
+source startup script into each staged Slicer payload and records startup plus
+complete Python/UI payload hashes so a same-version installer can refresh an
+older per-user runtime. The installed launcher selects the packaged script with
+its presentation/Qss companions. A changed native
+Slicer file requires a rebuilt/recached runtime; the coordinator fails instead
+of silently shipping the older UI. See
+`builder/docs/ADVANCED_MPR_BUILD_RUNTIME_INTEGRATION.md`.
+The verified VC143 app-local DLLs are part of that runtime and are required
+for **both** build backends and **both** Client/Server roles; an older cache
+without them is rejected. This does not rerun the Slicer SuperBuild.
 
 Versioned Git publication is governed by `RELEASE.md`. A full release candidate
 cannot start until the exact clean source commit is synchronized to every required
@@ -106,15 +159,16 @@ coordinator automatically uses `generated-files/eagle-eye/brain-tf212-py310` or 
 explicit `--brain-source`. Do not bypass the payload validation to build an
 incomplete Eagle Eye installer. Standard and ARM exclude both Eagle Eye models.
 
-A complete release candidate contains six standalone Windows installers. Both
-backends use one core build and then create three edition views.
+A Client candidate contains four standalone Windows installers; a Server candidate
+contains two. Each selected backend builds one core and only its requested edition
+views. The 3.6.7 six-file build is historical evidence, not the new default.
 
 | Backend | Edition | Required filename | Runtime policy |
 |---|---|---|---|
-| Python/PyInstaller | Eagle Eye | `builder/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, and offline Brain/Lumbar assets |
+| Python/PyInstaller | Eagle Eye Server | `builder/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, and available offline models; server release qualification pending |
 | Python/PyInstaller | Standard | `builder/output/installer/ai-pacs standard v<version>.exe` | x64 and Slicer; no Eagle Eye Brain/Lumbar assets |
 | Python/PyInstaller | ARM64 emulation | `builder/output/installer/ai-pacs arm64-emulated v<version>.exe` | x64-on-ARM64 and Slicer; no Eagle Eye Brain/Lumbar assets |
-| Nuitka | Eagle Eye | `builder nuitka/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, and offline Brain/Lumbar assets |
+| Nuitka | Eagle Eye Server | `builder nuitka/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, and available offline models; server release qualification pending |
 | Nuitka | Standard | `builder nuitka/output/installer/ai-pacs standard v<version>.exe` | x64 and Slicer; no Eagle Eye Brain/Lumbar assets |
 | Nuitka | ARM64 emulation | `builder nuitka/output/installer/ai-pacs arm64-emulated v<version>.exe` | x64-on-ARM64 and Slicer; no Eagle Eye Brain/Lumbar assets |
 
@@ -126,22 +180,37 @@ Each backend installer folder must also contain its current release metadata,
 and `SHA256_FA.txt`. A folder named `_superseded` contains historical evidence;
 never distribute from it.
 
-## 2. One fixed matrix, three validation lanes
+When an explicitly non-promotable local install-QA run rebuilds the same version,
+the coordinator first moves only that backend's selected-role installers and
+top-level metadata into a timestamped `_superseded/local-qa-*` folder. This makes
+the same-version repair recoverable and prevents the expensive backend from
+finishing only to fail on an existing filename. Receipt-backed release candidates
+remain immutable and never use this convenience.
 
-Do not build six installers after every source edit. Select the narrowest lane
+The generic metadata filenames describe the most recently built role in that
+folder. Role-specific `distributions-client.json` / `distributions-server.json`,
+`SHA256-client.txt` / `SHA256-server.txt`, and matching `INSTALL_NOTES-*.txt`
+preserve each role's evidence when the other role is built later. Always check
+the `build_target` and listed filenames; never treat an older installer sitting
+beside the new role's files as part of that candidate.
+
+## 2. Two build roles, three validation lanes
+
+Do not build a full role-selected installer set after every source edit. Select the narrowest lane
 that answers the current question. An artifact may move only from a stricter lane,
 never from a faster lane by renaming it.
 
-Lane selection is not edition selection. Both the receipt-backed release lane and
-the local install-QA lane always produce the same six-file matrix in the same two
-repository folders. Only the explicitly requested internal diagnostic lane may
-produce fewer files, and those files never enter the canonical installer folders.
+Choose the role first: Client is four files, Server is two. Lane selection then
+decides whether those files are a receipt-backed release candidate or local QA.
+Both lanes use the same two repository folders. One-backend diagnostics remain
+isolated and never enter the canonical installer folders.
 
 | Lane | When to use it | Output | Release status |
 |---|---|---|---|
 | Source validation | Every normal code change | Tests and Developer Run evidence | No installer; never distributable |
 | Internal packaging validation | Installer/profile work or focused QA | Synthetic Inno check or one isolated edition | Disposable; never promote or distribute |
-| Full release candidate | Source is frozen and the owner requests a candidate | All six installers from one isolated snapshot | Eligible for install QA; not production until all release gates pass |
+| Full release candidate | Source is frozen and the owner requests a Client candidate | Four Client installers from one isolated snapshot | Eligible for install QA; not production until all release gates pass |
+| Server local install QA | The owner explicitly requests an Eagle Eye Server candidate | Two Eagle Eye installers from one isolated snapshot | Non-promotable until server packaging and deployment gates pass |
 
 On the 2026-09-06 reference machine, the complete 3.6.5 matrix took about
 2 hours 54 minutes. PyInstaller took about 62 minutes and Nuitka about 112 minutes.
@@ -191,7 +260,7 @@ dependencies during a release.
 The r15 evidence occupied about 17.6 GiB in its candidate workspace and another
 23.0 GiB across the two short Inno staging trees, in addition to the 4.03 GiB
 asset cache and final installers. Keep at least 60 GiB free on the candidate/stage
-drive before a full matrix. Failed candidate and stage trees are evidence; do not
+drive before a full role build. Failed candidate and stage trees are evidence; do not
 delete them automatically or with a broad wildcard. Archive or remove only an
 explicitly reviewed path after the release is superseded.
 
@@ -268,11 +337,11 @@ gate. `AIPACS_SKIP_GIT_FETCH` above is scoped only to deterministic unit tests;
 `build_local_candidate.py` removes inherited `AIPACS_SKIP_*` and `AIPACS_ALLOW_*`
 values before invoking the real release gates.
 
-## 4. Canonical full-matrix command
+## 4. Canonical role-selected command
 
 The coordinator creates a new short workspace on `C:` automatically. The command
 creates an isolated, sanitized, content-addressed snapshot, compiles both backends
-sequentially, writes the six final files only to the established repository
+sequentially, writes the four Client files only to the established repository
 installer folders, and runs cross-backend coherence. It never publishes or
 launches the workstation.
 
@@ -284,8 +353,23 @@ $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12
   --git-sync-receipt $receipt
 ```
 
+For an explicit Eagle Eye Server install-QA request, use the same coordinator:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
+  --local-install-qa --target server
+```
+
+This produces only the two Eagle Eye installers, not Standard or ARM. Do not
+describe them as release-qualified server installers while portable Breast/Bone,
+headless service installation, GPU validation, and clean-server acceptance remain
+unfinished. A receipt-backed `--target server` is deliberately blocked until
+those gates are implemented and verified. Never rename an older Eagle Eye file
+to satisfy this request.
+
 The candidate workspace is evidence. Keep its `build_status.json`, backend logs,
-`coherence.log`, `source/build_source_manifest.json`, Nuitka checkpoints, and XML
+`coherence.log`, `source/build_source_manifest.json`, recorded `build_target`,
+Nuitka checkpoints, and XML
 report until the release is accepted or superseded.
 
 ## 5. Safe faster paths
@@ -312,7 +396,7 @@ application core.
 If an install screen or one edition must be inspected before source freeze,
 run the same coordinator in its internal lane. It prepares the snapshot and runs
 only the requested backend/edition. The output remains inside the candidate
-snapshot and must never replace a canonical six-file set.
+snapshot and must never replace a canonical role-selected file set.
 
 ```powershell
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py --internal
@@ -326,7 +410,7 @@ test target. For a Nuitka-specific internal check, use:
   --internal --backend nuitka
 ```
 
-These single-edition outputs are diagnostic. They do not pass the six-artifact
+These single-edition outputs are diagnostic. They do not pass the role-selected
 coherence contract and cannot be promoted.
 
 ### 5.4 Exact-input PyInstaller repackaging
@@ -358,8 +442,9 @@ Resume through the same root coordinator, never by choosing a backend command:
 
 The coordinator infers the recorded release/local-QA lane, revalidates the immutable
 source and external asset locations, refuses a still-running recorded process,
-skips a backend only when it completed with exit code 0 and all three of its
-canonical installers still exist, and resumes Nuitka only across the release stages
+skips a backend only when it completed with exit code 0 and all installers for
+the recorded `build_target` still exist (two Client or one Server per backend),
+and resumes Nuitka only across the release stages
 `0, 6, 7, 8, 9, 10`. It then reruns cross-backend coherence. It
 must never enter diagnostic stages 1-5 while recovering a full candidate. Do not
 start a fresh candidate merely because the controlling terminal or agent stopped;
@@ -367,13 +452,13 @@ use this command after confirming the recorded child process is no longer active
 
 ### 5.6 Reuse and compression decision
 
-The build already avoids compiling the application six times. Each backend creates
-one core and stages three edition views from it. The immutable Slicer, Brain,
-Lumbar, Qt, codec, and other dependency inputs also come from verified local caches;
-they are not downloaded again for every edition.
+The build already avoids compiling the application once per installer. Each
+backend creates one core and stages only the selected role's edition views. The
+immutable Slicer, Qt, codec, and other dependency inputs come from verified local
+caches; the Client role does not verify or stage the offline-lumbar cache.
 
-The remaining repetition is mostly Inno Setup compression. Because the contract is
-six standalone EXE installers and the edition payloads or architecture rules differ,
+The remaining repetition is mostly Inno Setup compression. Because each selected
+edition remains a standalone EXE and its payload or architecture rules differ,
 Inno must currently read and compress each complete edition separately. Inno Setup
 does not provide a safe incremental block cache for rebuilding one monolithic EXE.
 Unchanged DLLs therefore do not, by themselves, make an old installer reusable.
@@ -386,9 +471,9 @@ Use the following decision table instead of guessing:
 |---|---|---|
 | Normal source development | Source tests and Developer Run | Existing environments and immutable asset cache; no installer |
 | One installer/profile investigation | Explicit internal diagnostic lane | Verified assets and that isolated diagnostic workspace only |
-| Packaging retry with byte-identical PyInstaller core inputs | `--reuse-python-source` with its fail-closed input map | Validated PyInstaller core; gates and installers run again |
+| Client packaging retry with byte-identical PyInstaller core inputs | `--reuse-python-source` with its fail-closed input map | Validated PyInstaller core; Client gates and installers run again; never reuse this route for Server model payloads |
 | Infrastructure interruption in the current full candidate | Root coordinator `--resume-workspace` | Completed backend plus validated same-candidate Nuitka checkpoints/objects |
-| New version or changed core inputs | Fresh full matrix after source freeze | Toolchain and immutable asset cache only |
+| New version or changed core inputs | Fresh selected-role candidate after source freeze | Toolchain and immutable asset cache only |
 
 Do not manually copy a DLL tree or decide reuse from modification times. Reuse is
 valid only when a checked content manifest covers source, dependency lock, build
@@ -400,7 +485,7 @@ fail-closed invalidation and a new coherence guard. After that, benchmark a fast
 compression profile for non-promotable internal diagnostics. Bounded parallel Inno
 compilation may be evaluated only on a dedicated machine with measured RAM and disk
 headroom. None of these experiments changes the current release default until a
-before/after six-artifact run passes every existing content, hash, version, size,
+before/after selected-role run passes every existing content, hash, version, size,
 Qt/ICU, codec, DICOM Flow, and installability guard.
 
 ## 6. Expected sizes and content checks
@@ -421,12 +506,56 @@ authoritative even when size looks normal.
 
 For every backend verify:
 
-- Standard and ARM contain the Advanced MPR/Slicer executable and do not contain
-  `offline_lumbar` or `AIPacsOfflineLumbar.py`.
+- Standard and ARM contain the Advanced MPR/Slicer executable and shared Lumbar
+  result-review UI, but no `offline_lumbar` model/runtime directory or other
+  Eagle Eye model weights.
+- For each selected edition, the packaged Advanced MPR `presentation.py`,
+  startup script, and resident window-guard module must match the frozen
+  candidate's source. On an installed QA host, automatic warm-up must keep the
+  Slicer window hidden until an explicit viewer request; opening the viewer must
+  show the current presentation, not merely the correct product version.
 - Eagle Eye contains Slicer, the offline-lumbar manifest, model environment, and
   integration module.
 - The core contains exactly one compatible QtCore runtime, no foreign app-local
   ICU DLLs, and retains WebEngine `icudtl.dat`.
+- Both backend cores retain the shared role-aware Settings modules and
+  `eagle_eye_remote.administration` resolver. In both roles, frozen Settings
+  must show the five top-level groups `Server Settings`, `Viewer Configuration`,
+  `AI`, `Installation & Updates`, and `Consultation & Education`. Verify the
+  nested Viewer Configuration/Tools Settings/Image Filter leaves, optional
+  Light Viewer, and the nested AI/Eagle Eye/Agent leaves with optional
+  EchoMind. Lazy leaves must open without missing imports; the Server Settings
+  link must jump directly to AI/Eagle Eye without constructing EchoMind, and
+  viewer configuration change wiring must remain functional. Installed
+  Standard/ARM Settings
+  must show the single Eagle Eye Client connection form and hide the legacy
+  Breast/Bone Age/Segmentation/Mammography AI editors, including profile-level
+  controls. Installed Eagle Eye Server Settings must show local service/PACS
+  management and hide both those outbound editors and the Eagle Eye client
+  connection form. Existing saved hidden endpoints and PACS/Reception settings
+  must be preserved. Verify this visually on a fresh launch for each role;
+  offscreen widget tests and source deployment are not frozen
+  acceptance. Do not install/start a service just to inspect visibility.
+  A Server candidate additionally needs isolated installed QA of listener
+  IPv4/port/TLS Settings, stale-save rejection, service-managed HTTPS desktop
+  attachment without a duplicate listener, and a Standard-client request/result
+  round trip on that same port. The installed Client must present its paired
+  certificate and private key, verify the Server CA and address SAN, and use
+  the token belonging to that certificate's exact SHA-256 fingerprint. Verify
+  rejection of a missing certificate, a trusted certificate with the wrong
+  owner pin, an incorrect token, and an untrusted or wrong-host Server. Record
+  renewal/revocation behavior without exposing keys or tokens. Pairing is not
+  commercial-license attestation. The successful source-only 8002 cutover and
+  its tests do not satisfy this frozen-installer gate; perform it on an isolated
+  host without changing the live clinical listener.
+- Both frozen backends retain the early internal
+  `--aipacs-native-graphics-probe` child route and its synthetic VTK imports.
+  On an installed QA host, the **human operator** verifies its private JSON
+  receipt from the windowed executable (stdout is not required): a native
+  failure must leave the parent in VTK-free Fast mode, with stale MPR PASS
+  rejected. A successful synthetic receipt alone is not patient-list or
+  drag/drop GUI acceptance. Apply this to Standard/ARM and Eagle Eye where
+  built; see `builder/docs/INSTALLER_QA_CHECKLIST.md`.
 - DICOM codec modules and discovery metadata are present. The Nuitka XML report
   must include pylibjpeg, OpenJPEG, RLE, JPEG-LS, and GDCM metadata.
 - The cardiac Flow VM-normalization and DICOMDIR modules appear in the PyInstaller
@@ -442,7 +571,8 @@ A build is complete only when all of the following are true:
 3. `coherence_exit_code` is 0.
 4. Both backend metadata files say `status: compiled`, `version: <version>`, and
    `published: false`.
-5. All six required filenames exist, are newly produced, and have no `.partial`
+5. All files for the recorded role exist (four Client or two Server), are newly
+   produced, and have no `.partial`
    or `.tmp` sibling.
 6. Independent file length and SHA-256 calculations match metadata and checksum
    files.
@@ -461,7 +591,7 @@ and explicit owner sign-off.
 ## 8. Never do these
 
 - Do not use `build.py`, `build.bat`, `build_nuitka.py`, the simple Nuitka command,
-  or old resumable wrappers as the official six-file release entry point.
+  or old resumable wrappers as the official role-selected release entry point.
 - Do not build a final candidate directly from the dirty development checkout.
 - Do not run PyInstaller and Nuitka full-core compilation concurrently on the
   current build machine.
@@ -500,7 +630,8 @@ Record accepted optimization work under the existing OPT-53 item in
 
 ## 10. Supporting references
 
-- `docs/releases/VERSION_3.6.7_BUILD.md` — current candidate preparation and artifact evidence.
+- `docs/releases/VERSION_3.6.8_BUILD.md` — current Client candidate preparation and artifact evidence.
+- `docs/releases/VERSION_3.6.7_BUILD.md` — historical candidate preparation and artifact evidence.
 - `docs/releases/VERSION_3.6.6_BUILD.md` — previous measured artifact baseline.
 - `docs/releases/VERSION_3.6.5_BUILD.md` — earlier measured artifact baseline.
 - `builder/docs/DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md` — edition payloads.

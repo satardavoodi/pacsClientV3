@@ -19,6 +19,7 @@ import threading
 import time
 import random
 import os
+from math import gcd
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from pathlib import Path
 
@@ -132,6 +133,23 @@ _SERIES_FORCE_BATCH_ONE_MODALITIES = {
 # only — never persisted to the global adaptive batch size.
 _BATCH_BYTES_SOFT_CAP = 64 * 1024 * 1024
 
+# Estimate the next response from the largest encoded instance seen in this
+# series. This is a working budget, not a guarantee about unseen larger files.
+_NORMAL_BATCH_TARGET_BYTES = 8 * 1024 * 1024
+_NORMAL_BATCH_TARGET_SECONDS = 0.75
+
+
+def _next_aligned_batch_size(current, next_offset, largest_encoded, elapsed_s, cap):
+    """Bound growth by bytes/time and preserve the server's index*size offset."""
+    if largest_encoded <= 0:
+        return current  # No usable sample: do not speculate about response size.
+    target = min(cap, current * 2, max(1, _NORMAL_BATCH_TARGET_BYTES // largest_encoded))
+    if elapsed_s > _NORMAL_BATCH_TARGET_SECONDS:
+        target = min(target, max(1, int(current * _NORMAL_BATCH_TARGET_SECONDS / elapsed_s)))
+    # Count is bounded by the configured cap; descending search also handles
+    # odd starting sizes and resumed offsets without a repeated/skipped page.
+    return next(size for size in range(max(1, int(target)), 0, -1) if next_offset % size == 0)
+
 _SERIES_FORCE_BATCH_ONE_DESC_KEYWORDS = (
     "PANORAM",
     "MAMMO",
@@ -244,7 +262,7 @@ class SocketDicomClient:
 
         # Reversible load-shaping knobs (weak-hardware friendly).
         # Set to 0 to disable pacing behavior immediately.
-        self._batch_size_cap = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "10") or "10"))
+        self._batch_size_cap = max(1, min(40, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "40") or "40")))
         self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
         self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
         self._last_resource_probe_ts = 0.0
@@ -253,6 +271,29 @@ class SocketDicomClient:
             f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
             extra={"component": "download"},
         )
+
+    def _poor_connectivity_active(self) -> bool:
+        """Freeze the saved mode for this study's client, using its actual host.
+
+        A newly started study reads the saved setting again; no app restart is
+        required. Never change pagination policy halfway through an active job.
+        """
+        cached = getattr(self, "_poor_conn_cached", None)
+        if cached is not None:
+            return cached
+        try:
+            from modules.network.socket_config import get_socket_config
+
+            enabled = get_socket_config().is_poor_connectivity_enabled(
+                host=getattr(self, "host", _dm_consts.DEFAULT_SOCKET_HOST)
+            )
+        except Exception:
+            # A mode lookup failure must not accidentally create large retries
+            # for a server the user may have explicitly marked as unreliable.
+            enabled = True
+            logger.warning("[TRANSFER_MODE] config unavailable; using single-image batches")
+        self._poor_conn_cached = bool(enabled)
+        return self._poor_conn_cached
     
     def connect(self) -> bool:
         """
@@ -1144,12 +1185,19 @@ class SocketDicomClient:
         
         # Calculate batches (adaptive + configurable cap)
         batch_size = min(self._adaptive_batch_size, self._batch_size_cap)
-        if _should_force_single_instance_batches(series_info):
+        _poor_conn = self._poor_connectivity_active()
+        _modality_force_single = _should_force_single_instance_batches(series_info)
+        _force_single = _modality_force_single or _poor_conn
+        if _force_single:
             batch_size = 1
             logger.info(
                 "📦 Using single-image batches for large-frame modality/series type "
                 f"(series={series_number}, modality={series_info.modality or 'N/A'})"
             )
+        if _poor_conn:
+            logger.warning("[POOR_CONN] batch_size=1; image-level retry and resume")
+        growth_cap = self._batch_size_cap
+        largest_encoded = 0
         min_batch_size = 1
         # U1: bounded same-size retries once the batch can't shrink further.
         # An implausible declared length (>500MB) usually means the socket
@@ -1175,6 +1223,9 @@ class SocketDicomClient:
         total_decode_ms = 0.0
         total_decompress_ms = 0.0
         total_write_bytes = 0
+        request_ms = normalize_ms = callback_ms = 0.0
+        request_max_ms = 0.0
+        request_count = slow_requests = 0
         
         # Ensure we're connected before starting batches
         logger.info(f"🔌 Ensuring socket connection...")
@@ -1287,12 +1338,24 @@ class SocketDicomClient:
                         continue
             
             # Download batch with retry
+            request_started = time.monotonic()
             response = await self._download_batch_with_retry(
                 study_uid,
                 series_uid,
                 batch_start,
                 batch_size
             )
+            request_elapsed_s = time.monotonic() - request_started
+            request_count += 1
+            request_ms += request_elapsed_s * 1000.0
+            request_max_ms = max(request_max_ms, request_elapsed_s * 1000.0)
+            slow_requests += request_elapsed_s >= 2.0
+            if request_elapsed_s >= 2.0:
+                logger.warning(
+                    "[TRANSFER_SLOW_REQUEST] batch_size=%d elapsed_ms=%.2f success=%s",
+                    batch_size, request_elapsed_s * 1000.0,
+                    bool(response and response.get('status') == 'success'),
+                )
             
             logger.debug(f"📦 Batch {batch_idx + 1} response received: {response is not None}")
 
@@ -1321,7 +1384,10 @@ class SocketDicomClient:
 
                 if "Response too large" in str(error_msg):
                     if batch_size > min_batch_size:
-                        batch_size = max(min_batch_size, batch_size // 2)
+                        # The server accepts page indexes, not raw offsets.
+                        # A smaller size must divide the current offset exactly.
+                        batch_size = gcd(batch_start, max(min_batch_size, batch_size // 2))
+                        growth_cap = min(growth_cap, batch_size)
                         self._adaptive_batch_size = batch_size
                         SocketDicomClient._global_adaptive_batch_size = batch_size
                         total_batches = (expected_count + batch_size - 1) // batch_size
@@ -1366,6 +1432,9 @@ class SocketDicomClient:
             _batch_payload_bytes = sum(
                 len(inst.get('dicom_data') or '') for inst in instances
             )
+            largest_encoded = max(largest_encoded, max(
+                (len(inst.get('dicom_data') or '') for inst in instances), default=0
+            ))
             
             logger.debug(
                 f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances",
@@ -1418,7 +1487,9 @@ class SocketDicomClient:
                         dicom_bytes = gzip.decompress(dicom_bytes)
                         total_decompress_ms += max(0.0, now_ms() - t_decompress)
 
+                    normalize_started = time.monotonic()
                     dicom_bytes = _normalize_received_dicom_bytes(dicom_bytes)
+                    normalize_ms += (time.monotonic() - normalize_started) * 1000.0
                     
                     # Ensure directory exists (defensive check for preemption recovery)
                     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1461,6 +1532,7 @@ class SocketDicomClient:
                 
                 # Progress callback
                 if progress_callback:
+                    callback_started = time.monotonic()
                     progress_pct = ((downloaded_count + skipped_count) / expected_count) * 100
                     progress_callback(
                         'instance_downloaded',
@@ -1470,6 +1542,7 @@ class SocketDicomClient:
                         expected_count,
                         series_uid=series_uid,
                     )
+                    callback_ms += (time.monotonic() - callback_started) * 1000.0
 
                     now = time.monotonic()
                     if (downloaded_count + skipped_count == expected_count) or (now - summary_last_t >= 2.0):
@@ -1530,23 +1603,25 @@ class SocketDicomClient:
             batch_idx += 1
             batch_start += batch_size
 
-            # Byte-budget soft cap: halve the NEXT batches when this one's
-            # payload was oversized. Applied AFTER the advance so the just-
-            # received window is never re-requested; halving keeps
-            # batch_start aligned to the new size (start = k*old = 2k*new),
-            # so the server's batch_index mapping stays exact.
+            # Reduce the NEXT batch after advancing. Integer halving of an
+            # odd size can misalign the next offset; gcd preserves exact paging.
             if (
                 _batch_payload_bytes > _BATCH_BYTES_SOFT_CAP
                 and batch_size > min_batch_size
             ):
-                batch_size = max(min_batch_size, batch_size // 2)
+                batch_size = gcd(batch_start, max(min_batch_size, batch_size // 2))
                 total_batches = (expected_count + batch_size - 1) // batch_size
                 logger.warning(
                     f"📉 Batch payload {_batch_payload_bytes / (1024*1024):.0f} MB "
                     f"exceeds {_BATCH_BYTES_SOFT_CAP // (1024*1024)} MB soft cap — "
-                    f"halving subsequent batches of series {series_number} to "
+                    f"reducing subsequent batches of series {series_number} to "
                     f"{batch_size} instance(s)"
                 )
+            elif not _force_single:
+                batch_size = _next_aligned_batch_size(
+                    batch_size, batch_start, largest_encoded, request_elapsed_s, growth_cap
+                )
+                total_batches = (expected_count + batch_size - 1) // batch_size
 
         # Download diagnostics default to WARNING threshold. Emit one summary
         # write-stage sample per series at WARNING so KPI parsers can
@@ -1605,6 +1680,12 @@ class SocketDicomClient:
             total_decode_ms,
             total_decompress_ms,
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+        )
+        logger.warning(
+            "[TRANSFER_TIMING] single=%s requests=%d request_ms=%.2f request_max_ms=%.2f "
+            "slow_requests=%d normalization_ms=%.2f callback_ms=%.2f",
+            _force_single, request_count, request_ms, request_max_ms,
+            slow_requests, normalize_ms, callback_ms,
         )
         
         return SeriesDownloadResult(

@@ -362,6 +362,9 @@ def opengl_preflight() -> Tuple[bool, str]:
     machine whose driver was upgraded self-heals on the next attempt.
     """
     global _cached_result
+    from modules.viewer.native_graphics_probe import native_vtk_blocked
+    if native_vtk_blocked():
+        return False, "Native VTK OpenGL is unavailable in this session. Use the Fast viewer."
     if not _flag_enabled():
         return True, "preflight disabled"
     if _cached_result is not None:

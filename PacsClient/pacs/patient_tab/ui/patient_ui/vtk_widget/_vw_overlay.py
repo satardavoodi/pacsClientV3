@@ -12,6 +12,16 @@ import vtkmodules.all as vtk
 logger = logging.getLogger(__name__)
 
 
+class _EmptyDropHintLabel(QLabel):
+    """Paint an opaque backing; native VTK supplies no Qt backing-store pixels."""
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor('#0f172a'))
+        painter.end()
+        super().paintEvent(event)
+
+
 class _VWOverlayMixin:
     """VTK image overlay: add, clear, update extent."""
 
@@ -29,13 +39,14 @@ class _VWOverlayMixin:
         if label is not None:
             return label
 
-        label = QLabel(self)
+        label = _EmptyDropHintLabel(self)
         label.setObjectName("emptyDropHint")
         label.setAlignment(Qt.AlignCenter)
         label.setWordWrap(True)
         label.setTextFormat(Qt.RichText)
         label.setText(self._EMPTY_DROP_HINT_HTML)
         label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        label.setAttribute(Qt.WA_OpaquePaintEvent, True)
         label.setStyleSheet(
             "QLabel#emptyDropHint {"
             "background-color: rgba(15, 23, 42, 145);"

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import shutil
 import zipfile
 from pathlib import Path
@@ -176,6 +177,126 @@ def test_bootstrap_installer_selected_module_packages_installs_bundled_packages(
     runtime_path = runtime.modules_runtime_root() / "web_browser"
     assert [record["module_id"] for record in records] == ["web_browser"]
     assert (runtime_path / "python" / "modules" / "web_browser" / "custom_marker.txt").exists()
+
+
+def test_bootstrap_refreshes_same_version_slicer_when_bundled_startup_changes(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+    install_profile = runtime.default_installation_profile()
+    install_profile["modules"]["advanced_mpr"] = True
+    install_profile["module_packages"]["advanced_mpr"]["status"] = "selected_for_install"
+    install_profile["module_packages"]["advanced_mpr"]["installed_from"] = "bundled_setup_selection"
+    runtime.installation_profile_path().write_text(json.dumps(install_profile), encoding="utf-8")
+
+    bundled_root = Path(runtime.sys.executable).resolve().parent / runtime.MODULE_PACKAGE_DOWNLOADS_DIRNAME
+    package = _create_package_directory(
+        bundled_root, "advanced_mpr",
+        payload_files={
+            "AIPacsAdvancedViewer.exe": "binary",
+            "bin/Python/startup_script.py": "new interface",
+        },
+    )
+    expected_hash = hashlib.sha256(b"new interface").hexdigest()
+    bundled_manifest_path = package / runtime.MODULE_PACKAGE_MANIFEST_FILENAME
+    bundled_manifest = json.loads(bundled_manifest_path.read_text(encoding="utf-8"))
+    bundled_manifest.update(package_kind="runtime_payload", slicer_startup_sha256=expected_hash)
+    bundled_manifest_path.write_text(json.dumps(bundled_manifest), encoding="utf-8")
+
+    installed = runtime.module_runtime_dir("advanced_mpr")
+    (installed / "bin/Python").mkdir(parents=True)
+    (installed / "AIPacsAdvancedViewer.exe").write_text("binary", encoding="utf-8")
+    (installed / "bin/Python/startup_script.py").write_text("old interface", encoding="utf-8")
+    old_manifest = dict(bundled_manifest)
+    old_manifest.pop("slicer_startup_sha256")
+    (installed / runtime.MODULE_PACKAGE_MANIFEST_FILENAME).write_text(
+        json.dumps(old_manifest), encoding="utf-8",
+    )
+    runtime.installed_module_manifest_path("advanced_mpr").parent.mkdir(parents=True, exist_ok=True)
+    runtime.installed_module_manifest_path("advanced_mpr").write_text(
+        json.dumps(old_manifest), encoding="utf-8",
+    )
+    runtime.save_runtime_profile({
+        "modules": {"advanced_mpr": True},
+        "module_packages": {"advanced_mpr": {
+            "status": "installed", "installed_version": "1.2.3",
+            "installed_from": str(package),
+        }},
+    })
+
+    records = runtime.bootstrap_installer_selected_module_packages()
+
+    assert [record["module_id"] for record in records] == ["advanced_mpr"]
+    assert (installed / "bin/Python/startup_script.py").read_text(encoding="utf-8") == "new interface"
+    assert runtime.bootstrap_installer_selected_module_packages() == []
+
+
+def test_bootstrap_refreshes_same_version_slicer_when_only_presentation_changes(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+    install_profile = runtime.default_installation_profile()
+    install_profile["modules"]["advanced_mpr"] = True
+    install_profile["module_packages"]["advanced_mpr"]["status"] = "selected_for_install"
+    install_profile["module_packages"]["advanced_mpr"]["installed_from"] = "bundled_setup_selection"
+    runtime.installation_profile_path().write_text(json.dumps(install_profile), encoding="utf-8")
+
+    bundled_root = Path(runtime.sys.executable).resolve().parent / runtime.MODULE_PACKAGE_DOWNLOADS_DIRNAME
+    package = _create_package_directory(bundled_root, "advanced_mpr", payload_files={
+        "AIPacsAdvancedViewer.exe": "binary",
+        "bin/Python/startup_script.py": "same startup",
+        "python/modules/mpr/advanced_3d_slicer/slicer_custom_app/presentation.py": "new presentation",
+    })
+    startup_hash = hashlib.sha256(b"same startup").hexdigest()
+    new_python_hash = runtime.slicer_python_payload_sha256(package / "payload/python")
+    bundled_manifest_path = package / runtime.MODULE_PACKAGE_MANIFEST_FILENAME
+    bundled_manifest = json.loads(bundled_manifest_path.read_text(encoding="utf-8"))
+    bundled_manifest.update(
+        package_kind="runtime_payload", slicer_startup_sha256=startup_hash,
+        slicer_python_sha256=new_python_hash,
+    )
+    bundled_manifest_path.write_text(json.dumps(bundled_manifest), encoding="utf-8")
+
+    installed = runtime.module_runtime_dir("advanced_mpr")
+    old_presentation = installed / "python/modules/mpr/advanced_3d_slicer/slicer_custom_app/presentation.py"
+    old_presentation.parent.mkdir(parents=True)
+    old_presentation.write_text("old presentation", encoding="utf-8")
+    (installed / "bin/Python").mkdir(parents=True)
+    (installed / "bin/Python/startup_script.py").write_text("same startup", encoding="utf-8")
+    (installed / "AIPacsAdvancedViewer.exe").write_text("binary", encoding="utf-8")
+    old_manifest = dict(bundled_manifest)
+    old_manifest["slicer_python_sha256"] = runtime.slicer_python_payload_sha256(installed / "python")
+    (installed / runtime.MODULE_PACKAGE_MANIFEST_FILENAME).write_text(json.dumps(old_manifest), encoding="utf-8")
+    runtime.installed_module_manifest_path("advanced_mpr").parent.mkdir(parents=True, exist_ok=True)
+    runtime.installed_module_manifest_path("advanced_mpr").write_text(json.dumps(old_manifest), encoding="utf-8")
+    runtime.save_runtime_profile({
+        "modules": {"advanced_mpr": True},
+        "module_packages": {"advanced_mpr": {
+            "status": "installed", "installed_version": "1.2.3", "installed_from": str(package),
+        }},
+    })
+
+    records = runtime.bootstrap_installer_selected_module_packages()
+
+    assert [record["module_id"] for record in records] == ["advanced_mpr"]
+    assert old_presentation.read_text(encoding="utf-8") == "new presentation"
+    assert runtime.bootstrap_installer_selected_module_packages() == []
+
+
+def test_invalid_slicer_python_revision_does_not_replace_existing_runtime(monkeypatch, tmp_path):
+    _configure_frozen_runtime(monkeypatch, tmp_path)
+    existing = runtime.module_runtime_dir("advanced_mpr")
+    existing.mkdir(parents=True)
+    (existing / "AIPacsAdvancedViewer.exe").write_text("old binary", encoding="utf-8")
+    package = _create_package_directory(
+        tmp_path / "packages", "advanced_mpr",
+        payload_files={"AIPacsAdvancedViewer.exe": "new binary", "python/presentation.py": "new UI"},
+    )
+    manifest_path = package / runtime.MODULE_PACKAGE_MANIFEST_FILENAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(package_kind="runtime_payload", slicer_python_sha256="0" * 64)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Python revision"):
+        runtime.install_module_package(package)
+
+    assert (existing / "AIPacsAdvancedViewer.exe").read_text(encoding="utf-8") == "old binary"
 
 
 def test_bootstrap_honors_installer_selection_when_runtime_profile_is_stale(monkeypatch, tmp_path):

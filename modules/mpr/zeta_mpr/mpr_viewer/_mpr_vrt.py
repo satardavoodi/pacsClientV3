@@ -10,8 +10,95 @@ from PySide6.QtCore import Qt, QPoint
 logger = logging.getLogger(__name__)
 
 
+def refine_vrt_property(prop, preset_name):
+    """Standard MPR presentation only; never change the input scalar volume.
+
+    Like Slicer's CT presets, bone uses scalar opacity without suppressing
+    low-gradient interiors. These are local tuning values, not segmentation.
+    """
+    prop.SetScalarOpacityUnitDistance(1.0)  # opacity defined per physical mm
+    if preset_name in ('CT-Bone', 'CT-Bone-Enhanced'):
+        prop.SetDisableGradientOpacity(True)
+        prop.SetAmbient(0.18)
+        prop.SetDiffuse(0.82)
+        prop.SetSpecular(0.22)
+        prop.SetSpecularPower(24)
+    elif preset_name.startswith('CT-Vessels'):
+        prop.SetDisableGradientOpacity(True)
+        prop.SetAmbient(0.20)
+        prop.SetDiffuse(0.80)
+        prop.SetSpecular(0.25)
+    elif preset_name == 'CT-Lung-Airways':
+        # Keep lung context translucent; this preset does not isolate bronchi.
+        opacity = prop.GetScalarOpacity()
+        for i in range(opacity.GetSize()):
+            node = [0.0] * 4
+            opacity.GetNodeValue(i, node)
+            node[1] *= 0.45
+            opacity.SetNodeValue(i, node)
+
+
+def configure_vrt_quality(mapper, prop, spacing, quality, interacting=False, heavy=False):
+    """Bounded VRT-only quality; interactive lighting never casts secondary rays."""
+    import math
+    valid = [float(s) for s in spacing if math.isfinite(float(s)) and float(s) > 0]
+    step = min(valid) if valid else 1.0
+    detailed = quality == 'Detailed' and not interacting and not heavy
+    mapper.SetSampleDistance(max(0.1, min(0.5, step * (0.25 if detailed else 0.5))))
+    if hasattr(mapper, 'SetVolumetricScatteringBlending'):
+        mapper.SetVolumetricScatteringBlending(0.5 if detailed and prop.GetShade() else 0.0)
+        mapper.SetGlobalIlluminationReach(0.0)  # local shadows; avoid long expensive rays
+    if heavy:
+        prop.SetDisableGradientOpacity(True)
+
+
 class _MprVrtMixin:
     """VRT preset menu, appearance delta, and all VRT mouse event handlers."""
+
+    def _set_vrt_quality(self, quality=None, interacting=False):
+        if quality is not None:
+            self._vrt_quality = quality
+        info = self.viewers.get('3d')
+        if not info:
+            return
+        configure_vrt_quality(info['mapper'], info['property'], self.image_data.GetSpacing(),
+                              getattr(self, '_vrt_quality', 'Balanced'), interacting,
+                              info.get('heavy', False))
+        self._request_render('3d')
+
+    def _set_vrt_threshold(self, offset):
+        info = self.viewers.get('3d')
+        baseline = getattr(self, '_vrt_threshold_baseline', None)
+        if not info or baseline is None:
+            return
+        # Absolute offset from the selected preset, never from the previous drag.
+        self._vrt_threshold_offset = int(offset)
+        prop = info['property']
+        for target, source, width in ((prop.GetScalarOpacity(), baseline[0], 4),
+                                      (prop.GetRGBTransferFunction(), baseline[1], 6)):
+            target.DeepCopy(source)
+            nodes = []
+            for i in range(target.GetSize()):
+                node = [0.0] * width
+                target.GetNodeValue(i, node)
+                node[0] += offset
+                nodes.append(node)
+            target.RemoveAllPoints()
+            for node in nodes:
+                if width == 4:
+                    target.AddPoint(*node)
+                else:
+                    target.AddRGBPoint(*node)
+        self._reset_vrt_rmb_state()
+        self._request_render('3d')
+
+    def _remember_vrt_threshold(self, prop):
+        import vtkmodules.all as vtk
+        opacity, color = vtk.vtkPiecewiseFunction(), vtk.vtkColorTransferFunction()
+        opacity.DeepCopy(prop.GetScalarOpacity())
+        color.DeepCopy(prop.GetRGBTransferFunction())
+        self._vrt_threshold_baseline = (opacity, color)
+        self._vrt_threshold_offset = 0
 
     def _show_vrt_preset_menu(self, widget, pos):
         """Show a polished right-click preset menu for the 3D viewport.
@@ -95,6 +182,26 @@ class _MprVrtMixin:
                 }
             """)
             root_layout.addWidget(title)
+
+            from PySide6.QtWidgets import QComboBox, QSpinBox
+            quality = QComboBox()
+            quality.addItems(['Balanced', 'Detailed'])
+            quality.setCurrentText(getattr(self, '_vrt_quality', 'Balanced'))
+            quality.setToolTip('Detailed adds local shadows at rest. Large volumes retain balanced lighting.')
+            quality.currentTextChanged.connect(self._set_vrt_quality)
+            root_layout.addWidget(QLabel('Render quality'))
+            root_layout.addWidget(quality)
+            threshold = QSpinBox()
+            threshold.setRange(-500, 500)
+            threshold.setSingleStep(10)
+            threshold.setSuffix(' HU')
+            threshold.setValue(getattr(self, '_vrt_threshold_offset', 0))
+            threshold.setEnabled(str(getattr(self, 'current_3d_preset', '')).startswith('CT-'))
+            threshold.setToolTip('Shift tissue visibility relative to the selected preset. No tissue segmentation.')
+            threshold.setKeyboardTracking(False)
+            threshold.valueChanged.connect(self._set_vrt_threshold)
+            root_layout.addWidget(QLabel('Tissue threshold offset'))
+            root_layout.addWidget(threshold)
 
             # Thin separator
             sep = QFrame()

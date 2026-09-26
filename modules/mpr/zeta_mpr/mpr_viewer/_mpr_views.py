@@ -578,6 +578,12 @@ class _MprViewsMixin:
                     # OFF for a stable stack scroll; linear interpolation keeps the
                     # smooth appearance. AIPACS_MPR_STABLE_SCROLL=0 = legacy True.
                     prop.SetInterpolationTypeToLinear()
+                    # OPT-48: VTK's optimized reslice can jump an entire sample
+                    # row at floating-point grid boundaries during stack scroll.
+                    # Use the general linear path; keep geometry and sampling
+                    # resolution unchanged. Native acquired slices stay untouched.
+                    if mapper is not None and hasattr(mapper, 'GetImageReslice'):
+                        mapper.GetImageReslice().OptimizationOff()
                     _stable_scroll = mpr_stable_scroll_enabled()
                     if mapper is not None and hasattr(mapper, 'SetResampleToScreenPixels'):
                         mapper.SetResampleToScreenPixels(not _stable_scroll)
@@ -979,7 +985,10 @@ class _MprViewsMixin:
 
         best_preset = self._get_best_3d_preset()
         self.current_3d_preset = best_preset
-        self.preset_manager.apply_preset(volume_property, best_preset, self.scalar_range)
+        self._apply_volume_preset(volume_property, best_preset)
+        from ._mpr_vrt import configure_vrt_quality
+        configure_vrt_quality(volume_mapper, volume_property, self.image_data.GetSpacing(),
+                              getattr(self, '_vrt_quality', 'Balanced'), heavy=_heavy)
 
         volume = vtk.vtkVolume()
         volume.SetMapper(volume_mapper)
@@ -1045,8 +1054,12 @@ class _MprViewsMixin:
         self.viewers['3d'] = {
             'widget': vtk_widget, 'renderer': renderer,
             'volume': volume, 'property': volume_property,
-            'mapper': volume_mapper, 'camera': camera, 'style': style
+            'mapper': volume_mapper, 'camera': camera, 'style': style, 'heavy': _heavy
         }
+        interactor.AddObserver('StartInteractionEvent',
+                               lambda obj, event: self._set_vrt_quality(interacting=True))
+        interactor.AddObserver('EndInteractionEvent',
+                               lambda obj, event: self._set_vrt_quality(interacting=False))
         self._register_view('3d', container, vtk_widget, row, col)
         self.setup_auto_rotation()
         layout.addWidget(container, row, col)
@@ -1263,6 +1276,11 @@ class _MprViewsMixin:
         if not success:
             logger.warning(f"Failed to apply preset {preset_name}")
         else:
+            from ._mpr_vrt import refine_vrt_property
+            refine_vrt_property(volume_property, preset_name)
+            self._remember_vrt_threshold(volume_property)
+            if self.viewers.get('3d'):
+                self._set_vrt_quality()
             self.current_3d_preset = preset_name
             logger.debug(f"Applied volume preset: {preset_name}")
 

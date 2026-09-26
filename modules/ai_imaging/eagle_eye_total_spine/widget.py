@@ -564,6 +564,7 @@ class ProjectionEditor(QWidget):
                 self.files.addItem(row['label'], row['path'])
 
     def clear_image(self, *_):
+        self._candidate_provenance = {}
         self.canvas.measurement_overlay()
         self.sam.reset()
         self.region = None; self._region_start = None; self._region_item = None; self._region_handles = []
@@ -938,6 +939,13 @@ class TotalSpineWidget(QWidget):
         layout.addWidget(self.notes); self.notes.textChanged.connect(self.invalidate_report)
         row = QHBoxLayout(); layout.addLayout(row)
         self.draft = QPushButton('Generate draft PDF'); self.reviewed = QPushButton('Generate reviewed PDF')
+        from ..eagle_eye_remote.settings import remote_required
+        if remote_required():
+            self.draft.setText('Apply on server / draft PDF')
+            self.reviewed.setText('Apply on server / reviewed PDF')
+        self._server_report_parent = None
+        self._server_report_sources = None
+        self._pending_report_handle = None
         self.open = QPushButton('Open PDF'); self.save = QPushButton('Save PDF copy')
         for w in (self.draft, self.reviewed, self.open, self.save): row.addWidget(w)
         self.draft.clicked.connect(lambda: self.generate(False)); self.reviewed.clicked.connect(lambda: self.generate(True))
@@ -989,7 +997,9 @@ class TotalSpineWidget(QWidget):
             self.status.setText('The selected series has no available single-frame radiograph. Load it in the viewer and retry.')
             return
         positions = {row.get('view_position', '') for row in matches}
-        if positions <= {'AP', 'PA'}:
+        if getattr(self, '_control_projection', None) in ('coronal', 'lateral'):
+            projection = self._control_projection
+        elif positions <= {'AP', 'PA'}:
             projection = 'coronal'
         elif positions <= {'LL', 'RL', 'LAT', 'LATERAL'}:
             projection = 'lateral'
@@ -1029,6 +1039,7 @@ class TotalSpineWidget(QWidget):
 
     def _refresh(self):
         busy = self._future is not None
+        pending = self._pending_report_handle is not None
         editor = self.tabs.currentWidget()
         loaded = editor is not None and editor.image is not None
         coronal = loaded and editor.projection == 'coronal'
@@ -1042,9 +1053,15 @@ class TotalSpineWidget(QWidget):
         self.open.setEnabled(not busy and self.report_result is not None)
         self.open_images.setEnabled(not busy and self.report_result is not None)
         self.save.setEnabled(self.open.isEnabled())
+        if pending:
+            self.tabs.setEnabled(False); self.scan.setEnabled(False); self.notes.setEnabled(False)
+            self.region_button.setEnabled(False); self.analyze_button.setEnabled(False); self.measure_button.setEnabled(False)
+            self.reviewed.setEnabled(False)
+            self.draft.setText('Resume server result'); self.draft.setEnabled(not busy)
 
     def _submit(self, kind, function, *args, target=None):
         if self._disposed or self._future is not None: return
+        self._control_error = None
         self._cancel.clear(); self._kind = kind; self._target = target
         from ..analysis_progress import AnalysisProgress
         self.analysis_progress = AnalysisProgress()
@@ -1103,11 +1120,31 @@ class TotalSpineWidget(QWidget):
 
     def generate(self, reviewed):
         from .report import generate_report
+        if self._pending_report_handle is not None:
+            from ..eagle_eye_remote.client import Client
+            from PacsClient.utils.data_paths import AI_DIR
+            self._submit('report', lambda: Client().resume(self._pending_report_handle,
+                Path(AI_DIR) / 'eagle_eye', cancel=self._cancel))
+            return
         views = [editor.snapshot() for editor in self.editors if editor.image is not None]
         try: validate_report_views(views, self.study_uid, reviewed=reviewed)
         except (ValueError, KeyError) as exc:
             self.status.setText(str(exc)); return
-        self._submit('report', generate_report, views, self.study_uid, reviewed, self.notes.text())
+        from ..eagle_eye_remote.settings import remote_required
+        if remote_required():
+            from ..eagle_eye_remote.spine_review import submit
+            sources = [(v['image']['identity']['series_uid'], v['image']['identity']['sop_uid']) for v in views]
+            previous = self._server_report_sources
+            parent = self._server_report_parent if previous and sources[:len(previous)] == previous else None
+            if parent is None and self._server_report_parent is None:
+                candidate = getattr(self.editors[0], '_candidate_provenance', {})
+                if candidate.get('remote_analysis') and self.editors[0].image is views[0]['image']:
+                    parent = candidate.get('server_job_id')
+            self._server_report_sources = sources
+            self._submit('report', partial(submit, parent=parent, cancel=self._cancel),
+                         views, self.study_uid, reviewed, self.notes.text())
+        else:
+            self._submit('report', generate_report, views, self.study_uid, reviewed, self.notes.text())
 
     def _poll(self):
         from ..analysis_progress import display_progress
@@ -1151,9 +1188,22 @@ class TotalSpineWidget(QWidget):
                 self.analysis_progress.update(4, 4, 'Segmentation preview ready')
                 self.status.setText('SAM preview ready. Inspect the mask and explicitly apply usable endplates.')
             elif kind == 'report':
+                self._pending_report_handle = None
+                self._server_report_parent = result.get('server_job_id')
+                if result.get('remote_analysis'):
+                    self.draft.setText('Apply on server / draft PDF')
                 self.report_result = result; self.status.setText('PDF, annotated PNG images and measurement JSON are ready in private study storage.')
             elif kind == 'copy': self.status.setText('PDF copy saved.')
         except Exception as exc:
+            self._control_error = type(exc).__name__
+            from ..eagle_eye_remote.client import DetachedAnalysis, AnalysisFailed
+            if kind == 'report' and isinstance(exc, AnalysisFailed):
+                self._pending_report_handle = None
+                self.draft.setText('Apply on server / draft PDF')
+            if kind == 'report' and isinstance(exc, DetachedAnalysis):
+                self._pending_report_handle = exc.handle_path
+                self.status.setText(str(exc))
+                return
             logger.warning('Total Spine task failed: kind=%s error_type=%s', kind, type(exc).__name__)
             self.status.setText(str(exc) if isinstance(exc, (ValueError, KeyError)) else 'Task failed. Check image/model availability and retry.')
         finally:

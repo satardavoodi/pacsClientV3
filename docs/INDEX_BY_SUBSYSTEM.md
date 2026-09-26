@@ -1,5 +1,70 @@
 # AI-PACS Documentation ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Index by Subsystem
 
+## Client installer pairing isolation (2026-09-26)
+
+Client installer pairing isolation: `builder/config_sanitizer.py` emits an
+allowlisted unpaired `eagle_eye_client.json` template without changing local
+Developer Run settings. Guard: `test_eagle_eye_client_sanitization.py`; release
+scope and remaining acceptance: [3.6.8 release](releases/VERSION_3.6.8_RELEASE.md).
+
+## Native 2D white-matter lesions (2026-09-26)
+
+Reversible MS morphology review: `periventricular_band_filter.py` preserves raw and suspected-band masks alongside retained candidates. [Method, scientific sources and pending clinical/live gates](modules/eagle-eye-server-development/docs/LESIONS_2D_2026-09-26.md#reversible-smooth-band-review-follow-up); guard `test_periventricular_band_filter.py`.
+
+[Method, same-form 2D/3D selection, server contract and acceptance](modules/eagle-eye-server-development/docs/LESIONS_2D_2026-09-26.md).
+
+
+## Thumbnail presentation and patient-tab header (2026-09-26, OPT-58 / OPT-60)
+
+The canonical per-study series-order contract, superseding-generation row ownership
+and series-only counters are recorded in the [thumbnail pipeline](pipelines/thumbnail-pipeline.md),
+[multi-study record](MULTI_STUDY_SINGLE_TAB_PLAN.md), and
+[UI-stall owner receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md).
+Historical adapter rationale remains in the
+[thumbnail/priority provenance](plans/analysis/THUMBNAIL_AND_PRIORITY_PARALLEL_PATH_PROVENANCE_2026-09-13.md).
+The same records define sidebar-card admission as the sole source for the Patient-tab
+header thumbnail, with exact history-document exclusion and owner-tab targeting.
+This is shared Unify presentation coordination, not Fast/Advanced/VTK rendering.
+
+## Standard MPR sampling stability (2026-09-24, OPT-48)
+
+Local DX blank-thumbnail correction (September 25, OPT-60): bounded single-object
+worker preparation and regression evidence are recorded in
+[UI-stall evidence](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md).
+Advanced viewport rendering is unchanged; fresh thumbnail GUI acceptance is pending.
+
+Enhanced frame reference lines and sync (OPT-60): the
+[VTK owner receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md)
+separates per-frame planes from MPR volume geometry; guards are in
+`tests/code/viewer/test_advanced_frame_reference_sync.py`.
+
+Enhanced MR Advanced 2D presentation (September 25, OPT-60) uses existing
+independent-frame rendering; spatial reconstruction is not claimed. See the
+[VTK owner receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md)
+and `tests/code/viewer/test_advanced_enhanced_mr_frames.py`.
+
+Advanced pre-release drag-hover backing recurrence (OPT-23) is recorded in the
+[VTK owner report](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md),
+with its `test_advanced_drag_hover_backing.py` regression guard.
+
+Related maintenance on September 24: Local Enhanced MR thumbnail repair is in
+[UI-stall evidence](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md); empty Advanced
+hint opacity is in the [VTK owner report](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+Client/Server control-transport diagnosis is in the
+[agent guide](for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md), section 0.
+
+[VTK domains review](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md)
+records the optimized-reslice row-jump reproduction, reconstructed-pane correction,
+85 focused passes and pending Developer Run visual gate. Guard:
+`tests/code/mpr/test_mpr_reslice_sampling_stability.py`. Geometry is unchanged.
+
+## Eagle Eye server/client phase 1 (2026-09-21)
+
+[Source implementation, deployment configuration and acceptance ledger](modules/EAGLE_EYE_SERVER_PHASE1_2026-09-21.md)
+documents the seven model adapters, PACS-reference-only requests, Standard thin
+client, synthetic HTTP/model receipts and the remaining GUI/installer/server gates.
+Interactive annotation synchronization remains phase 2.
+
 ## Canonical shared Unify route (2026-09-18)
 
 **2026-09-20 first-viewer graphics-policy correction:** startup now primes the one
@@ -452,8 +517,8 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 - **[Eagle Eye Brain delivery](modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Brain/Lumbar ownership, portable assets, edition packaging and customer acceptance.
 - **[Eagle Eye Brain active reference](modules/EAGLE_EYE_BRAIN_REFERENCE_SETUP.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ volBrain-only policy, scientific source, interval calculation and retired adapters.
 
-- **[Release and build documentation hub](release-and-build/README.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ route to Git publication, the six-installer coordinator, backend details, output ownership, and release evidence.
-- **[Canonical build and installer runbook](../BUILD.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ single human/AI entry point, safe fast lanes, official six-file isolated command, exact output folders, expected sizes, content checks, recovery constraints, and release blockers.
+- **[Release and build documentation hub](release-and-build/README.md)** - route to Git publication, role-selected Client and Server packaging, backend details, output ownership, and release evidence.
+- **[Canonical build and installer runbook](../BUILD.md)** - single human/AI entry point, safe fast lanes, official four-Client or two-Server isolated commands, exact output folders, expected sizes, content checks, recovery constraints, and release blockers.
 - **[3.6.6 build record](releases/VERSION_3.6.6_BUILD.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ current synchronized-source Python/Nuitka candidate, Standard/Eagle Eye/ARM-emulated editions, artifact identity and remaining installation gates.
 - **[3.6.5 local build matrix](releases/VERSION_3.6.5_BUILD.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ previous measured Python/Nuitka baseline and historical recovery evidence.
 - **[Pre-development system map (2026-08-27)](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ verified startup, subsystem connections, data/network boundaries, packaging flow, skills, MCPs, and the pre-code gate
@@ -851,6 +916,11 @@ fresh-source GUI/completion-proof gates remain open. UI and scheduling unchanged
 
 ### Web browser module + startup / engine warm-up
 
+September 26 OPT-22 correction: the opening notice is now a compact centered
+card with wrapped-height sizing and resize tracking. The existing opening-status
+receipt records three fail-before geometry guards, 92 related passes and pending
+fresh source GUI acceptance.
+
 **September 15 user-initiated opening update (OPT-22):**
 [Opening wait-status receipt](reports/WEBENGINE_OPEN_WAIT_STATUS_2026-09-15.md)
 documents the observed 35.4-second first-open stall and a bounded header notice /
@@ -1089,7 +1159,7 @@ The current Home-click cutover needs real card input; a downstream `change_serie
 ### Release publication and build operations
 
 - [Canonical versioned Git release workflow](../RELEASE.md)
-- [Canonical six-installer build workflow](../BUILD.md)
+- [Canonical role-selected build workflow](../BUILD.md)
 - [Version 3.6.6 release gate and current blockers](releases/VERSION_3.6.6_RELEASE.md)
 - [Version 3.6.6 build evidence](releases/VERSION_3.6.6_BUILD.md)
 - [Version 3.6.5 release record](releases/VERSION_3.6.5_RELEASE.md)
@@ -1345,3 +1415,139 @@ This is a proposal; no runtime migration or deployment is claimed.
 [Engine integration and execution gates](modules/EAGLE_EYE_BREAST_BONE_LOCAL_2026-09-21.md)
 tracks owner-supplied model provenance, isolated CPU workers, MG/DX UI routing,
 synthetic execution, and the separate GUI/packaging/server acceptance boundaries.
+
+### Eagle Eye hosted execution receipt (2026-09-22)
+
+[Phase-1 implementation and live checks](modules/EAGLE_EYE_SERVER_PHASE1_2026-09-21.md) records desktop Server/Standard roles, reference-only jobs, the MSIX development-runtime path correction, HAND/WRIST input handling and actual Breast/Bone server-to-client results. Breast classifier qualification, portable packaging and LAN deployment remain open.
+
+## Eagle Eye execution corrections (2026-09-22)
+
+[Execution correction report](reports/EAGLE_EYE_EXECUTION_FIXES_2026-09-22.md): exact-SOP stitched radiograph staging, paginated/font-complete Brain PDFs, short lesion and nested MS/SVD anatomy scratch with durable same-study reuse, and read-only worker-owned Slicer Lumbar references. Automated and native acceptance are recorded separately.
+
+### Brain registration repeatability (2026-09-22)
+
+The lesion runner fixes Greedy seed and registration thread count. See [execution evidence and remaining full-model gates](reports/EAGLE_EYE_EXECUTION_FIXES_2026-09-22.md). The development payload is resealed through the existing finalizer; no acceptance is inherited from its previous manifest.
+
+### Eagle Eye configuration and concurrent jobs (2026-09-22)
+
+[Server/client implementation ledger](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#11-implementation-ledger-settings-and-bounded-scheduling-2026-09-22)
+covers the lazy Eagle Eye settings tab, unified client connection, next-start PACS
+source/resource configuration, owner-only job inventory, bounded FIFO reservations,
+exclusive job-directory ownership and actual two-client Alignment/Bone execution.
+Private Brain process diagnostics and the native allocation failure investigation are in
+the execution report. Automatic cache-miss acquisition has a shared-pipeline handoff;
+native settings and deployment gates remain open.
+
+The same execution report records the native `std::bad_alloc` investigation,
+measured Windows commit pressure and default SynthSeg oneDNN CPU correction.
+Exact same-input mask/QC comparisons, bounded probabilistic-volume differences,
+process diagnostics and remaining integrated/native gates are stated separately.
+
+SVD anatomical mapping now checks physical geometry as well as array size before
+registration. The shared MS/SVD geometry regression is indexed in
+`tests/INDEX_BY_GUARD.md`; fail-before and proportional verification evidence are
+recorded in the same execution report.
+
+Lesion HTML preview images are embedded in the report for portable client retrieval;
+the source PNG bytes, mask calculation and PDF layout remain unchanged. The transfer
+regression is in `test_eagle_eye_lesions.py`; actual MS/SVD report packet checks are
+recorded in the execution report.
+
+TLS listener handshakes are deferred to individual connection handlers so a peer
+that stalls before TLS cannot block acceptance of other clients. The guarded
+failure, correction and separate-machine qualification boundary are recorded in
+the server/client implementation ledger and execution report.
+
+The full LST repeat comparison is now complete for the selected input pair: equal
+input/manifest hashes, zero differing final-mask voxels, equal measurements and
+complete reports. The execution report records timing, NIfTI-roundtrip precision
+and remaining native/clinical gates; historical pending statements are superseded
+by its current acceptance ledger.
+
+### Eagle Eye Windows service architecture review (2026-09-22)
+
+[Service architecture and acceptance sequence](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#12-windows-service-architecture-review-2026-09-22)
+maps the existing desktop/console host to a proposed independent SCM service,
+Session 0 workers, durable jobs, reconnectable clients, Unify PACS acquisition,
+service-account storage, production capacity and both installer backends. This is
+a source-backed design review under OPT-51, not installed-service qualification.
+
+[Service entry and reconnect implementation ledger](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#13-service-entry-and-reconnect-implementation-ledger-2026-09-22)
+records the SCM entry/child protocol, build-task handoff, bounded process ownership,
+durable client reconciliation handles, fail-before tests and outstanding installed
+service/native UI acceptance. It supersedes design-only status for those slices.
+
+### Razi Eagle Eye development workspace (2026-09-23)
+
+[Self-contained development documentation](modules/eagle-eye-server-development/README.md)
+is the canonical copy of the nine English documents installed under
+`D:/Eagle Eye Server` on Razi Reception. It covers current inventory, architecture,
+development, operation, testing, ordered remaining work and agent rules. Remote
+file hashes and relative links were verified; clinical inference remains unqualified.
+
+[Unattended service and PACS authentication acceptance](modules/eagle-eye-server-development/docs/SERVICE_AUTH.md)
+records the separate Razi 8043 service, delayed startup, tested failure recovery,
+protected PACS account renewal and UI changes. The original 8042 task remains active.
+
+
+## Native graphics admission: shared Standard/Server bootstrap (2026-09-23)
+
+`modules/viewer/native_graphics_probe.py` contains the bounded crash-isolated
+Win32 VTK probe and import-light admission state. The existing VTK domains report
+records Razi Windows dump evidence and scoped correction. Regression guard:
+`tests/code/viewer/test_native_graphics_admission.py`. Native drag/drop live
+acceptance remains distinct from synthetic probe and automated verification.
+
+### Eagle Eye service/PACS follow-up (2026-09-24)
+
+Native dependency readiness and PACS Study Instance UID guards:
+`tests/code/ai_imaging/test_eagle_eye_service_initialization.py` and
+`tests/code/ai_imaging/test_eagle_eye_pacs_identity.py`. Live deployment evidence:
+`modules/eagle-eye-server-development/docs/FULL_WORKSTATION.md`.
+
+### MG detection-only artifact display (2026-09-24)
+
+Guard: `tests/code/ai_imaging/test_mg_detection_without_classification.py`.
+Runtime owner: Eagle Eye MG artifact loading in `ai_module_ui/overrides/vtk_widget.py`;
+no decoding or VTK geometry changes. Live qualification and pending fresh-client
+overlay gate: `modules/eagle-eye-server-development/docs/FULL_WORKSTATION.md`.
+
+### Lower Limb Alignment workspace tab (2026-09-24)
+
+Controller: `modules/ai_imaging/eagle_eye_workspace.py::open_alignment`.
+Guard: `tests/code/ai_imaging/test_alignment_review_tab.py`.
+Development deployment and live gate: `modules/eagle-eye-server-development/docs/FULL_WORKSTATION.md`.
+
+### Eagle Eye remote radiograph evidence (2026-09-24)
+
+`modules/ai_imaging/eagle_eye_remote/radiograph_binding.py` owns versioned
+semantic source matching and safe Total Spine client review rebinding.
+Guard: `tests/code/ai_imaging/test_remote_radiograph_binding.py`.
+
+## White-matter lesion distribution delivery (2026-09-24)
+See `modules/eagle-eye-server-development/docs/LESION_DISTRIBUTION_2026-09-24.md` for context-independent distribution, MS-specific interpretation, artifact boundaries and pending live acceptance.
+
+## Eagle Eye remote manual review (2026-09-25)
+See the remote manual review section in `plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md` for verified local-edit gaps, server revision design, editable Brain artifacts and ordered cross-role acceptance. Design only; runtime not implemented.
+
+- Native radiograph correction mouse affordances: `eagle_eye_alignment/widget.py`; guard `tests/code/ai_imaging/test_review_mouse_affordances.py`; evidence in the Eagle Eye server/client owning plan (2026-09-25).
+
+- Eagle Eye MCP: `modules/EchoMind/secretary/adapters/eagle_eye_command_adapter.py`, shared workspace controller and Brain `controlled_inputs.py`; workflow and remaining live gate in `plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md`.
+
+- Co-located PACS/Eagle Eye DICOM sharing: `eagle_eye_remote/source.py::SourceLease`, job/worker/revision lifetime, and paired PACS atomic-writer capability. Guard: `tests/code/ai_imaging/test_eagle_eye_shared_sources.py`. Same-volume requirements, fallback, source evidence and live gates are in the Eagle Eye server/client plan's 2026-09-25 source-sharing receipt.
+
+
+## Download / PatientID contract review (2026-09-25)
+
+See `reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`, section "client paging correction and PatientID contract": exact offset preservation on adaptive shrink, current Razi API availability and local editor/server rename incompatibility.
+
+- Eagle Eye remote human review: `modules/ai_imaging/eagle_eye_remote/segmentation_review.py` and `spine_review.py` extend existing revision jobs; Brain/Slicer mask editing and native spine editing remain client UI. Guard: `test_remote_review_modules.py`. API bounds, artifact roles, acceptance and deployment limits: existing Eagle Eye server/client plan, OPT-51 implementation follow-up.
+
+
+## Dual download modes (2026-09-26, OPT-04)
+
+The shared-pipeline report section "dual transfer modes implemented" documents per-study Poor Connectivity, aligned byte/time-bounded normal batching, numeric timing, 175 passing guards, bounded installed-PACS comparison and remaining source GUI gate.
+
+## Brain source-service model discovery (2026-09-26)
+
+[Service record](modules/eagle-eye-server-development/docs/SERVICE_AUTH.md) documents Git-free model discovery and the separate 2D-input limitation. Guard: `tests/code/ai_imaging/test_brain_git_free_bundle.py`.

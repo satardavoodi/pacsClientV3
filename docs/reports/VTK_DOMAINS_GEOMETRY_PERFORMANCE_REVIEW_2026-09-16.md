@@ -1,5 +1,249 @@
 # VTK domains: geometry and performance review
 
+## 2026-09-25 DX blank-card investigation
+
+The user supplied a Local Home screenshot with four single-image DX placeholder
+cards. Read-only local inspection found all four stored DX Presentation objects:
+Explicit VR Little Endian, MONOCHROME2, 16 allocated / 12 stored unsigned bits,
+IDENTITY presentation LUT, and no top-level IPP/IOP. Missing volume geometry does
+not itself invalidate these projection images. Each object successfully passed
+the current `load_presentation_sequence` preparation with matching native image
+dimensions and nonconstant pixel ranges. All four persisted thumbnails are absent.
+
+Confirmed thumbnail boundary: `load_series_preview` returns None for presentation
+objects by design; `repair_local_series_thumbnail` has an Enhanced multiframe
+fallback but no corresponding single-frame presentation fallback. Thus DX pixel
+preparation succeeds while the Local card remains a placeholder. Shared-thumbnail
+owner handoff: use a bounded identity-checked independent-image thumbnail path;
+do not relax spatial-volume admission or fabricate IPP/IOP for radiographs.
+
+This is a diagnosis, not a runtime correction. The current terminal session is
+`terminal_20260925_221643.log`; it contains no matching missing-geometry or unsupported
+presentation-layout error. Source preparation is not proof of live viewport binding.
+The documented control client ping still reports no local test endpoint; viewport
+acceptance remains unverified. No patient files, thumbnail PNGs or DB rows changed.
+
+## 2026-09-25 Enhanced frame reference lines and synchronization (OPT-60)
+
+User explicitly requests reference lines, slice levels and synchronous navigation
+without requiring MPR. This extends the 2D presentation correction below and
+supersedes its limitation on patient-space reference/sync for validated planes.
+The spatial-volume flag remains false; a separate frame-plane capability carries
+per-frame IPP/IOP, pixel spacing, slice location and FrameOfReferenceUID. Existing
+MPR gates and volume-affine registry remain closed for independent frames.
+
+Worker preparation preserves direct functional-group mappings. The known N+1
+export shape is normalized in memory only when the sole display-only item is
+immediately before the final full group, and remaining FrameContent ordinals
+are exactly 1..N with a single temporal index. Other ambiguous shapes retain
+viewable pixels but no inferred planes. Validate finite positions, orthonormal
+IOP and positive spacing. No original files or Fast decoder state are modified.
+Read-only headers for the supplied study yield 606 valid planes across 32 series.
+This validates structure and coverage, not independent clinical spatial accuracy.
+
+Three additional Advanced integration defects were reproduced before correction:
+metadata was IPP-sorted independently of pixel frame order; sync treated each
+native depth-one image as a one-frame series; reference actors used logical frame
+index as native Z. Keep frame order, resolve source metadata using GetSlice, and
+choose target planes by actual physical position within the currently selected
+orientation group. Reject outside-stack/in-plane points and incompatible known
+FrameOfReferenceUIDs; absent frame IDs require a matching nonempty study UID.
+No volume-affine fallback is allowed for an unmappable presentation sequence.
+Logical target selection is carried to presentation-aware set_sync_point, which
+changes the frame and places the marker at native Z=0. Both default selected-source
+and optional all-pairs reference lines also draw at native Z=0. Existing toggle
+defaults and Fast execution remain unchanged.
+
+Evidence: two frame-plane guards failed before enrichment; three sync/reference
+guards failed before integration (one control passed). Final suite **123 passed,
+exit 0**: axial/sagittal directions, reverse/irregular order, oblique anisotropic
+mapping, last-frame selection, native actor plane, marker placement, incompatible
+space/outside rejection, ambiguous groups, existing Fast/ref/sync/presentation
+guards. Two changed viewer mirrors were the only dry-run drift and were synced;
+472 pairs match and the dedicated builder mirror guard passes.
+
+Applies to shared Standard Client and Eagle Eye Server source/payloads. Existing
+profile/codec checks from the preceding slice remain relevant; artifact acceptance
+and the previously documented staged-config blocker are not cleared. Fresh source
+GUI is pending: human relaunch/login, enable reference and synchronous controls,
+scroll and pick in axial and sagittal in both directions, include first/last frame,
+reverse order and Fast control, and confirm line/level agreement clinically.
+Automated geometry tests do not replace that acceptance. Rollback only this slice's
+frame-plane enrichment, `_pw_sync` branches and presentation-aware marker hook,
+then resync the two mirrors; preserve the working pixel display correction.
+
+## 2026-09-25 Enhanced MR Advanced frame presentation (OPT-60)
+
+The user confirms this study displays in Fast and asks for the Advanced remedy.
+Fast expands pixels by frame index even when geometry is missing; Advanced's
+spatial admission rejects absent top-level IPP/IOP. A synthetic 3-frame / 4-group
+probe reproduced missing geometry on the last declared frame and Advanced rejection.
+
+Correction in `advanced_presentation.py`: route Enhanced MR into the existing
+Advanced independent-frame renderer, before spatial-volume construction. Prepare
+all pixels and VTK frames on the load worker; retain SOP identity plus zero-based
+frame index and original pixel order. Per-frame rescale is applied exactly once.
+No Fast implementation, original data, live DB or 3D volume contract is changed.
+
+This is explicitly **2D presentation support**, not a spatial volume: orientation
+markers, patient-space synchronization, calibrated measurements and MPR remain
+unavailable through the existing nonspatial gates. Pixel spacing preserves aspect
+only. For mismatched functional-group counts, admission requires identical rescale
+transforms and consistent declared spacing across groups; independent scalar-range
+windows avoid assigning an ambiguous VOI item to a pixel frame. Manual windowing
+remains available. Ambiguous transforms, unsupported pixels, mixed/multiple objects,
+identity changes and oversized preparations are rejected atomically. General
+Enhanced multi-object/concatenation support and validated spatial reconstruction
+remain outside this correction; no geometry is inferred by deleting a group.
+
+Three initial synthetic guards failed before the patch (exit 1). Final related
+suite: **47 passed, exit 0**, including full public loader routing, every-frame
+pixel values/order, single rescale, malformed VOI isolation, memory and identity
+guards, existing presentations, ordinary complete stacks and nonspatial US.
+Read-only real-input preparation succeeded for **32 series / 606 frames**; no
+images were exported or clinical identifiers recorded. This is preparation evidence,
+not a clinical appearance or live GUI pass. The source app needs human relaunch
+for all-frame scroll/window and Fast/Advanced acceptance with the changed code.
+
+The existing core module applies to Standard Client and Eagle Eye Server without
+new dependencies or feature flags. Mirror dry-run reports no drift; 472 pairs
+match. Distribution-profile and codec-bundling checks: 44 passed, exit 0.
+Source SHA256 for `advanced_presentation.py` at verification:
+`b7b95ea1efe4a0e66a8f2d724b9a8c95a1fe8b52f98b7e786aa54d4f0b90cf20`.
+Existing staged-config release-parity blocker and artifact acceptance remain
+pending. Rollback only Enhanced routing/helper/constant and the new regression
+test; preserve all prior presentation and unrelated changes.
+
+## 2026-09-24 drag-hover backing recurrence (OPT-23)
+
+The user clarified that Home content appears before mouse release. A real native
+drag in the running source app reproduced the blue hover surface showing Home
+instead of the VTK image. The September 16 loading-cover fixes remain present;
+their nine guards pass. This is the separate `_show_drop_highlight` child QFrame,
+whose RGBA background and rounded corners depend on an unavailable Qt backing
+store over native VTK. Causation by the recent empty-hint patch is not established.
+
+The new real-Qt guard failed before correction (corner alpha 25, expected 255).
+`_NativeDropHighlight.paintEvent` now paints a full black rectangle before the
+existing blue highlight style, with the opaque-paint attribute. The hover is a
+temporary opaque tinted cover; the image returns when hover ends. Mouse input,
+dwell policy, drop dispatch, loading covers, Fast and geometry are unchanged.
+The guard covers opacity, parent-color independence, mouse pass-through and
+empty-hint hide/restore. Focused hover/loading/drop suite: 32 passed, exit 0.
+Broader suite: 192 passed, one failure from a series-start test spinner stub
+missing `hide_loading_after`, two previously documented spinner tests deselected,
+one existing xfail. Do not claim the broader suite is green. 471 mirrors match.
+
+Changed shared core is used by Client and Server; no mapped plugin copy changed.
+Artifact acceptance remains pending, with the previously recorded staged-config
+blocker. Source post-fix native acceptance also remains pending: the running app
+predates this patch. Reproduce hover over empty and populated Advanced panes,
+leave/cancel, drop/load, and repeat with a Fast control after human source relaunch.
+Rollback only the highlight subclass/construction/attribute hunks and its guard.
+
+## 2026-09-24 21:57 source-session viewport diagnosis
+
+September 25 original/stored comparison (supersedes the original-input gap below):
+the user supplied the local pre-import folder. All 32 Enhanced MR SOP identities
+matched stored objects. All originals already have N+1 functional-group items;
+NumberOfFrames and the complete per-frame sequence match the stored counterpart
+for every object. Byte hashes differ, but decoded arrays match exactly for all
+32 objects / 606 frames using pydicom. Import did not introduce the observed
+functional-group discrepancy or change those decoded pixels.
+
+There are exactly N items containing both plane position and frame content in
+each original, and their InStackPositionNumber values occur in order 1..N. One
+sample explicitly places a VOI/transform-only item before the final full spatial
+item. This provides evidence for a narrowly validated compatibility route, not
+permission for a generic discard-and-shift fallback. Preserve original files;
+an eventual in-memory adapter needs strict shape/dimension/identity checks,
+per-frame transform handling and separate multi-stack admission. Original/stored
+pixel equality establishes import fidelity, not clinical spatial correctness.
+No runtime correction or post-fix GUI acceptance is claimed by this comparison.
+
+September 25 follow-up: inspected `terminal_20260925_110252.log` after another
+user report. Four `Missing IPP/IOP` messages all match the affected study locally;
+two report DB fast-path failure followed by file-grouping fallback. The fallback
+also encounters the geometry requirement. The terminal contains no
+`ADVANCED_SERIES_BIND` marker (absence here alone does not establish absence in
+every logging sink). The two authoritative loader/geometry source files have no
+working-tree modifications. This confirms the unresolved loader limitation, not
+a failed rollout of a multiframe fix: no such fix has been implemented in this
+session. Requested the local pre-import source folder for original/stored
+comparison to resolve the N versus N+1 functional-group ambiguity. No patient
+files or live database contents were modified; no geometry was guessed.
+
+Follow-up after the user's 23:16 source relaunch: the fresh terminal session
+contains 24 `Missing IPP/IOP` messages. Read-only header inventory of the affected
+32 Enhanced MR objects finds no top-level geometry in any object. Three selected
+objects fully decode through SimpleITK with Z dimensions matching NumberOfFrames
+(20, 21, 20). This rules out pixel decode failure for those samples, not every
+series or packaged codec environment.
+
+Additional input ambiguity: all 32 objects contain N+1 per-frame functional-group
+items for N declared frames. The existing pure frame parser finds missing spatial
+geometry at index N-1 in every object and an extra final item with position.
+For one inspected sample, item N-1 contains only VOI and pixel-value-transform
+sequences; item N contains a full spatial group. Across declared-frame parsing,
+574 of 606 frames have spatial geometry; classification returns 30 spatial and
+two multi-stack objects. These are structural parser observations, not proof
+of clinically correct frame mapping. No original-versus-imported comparison is
+available yet; do not attribute the extra item to the scanner or importer.
+Do not silently skip the geometry-less item, shift the extra group onto pixels,
+or coerce the two multi-stack series into regular volumes. An Advanced correction
+needs explicit frame identity/geometry admission and synthetic coverage for these
+cases. This follow-up is diagnosis only; no decoder or geometry code changed.
+
+The user relaunched source and reported that the affected imported study still
+does not display in the viewport. Read-only inspection now finds thumbnail
+files for all 32 image series (the remaining stored series is a document).
+This confirms thumbnail generation on disk, not visual acceptance of the cards.
+The fresh terminal session contains six `Missing IPP/IOP` geometry failures;
+all six paths match the affected study's persisted series locally. No patient
+identifiers, paths or pixels are copied into this record.
+
+The Advanced full loader calls `_get_or_build_series_geometry_index` before
+ITK loading. `advanced_geometry_contract._read_minimal_header` requires
+top-level IPP/IOP and raises for this Enhanced MR export, whose geometry is in
+functional groups. The thumbnail-only extraction does not change that volume
+contract. Viewport status: diagnosed, not fixed or live-verified. A future
+viewer-owned correction must maintain frame-to-pixel identity, per-frame
+geometry, spatial/temporal separation and display ordering; copying one frame's
+geometry to every frame or bypassing the contract is not an acceptable fix.
+
+Both source launcher/interpreter processes have test control disabled (parent
+and child, not evidence of two independent apps). The documented control client
+`ping` still fails because no local test endpoint is present. Direct GUI and
+empty-hint visual acceptance remain pending; no process was restarted and no
+test flag or production gateway configuration was changed.
+
+## 2026-09-24 empty Advanced drop-hint background (OPT-60)
+
+Bug-fix session `01a0d48f-1b24-7e73-8578-e04d4a22a329`, first report, part B;
+the user explicitly requested this UI repair alongside Local thumbnails.
+The empty hint was a translucent/rounded QLabel on a native QVTK surface with
+no Qt paint engine. Its pixels depended on unavailable backing-store content.
+A real-Qt guard demonstrated non-opaque pixels before the change (exit 1).
+`_EmptyDropHintLabel.paintEvent` fills its whole rectangle before QLabel paints
+the existing text/style; mouse pass-through and visibility rules remain intact.
+There is no image rendering, geometry or native viewer lifetime modification.
+
+Guard: `test_fast_viewer_empty_state_ui.py::test_empty_drop_hint_pixels_do_not_depend_on_parent_background`.
+The pixel/opacity guard passes after the change. The adjacent suite has two
+pre-existing spinner-stub failures: the old expected call omits
+`opaque_native_background` and the fallback stub lacks `repaint`. Both were
+reproduced by running unmodified HEAD test text in a temporary directory against
+the existing spinner implementation (exit 1); they were not hidden or repaired
+in this slice. One existing quarantined border test remains xfailed.
+
+Fresh source visual acceptance is pending: the real Advanced empty pane must be
+checked for bleed-through during expose/resize, then loading and return-to-empty,
+with a Fast control. An offscreen opaque-pixel test is not native GUI acceptance.
+The shared core change applies to both build backends and all workstation editions;
+471 mirrors match, but staged-config parity remains red and artifacts are pending.
+Rollback only the label class/construction hunks. Related Local repair:
+[shared owner record](UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md).
+
 ## Inbound Alignment/Stitching source audit (2026-09-17)
 
 ELA session, read-only source/synthetic probe: `StitchingWidget._export_as_dicom`
@@ -1653,3 +1897,551 @@ Verification:
 Status: fixed/code-verified for redundant spatial renders; overall user-perceived speed is
 not yet live-verified. Roll back only this single-draw branch/helper extraction together
 and resync its mirror; preserve earlier stack/order/window/cache fixes.
+
+### 2026-09-22 Advanced chrome ownership follow-up
+
+OPT-56 main-window menubar/toolbar restrictions and native Save dialog branding
+are confined to the Advanced presentation adapter. Code and mirror checks pass;
+fresh native GUI acceptance is pending after concurrent user input interrupted
+restart verification. Receipt: `ADVANCED_ANALYSIS_UI_UX_AUDIT_2026-09-15.md`,
+2026-09-22 section. No shared pipeline or image geometry change.
+
+### 2026-09-22 Eagle Eye Lumbar entry-point handoff
+
+Owner: Advanced presentation / Eagle Eye entry integration (OPT-56). A fresh owned
+Advanced Viewer was opened from the source workstation through native thumbnail
+selection and Advanced MPR input. The verified sagittal lumbar MR volume rendered.
+Its curated module selector exposes only the eight `VIEWER_MODULES`; the registered
+`AIPacsOfflineLumbar` module is not accessible, and the stock module finder is hidden.
+Repository search found its module registration but no alternate native Eagle Eye
+entry selecting it. No presentation code or in-progress payload was changed here.
+
+Required owner resolution: preserve the deliberate separation of generic viewing
+from specialized Eagle Eye tools while providing an explicit Lumbar analysis entry.
+Acceptance: native entry opens the actual Lumbar panel on the selected MR volume,
+its server job returns a geometry-matching nonempty segmentation, and the unreviewed
+overlay renders. The corrected worker-owned CTK reference resolver has synthetic
+guards, but this inaccessible entry means its post-fix native gate is still blocked.
+No patient identity, image, or clinical result is included in this handoff.
+
+
+### 2026-09-23 Razi full-workstation source acceptance: native fault
+
+Inbound Eagle Eye deployment finding; owner diagnosis pending. Full source snapshot
+`20260923-workstation`, 16:54:57 source launch, main PID 9472, private Python 3.13.3,
+PySide6 6.10.2 and VTK 9.6.1. The owner signed in and reported freezing while opening
+the patient list. Later session evidence also includes patient-tab construction
+and series-load application. These are related observations, not proof of one cause.
+
+The session-scoped native fault log on Razi contains one Windows fatal access
+violation. The current-thread chain ends at `modules/viewer/advanced/viewer_2d.py`
+line 342 (`self.SetInputData(_reslice_out)`) through `_vw_series.switch_series`,
+`_vc_switch._perform_series_switch_optimized`, `_vc_load._apply_loaded_series_data`
+and `_ui_apply`. The server source transfer manifest identifies the exact baseline.
+No patient identifiers, image geometry or raw clinical logs were copied here.
+
+Confirmed: native Advanced failure during this source acceptance session. Unknown:
+input scalar lifetime/ownership, reslice validity beyond the existing predicate,
+native library/runtime compatibility and exact trigger. Do not infer GPU failure,
+low memory, PACS transport failure or a repair from this stack alone. About 7.8 GiB
+RAM was free at the subsequent sampling; this is not peak-allocation evidence.
+Requested owner check: reproduce with a synthetic isolated image, review the
+SetInputData input/lifetime boundary and target runtime parity, add a fail-before
+regression guard, then repeat affected-workflow GUI acceptance. No viewer code,
+feature flag, payload mirror or executing process was modified by this handoff.
+Source GUI acceptance is FAILED; do not qualify deployment from successful sign-in.
+
+
+## 2026-09-23 correction: confirmed native drag/drop crash sequence
+
+The owner clarified that patient double-click opened the tab and images downloaded;
+the freeze/crash/exit happened after dragging a series into the viewport. Fresh
+read-only review of terminal_20260923_165457.log confirms PROTECTED_DRAG at
+17:08:04.296 and 17:08:05.025, DROP at 17:08:05.042, RENDER-DROP at 17:08:07.543,
+and VIEWER_SWITCH/_perform_series_switch_optimized at 17:08:08.785 (Razi local
+log timestamps). The session-scoped PID 9472 native fault file was last written
+at 17:08:09.082 and contains Windows fatal exception: access violation.
+The current-thread chain reaches Advanced viewer_2d.py:342 SetInputData through
+switch_series -> _perform_series_switch_optimized -> _apply_loaded_series_data.
+The fault-file modification time brackets the event; it is not an embedded
+exception timestamp. This identifies the failing drag/drop-to-Advanced workflow,
+not the underlying native memory/lifetime cause. The earlier Home breaker stall
+is separate evidence and must not be presented as the reported terminal crash.
+No new reproduction, runtime change or restart was performed for this correction.
+
+
+## 2026-09-23 native graphics diagnosis and guarded development correction
+
+Windows Application Error 1000 records c0000005 with instruction address zero.
+The crash dump was parsed on Razi only, without exporting clinical content. Its
+top native return address maps to vtkOpenGLRenderWindow::GetDepthBufferSize;
+the remaining candidate frames include ResetCameraClippingRange,
+UpdateDisplayExtent and vtkResliceImageViewer::SetInputData. Local and Razi
+OpenGL DLL hashes match. This supports an execute-at-zero graphics fault,
+not a PACS transport failure or demonstrated invalid pixel payload.
+
+An isolated synthetic vtkWin32OpenGLRenderWindow.SupportsOpenGL probe failed in
+both the remote command session and the actual interactive desktop. VTK could
+not select a valid pixel format or initialize OpenGL functions. The software
+runtime had incorrectly been considered ready solely because its DLLs existed.
+Qt software GL and VTK Win32 GL are separate contexts. The implicated upstream
+path is in [VTK 9.6.1](https://github.com/Kitware/VTK/blob/v9.6.1/Rendering/OpenGL2/vtkOpenGLRenderWindow.cxx).
+
+The shared Standard/Server GUI bootstrap now runs an isolated native probe before
+Qt UI startup, once per launch with a 15-second limit, using only synthetic 8x8x2
+pixels. Native crashes, timeout, missing dependencies and invalid receipts deny
+VTK admission. A private JSON receipt supports source and windowed frozen builds.
+Headless Eagle Eye service dispatch still exits before graphics initialization.
+
+On failure, VTK-free Fast is authoritative for empty and populated viewports,
+including legacy-backend settings, metadata fallback and per-widget Advanced
+overrides. MPR cannot reuse a stale PASS or disable this fresh native safety
+decision. This does not repair/install the machine's graphics driver: Advanced
+and native MPR remain unavailable there. AI calculations and PACS/download
+protocols are unchanged. The real local synthetic probe succeeds and preserves
+Advanced admission on this development computer.
+
+Verification: the admission guard failed before correction (10 failed, 2 passed,
+exit 1). After correction, 71 graphics/backend/runtime/ARM guards and 15
+mirror/service-boundary guards passed with exit 0. All 471 mirror pairs match.
+The actual Razi interactive post-change probe exited 0, rejected native GL and
+verified Fast routing for empty/populated viewers and blocked MPR. These checks
+do not replace the original clinical drag/drop workflow.
+
+Seven scoped source/payload files were baseline/hash-checked and updated only in
+the existing Razi development source. Original files and exact manifest:
+backups/native-graphics-20260923. Receipt: logs/native-graphics-fix-20260923.json.
+For rollback with the source UI closed, restore baseline entries from that
+backup and remove only manifest-listed new files. No clinical service, installed
+executable or driver was changed. Surviving Python processes were output-capture
+wrappers, not an active workstation UI; they were not terminated.
+
+Status: guarded source correction and isolated desktop verification completed;
+human fresh-source launch/native drag/drop plus fresh Windows/native-log review
+remain pending. Normal launches retain AIPACS_TEST_SERVER=0. No release-readiness
+claim is made.
+
+## 2026-09-23 Standard MPR residual image jitter: investigation only
+
+Scope: the owner reports residual image shaking during sagittal/coronal stack
+navigation or rotation in approximately half of CT cases after the earlier
+improvement. Standard Zeta MPR only; Advanced Viewer and Slicer are excluded.
+Geometry is explicitly frozen. No runtime source, sampling policy, camera,
+volume orientation, spacing, origin, slice ordering or packaged payload changed.
+This extends the August 1 reconstructed-pane scroll-stability receipt and the
+existing OPT-48 interaction investigation; it does not close either live gate.
+
+Evidence obtained:
+
+- The August 1 stable-scroll implementation remains in place. The common
+  `_apply_native_plane_interpolation` post-pass disables screen-pixel resampling
+  for all three panes under the default configuration, preserving nearest
+  interpolation for the acquisition plane and linear for reconstructions.
+- VTK 9.6.1 is installed. Its upstream `vtkImageResliceMapper::Update` performs
+  automatic screen/data-grid quality switching only when screen resampling is
+  enabled. Therefore `AutoAdjustImageQualityOn` alone is not evidence of this
+  defect with the current default-off screen-resampling setting; do not disable
+  it speculatively. Source: [VTK 9.6.1 mapper implementation](https://github.com/Kitware/VTK/blob/v9.6.1/Rendering/Image/vtkImageResliceMapper.cxx).
+- Direct pytest: `test_mpr_geometry_regression.py`,
+  `test_mpr_interaction_stability.py`, `test_mpr_scroll_stability.py` and
+  `tests/code/system/test_mpr_interaction_perf.py`: **51 passed**, six dependency
+  deprecation warnings, 20.62 seconds, process exit 0. An earlier command used
+  the wrong directory for the interaction-performance file and ran no tests;
+  only the corrected invocation is evidence.
+- A separate synthetic probe called the actual interpolation, explicit-plane
+  and slice-position mixin methods with real VTK cameras/mappers/actors: three
+  acquisition-plane routings, two spacings (0.7/0.7/0.625 and 0.7/0.7/5.0), four
+  oblique angles and 200 position updates per configuration. All **3,672**
+  counted camera/plane invariant checks passed, exit 0. It also checked role
+  interpolation and disabled screen sampling. No render window, patient data
+  or database was used. This is state verification, not rendered-image proof.
+- Existing control client `ping` failed to connect to the local Test Control
+  Server. No application launch, login, restart or process recovery was done.
+
+Unresolved hypotheses, not diagnoses:
+
+1. Interaction scheduling: stack drag requests a throttled `move` update but
+   also renders immediately; wheel input immediately moves/renders its camera
+   while oblique synchronization can be deferred. Inspect whether an affected
+   case presents stale/mixed state or merely redundant unchanged frames.
+   A direct render call by itself does not prove visible shaking.
+2. Oblique-to-orthogonal transition: the existing angle threshold invokes
+   `_reset_all_to_orthogonal`, which includes camera fitting. Compare onset
+   specifically near zero rotation against continuous nonzero rotation.
+   Do not change this geometry-sensitive reset from source suspicion alone.
+3. Sampling versus motion: compare anisotropic and near-isotropic CT at the
+   same zoom; distinguish changing anatomical samples from a moving viewport.
+   The synthetic state probe cannot establish pixel-level temporal stability.
+
+Next decisive gate: one human-started, logged-in source test session outside
+clinical work, with a known affected CT and a stable comparison case. Discover
+`ping` then `list_actions`; exercise real wheel input, stack drag and crosshair
+rotation separately in both sagittal/coronal and enlarged/normal layouts.
+Observe actual pixels, stationary landmarks, camera/plane state, final release,
+reset and source-session timing. Preserve exact geometry and acquisition-plane
+fidelity. Only after reproduction select a narrow presentation/scheduling seam,
+write a failing behavioral guard, apply the correction and rerun automated plus
+live acceptance. Status: **investigated; original symptom not reproduced;
+live gate blocked on source test session; no fix claimed**.
+
+## 2026-09-23 Standard MPR neck CT inversion: diagnosed, not changed
+
+Separate owner-reported issue from the unresolved temporal jitter above. The
+owner opened three CT series, reconstructed each with Standard MPR, and reported
+the middle neck case upside down while the first and last cases were correct.
+Authorization for this turn was careful investigation before any geometry edit.
+No runtime, geometry, source-volume ordering or packaged payload was changed.
+
+Local evidence used only the three most recent canonicalization events, their
+explicit series directories and bounded current-session log windows. Header-only
+reads verified one series per directory, unique instance numbers, constant axial
+IOP, HFS positioning, zero gantry tilt and single-frame objects. No DICOM pixels
+were decoded/exported. Identity linkage was checked locally with SeriesInstanceUID;
+identifiers, paths, images and raw logs are deliberately omitted here.
+
+The discriminating fact is stack direction, not the body-part label:
+
+| Boundary | First control | Reported neck case | Last control |
+|---|---|---|---|
+| IPP direction in ascending InstanceNumber | Superior to inferior | Inferior to superior | Superior to inferior |
+| MPR input route | Existing complete volume | Existing complete volume | Existing complete volume |
+| Source display convention | Axial superior to inferior | Axial superior to inferior | Axial superior to inferior |
+| Canonicalizer's attached through-plane sign | Negative | Positive | Negative |
+| Sagittal/coronal camera up along volume Z | Negative | Positive | Negative |
+
+All three route receipts identify `vtk_simpleitk` and `using_existing_volume`.
+The middle case's full-volume `vtk_convert_db` receipt independently establishes
+decreasing patient Z in the actual first/last input files, while its canonicalizer
+receipt attaches increasing Z. The final control's full-volume receipt confirms
+the same decreasing input order with a matching negative attached sign. The first
+control's source convention and camera receipts agree, but its full-volume build
+was outside the bounded evidence window; do not imply a new full-volume read.
+
+Root cause at the MPR input boundary:
+
+1. `_resolve_mpr_volume_for_route` can reuse an already constructed volume whose
+   slice order is the source loader's display order.
+2. `canonicalize_volume` calls `_read_dicom_slice_axis_sign`, which independently
+   rereads the directory and sorts headers by `InstanceNumber`.
+3. It treats that independently inferred direction as the actual volume's +Z
+   direction when attaching `ZetaAnatA`. This assumption fails when the source
+   volume has reordered the original acquisition sequence.
+4. `_anatomical_camera` then correctly follows the incorrect attached matrix.
+   Changing the camera, adding a neck-specific flip, or globally reversing CT
+   would mask the provenance error and risk the working cases.
+
+The DICOM image plane is defined by IOP/IPP, not a body-part-specific inversion
+rule. Reference: [DICOM PS3.3 C.7.6.2](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.2.html).
+This sample does not establish that every neck CT uses this acquisition direction,
+or that another body part cannot trigger the same mismatch.
+
+Reproduction: `tools/testing/probe_mpr_stack_order.py` creates synthetic headers
+and a small scalar volume with independently controlled input order, then invokes
+the actual canonicalizer and anatomical-camera methods. Both matching-direction
+controls have superior screen-up in sagittal/coronal; both opposite-direction
+cases have inferior screen-up. **4 of 8 presentation invariants fail; exit 1**,
+intentionally retaining the unfixed defect. No render window, live database or
+clinical fixture is used, and canonicalizer diagnostic-file writes are mocked.
+This is a deterministic state/transform reproducer, not a new live rendered-image
+acceptance run. Existing `test_mpr_canonicalize.py`, `test_mpr_geometry_regression.py`
+and `test_series_geometry_index.py`: **95 passed**, six dependency deprecation
+warnings, exit 0; their success does not cover the new order-provenance mismatch.
+
+Safe correction seam for a later authorized implementation: bind MPR's through-
+plane direction to the exact ordered instances that built its input volume, with
+identity/count/order validation and a documented fallback. Preserve existing
+pixel order, spacing, origin, X/Y flips, anatomical-camera math and domain
+separation. Do not substitute the nominal IOP cross product or the currently
+identity native VTK direction matrix as the volume-order authority. Cover both
+acquisition directions, reused versus rebuilt volumes, missing provenance,
+series reload and non-axial acquisitions before live acceptance on this case and
+the controls. The documented source control bridge is still unavailable; no
+restart or login was attempted. Status: **root-cause evidence and synthetic
+reproduction obtained; no correction applied; jitter investigation remains open**.
+
+### General correction design: geometry belongs to the constructed volume
+
+Requested follow-up: propose a general rule that survives different centers,
+acquisition directions and input routes, without body-part/vendor exceptions.
+Status: design investigation only; no runtime implementation or new support claim.
+
+Decision: an admitted MPR volume must carry an immutable, versioned description
+of the exact voxel/frame order from which it was constructed. Pixel data and
+that description form one artifact. MPR must not rediscover direction by sorting
+the source directory independently, nor trust metadata merely because its count
+matches the volume depth. Reversing the same source frame list changes the
+volume geometry even when series identity, dimensions and spacing are unchanged.
+
+For a regular spatial stack with fixed IOP, let r and c be the DICOM row/column
+direction cosines, and p[k] the IPP of frame k **in actual buffer order**:
+
+`P(i,j,k) = p[0] + i * column_spacing * r + j * row_spacing * c + k * d`
+
+Here d is the signed step derived from the ordered p[k] values. A median of
+adjacent vector differences is an estimator, not sufficient validation: all
+frame positions must agree with the fitted lattice within explicit tolerances,
+with consistent orientation and compatible dimensions/spacing. Preserve an
+in-plane component rather than silently projecting away shear. The IOP normal
+`cross(r,c)` identifies plane orientation; it does not independently establish
+the sign of increasing buffer index. Reference: DICOM PS3.3 C.7.6.2 and
+[SimpleITK physical image geometry](https://simpleitk.readthedocs.io/en/master/fundamentalConcepts.html).
+
+Represent any existing index permutation/reversal in the transform chain,
+including the current Y conversion and MPR X flip. A reversal includes an origin
+offset `(dimension - 1)` as well as a negative direction. Keep index-to-patient
+and VTK-world-to-patient transforms distinct; do not pass a scaled voxel affine
+directly into the current orientation-only camera contract. First implementation
+should supply the validated axis directions to the existing `ZetaAnatA` seam,
+preserving camera math, pixels, spacing, origins and all existing display rules.
+It need not resample or globally reorder any currently working series.
+
+Implementation ownership and integration:
+
+1. Construct the immutable geometry record at successful volume creation, from
+   the exact post-selection/post-ordering frame list used for its pixels. Include
+   Study/Series/Frame-of-Reference identity, ordered SOP/frame identities,
+   dimensions, geometry/content revision, transform convention version and
+   validation outcome. An order digest alone is insufficient if headers/pixels
+   can change at the same paths. Keep identity details local and out of logs.
+2. Both existing-volume reuse and full MPR rebuild consume this same data
+   contract. The former imports a validated immutable artifact, not an Advanced
+   viewer object/controller; the latter produces its own record on the worker.
+   Preserve independent execution domains and per-domain cache ownership.
+3. The current immutable index in
+   `PacsClient/pacs/patient_tab/utils/advanced_geometry_contract.py` already has
+   `dicom_files_for_itk`, `ipp_by_display_index`, `iop_by_display_index` and an
+   order hash. Reuse these verified build-time facts through the handoff rather
+   than creating another header scanner. Two classes are named
+   `SeriesGeometryIndex`; the separate `modules/viewer/advanced` affine helper
+   must not be adopted by name alone. Its nominal normal times absolute spacing
+   is not proof of signed actual buffer direction.
+4. Preserve the record with all allowed copies/flips and cache reuse. Reject a
+   stale or unversioned cached artifact at the MPR boundary. For a legacy volume
+   without trustworthy build-order evidence, rebuild once through the documented
+   MPR worker path and attach the record; do not guess from current directory or
+   unrelated/current viewport metadata. No automatic repeated rebuild loop.
+5. Missing or inconsistent spatial facts yield a truthful MPR-unavailable reason
+   while ordinary 2D viewing remains usable. Irregular spacing, mixed time/echo
+   stacks, varying planes and unsupported shear need validated dedicated paths;
+   do not force them into a regular lattice. Enhanced multiframe uses per-frame
+   functional groups under the same principle when a qualified builder exists.
+   The current multiframe admission gate remains intact; this fix is not a
+   multiframe-enablement project. Reference: [DICOM functional groups](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.16.2.html).
+
+Alternatives rejected: neck/vendor/PatientPosition flips; always-positive or
+always-negative Z; blanket resampling; re-sorting every working volume; and
+using native VTK/nominal IOP direction without buffer provenance. These either
+repeat the two-authority defect, change established output, or add unnecessary
+interpolation and resource cost.
+
+Acceptance focuses on physical invariance: renaming files, renumbering instances
+or changing the display order must not change the patient coordinates or
+anatomical screen directions of corresponding voxels when the matching geometry
+record travels with them. Exercise ascending/descending acquisition, arbitrary
+filenames/numbers, native axial/sagittal/coronal/oblique planes, HFS/FFS/prone
+orientations expressed through IOP/IPP, nonzero origin, anisotropic spacing,
+X/Y reversals, reused/rebuilt/cached volumes, reload and missing/stale records.
+Invalid geometry should fail admission rather than return an arbitrary direction.
+Use synthetic asymmetric landmarks and both existing positive controls plus the
+reported neck case for source-GUI confirmation. Retain the separate jitter gate.
+
+Design sanity check in this turn: 24 right-handed signed axis permutations times
+two stack directions, nonzero origin and anisotropic spacing, with composed X/Y
+reversals: **48 mathematical configurations passed**, exit 0. This verifies the
+formula only; it is not a product patch, fail-after result or live acceptance.
+
+## 2026-09-23 Razi patient-open / viewport acceptance receipt
+
+The user confirmed opening a patient and importing a series into the viewport.
+Fresh remote log review ties this to the existing source UI PID 17424 (normal
+AIPACS_TEST_SERVER=0 session), not the isolated diagnostic probe or a frozen build.
+Open request: 19:56:07.217; tab created: 19:56:08.384; actual first-image marker:
+19:56:17.617 (Razi local time), backend pydicom_qt. The earlier first_series_visible
+marker is not used as proof of actual pixels. The UI remained responding.
+
+For the 19:55-19:59 workflow interval, app/viewer/download/database logs contain
+zero ERROR/CRITICAL records. Windows Application events 1000/1001/1002 since 19:55:30
+were absent at inspection. The main PID's session-scoped native file contains only
+its session header, no native fatal exception. Worker headers are not crashes.
+The download log reports 12 completed series totalling 111 downloaded files and
+zero skipped, matching its authoritative total of 111. This is a log-level count,
+not a new on-disk/SOP audit. One socket reconnection warning recovered before the
+series completions. Human visual confirmation plus first-image/liveness evidence
+passes this scoped patient-open-to-viewport source workflow, including the earlier
+native-crash path now routed to VTK-free Fast.
+
+Remaining findings: a 1251.1 ms UI stall during first Fast pipeline import/source
+compilation; Download Manager DM-CONVERGE-MISS at Downloading and Completed and
+missing-row/status warnings, so the progress-row acceptance is not clean. The
+FAST_GEOMETRY_ORDER_MISMATCH entries are INFO diagnostics for InstanceNumber vs
+IPP order; existing code uses a separately ordered copy for sync/reference lines.
+They are not proof of corrupted images or a new geometry correctness pass.
+
+No runtime modification or restart was performed for this verification. The
+input-observation source update has not been loaded into this still-running UI.
+Advanced/MPR on Razi, concurrent AI requests, model inference, standard-client
+round trips and frozen/service deployment remain separate acceptance gates.
+
+## 2026-09-24 Standard MPR jitter: paired Advanced/Fast launch log review
+
+The owner reports stable MPR after opening through Advanced and coronal shaking
+after opening through Fast, with the latter still open. This is evidence for
+investigating the input routes, not proof of a backend-dependent renderer defect.
+No runtime source, geometry, filter, configuration or live UI state changed.
+
+The bounded local session contains Advanced-to-MPR at 00:17:33 and Fast-to-MPR at
+00:18:37. Both match the requested patient locally, but header identity checks
+show **different StudyInstanceUIDs and different SeriesInstanceUIDs, with zero
+shared SOP instances**. Raw identity values and paths remain local. Thus this
+is not yet an A/B comparison of the same source series.
+
+| Observed property | Advanced input | Fast input |
+|---|---|---|
+| Route receipt | using_existing_volume | loaded_full_volume |
+| Volume dimensions | 512 x 512 x 380 | 512 x 512 x 372 |
+| Spacing, approximately | 0.7949453 / 0.7949453 / 1.25 mm | Same |
+| Anatomical axis matrix | diag(-1,-1,-1) | Same |
+| Coronal camera direction / view-up | +Y / -Z | Same |
+| Reconstructed sampling policy | linear, stable-scroll | Same |
+| Initial parallel scale | 310.260 | 307.625 |
+| Pre-MPR processing | noise-filter stage recorded | direct load/convert path |
+
+Header-only checks of the two explicit source directories find constant IOP,
+monotonic descending positions in filename order, zero adjacent in-plane IPP
+shift, and only approximately 0.0000153 mm adjacent-step rounding variation.
+The kernel and image-type fields match across the two series. This does not
+establish identical pixels, patient motion, or identical reconstruction history.
+Different initial camera fit is consistent with the different volume extents;
+it is not evidence of a moving camera during interaction.
+
+The Advanced filter receipt records a noise stage of 3765.977 ms; the inspected
+Fast full-volume loader goes through get_itk_image and convert_itk2vtk without
+apply_filters. Do not add smoothing to MPR on this evidence: it changes image
+appearance and cannot establish or cure a scheduling/geometric jitter cause.
+
+In the bounded 00:17-00:19 log window there are no MPR error lines and no
+ZETA_MPR_PERF frame-timing markers. Neither fact proves temporal stability.
+Documented local test-client ping remains unavailable. The existing process was
+not restarted, and no authentication or control workaround was attempted.
+
+Next discriminating step requested from the owner: open the exact stable
+380-slice series via Fast, then MPR, and repeat coronal stack interaction at
+matched layout/zoom. Conversely, compare the 372-slice case via Advanced if
+needed. Recheck exact series/frame identity before assigning the symptom to
+the route. If the same-series difference persists, examine preprocessing and
+actual rendered-frame cadence/state before selecting a correction. Keep this
+jitter investigation distinct from the previously diagnosed stack-sign inversion.
+Status: log/header comparison completed; original jitter cause unconfirmed;
+same-series reproduction pending; no fix claimed.
+
+### 2026-09-24: OPT-48 rendered stationarity failure isolated to VTK optimization
+
+The owner completed the route crossover: the 380-frame series is stable through
+both Fast and Advanced; the 372-frame series jumps through both. The owner
+clarifies that the patient image itself jumps. This supersedes the route-specific
+working hypothesis above. Interaction device and live frame trace remain unknown.
+
+Added `tools/testing/probe_mpr_render_stationarity.py`, a standalone synthetic
+checkerboard volume invariant along Y. Coronal scrolling must therefore preserve
+every displayed pixel. It uses the production stable camera-step helper, VTK
+9.6.1, linear interpolation, native-grid sampling, a 600 x 500 render window,
+parallel camera, and 1.2 zoom. No clinical pixel data, identifiers, database or
+application process is used. Numeric volume geometry was supplied locally as
+arguments; no case-specific fixture was added.
+
+Controlled 41-frame results with full-precision numeric arguments:
+
+| Synthetic setup | Optimization | Maximum changed screen pixels | Maximum raw scalar delta | Exit |
+|---|---|---:|---:|---:|
+| Geometry corresponding to 372-frame input | on | 13,902 | 600 | 1 |
+| Same input and camera path | off | 0 | 1 | 0 |
+| Geometry corresponding to 380-frame input | on | 0 | 1 | 0 |
+
+For the first large 372-frame raw-output change, shifting the output by exactly
+one row restores the interior checkerboard with zero mean absolute error. With
+no shift the mean error is 34.2391. This demonstrates a one-row sampling jump,
+not merely fluctuating frame cadence, patient motion, or an intensity-only
+change. Optimization-off leaves at most one scalar-unit rounding difference
+and pixel-identical displayed output. It is a diagnostic control, not a product
+fix or proof of preserved performance.
+
+The shell matters: unquoted PowerShell numeric arguments shortened the Z-spacing
+values to 15 significant digits before Python received them. Initial runs then
+showed the opposite stability pattern. Explicitly quoted arguments preserve all
+digits, reproduce the owner's 372/380 distinction, and repeat consistently.
+Never round volume spacing as a workaround; these experiments demonstrate the
+numerical trigger, not erroneous DICOM geometry.
+
+The vulnerable boundary is now supported by an intervention: the optimized VTK
+reslice execution path under native-grid sampling. The precise internal rounding
+branch still needs a smaller direct-reslice reproduction. Upstream
+[vtkImageReslice.cxx, VTK 9.6.1](https://raw.githubusercontent.com/Kitware/VTK/v9.6.1/Imaging/Core/vtkImageReslice.cxx)
+selects permutation/nearest-neighbor shortcuts under Optimization;
+[vtkImageResliceMapper.cxx](https://raw.githubusercontent.com/Kitware/VTK/v9.6.1/Rendering/Image/vtkImageResliceMapper.cxx)
+computes a native sampling grid with roundoff tolerances. These sources support
+investigating that boundary; they do not alone prove a particular faulty line.
+
+No runtime, canonical geometry, patient-space transforms, interpolation policy
+or packaged mirror was changed. The documented local control-client ping still
+fails with an unavailable local endpoint. No live GUI acceptance is claimed.
+Next: obtain live confirmation on the affected series, develop a fully synthetic
+minimal guard, compare general sampling corrections for fidelity and interaction
+cost, and verify orthogonal/oblique plus native/reconstructed views. Do not add a
+372-frame, neck, vendor, or rounded-spacing special case. Status: synthetic
+rendering defect reproduced and optimization boundary isolated; attribution to
+the live case is strongly supported but awaits live validation; not fixed.
+
+### 2026-09-24: OPT-48 reconstructed sampling correction, developer-run candidate
+
+Owner authorized the correction for a fresh local Developer Run. The only runtime
+change is `_mpr_views.py::_apply_native_plane_interpolation`: call
+`mapper.GetImageReslice().OptimizationOff()` on reconstructed panes after selecting
+linear interpolation. Native acquired panes retain their prior policy. No volume,
+camera, axis matrix, slice-plane, spacing, origin or canonicalizer change. No
+special case based on series identity, slice count, body part or manufacturer.
+
+Chosen over rounding geometry or switching to screen resampling: the general
+linear executor preserves the existing sampling contract and removes the proven
+optimized-executor failure. No new flag is needed for this local candidate.
+Rollback is removal of the new OptimizationOff block, followed by source restart;
+the existing stable-scroll flag continues to control only screen sampling.
+
+New guard `tests/code/mpr/test_mpr_reslice_sampling_stability.py` uses a wholly
+invented 64-slice checkerboard with arbitrary origin and 0.73/0.73/1.3 spacing.
+Before the runtime edit all four initial cases failed (exit 1): the rendered
+case changed 1,376 pixels; reconstructed policy assertions failed for all three
+native-plane role routings. After the correction and an added enlarged-view
+case, 85 focused tests pass, exit 0, reruns disabled. Suites cover new rendering,
+geometry, interaction, canonicalization, scroll stability and crosshair-off stack.
+Existing SWIG deprecation warnings remain. No lint pass claimed.
+
+The production policy also gives zero changed screen pixels across 41 synthetic
+frames for both locally supplied 372/380 numeric geometries. A matched 81-frame
+synthetic timing sample measured median warm Render calls of 7.03 ms optimized
+versus 7.21 ms general execution. These are local isolated renderer measurements,
+not application event latency or a performance guarantee on other machines.
+
+Mirror sync changed zero files; verification reports 471 matching pairs. This
+Standard MPR source has no plugin payload mirror, so no mirror-specific builder
+boundary changed. Catalog and guard index updated. The documented control-client
+ping still fails (local endpoint unavailable). No application restart, login,
+clinical data modification or live GUI pass was performed. Candidate is ready
+for the owner's fresh normal Developer Run: compare 372 and 380 coronal/sagittal
+scroll, enlarged view and oblique interaction, checking stability, orientation,
+detail and responsiveness. Human visual confirmation remains open.
+
+### 2026-09-24: fresh source-session observation after sampling correction
+
+The owner reports "I think it work" after the fresh local run. Treat this as
+positive preliminary human observation, not exhaustive workflow acceptance.
+Source main-process entries started at 01:31:38, after the sampling source edit
+at 00:56:28. Local canonicalization receipts show 512 x 512 x 372 at 01:32:52
+and 512 x 512 x 380 at 01:34:20. Thus both comparison volumes were opened in
+the fresh session; counts alone are not an identity proof. No MPR-tagged ERROR
+or CRITICAL line was found in the inspected viewer-diagnostics interval after
+01:20 through the latest 01:37 log activity. Absence of logged errors does not
+measure image stationarity. Local test-control ping is still unavailable, so
+no direct frame inspection or runtime Optimization-state readback was possible.
+The 85 automated passes remain the code gate; the owner's preliminary observation
+supports improvement on live images. Full sagittal/coronal, enlarged, oblique
+and responsiveness coverage is not explicitly confirmed. No further runtime edit.

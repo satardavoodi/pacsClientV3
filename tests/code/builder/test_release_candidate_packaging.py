@@ -277,7 +277,6 @@ def test_candidate_stops_before_nuitka_when_required_python_backend_fails(tmp_pa
     expected_stage_root = Path(workspace.resolve().anchor) / "ap-stage"
     assert Path(status["packaging_stage_root"]) == expected_stage_root
     expected_names = {
-        "ai-pacs eagle-eye v3.6.5.exe",
         "ai-pacs standard v3.6.5.exe",
         "ai-pacs arm64-emulated v3.6.5.exe",
     }
@@ -307,7 +306,7 @@ def test_brain_release_preflight_fails_before_expensive_payload_validation(tmp_p
     assert calls == []
 
 
-def test_local_install_qa_builds_both_backends_all_editions_to_canonical_folders(
+def test_local_install_qa_builds_client_editions_to_canonical_folders(
     tmp_path, monkeypatch
 ):
     from tools.build import build_local_candidate as candidate
@@ -351,7 +350,7 @@ def test_local_install_qa_builds_both_backends_all_editions_to_canonical_folders
     assert len(calls) == 3  # PyInstaller, Nuitka, then coherence.
     for command, invocation in calls[:2]:
         assert "--internal-build" in command
-        assert command[command.index("--edition") + 1] == "all"
+        assert command[command.index("--edition") + 1] == "client"
         assert invocation["env"]["AIPACS_PY_INSTALLER_OUTPUT_DIR"] == str(
             final_repo / "builder/output/installer"
         )
@@ -369,8 +368,86 @@ def test_local_install_qa_builds_both_backends_all_editions_to_canonical_folders
         )
     status = json.loads((workspace / "build_status.json").read_text(encoding="utf-8"))
     assert status["lane"] == "local-install-qa"
+    assert status["build_target"] == "client"
+    assert all(len(paths) == 2 for paths in status["expected_release_installers"].values())
     assert status["distribution_approved"] is False
     assert status["published"] is False
+
+
+def test_local_qa_same_version_rebuild_archives_only_selected_backend_outputs(tmp_path):
+    from tools.build import build_local_candidate as candidate
+
+    output = tmp_path / "builder nuitka/output/installer"
+    output.mkdir(parents=True)
+    standard = output / "ai-pacs standard v3.6.7.exe"
+    arm = output / "ai-pacs arm64-emulated v3.6.7.exe"
+    server = output / "ai-pacs eagle-eye v3.6.7.exe"
+    metadata = output / "distributions.json"
+    for path in (standard, arm, server, metadata):
+        path.write_bytes(path.name.encode("ascii"))
+    status = {
+        "version": "3.6.7",
+        "lane": "local-install-qa",
+        "expected_release_installers": {
+            "nuitka": [str(standard), str(arm)],
+        },
+    }
+
+    moved = candidate.archive_existing_local_qa_outputs(status, "nuitka")
+
+    assert len(moved) == 3
+    assert not standard.exists()
+    assert not arm.exists()
+    assert not metadata.exists()
+    assert server.is_file()
+    archives = {Path(row["archive"]) for row in moved}
+    assert {path.name for path in archives} == {
+        standard.name,
+        arm.name,
+        metadata.name,
+    }
+    assert all(path.is_file() and "_superseded" in path.parts for path in archives)
+    assert candidate.archive_existing_local_qa_outputs(status, "nuitka") == []
+
+
+def test_server_qa_builds_only_eagle_eye_in_both_backends(tmp_path, monkeypatch):
+    from tools.build import build_local_candidate as candidate
+
+    workspace = tmp_path / "candidate"
+    source = workspace / "source"
+    source.mkdir(parents=True)
+    (source / "build_source_manifest.json").write_text(json.dumps({
+        "source_sha256": "stable", "version": "3.6.7",
+        "build_target": "server", "github_freshness_verified": False,
+        "release_sync": None,
+    }), encoding="utf-8")
+    final_repo = tmp_path / "final"
+    monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
+    monkeypatch.setattr(candidate, "canonical_installer_dirs", lambda _root, _version: {
+        "python": final_repo / "builder/output/installer",
+        "nuitka": final_repo / "builder nuitka/output/installer",
+    })
+    calls = []
+    monkeypatch.setattr(candidate, "run_logged_build",
+                        lambda command, **_kwargs: calls.append(command) or 0)
+
+    assert candidate.run_builds(workspace, tmp_path / "assets", "3.6.7",
+                                final_repo=final_repo, local_install_qa=True,
+                                target="server") == 0
+    assert len(calls) == 3
+    assert all(command[command.index("--edition") + 1] == "server"
+               for command in calls[:2])
+    status = json.loads((workspace / "build_status.json").read_text(encoding="utf-8"))
+    assert status["build_target"] == "server"
+    assert all(len(paths) == 1 and "eagle-eye" in paths[0]
+               for paths in status["expected_release_installers"].values())
+
+
+def test_server_release_is_not_misrepresented_as_qualified(tmp_path):
+    from tools.build import build_local_candidate as candidate
+
+    with pytest.raises(ValueError, match="not qualified for release"):
+        candidate.run_builds(tmp_path, tmp_path / "assets", "3.6.7", target="server")
 
 
 def test_python_release_materializer_stages_every_eagle_eye_external_payload():
@@ -459,6 +536,7 @@ def test_candidate_resume_skips_completed_python_and_resumes_nuitka(
         final_repo=final_repo,
         local_install_qa=True,
         resume=True,
+        target="all",
     ) == 0
     assert len(calls) == 2  # Nuitka recovery, then coherence.
     assert "builder nuitka/build_nuitka_release.py" in calls[0]
@@ -538,6 +616,7 @@ def test_candidate_resume_converts_interrupted_release_stage_to_failed(
         final_repo=final_repo,
         local_install_qa=True,
         resume=True,
+        target="all",
     ) == 0
     repaired = json.loads(state_path.read_text(encoding="utf-8"))
     assert repaired["failed_stage"] == 10

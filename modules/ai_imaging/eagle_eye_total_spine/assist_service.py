@@ -95,6 +95,10 @@ def _run(image, mode, cancel, box=None, runtime_seal=None, progress=None):
 
 
 def segment_body(image, level, box, cancel, *, runtime_seal=None, progress=None):
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        from ..eagle_eye_remote.routing import spine_segmentation
+        return spine_segmentation(image, level, box, cancel, progress)
     if level not in LEVELS or level == 'S1':
         raise ValueError('SAM body fitting supports C1-L5. Place S1 endplate landmarks manually.')
     if image['projection'] not in ('coronal', 'lateral'):

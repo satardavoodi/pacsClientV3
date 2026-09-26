@@ -556,6 +556,11 @@ class RightPanelWidget(QWidget):
     def display_thumbnails(self, thumbnails, progressive: bool = True):
         """Display thumbnail images with series info in single boxes."""
         try:
+            from PacsClient.utils.series_identity import order_series_for_presentation
+
+            history_first = (os.getenv('AIPACS_HISTORY_SERIES_FIRST', '1') or '1').strip() != '0'
+            thumbnails = order_series_for_presentation(
+                thumbnails or (), history_first=history_first)
             # Skip a redundant rebuild when asked to display exactly what is already
             # shown (or currently rendering). The main-page open flow legitimately
             # triggers the right panel twice per click — once on the fast open path

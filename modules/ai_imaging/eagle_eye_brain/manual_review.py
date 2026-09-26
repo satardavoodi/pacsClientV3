@@ -13,20 +13,21 @@ def prepare_review(result):
     from .runtime import slicer_executable, sha256
     executable = slicer_executable()
     lesion = result.get('analysis_type') == 'brain_lesions'
-    source = Path(result['mask_path']) if lesion else Path(result['artifact_directory']) / 'labels.nii.gz'
+    review_assets = result.get('review_assets', {})
+    source = Path(review_assets['mask']) if review_assets else Path(result['mask_path']) if lesion else Path(result['artifact_directory']) / 'labels.nii.gz'
     image_name = 'flair.nii.gz' if lesion else 'resampled.nii.gz'
     roots = [Path(result['artifact_directory']), *source.parents]
-    root = next((p for p in roots if (p / image_name).is_file() and source.is_file()), None)
+    root = Path(result['artifact_directory']) if review_assets else next((p for p in roots if (p / image_name).is_file() and source.is_file()), None)
     if root is None:
         raise BrainError('Original image and segmentation are required for manual correction.')
     directory = root / 'manual-reviews' / uuid.uuid4().hex
     directory.mkdir(parents=True)
-    shutil.copy2(root / image_name, directory / 'image.nii.gz')
+    shutil.copy2(review_assets.get('image', root / image_name), directory / 'image.nii.gz')
     shutil.copy2(source, directory / 'original.nii.gz')
     manifest = dict(source_result=result, source_mask=str(source), source_sha256=sha256(source),
                     lesion=lesion, directory=str(directory))
     if not lesion:
-        manifest['label_names'] = json.loads((root / 'label_names.json').read_text(encoding='utf-8'))
+        manifest['label_names'] = json.loads(Path(review_assets.get('names', root / 'label_names.json')).read_text(encoding='utf-8'))
     (directory / 'session.json').write_text(json.dumps(manifest, allow_nan=False), encoding='utf-8')
     env = os.environ.copy(); env['AIPACS_MANUAL_REVIEW'] = str(directory)
     subprocess.Popen([str(executable), '--no-splash', '--ignore-slicerrc', '--disable-settings',
@@ -34,7 +35,7 @@ def prepare_review(result):
     return str(directory)
 
 
-def validate_edit(original, edited):
+def validate_edit(original, edited, *, lesion=False):
     import numpy as np
     import SimpleITK as sitk
     if (original.GetDimension() != 3 or edited.GetDimension() != 3
@@ -44,11 +45,17 @@ def validate_edit(original, edited):
                    for k in ('GetSpacing', 'GetOrigin', 'GetDirection'))):
         raise BrainError('Corrected segmentation geometry does not match the original examination.')
     before, after = sitk.GetArrayFromImage(original), sitk.GetArrayFromImage(edited)
-    if not np.isfinite(after).all() or not np.isin(after, np.append(np.unique(before), 0)).all():
+    allowed = [0, 1] if lesion else np.append(np.unique(before), 0)
+    if (lesion and not np.isin(before, allowed).all()) or not np.isfinite(after).all() or not np.isin(after, allowed).all():
         raise BrainError('Corrected segmentation contains unsupported labels.')
 
 
 def recalculate_review(session, *, cancel=None, progress=None):
+    manifest_path = Path(session) / 'session.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8')) if manifest_path.is_file() else {}
+    if manifest.get('source_result', {}).get('remote_analysis'):
+        from ..eagle_eye_remote.segmentation_review import submit
+        return submit(session, cancel=cancel, progress=progress)
     from .service import _ANALYSIS_LOCK
     if not _ANALYSIS_LOCK.acquire(blocking=False):
         raise BrainError('Another brain analysis is running. Wait for it to finish before recalculating.')
@@ -71,7 +78,7 @@ def _recalculate_review(session, *, cancel=None, progress=None):
     if sha256(manifest['source_mask']) != manifest['source_sha256']:
         raise BrainError('Original segmentation changed. Start a new review session.')
     original, edited = sitk.ReadImage(str(directory / 'original.nii.gz')), sitk.ReadImage(str(edited_path))
-    validate_edit(original, edited)
+    validate_edit(original, edited, lesion=manifest['lesion'])
     if not manifest['lesion']:
         return brain_revision(directory, manifest, original, edited)
     from .lesions import measure_mask
@@ -86,17 +93,38 @@ def _recalculate_review(session, *, cancel=None, progress=None):
                                      'corrected_mask_sha256': sha256(out / 'corrected.nii.gz')},
                   pdf_available=False)
     image = sitk.ReadImage(str(directory / 'image.nii.gz'))
+    if result.get('acquisition_mode') == '2d':
+        from .lesions_2d import measure_slices, spatial_status
+        if result.get('band_filter'):
+            result['source_band_filter'] = result.pop('band_filter')
+        result.pop('raw_mask_path', None)
+        result.pop('band_mask_path', None)
+        result['metrics'] = measure_slices(image, edited, thickness_mm=result['metrics']['slice_thickness_mm'])
+        result['lesion_topography'] = spatial_status()
+        sitk.WriteImage(image, str(out / 'flair.nii.gz'))
+        for key in ('svd_spatial', 'ms_topography', 'wmh_reference'):
+            result.pop(key, None)
+        if cancel is not None and cancel.is_set():
+            raise BrainError('Manual recalculation cancelled.')
+        write_lesion_report(result, image, edited, out)
+        result['pdf_available'] = True
+        (out / 'result.json').write_text(json.dumps(result, allow_nan=False), encoding='utf-8')
+        return result
     result['metrics'] = measure_mask(image, edited)
-    for key in ('svd_spatial', 'ms_topography', 'wmh_reference'):
+    for key in ('svd_spatial', 'ms_topography', 'wmh_reference', 'lesion_topography'):
         result.pop(key, None)
-    root = next(p for p in Path(manifest['source_mask']).parents if (p / 'flair.nii.gz').is_file())
+    root = Path(result['_review_context_root']) if result.get('_review_context_root') else next(p for p in Path(manifest['source_mask']).parents if (p / 'flair.nii.gz').is_file())
+    result['_review_context_root'] = str(root)
     indication = result.get('clinical_context', {}).get('primary_disease')
     if indication == 'svd':
         from .svd_assessment import enrich_svd
         result['svd_spatial'] = enrich_svd(result, root, cancel=cancel, progress=progress)
-    elif indication == 'ms':
-        from .ms_assessment import enrich_ms
-        result['ms_topography'] = enrich_ms(result, root, cancel=cancel, progress=progress)
+    from .ms_assessment import enrich_ms
+    topography = enrich_ms(result, root, cancel=cancel, progress=progress)
+    result['lesion_topography'] = {k: v for k, v in topography.items()
+                                  if k not in ('conclusion', 'potential_brain_dis_support', 'diagnosis')}
+    if indication == 'ms':
+        result['ms_topography'] = topography
     if cancel is not None and cancel.is_set():
         raise BrainError('Manual recalculation cancelled.')
     write_lesion_report(result, image, edited, out)

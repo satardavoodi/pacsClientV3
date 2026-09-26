@@ -1,14 +1,13 @@
 """
-Download the pre-built Slicer runtime from GitHub Releases.
+Historical download helper for a legacy Slicer runtime.
 
 This script downloads and extracts the Slicer runtime zip into
-the correct location within the project tree. It's the recommended
-way to set up the Advanced 3D Slicer module on a fresh machine.
+an explicitly selected scratch location. It must never replace the definitive
+native Developer Run runtime used by current Client and Server builds. See
+docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md.
 
 Usage:
-    python tools/slicer/download_slicer_runtime.py
-    python tools/slicer/download_slicer_runtime.py --tag slicer-runtime-v0.1.0
-    python tools/slicer/download_slicer_runtime.py --url "https://example.com/slicer_runtime.zip"
+    python tools/slicer/download_slicer_runtime.py --target C:/b/legacy-slicer-inspection --tag slicer-runtime-v0.1.0
 """
 import argparse
 import hashlib
@@ -112,6 +111,11 @@ def main():
     args = parser.parse_args()
 
     target = args.target or TARGET_DIR
+    if target.resolve() == TARGET_DIR.resolve():
+        parser.error(
+            "The legacy download cannot replace the canonical native Slicer runtime. "
+            "Use the verified 2026-09-23 baseline; inspect old archives only in an explicit scratch target."
+        )
 
     # Safety check
     if target.exists() and any(target.iterdir()):

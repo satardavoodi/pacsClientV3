@@ -202,7 +202,18 @@ def write_paged_pdf(html, path, *, title="AI-PACS | Brain volumetry | Review req
                     heading="AI-PACS  |  EAGLE EYE BRAIN"):
     from html.parser import HTMLParser
     from PySide6.QtCore import QRectF, QSizeF, Qt
-    from PySide6.QtGui import QPdfWriter, QPageSize, QPainter, QTextDocument, QFont, QColor, QFontMetrics
+    from PySide6.QtGui import QPdfWriter, QPageSize, QPainter, QTextDocument, QFont, QColor, QFontMetrics, QFontDatabase
+    # Qt's Windows offscreen platform has no system font discovery. Register
+    # installed fonts explicitly instead of silently producing blank PDFs.
+    if not QFontDatabase.families():
+        import os
+        from pathlib import Path
+        fonts = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts'
+        for name in ('arial.ttf', 'arialbd.ttf', 'ariali.ttf', 'arialbi.ttf'):
+            if (fonts / name).is_file():
+                QFontDatabase.addApplicationFont(str(fonts / name))
+        if not QFontDatabase.families():
+            raise ValueError('No report fonts are available. Install the server report fonts before analysis.')
     class HeaderParser(HTMLParser):
         patient = "Identity unavailable"
         def handle_starttag(self, tag, attrs):
@@ -216,15 +227,18 @@ def write_paged_pdf(html, path, *, title="AI-PACS | Brain volumetry | Review req
     writer.setTitle(title)
     width, height = writer.width(), writer.height()
     documents = []
-    for section_index, part in enumerate(parts, 1):
+    content_width, content_height = width - 24, height - 130
+    for part in parts:
         doc = QTextDocument(); doc.setDefaultFont(QFont("Arial", 9))
-        doc.setTextWidth(width - 24); doc.setHtml(head + "<body>" + part + "</body></html>")
-        if doc.size().height() > height - 130:
-            raise ValueError(f"Report section {section_index} exceeds its printable page; reduce content or split section.")
-        documents.append(doc)
+        # Let Qt lay out continuations at line/row boundaries and repeat thead.
+        # Each explicit section still starts on a new physical page.
+        doc.setPageSize(QSizeF(content_width, content_height))
+        doc.setHtml(head + "<body>" + part + "</body></html>")
+        for page in range(doc.pageCount()):
+            documents.append((doc, page))
     painter = QPainter(writer)
     try:
-        for index, doc in enumerate(documents):
+        for index, (doc, page) in enumerate(documents):
             if index:
                 writer.newPage()
             painter.setPen(QColor("#203e54")); painter.setFont(QFont("Arial", 13, QFont.Weight.Bold))
@@ -232,7 +246,12 @@ def write_paged_pdf(html, path, *, title="AI-PACS | Brain volumetry | Review req
             painter.setFont(QFont("Arial", 8))
             text = QFontMetrics(painter.font()).elidedText(parser.patient, Qt.TextElideMode.ElideRight, width - 24)
             painter.drawText(12, 43, text); painter.drawLine(12, 52, width - 12, 52)
-            painter.save(); painter.translate(12, 64); doc.drawContents(painter, QRectF(0, 0, width - 24, height - 130)); painter.restore()
+            offset = page * content_height
+            painter.save()
+            painter.setClipRect(QRectF(12, 64, content_width, content_height))
+            painter.translate(12, 64 - offset)
+            doc.drawContents(painter, QRectF(0, offset, content_width, content_height))
+            painter.restore()
             painter.drawLine(12, height - 42, width - 12, height - 42)
             painter.drawText(12, height - 22, "AI-PACS | Review required - not signed for patient release")
             painter.drawText(QRectF(width - 115, height - 36, 100, 25), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,

@@ -24,9 +24,8 @@ def bundle_root():
         if (candidate / 'manifest.json').is_file():
             return candidate
     if not is_frozen():
-        for parent in Path(__file__).resolve().parents:
-            if (parent / ".git").exists():
-                return development_bundle(parent)
+        # Source service exports retain this layout without a .git directory.
+        return development_bundle(Path(__file__).resolve().parents[3])
     raise BrainError("The Eagle Eye Brain computation package is not installed. Contact your AI-PACS administrator.")
 
 
@@ -47,7 +46,14 @@ def development_bundle(repository):
 
 def sha256(path):
     digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
+    source = Path(path)
+    if os.name == 'nt':
+        # TensorFlow payload paths exceed MAX_PATH in source service exports.
+        value = str(source.absolute())
+        if not value.startswith('\\\\?\\'):
+            value = '\\\\?\\UNC\\' + value[2:] if value.startswith('\\\\') else '\\\\?\\' + value
+        source = Path(value)
+    with source.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
@@ -89,6 +95,9 @@ def run_process(command, directory, cancel, *, timeout=1800, environment=None):
     owner = ProcessJob()
     process = None
     log = None
+    from .process_evidence import ProcessEvidence
+    evidence = ProcessEvidence(directory, str(command[0]))
+    outcome = 'failed'
     try:
         # Keep diagnostics with the private job, never in UI text or shared logs.
         log = (Path(directory) / 'process.log').open('ab')
@@ -98,23 +107,31 @@ def run_process(command, directory, cancel, *, timeout=1800, environment=None):
         owner.assign(process)
         deadline = time.monotonic() + timeout
         while process.poll() is None:
+            evidence.sample(process)
             if cancel.wait(0.1):
+                outcome = 'cancelled'
                 raise BrainError("Brain analysis cancelled.")
             if time.monotonic() > deadline:
+                outcome = 'timed_out'
                 raise BrainError("The brain computation exceeded its time limit.")
         if cancel.is_set():
+            outcome = 'cancelled'
             raise BrainError("Brain analysis cancelled.")
         if process.returncode:
             raise BrainError(f"The local brain computation failed (exit code {process.returncode}). "
                              "Diagnostic details were saved with this analysis. Check model readiness and available memory.")
+        outcome = 'succeeded'
     finally:
-        owner.close()
-        if process is not None:
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=15)
-        if log is not None:
-            log.close()
+        try:
+            owner.close()
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=15)
+        finally:
+            evidence.finish(process.returncode if process is not None else None, outcome)
+            if log is not None:
+                log.close()
 
 
 def synthseg_command(root, directory, plan):

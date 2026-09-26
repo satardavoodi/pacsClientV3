@@ -67,6 +67,10 @@ def _make_bundled_config(root: Path) -> Path:
         json.dumps({"enabled": False}), encoding="utf-8"
     )
     (src / "servers.json").write_text(json.dumps({"host": "1.2.3.4"}), encoding="utf-8")
+    (src / "eagle_eye_client.json").write_text(
+        json.dumps({"schema_version": 1, "url": "", "token_file": "", "ca_file": ""}),
+        encoding="utf-8",
+    )
     return src
 
 

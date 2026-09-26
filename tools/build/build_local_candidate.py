@@ -21,6 +21,7 @@ from builder.config_sanitizer import build_clean_config_tree, scan_for_center_va
 from builder.source_identity import file_hash, input_paths, source_fingerprint
 from builder.build_process import run_logged_build
 from tools.git.release_manager import validate_sync_receipt
+from tools.build.prepare_distribution_assets import DEFAULT_ROOT as DEFAULT_ASSET_ROOT
 
 
 def git(root, *args):
@@ -89,6 +90,53 @@ def preflight_total_spine_payload(*, for_distribution: bool) -> None:
     validate_payload(resolve_total_spine_source(), for_distribution=for_distribution)
 
 
+def preflight_server_service_dependencies(asset_root: Path) -> None:
+    """Reject a Server freeze without real pywin32 build and offline inputs.
+
+    This is a build-input gate, not installed Session 0 service qualification.
+    """
+    from importlib import metadata, util
+
+    required_version = "311"
+    manifest = json.loads((asset_root / "manifest.json").read_text(encoding="utf-8"))
+    files = {item.get("path") for item in manifest.get("files", [])}
+    wheel_prefix = f"build-wheels/pywin32-{required_version}-"
+    if not any(isinstance(name, str) and name.startswith(wheel_prefix)
+               and name.endswith("-win_amd64.whl") for name in files):
+        raise RuntimeError(
+            "Eagle Eye Server build cache needs a pywin32 311 wheel; "
+            "pywin32-ctypes is not a substitute. Prepare a new immutable dependency cache."
+        )
+    lock = (asset_root / "build-environment.lock").read_text(encoding="utf-8")
+    hashed = (asset_root / "build-wheels-hashed.lock").read_text(encoding="utf-8")
+    if f"pywin32=={required_version}" not in lock.splitlines() or not any(
+        line.startswith(f"pywin32=={required_version} --hash=sha256:")
+        for line in hashed.splitlines()
+    ):
+        raise RuntimeError(
+            "Eagle Eye Server cache must pin pywin32 311 in its environment and hashed wheel locks."
+        )
+    try:
+        installed = metadata.version("pywin32")
+    except metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            "Eagle Eye Server build environment needs pywin32 311; "
+            "pywin32-ctypes is not a substitute."
+        ) from exc
+    if installed != required_version:
+        raise RuntimeError(f"Eagle Eye Server needs pywin32 {required_version}, found {installed}.")
+    required_imports = (
+        "servicemanager", "win32service", "win32serviceutil", "win32crypt",
+        "win32security", "pywintypes",
+    )
+    missing = [name for name in required_imports if util.find_spec(name) is None]
+    if missing:
+        raise RuntimeError(
+            "Eagle Eye Server build environment lacks pywin32 service/DPAPI modules: "
+            + ", ".join(missing)
+        )
+
+
 def preflight_brain_payload(source: Path, *, for_distribution: bool) -> None:
     """Fail before any core compilation when the requested Brain payload cannot ship."""
     source = source.resolve()
@@ -111,6 +159,7 @@ def create_snapshot(
     destination: Path,
     version: str,
     release_sync: dict | None = None,
+    build_target: str = "client",
 ) -> dict:
     source, destination = source.resolve(), destination.absolute()
     if destination.exists() or destination.is_relative_to(source) or source.is_relative_to(destination):
@@ -152,7 +201,8 @@ def create_snapshot(
     git(destination, "config", "user.email", "local-build@invalid.example")
     git(destination, "add", "--all")
     git(destination, "commit", "-m", f"Local source snapshot for {version} installer verification")
-    identity = {"version": version, "source_head": git(source, "rev-parse", "HEAD"),
+    identity = {"version": version, "build_target": build_target,
+                "source_head": git(source, "rev-parse", "HEAD"),
                 "source_branch": git(source, "branch", "--show-current"),
                 "candidate_commit": git(destination, "rev-parse", "HEAD"),
                 "source_sha256": source_fingerprint(destination),
@@ -194,14 +244,20 @@ def canonical_installer_dirs(final_repo: Path, version: str) -> dict[str, Path]:
     return result
 
 
-def expected_release_installers(final_repo: Path, version: str) -> dict[str, list[str]]:
-    """Return the six canonical deliverables; compiler workspaces are never outputs."""
+def expected_release_installers(final_repo: Path, version: str,
+                                target: str = "client") -> dict[str, list[str]]:
+    """Return only the selected role's canonical deliverables."""
     directories = canonical_installer_dirs(final_repo, version)
-    filenames = (
-        f"ai-pacs eagle-eye v{version}.exe",
-        f"ai-pacs standard v{version}.exe",
-        f"ai-pacs arm64-emulated v{version}.exe",
-    )
+    filenames_by_target = {
+        "client": (f"ai-pacs standard v{version}.exe",
+                   f"ai-pacs arm64-emulated v{version}.exe"),
+        "server": (f"ai-pacs eagle-eye v{version}.exe",),
+        # Historical six-output candidates can still be resumed, not newly selected.
+        "all": (f"ai-pacs eagle-eye v{version}.exe",
+                f"ai-pacs standard v{version}.exe",
+                f"ai-pacs arm64-emulated v{version}.exe"),
+    }
+    filenames = filenames_by_target[target]
     return {
         backend: [str(directory / filename) for filename in filenames]
         for backend, directory in directories.items()
@@ -236,12 +292,89 @@ def _recorded_python_reuse_source(status: dict) -> Path | None:
 
 def _completed_backend_outputs_exist(status: dict, backend: str) -> bool:
     paths = status.get("expected_release_installers", {}).get(backend, [])
-    return len(paths) == 3 and all(Path(path).is_file() for path in paths)
+    expected_count = {"client": 2, "server": 1, "all": 3}[
+        status.get("build_target", "all")
+    ]
+    return len(paths) == expected_count and all(Path(path).is_file() for path in paths)
+
+
+_BACKEND_INSTALLER_METADATA = {
+    "python": (
+        "distributions-client.json",
+        "distributions.json",
+        "INSTALL_NOTES_FA.txt",
+        "INSTALL_NOTES-client.txt",
+        "INSTALL_NOTES.txt",
+        "installer_release_metadata.json",
+        "SHA256_FA.txt",
+        "SHA256-client.txt",
+        "SHA256.txt",
+    ),
+    "nuitka": (
+        "distributions.json",
+        "INSTALL_NOTES_FA.txt",
+        "INSTALL_NOTES.txt",
+        "nuitka_installer_release_metadata.json",
+        "SHA256_FA.txt",
+        "SHA256.txt",
+    ),
+}
+
+
+def archive_existing_local_qa_outputs(status: dict, backend: str) -> list[dict[str, str]]:
+    """Preserve an earlier same-version QA candidate before rebuilding it.
+
+    Production candidates remain immutable. This recovery is limited to the
+    explicitly non-promotable local install-QA lane and moves only the selected
+    role's exact installer names plus that backend's top-level metadata.
+    """
+    if status.get("lane") != "local-install-qa":
+        return []
+    expected = [Path(path).resolve() for path in
+                status.get("expected_release_installers", {}).get(backend, [])]
+    if not expected:
+        return []
+    output_dir = expected[0].parent
+    if any(path.parent != output_dir for path in expected):
+        raise ValueError("Recorded installer outputs do not share one canonical folder")
+    candidates = [path for path in expected if path.is_file()]
+    candidates.extend(
+        path for name in _BACKEND_INSTALLER_METADATA[backend]
+        if (path := output_dir / name).is_file()
+    )
+    if not candidates:
+        return []
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    archive = output_dir / "_superseded" / f"local-qa-{status['version']}-{stamp}-{backend}"
+    suffix = 1
+    while archive.exists():
+        suffix += 1
+        archive = output_dir / "_superseded" / (
+            f"local-qa-{status['version']}-{stamp}-{backend}-{suffix}"
+        )
+    archive.mkdir(parents=True)
+    moved = []
+    for source in candidates:
+        destination = archive / source.name
+        source.replace(destination)
+        moved.append({"source": str(source), "archive": str(destination)})
+    return moved
 
 
 def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source: Path | None = None,
                final_repo: Path = REPO, brain_source: Path | None = None,
-               local_install_qa: bool = False, resume: bool = False) -> int:
+               local_install_qa: bool = False, resume: bool = False,
+               target: str = "client") -> int:
+    if target not in {"client", "server", "all"}:
+        raise ValueError("Build target must be client or server")
+    if target == "server" and not local_install_qa:
+        raise ValueError(
+            "Eagle Eye Server is not qualified for release: portable Breast/Bone bundles, "
+            "service installation and clean-host acceptance are pending. "
+            "Use --local-install-qa --target server for a non-promotable installer candidate."
+        )
+    if target == "server" and reuse_python_source is not None:
+        raise ValueError("Server model payloads cannot reuse an older Python stage")
     root = workspace / "source"
     identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
     if local_install_qa:
@@ -253,6 +386,8 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         )
     if identity.get("version") != version:
         raise ValueError("Candidate Git synchronization version does not match the build")
+    if identity.get("build_target") and identity["build_target"] != target:
+        raise ValueError("Candidate snapshot build target does not match the requested role")
     installer_dirs = canonical_installer_dirs(final_repo, version)
     status_path = workspace / "build_status.json"
     if status_path.exists() and not resume:
@@ -262,8 +397,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
             raise ValueError("Resume workspace has no build_status.json")
         status = json.loads(status_path.read_text(encoding="utf-8"))
         expected_lane = "local-install-qa" if local_install_qa else "release-candidate"
-        if status.get("version") != version or status.get("lane") != expected_lane:
-            raise ValueError("Resume workspace version or lane does not match the requested build")
+        if (status.get("version") != version or status.get("lane") != expected_lane
+                or status.get("build_target", "all") != target):
+            raise ValueError("Resume workspace version, lane or build target does not match")
         for backend, record in status.get("backends", {}).items():
             if record.get("status") == "running" and _pid_is_alive(record.get("pid")):
                 raise ValueError(f"Cannot resume while the recorded {backend} build process is still active")
@@ -272,17 +408,18 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         status["recovery_started_at_utc"] = datetime.now(timezone.utc).isoformat()
     else:
         status = {"version": version, "status": "running", "pid": os.getpid(),
+                  "build_target": target,
                   "lane": "local-install-qa" if local_install_qa else "release-candidate",
                   "published": False, "distribution_approved": not local_install_qa,
                   "production_accepted": False,
                   "asset_root": str(assets.resolve()),
                   "brain_source": str(brain_source.resolve()) if brain_source else None,
                   "reuse_python_source": str(reuse_python_source.resolve()) if reuse_python_source else None,
-                  "expected_release_installers": expected_release_installers(final_repo, version),
+                  "expected_release_installers": expected_release_installers(final_repo, version, target),
                   "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
     if resume and reuse_python_source is None:
         reuse_python_source = _recorded_python_reuse_source(status)
-    status["expected_release_installers"] = expected_release_installers(final_repo, version)
+    status["expected_release_installers"] = expected_release_installers(final_repo, version, target)
 
     def save_status():
         temporary = status_path.with_suffix(".tmp")
@@ -320,16 +457,17 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
             env.pop(name)
     commands = {
         "python": [sys.executable, "-u", "builder/build_release.py", "--clean-build",
-                   "--edition", "all", "--asset-root", str(assets)],
+                   "--edition", target, "--asset-root", str(assets)],
         "nuitka": [sys.executable, "-u", "builder nuitka/build_nuitka_release.py", "--release",
-                   "--compiler", "msvc", "--edition", "all", "--asset-root", str(assets)],
+                   "--compiler", "msvc", "--edition", target, "--asset-root", str(assets)],
     }
     if local_install_qa:
         commands["python"].insert(3, "--internal-build")
         commands["nuitka"].insert(3, "--internal-build")
     if reuse_python_source is not None:
         commands["python"] = [sys.executable, "-u", "tools/build/repackage_candidate.py",
-                              "--previous-source", str(reuse_python_source.resolve()), "--version", version]
+                              "--previous-source", str(reuse_python_source.resolve()), "--version", version,
+                              "--edition", target]
     try:
         identity = json.loads((root / "build_source_manifest.json").read_text(encoding="utf-8"))
         source_matches = source_fingerprint(root) == identity["source_sha256"]
@@ -348,6 +486,7 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         ):
             print(f"Reusing completed {name} backend from this immutable candidate.", flush=True)
             continue
+        superseded_outputs = archive_existing_local_qa_outputs(status, name)
         if resume and name == "nuitka" and (root / "builder nuitka/output/build_state.json").is_file():
             nuitka_state_path = root / "builder nuitka/output/build_state.json"
             nuitka_state = json.loads(nuitka_state_path.read_text(encoding="utf-8"))
@@ -384,6 +523,8 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         record = {"status": "running", "started_at_utc": datetime.now(timezone.utc).isoformat(),
                   "log": str(workspace / (name + ".log")), "command": command,
                   "attempts": attempts}
+        if superseded_outputs:
+            record["superseded_outputs"] = superseded_outputs
         status["backends"][name] = record
         save_status()
         print(f"Starting {name} {version}: {record['log']}", flush=True)
@@ -539,13 +680,17 @@ def main():
     parser.add_argument("--workspace", type=Path, help="Defaults to a new timestamped C:\\b workspace")
     parser.add_argument("--version", help="Defaults to the version in pyproject.toml")
     parser.add_argument("--asset-root", type=Path,
-                        help="Defaults to generated-files/distribution-assets")
+                        help="Defaults to the current native-Slicer shared distribution asset cache")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--run-prepared", action="store_true")
     parser.add_argument(
         "--resume-workspace",
         type=Path,
         help="Resume the recorded failed full candidate in this existing C:\\b workspace",
+    )
+    parser.add_argument(
+        "--target", choices=("client", "server"),
+        help="Full build role: client makes Standard and ARM; server makes Eagle Eye. Default: client.",
     )
     parser.add_argument(
         "--git-sync-receipt",
@@ -564,7 +709,7 @@ def main():
         "--local-install-qa",
         action="store_true",
         help=(
-            "Build all six installable artifacts into the two canonical repository folders "
+            "Build the selected role in both backends into the two canonical repository folders "
             "for local QA without asserting Git publication or redistribution approval"
         ),
     )
@@ -580,6 +725,8 @@ def main():
         if any((args.workspace, args.prepare_only, args.run_prepared, args.internal,
                 args.local_install_qa, args.git_sync_receipt, args.reuse_python_source)):
             parser.error("--resume-workspace cannot be combined with a new-build or lane option")
+        if args.target:
+            parser.error("Resume uses the build target recorded in its workspace")
         workspace = args.resume_workspace.resolve()
         status_path = workspace / "build_status.json"
         manifest_path = workspace / "source/build_source_manifest.json"
@@ -592,22 +739,26 @@ def main():
             parser.error("Resume candidate version must match the current repository version")
         local_install_qa = status.get("lane") == "local-install-qa"
         if status.get("lane") not in {"local-install-qa", "release-candidate"}:
-            parser.error("Only a recorded six-installer candidate can be resumed")
-        recorded_assets = Path(status.get("asset_root") or (REPO / "generated-files/distribution-assets")).resolve()
+            parser.error("Only a recorded role-selected candidate can be resumed")
+        target = status.get("build_target", "all")
+        if target not in {"client", "server", "all"}:
+            parser.error("Resume workspace has an invalid build target")
+        recorded_assets = Path(status.get("asset_root") or DEFAULT_ASSET_ROOT).resolve()
         assets = (args.asset_root or recorded_assets).resolve()
         if assets != recorded_assets:
             parser.error("Resume asset root must match the original candidate")
         recorded_brain = status.get("brain_source")
-        brain_source = resolve_brain_source(
-            Path(recorded_brain) if recorded_brain else args.brain_source,
-            REPO,
-        )
+        brain_source = (resolve_brain_source(
+            Path(recorded_brain) if recorded_brain else args.brain_source, REPO,
+        ) if target in {"server", "all"} else None)
         if recorded_brain and args.brain_source and brain_source != Path(recorded_brain).resolve():
             parser.error("Resume Brain source must match the original candidate")
-        preflight_brain_payload(brain_source, for_distribution=not local_install_qa)
-        preflight_lesion_payload(for_distribution=not local_install_qa)
-        preflight_alignment_payload(for_distribution=not local_install_qa)
-        preflight_total_spine_payload(for_distribution=not local_install_qa)
+        if target in {"server", "all"}:
+            preflight_server_service_dependencies(assets)
+            preflight_brain_payload(brain_source, for_distribution=not local_install_qa)
+            preflight_lesion_payload(for_distribution=not local_install_qa)
+            preflight_alignment_payload(for_distribution=not local_install_qa)
+            preflight_total_spine_payload(for_distribution=not local_install_qa)
         recorded_reuse = _recorded_python_reuse_source(status)
         return run_builds(
             workspace,
@@ -618,15 +769,27 @@ def main():
             brain_source,
             local_install_qa=local_install_qa,
             resume=True,
+            target=target,
         )
     version = args.version or current_version(REPO)
     workspace = (
         args.workspace
         or default_workspace(version, internal=args.internal or args.local_install_qa)
     ).resolve()
-    assets = (args.asset_root or REPO / "generated-files/distribution-assets").resolve()
+    assets = (args.asset_root or DEFAULT_ASSET_ROOT).resolve()
     if args.prepare_only and args.run_prepared:
         parser.error("Choose prepare-only or run-prepared")
+    target = args.target or "client"
+    if args.run_prepared:
+        prepared = workspace / "source/build_source_manifest.json"
+        if not prepared.is_file():
+            parser.error("Prepared workspace has no source manifest")
+        recorded_target = json.loads(prepared.read_text(encoding="utf-8")).get("build_target", "all")
+        if args.target and args.target != recorded_target:
+            parser.error("Prepared workspace build target cannot be changed")
+        target = recorded_target
+    if args.internal and args.target:
+        parser.error("--target selects a two-backend build; use --edition for a diagnostic")
     if args.internal and args.local_install_qa:
         parser.error("Choose --internal or --local-install-qa")
     if args.internal and args.git_sync_receipt:
@@ -635,11 +798,14 @@ def main():
         parser.error("Local install-QA builds do not use a release synchronization receipt")
     if not args.internal and not args.local_install_qa and not args.git_sync_receipt:
         parser.error("Canonical release builds require --git-sync-receipt")
+    if not args.internal and target == "server" and not args.local_install_qa:
+        parser.error("Eagle Eye Server is not release-qualified; use --local-install-qa --target server")
     release_sync = None
     if args.git_sync_receipt:
         release_sync = validate_sync_receipt(args.git_sync_receipt.resolve(), REPO, version)
     brain_source = None
-    if not args.internal or args.edition == "eagle-eye":
+    if (not args.internal and target == "server") or (args.internal and args.edition == "eagle-eye"):
+        preflight_server_service_dependencies(assets)
         brain_source = resolve_brain_source(args.brain_source, REPO)
         preflight_brain_payload(
             brain_source,
@@ -649,9 +815,13 @@ def main():
         preflight_alignment_payload(for_distribution=not (args.internal or args.local_install_qa))
         preflight_total_spine_payload(for_distribution=not (args.internal or args.local_install_qa))
     if not args.run_prepared:
+        from builder.slicer_runtime_payload import verify_cache_matches_developer_runtime
+
+        verify_cache_matches_developer_runtime(REPO, assets)
         if workspace.exists():
             raise ValueError("Build workspace already exists; use a fresh directory")
-        create_snapshot(REPO, workspace / "source", version, release_sync=release_sync)
+        create_snapshot(REPO, workspace / "source", version, release_sync=release_sync,
+                        build_target=target)
         print(f"Prepared isolated candidate: {workspace}")
     if args.prepare_only:
         return 0
@@ -672,6 +842,7 @@ def main():
         REPO,
         brain_source,
         local_install_qa=args.local_install_qa,
+        target=target,
     )
 
 

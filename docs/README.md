@@ -119,10 +119,10 @@ Once oriented, the existing per-task table below still applies.
 - [Version 2.2.7 Release](releases/VERSION_2.2.7_RELEASE.md) â€” Earlier stable release snapshot
 
 ### Build & Deployment
-- [Canonical Build and Installer Runbook](../BUILD.md) — Single entry point for humans and AI agents; build lanes, official six-file command, outputs, size/content checks, recovery limits, and release blockers
+- [Canonical Build and Installer Runbook](../BUILD.md) — Single entry point for humans and AI agents; four-file Client or two-file Server build selection, outputs, size/content checks, recovery limits, and release blockers
 
   The backend command lists below are diagnostic and historical references. Do
-  not use them to cut the current six-installer release matrix; return to the
+  not use them to cut a role-selected installer set; return to the
   canonical runbook for every release candidate.
 
 - [Build Systems Index](../builder/docs/README.md) â€" Canonical split between the PyInstaller builder and the staged Nuitka builder

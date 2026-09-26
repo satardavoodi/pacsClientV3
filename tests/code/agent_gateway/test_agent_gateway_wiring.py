@@ -21,7 +21,8 @@ def _read(rel: str) -> str:
 # ── Settings tab registration ────────────────────────────────────────────────
 def test_settings_registers_agent_tab():
     src = _read("PacsClient/pacs/workstation_ui/settings_ui/settings_ui.py")
-    assert "_add_lazy_tab('Agent', self._create_agent_settings)" in src
+    assert "_add_lazy_tab('AI', self._create_ai_group)" in src
+    assert "('Agent', self._create_agent_settings)" in src
     assert "def _create_agent_settings" in src
     assert "from .agent_settings import AgentSettingsWidget" in src
 

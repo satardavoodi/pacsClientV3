@@ -182,6 +182,12 @@ class _HPImportMixin:
                 )
                 continue
             if not preview:
+                from PacsClient.pacs.patient_tab.utils.utils import repair_local_series_thumbnail
+                repaired = repair_local_series_thumbnail(
+                    study_uid, study_info, series, storage_key,
+                    str(study_path / storage_key),
+                )
+                generated_count += bool(repaired)
                 continue
 
             vtk_image_data, metadata, _patient_info, _total_files = preview

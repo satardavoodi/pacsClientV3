@@ -7,20 +7,88 @@ on any system-installed components.
 
 Run once:  python tools/slicer/assemble_slicer_runtime.py
 """
+import argparse
 import shutil
 import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+from builder.slicer_runtime_payload import (  # noqa: E402
+    APP_LOCAL_VC_RUNTIME_HASHES, NATIVE_EXECUTABLE, STARTUP_SOURCE,
+    assert_compiler_source_matches_project, assert_native_binary_fresh,
+    file_sha256, verify_portable_vc_runtime, write_native_build_provenance,
+)
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 SUPERBUILD   = Path(r"C:\S\NB")
 SLICER_BUILD = SUPERBUILD / "Slicer-build"
 QT_DIR       = Path(r"C:\Qt\5.15.2\msvc2019_64")
+VC_REDIST_DIR = Path(
+    r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Redist"
+    r"\MSVC\14.44.35112\x64\Microsoft.VC143.CRT"
+)
 
 TARGET = (
     Path(__file__).resolve().parents[2]
     / "modules" / "mpr" / "advanced_3d_slicer"
     / "slicer_custom_app" / "NewMPR2Slicer" / "build"
 )
+
+
+def configure_console_output(stream):
+    """Make status glyphs safe on Windows consoles with a legacy code page."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
+
+
+def copy_runtime_startup_bridge(project_root: Path, runtime: Path) -> None:
+    """Install the current AI-PACS-to-Slicer bridge in the native runtime."""
+    source = project_root / STARTUP_SOURCE
+    if not source.is_file():
+        raise FileNotFoundError(f"Current Slicer startup bridge is missing: {source}")
+    destination = runtime / "bin" / "Python" / "startup_script.py"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
+def verify_vc_runtime_source(
+    source: Path, *, expected_hashes: dict[str, str] | None = None,
+) -> None:
+    """Require the pinned official x64 VC143 app-local runtime before assembly."""
+    expected_hashes = APP_LOCAL_VC_RUNTIME_HASHES if expected_hashes is None else expected_hashes
+    for name, expected in expected_hashes.items():
+        dll = source / name
+        if not dll.is_file():
+            raise FileNotFoundError(f"Required VC143 redistribution input is missing: {dll}")
+        if file_sha256(dll).lower() != expected.lower():
+            raise ValueError(f"VC143 redistribution input hash mismatch: {dll}")
+
+
+def stage_vc_runtime(
+    source: Path, runtime: Path, *, expected_hashes: dict[str, str] | None = None,
+) -> None:
+    """Put compiler-matched CRT DLLs beside the inner native viewer executable."""
+    expected_hashes = APP_LOCAL_VC_RUNTIME_HASHES if expected_hashes is None else expected_hashes
+    verify_vc_runtime_source(source, expected_hashes=expected_hashes)
+    destination = runtime / "bin" / "Release"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in expected_hashes:
+        shutil.copy2(source / name, destination / name)
+    verify_portable_vc_runtime(runtime, expected_hashes=expected_hashes)
+
+
+def select_output_target(output: Path | None) -> Path:
+    """Keep an explicitly staged assembly separate from the active Developer Run."""
+    if output is None:
+        return TARGET
+    candidate = output.resolve()
+    active = TARGET.resolve()
+    if (candidate == Path(candidate.anchor) or candidate.exists()
+            or candidate.is_relative_to(active) or active.is_relative_to(candidate)):
+        raise ValueError("Explicit Slicer assembly output must be a new, specific directory")
+    return candidate
 
 # ── Qt modules actually needed by Slicer ──────────────────────────────────
 QT_MODULES = [
@@ -93,6 +161,8 @@ def _flatten_release_subdirs(lib_dir: Path):
 
 
 def main():
+    configure_console_output(sys.stdout)
+
     # Verify source directories
     for p, label in [
         (SLICER_BUILD, "Slicer-build"),
@@ -102,6 +172,11 @@ def main():
         if not p.exists():
             print(f"FATAL: {label} not found at {p}")
             sys.exit(1)
+
+    # Validate before replacing the previously assembled runtime.
+    assert_compiler_source_matches_project(PROJECT_ROOT, SUPERBUILD)
+    assert_native_binary_fresh(PROJECT_ROOT, SLICER_BUILD / NATIVE_EXECUTABLE)
+    verify_vc_runtime_source(VC_REDIST_DIR)
 
     # Clean previous assembly (keep AIPACS_LAUNCH_ERROR.txt for reference)
     if TARGET.exists():
@@ -127,9 +202,11 @@ def main():
     # ── 2. bin/ directory ─────────────────────────────────────────────────
     print("\n[2/11] bin/ (Release + Python + plugins)")
     copy_tree(SLICER_BUILD / "bin" / "Release", TARGET / "bin" / "Release")
+    stage_vc_runtime(VC_REDIST_DIR, TARGET)
     copy_tree(SLICER_BUILD / "bin" / "Python",  TARGET / "bin" / "Python")
     copy_tree(SLICER_BUILD / "bin" / "iconengines", TARGET / "bin" / "iconengines")
     copy_tree(SLICER_BUILD / "bin" / "styles",  TARGET / "bin" / "styles")
+    copy_runtime_startup_bridge(PROJECT_ROOT, TARGET)
     report("bin", TARGET / "bin")
 
     # ── 3. lib/ directory ─────────────────────────────────────────────────
@@ -233,8 +310,11 @@ def main():
 
     # ── 11. Launcher settings ini ────────────────────────────────────────
     print("\n[11/11] Creating LauncherSettings.ini")
-    write_launcher_ini(TARGET / "AIPacsAdvancedViewerLauncherSettings.ini")
-    print("  ✓ LauncherSettings.ini written")
+    write_runtime_launcher_settings(TARGET)
+    print("  ✓ Root and inner LauncherSettings.ini written")
+
+    write_native_build_provenance(PROJECT_ROOT, TARGET)
+    print("  ✓ Native source/binary provenance written")
 
     # ── Summary ──────────────────────────────────────────────────────────
     final_bytes = sum(
@@ -340,5 +420,25 @@ size=11
     path.write_text(ini.strip(), encoding="utf-8")
 
 
+def write_runtime_launcher_settings(runtime: Path) -> None:
+    """Write identical settings beside both launchers in the portable runtime."""
+    inner_directory = runtime / "bin"
+    inner_directory.mkdir(parents=True, exist_ok=True)
+    for path in (
+        runtime / "AIPacsAdvancedViewerLauncherSettings.ini",
+        inner_directory / "AIPacsAdvancedViewerLauncherSettings.ini",
+    ):
+        write_launcher_ini(path)
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path,
+                        help="Fresh staging directory; leaves the active Developer Run runtime unchanged")
+    parser.add_argument("--vc-redist-dir", type=Path,
+                        help="Verified official VC143 CRT directory matching the pinned native compiler")
+    arguments = parser.parse_args()
+    TARGET = select_output_target(arguments.output)
+    if arguments.vc_redist_dir is not None:
+        VC_REDIST_DIR = arguments.vc_redist_dir.resolve()
     main()

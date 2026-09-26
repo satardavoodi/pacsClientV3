@@ -222,11 +222,11 @@ def test_start_dx_process_has_reentrancy_guard_and_registers_worker():
     assert "self._current_worker = worker" not in body
 
 
-def test_requests_use_connect_read_timeout_tuples():
+def test_job_client_uses_a_bounded_transport_timeout():
     """A dead host must fail fast, not hang a worker thread for the full budget."""
-    assert "timeout=(10, 240)" in SRC   # MG run_full_analysis
-    assert "timeout=(10, 360)" in SRC   # DX bone-age predict
-    assert "timeout=240)" not in SRC    # the old scalar is gone
+    client = (REPO_ROOT / 'modules/ai_imaging/eagle_eye_remote/client.py').read_text(encoding='utf-8')
+    assert 'self.opener.open(req, timeout=30)' in client
+    assert 'resp = requests.post(' not in SRC
 
 
 def test_mg_overlay_safety_timer_outlasts_the_request_timeout():

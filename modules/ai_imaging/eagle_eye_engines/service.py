@@ -99,12 +99,13 @@ def validate_sources(files, study_uid, engine, sex=None):
             value = str(ds.get('PatientSex', '')).upper()
             if value in ('M', 'F'):
                 sexes.add(value)
-            if str(ds.get('BodyPartExamined', '')).upper() not in ('HAND',):
-                raise ValueError('Bone Age requires an explicitly identified full-hand image.')
+            if str(ds.get('BodyPartExamined', '')).strip().upper() not in ('HAND', 'WRIST'):
+                raise ValueError('Bone Age requires a selected hand or wrist acquisition.')
         records.append(dict(path=str(path), sha256=digest(path), sop_uid=sop, series_uid=series,
                             laterality=str(ds.get('ImageLaterality', '') or ds.get('Laterality', '')),
                             view_position=str(ds.get('ViewPosition', '')),
-                            rows=int(ds.Rows), columns=int(ds.Columns)))
+                            rows=int(ds.Rows), columns=int(ds.Columns),
+                            body_part=str(ds.get('BodyPartExamined', '')).strip().upper()))
     normalized = {'m': 'M', 'male': 'M', 'f': 'F', 'female': 'F'}.get(str(sex or '').lower())
     if engine == 'bone-age':
         if len(sexes) != 1 or (normalized and normalized not in sexes):
@@ -130,6 +131,7 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
     (job / 'request.json').write_text(json.dumps(request), encoding='utf-8')
     from modules.mpr.advanced_3d_slicer.owned_process import ProcessJob
     owner, process, success = ProcessJob(), None, False
+    diagnostic = None
     env = {k: v for k, v in os.environ.items() if not k.startswith(('PYTHON', 'QT_'))}
     env.update(PYTHONNOUSERSITE='1', PYTHONDONTWRITEBYTECODE='1', CUDA_VISIBLE_DEVICES='-1',
                HF_HUB_OFFLINE='1', HF_HUB_DISABLE_TELEMETRY='1', NO_ALBUMENTATIONS_UPDATE='1',
@@ -137,10 +139,11 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
     try:
         if cancelled():
             raise RuntimeError('Analysis cancelled.')
+        diagnostic = (job / 'engine-output.log').open('w+b')
         process = subprocess.Popen([str(root / 'runtime/Scripts/python.exe'), '-s', '-B',
                                     str(root / 'runner.py'), str(root), str(job)],
                                    cwd=job, env=env, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   stdout=diagnostic, stderr=diagnostic,
                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         owner.assign(process)
         deadline = time.monotonic() + timeout
@@ -153,7 +156,12 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
         if cancelled():
             raise RuntimeError('Analysis cancelled.')
         if process.returncode:
-            raise RuntimeError('Local engine failed. No completed result was published.')
+            diagnostic.flush()
+            diagnostic.seek(0, os.SEEK_END)
+            diagnostic.seek(max(0, diagnostic.tell() - 65536))
+            # Private server diagnostics are never part of the artifact allowlist.
+            (parent / 'engine-failure.log').write_bytes(diagnostic.read(65536))
+            raise RuntimeError(f'Local engine failed (exit {process.returncode}). No completed result was published.')
         result = json.loads((job / 'result.json').read_text(encoding='utf-8'))
         if result.get('study_id') != study_uid or result.get('status') != 'success':
             raise RuntimeError('Invalid engine result identity.')
@@ -162,6 +170,10 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
                 raise RuntimeError('Source changed during inference; discard this result.')
         result['input_sha256'] = {r['sop_uid']: r['sha256'] for r in records}
         result['engine_revision'] = manifest['revision']
+        if engine == 'bone-age' and any(r.get('body_part') == 'WRIST' for r in records):
+            result.setdefault('reliability_warnings', []).append(
+                'Acquisition is tagged WRIST. Confirm full hand and distal forearm coverage before interpreting the prediction.')
+            result['input_coverage_confirmation_required'] = True
         result['job_directory'] = str(job)
         receipt = job / 'receipt.partial'
         receipt.write_text(json.dumps(result, allow_nan=False), encoding='utf-8')
@@ -179,6 +191,8 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=15)
+        if diagnostic is not None:
+            diagnostic.close()
         if not success:
             if not job.resolve().is_relative_to(parent):
                 raise RuntimeError('Unsafe temporary job cleanup path.')

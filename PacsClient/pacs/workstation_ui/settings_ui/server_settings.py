@@ -3,7 +3,7 @@ import logging
 import os
 import re
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -152,8 +152,12 @@ _PROFILE_SERVICE_FIELDS = [
 class ServerSettingsWidget(QWidget):
     """Unified Server Settings – AI-PACS, External PACS, and Offline Cloud."""
 
+    eagleEyeSettingsRequested = Signal()
+
     def __init__(self):
         super().__init__()
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        self._eagle_eye_server = settings_role() == 'server'
         self.json_file = _AIPACS_SERVERS_FILE
         # [Startup] Initial data scans (server list, AI service URLs, external
         # and cloud server discovery) are deferred until the widget is first
@@ -215,6 +219,12 @@ class ServerSettingsWidget(QWidget):
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
 
+        eagle_eye = QPushButton('Eagle Eye Server — Manage service and local AI' if self._eagle_eye_server
+                               else 'Eagle Eye Server — Configure connection')
+        eagle_eye.setObjectName('EagleEyeServerConnection')
+        eagle_eye.clicked.connect(self.eagleEyeSettingsRequested.emit)
+        root.addWidget(eagle_eye)
+
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("color: #1e2530;")
@@ -249,6 +259,8 @@ class ServerSettingsWidget(QWidget):
                     self._reception_card.setVisible(False)
         except Exception:
             pass
+
+        self._ai_service_card.hide()
 
         columns.addLayout(left_column, 1)
         columns.addLayout(right_column, 1)
@@ -352,7 +364,9 @@ class ServerSettingsWidget(QWidget):
             "Downloads from this server use single-image batches and retry each\n"
             "image individually, so a dropped connection keeps the images already\n"
             "received and resumes from the next missing one. Leave off for servers\n"
-            "on a fast, stable link (normal adaptive batching is faster there)."
+            "on a fast, stable link (normal adaptive batching is faster there).\n"
+            "Save changes before starting a new study download. Active downloads\n"
+            "keep their mode; restarting the application is not required."
         )
         form.addWidget(self.poor_conn_check, 2, 1, 1, 3)
 
@@ -388,6 +402,8 @@ class ServerSettingsWidget(QWidget):
         svc_grid.addWidget(self._socket_port_edit, 0, 1)
 
         for _r, (_key, _label, _dport, _scheme) in enumerate(_PROFILE_SERVICE_FIELDS, start=1):
+            if _key != 'reception_api':
+                continue
             _l = QLabel(_label + ":"); _l.setObjectName("FormLabel")
             _l.setMinimumWidth(120)
             _e = QLineEdit(); _e.setMinimumHeight(28)
@@ -408,6 +424,10 @@ class ServerSettingsWidget(QWidget):
         self._svc_fill_btn.setMinimumHeight(28)
         self._svc_fill_btn.clicked.connect(self._fill_service_defaults_from_host)
         svc_lay.addWidget(self._svc_fill_btn)
+        if self._eagle_eye_server:
+            local_profile = QPushButton('Use local PACS and Reception (keep ports)')
+            local_profile.clicked.connect(self._local_server_profile)
+            svc_lay.addWidget(local_profile)
 
         pl.addWidget(self._svc_group)
         try:
@@ -1089,13 +1109,15 @@ class ServerSettingsWidget(QWidget):
                 return
             socket_port = ((self._socket_port_edit.text().strip()
                             if hasattr(self, "_socket_port_edit") else "") or "50052")
-            modules = {}
+            existing = _sp.find_profile_by_name(name)
+            modules = dict(existing.modules) if existing else {}
             if hasattr(self, "_svc_edits"):
                 for key, _label, _dport, _scheme in _PROFILE_SERVICE_FIELDS:
                     edit = self._svc_edits.get(key)
-                    v = edit.text().strip() if edit else ""
+                    if edit is None:
+                        continue
+                    v = edit.text().strip()
                     modules[key] = v or None
-            existing = _sp.find_profile_by_name(name)
             pid = existing.id if existing else _sp.data_segment(name)
             prof = _sp.ServerProfile(
                 id=pid,
@@ -1176,45 +1198,16 @@ class ServerSettingsWidget(QWidget):
             label.setStyleSheet("color: #94a3b8;")
 
     def _load_ai_service_urls(self):
-        services = load_ai_service_urls()
-        for name in _AI_SERVICE_NAMES:
-            edit = self._ai_service_edits.get(name)
-            if not edit:
-                continue
-            edit.setText(str(services.get(name, "")).strip())
-            self._set_ai_service_status(name, "Loaded", ok=None)
+        """Legacy endpoint controls are retired; use the Eagle Eye page."""
+        return
 
     def _save_ai_service_urls(self):
-        services = {}
-        for name in _AI_SERVICE_NAMES:
-            edit = self._ai_service_edits.get(name)
-            services[name] = (edit.text().strip() if edit else "")
-
-        if save_ai_service_urls(services):
-            QMessageBox.information(self, "Saved", "AI service URLs saved to config.")
-            for name in _AI_SERVICE_NAMES:
-                self._set_ai_service_status(name, "Saved", ok=None)
-            return
-
-        QMessageBox.critical(self, "Error", "Failed to save AI service URLs.")
+        """Legacy endpoint controls are retired; use the Eagle Eye page."""
+        return
 
     def _on_ai_service_test(self, name: str):
-        edit = self._ai_service_edits.get(name)
-        if not edit:
-            return
-        if self._validate_ai_service_url(edit.text()):
-            # "Approve" should activate the URL path immediately for runtime readers.
-            services = {}
-            for service_name in _AI_SERVICE_NAMES:
-                service_edit = self._ai_service_edits.get(service_name)
-                services[service_name] = (service_edit.text().strip() if service_edit else "")
-
-            if save_ai_service_urls(services):
-                self._set_ai_service_status(name, "Approved", ok=True)
-            else:
-                self._set_ai_service_status(name, "Save Failed", ok=False)
-        else:
-            self._set_ai_service_status(name, "Invalid", ok=False)
+        """Legacy endpoint controls are retired; use the Eagle Eye page."""
+        return
 
     # ════════════════════════════════════════════════════════════════════════
     #  EXTERNAL PACS LOGIC  (reads/writes config/external_pacs_servers.json)
@@ -1574,6 +1567,28 @@ class ServerSettingsWidget(QWidget):
     # ========================================================================
     #  RECEPTION / WORKFLOW API LOGIC  (config/reception_api_config.json)
     # ========================================================================
+    def _local_server_profile(self):
+        self.host_edit.setText('127.0.0.1')
+        self._local_reception_endpoint(self._svc_edits.get('reception_api'))
+
+    @staticmethod
+    def _local_reception_endpoint(edit):
+        from urllib.parse import urlsplit, urlunsplit
+        if edit is None:
+            return
+        raw = edit.text().strip()
+        if not raw:
+            edit.setText('http://127.0.0.1:8080')
+            return
+        try:
+            parsed = urlsplit(raw if '://' in raw else 'http://' + raw)
+            if parsed.scheme not in ('http', 'https') or parsed.username or parsed.password:
+                return
+            authority = '127.0.0.1' + (f':{parsed.port}' if parsed.port else '')
+            edit.setText(urlunsplit((parsed.scheme, authority, parsed.path, '', '')))
+        except ValueError:
+            return
+
     def _build_reception_api_card(self, parent):
         """Reception / Workflow REST API endpoint editor.
 
@@ -1646,6 +1661,10 @@ class ServerSettingsWidget(QWidget):
         btn_row.addWidget(save_btn, 1)
         btn_row.addWidget(load_btn, 1)
         pl.addLayout(btn_row)
+        if self._eagle_eye_server:
+            local_reception = QPushButton('Use Reception on this computer (keep port)')
+            local_reception.clicked.connect(lambda: self._local_reception_endpoint(self._reception_api_edit))
+            pl.addWidget(local_reception)
 
         # ── Internal Assignment (INO) — assign a reporting radiologist/typist ──
         self._build_ino_assign_subsection(pl)

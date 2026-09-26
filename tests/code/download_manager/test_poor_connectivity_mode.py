@@ -160,7 +160,8 @@ def test_socket_config_exposes_resolver_and_env():
 def test_client_helper_reads_socket_config():
     assert "def _poor_connectivity_active(self)" in _SRC
     assert "from modules.network.socket_config import" in _SRC
-    assert "is_poor_connectivity_enabled as _ipc" in _SRC
+    assert "get_socket_config().is_poor_connectivity_enabled(" in _SRC
+    assert 'host=getattr(self, "host", _dm_consts.DEFAULT_SOCKET_HOST)' in _SRC
 
 
 def test_download_series_computes_force_single_from_poor_conn():
@@ -168,17 +169,14 @@ def test_download_series_computes_force_single_from_poor_conn():
     assert "_force_single = _modality_force_single or _poor_conn" in _SRC
     # poor-connectivity pins one image per batch
     assert "if _poor_conn:" in _SRC
-    assert _SRC.count("batch_size = 1") >= 2  # modality path + poor-conn path
+    assert "if _force_single:" in _SRC
+    assert "batch_size = 1" in _SRC
 
 
 def test_other_force_single_sites_use_combined_flag():
-    # The legacy modality predicate is evaluated exactly ONCE (into
-    # _modality_force_single); the first-image-prime arg and the adaptive-growth
-    # gate now use the combined _force_single, so poor-connectivity also suppresses
-    # the prime and the ramp-up. (The function definition line uses "series_info:"
-    # and is not matched by the "(series_info)" call form.)
+    # Both poor mode and large-frame modalities suppress aligned growth.
     assert _SRC.count("_should_force_single_instance_batches(series_info)") == 1
-    assert "and not _force_single" in _SRC
+    assert "elif not _force_single:" in _SRC
 
 
 def test_poor_conn_logs_mode_and_batch_size():

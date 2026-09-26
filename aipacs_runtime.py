@@ -1453,6 +1453,27 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def slicer_python_payload_sha256(root: Path) -> str:
+    """Identify the immutable Slicer-side Python/UI payload across installs."""
+    if not root.is_dir():
+        raise FileNotFoundError(f"Advanced MPR Python payload is missing: {root}")
+    digest = hashlib.sha256()
+    files = sorted(
+        (path for path in root.rglob("*") if path.is_file()
+         and "__pycache__" not in path.parts and path.suffix not in (".pyc", ".pyo")),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
+    if not files:
+        raise ValueError("Advanced MPR Python payload is empty")
+    for path in files:
+        if path.is_symlink():
+            raise ValueError("Advanced MPR Python payload contains a filesystem link")
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(_file_sha256(path)))
+    return digest.hexdigest()
+
+
 def module_availability_detail(module_id: str) -> dict[str, Any]:
     """One-call snapshot for "why can't this module open?" diagnostics.
 
@@ -1651,6 +1672,24 @@ def install_module_package(
             payload_source = extracted_root / payload_dir_name
             if not payload_source.exists():
                 raise FileNotFoundError(f"Package payload directory is missing: {payload_source}")
+            if module_id == "advanced_mpr" and manifest.get("slicer_startup_sha256"):
+                expected = str(manifest["slicer_startup_sha256"]).lower()
+                startup = payload_source / "bin" / "Python" / "startup_script.py"
+                if (
+                    len(expected) != 64
+                    or any(character not in "0123456789abcdef" for character in expected)
+                    or not startup.is_file()
+                    or _file_sha256(startup).lower() != expected
+                ):
+                    raise ValueError("Advanced MPR package startup revision does not match its payload")
+            if module_id == "advanced_mpr" and manifest.get("slicer_python_sha256"):
+                expected_python = str(manifest["slicer_python_sha256"]).lower()
+                if (
+                    len(expected_python) != 64
+                    or any(character not in "0123456789abcdef" for character in expected_python)
+                    or slicer_python_payload_sha256(payload_source / "python") != expected_python
+                ):
+                    raise ValueError("Advanced MPR package Python revision does not match its payload")
             if target_dir.exists():
                 shutil.rmtree(target_dir, ignore_errors=True)
             shutil.copytree(payload_source, target_dir, dirs_exist_ok=True)
@@ -1855,6 +1894,24 @@ def validate_module_installation(module_id: str) -> dict[str, Any]:
         if not candidate.exists():
             return {"ok": False, "message": f"Missing runtime file: {candidate}"}
 
+    if module_id == "advanced_mpr" and record["runtime_path"]:
+        installed_manifest = load_installed_module_manifest(module_id) or {}
+        expected = str(installed_manifest.get("slicer_startup_sha256") or "").lower()
+        if expected:
+            startup = Path(str(record["runtime_path"])) / "bin" / "Python" / "startup_script.py"
+            if not startup.is_file() or _file_sha256(startup).lower() != expected:
+                return {"ok": False, "message": "Advanced MPR startup revision is incomplete."}
+        expected_python = str(installed_manifest.get("slicer_python_sha256") or "").lower()
+        if expected_python:
+            try:
+                actual_python = slicer_python_payload_sha256(
+                    Path(str(record["runtime_path"])) / "python"
+                )
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "message": f"Advanced MPR Python payload is incomplete: {exc}"}
+            if actual_python.lower() != expected_python:
+                return {"ok": False, "message": "Advanced MPR Python revision is incomplete."}
+
     return {"ok": True, "message": f"{record['title']} is ready."}
 
 
@@ -1978,13 +2035,34 @@ def bootstrap_installer_selected_module_packages(
                 installed_manifest = load_installed_module_manifest(module_id) or {}
                 bundled_paths = _normalized_python_paths(package)
                 installed_paths = _normalized_python_paths(installed_manifest)
-                if bundled_paths and installed_paths != bundled_paths:
+                bundled_revision = str(package.get("slicer_startup_sha256") or "").lower()
+                installed_revision = str(installed_manifest.get("slicer_startup_sha256") or "").lower()
+                bundled_python = str(package.get("slicer_python_sha256") or "").lower()
+                installed_python = str(installed_manifest.get("slicer_python_sha256") or "").lower()
+                runtime_startup = module_runtime_dir(module_id) / "bin" / "Python" / "startup_script.py"
+                startup_mismatch = bool(bundled_revision) and (
+                    bundled_revision != installed_revision
+                    or not runtime_startup.is_file()
+                    or _file_sha256(runtime_startup).lower() != bundled_revision
+                )
+                actual_python = ""
+                if bundled_python:
+                    try:
+                        actual_python = slicer_python_payload_sha256(
+                            module_runtime_dir(module_id) / "python"
+                        ).lower()
+                    except (OSError, ValueError):
+                        pass
+                python_mismatch = bool(bundled_python) and (
+                    bundled_python != installed_python or actual_python != bundled_python
+                )
+                if (bundled_paths and installed_paths != bundled_paths) or startup_mismatch or python_mismatch:
                     try:
                         installed_records.append(
                             install_module_package(
                                 str(package.get("source_path") or ""),
                                 expected_module_id=module_id,
-                                enable_on_install=True,
+                                enable_on_install=enabled,
                             )
                         )
                     except Exception as exc:
@@ -2507,6 +2585,7 @@ def seed_user_config_defaults() -> None:
 CONFIG_MIGRATIONS_FILENAME = "config_migrations.json"
 
 CONFIG_FAMILY_VERSIONS: dict[str, int] = {
+    "eagle_eye_client.json": 1,
     # v1 (2026-06-11): seed the family + add hub keys (hub_mode,
     # consultation_address) introduced by ADR-0004 to pre-hub installs.
     # v2 (2026-06-12): add the optional "center_id" key (assignment workflow

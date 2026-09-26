@@ -2,6 +2,42 @@
 
 ## Status and scope
 
+### Patient-tab representative thumbnail owner (2026-09-26, code verified; live pending)
+
+The title-bar image previously had several producers: cached-file startup was gated on
+an asyncio loop, while sync/lazy/import/viewer-load paths assigned whichever thumbnail
+finished first. None of those producers excluded the clinical-history document, and the
+deferred update targeted `currentIndex()`. This was a parallel ownership defect: it
+explains the intermittent plus icon, document header and possible cross-tab update
+without implicating thumbnail bytes, decoding or VTK.
+
+The existing sidebar card-admission function is now the sole producer. It passes the
+same immutable series metadata used by the card to an O(1), identity-aware sink after
+successful insertion. The sink excludes original SeriesNumber 100000, understands
+multi-study offsets, requires no event loop and targets the PatientWidget's registered
+tab. Independent assignments were removed from patient/viewer loading adapters. This
+does not merge Home and Patient Qt lifecycles and does not create a second cache.
+
+Four fail-before guards and 238 affected/adjacent passes protect the boundary; 42
+packaging-input checks pass. Fresh source and frozen-artifact acceptance remain open.
+
+### Canonical per-study presentation order (2026-09-26, code verified; live pending)
+
+The historical cached-file, admitted-entry and grouped producers remain legitimate
+input adapters, but they no longer own independent ordering. Their immutable rows
+converge on `series_identity.series_presentation_order_key`; Home uses the same
+per-study ordering boundary before render-signature calculation. Group order and
+multi-study offset identity remain owner-local and unchanged. The bounded scheduler
+also repositions retained cards when a newer generation supersedes an older partial
+generation, preventing two series from occupying one grid row. Counts are derived
+from planned series rows, excluding study headers. This removes duplicate presentation
+authority; it does not merge Home and Patient Qt lifecycles or viewer backends.
+
+Fail-before evidence reproduced a retained history card and an ordinary card at row
+zero, and reproduced inconsistent per-study history order. Both guards pass after the
+change; 230 adjacent tests pass. Source GUI and installed-artifact acceptance remain
+open. See the thumbnail pipeline and UI-stall owner receipt for scope and rollback.
+
 ### Bounded cached/grouped application (2026-09-16, code verified; live pending)
 
 The early cached path existed to give an exact count to startup routing; the

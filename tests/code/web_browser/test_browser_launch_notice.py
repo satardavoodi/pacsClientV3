@@ -239,3 +239,27 @@ def test_preexisting_disabled_control_stays_disabled(shell, monkeypatch):
     shell.home.open_web_browser()
     settle(shell)
     assert not button.isEnabled()
+
+
+@pytest.mark.parametrize('size', [(1920, 1080), (800, 600), (360, 480)])
+def test_notice_is_compact_centered_and_contains_wrapped_text(shell, size):
+    from modules.web_browser.launch import _BrowserLaunchNotice
+    shell.root.resize(*size)
+    shell.app.processEvents()
+    notice = _BrowserLaunchNotice(shell.home)
+    try:
+        notice.present()
+        shell.app.processEvents()
+        for width, height in (size, (640, 480)):
+            shell.root.resize(width, height)
+            shell.app.processEvents()
+            bounds = notice.geometry()
+            assert bounds.width() <= 480, 'Launch status must not span the window'
+            assert abs(bounds.center().x() - shell.root.rect().center().x()) <= 1
+            assert abs(bounds.center().y() - shell.root.rect().center().y()) <= 1
+            assert shell.root.rect().contains(bounds)
+            for label in notice.findChildren(QLabel):
+                assert notice.rect().contains(label.geometry())
+                assert label.height() >= label.heightForWidth(label.width())
+    finally:
+        notice.release()

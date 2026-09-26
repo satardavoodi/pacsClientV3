@@ -107,9 +107,18 @@ ACTION_SIDE_EFFECTS: dict[str, str] = {
     "download_statistics": READ_ONLY,
     # ── module / agent reads ──
     "list_modules": READ_ONLY,
+    "eagle_eye_series": READ_ONLY,
+    "eagle_eye_functions": READ_ONLY,
+    "eagle_eye_status": READ_ONLY,
+    "eagle_eye_open": LOCAL_WRITE,
+    "eagle_eye_select_series": LOCAL_WRITE,
+    "eagle_eye_run": SERVER_WRITE,
+    "eagle_eye_inputs": SERVER_WRITE,
     "agent_task_status": READ_ONLY,
     # ── home (a patient *search* returns data; treat as read) ──
     "list_patients": READ_ONLY,
+    "read_patients": READ_ONLY,
+    "search_patients": READ_ONLY,
     # ── UI navigation (no data change) ──
     "select_patient": UI_NAV,
     "open_browser": UI_NAV,

@@ -696,6 +696,10 @@ class _PWSyncMixin:
 
             backend = _PWSyncMixin._detect_backend_order_domain(viewer)
             instances = metadata.get("instances")
+            if metadata.get('_advanced_presentation_frames') is not None:
+                # Logical frame order is pixel authority; IPP sorting would
+                # detach each frame from its plane (especially reverse stacks).
+                return instances or []
             if not isinstance(instances, list) or len(instances) <= 1:
                 logger.debug(
                     "[SYNC_BACKEND_ORDER_DOMAIN] backend=%s metadata_order_domain=%s "
@@ -813,6 +817,63 @@ class _PWSyncMixin:
         )
 
     @staticmethod
+    def _presentation_spaces_match(source_viewer, target_viewer):
+        a = (getattr(source_viewer, 'metadata', None) or {}).get('series') or {}
+        b = (getattr(target_viewer, 'metadata', None) or {}).get('series') or {}
+        af, bf = a.get('frame_of_reference_uid'), b.get('frame_of_reference_uid')
+        if af and bf:
+            return af == bf
+        return bool(a.get('study_instance_uid') and a.get('study_instance_uid') == b.get('study_instance_uid'))
+
+    @staticmethod
+    def _map_lps_to_presentation(target_viewer, point):
+        """Nearest actual plane; return logical frame index separate from native Z.
+
+        The returned world Z carries a frame-selection token consumed only by
+        presentation-aware set_sync_point; the visible marker always uses Z=0.
+        """
+        meta = target_viewer.metadata
+        instances = meta.get('instances') or []
+        current = int(target_viewer.GetSlice())
+        if not 0 <= current < len(instances):
+            return None
+        basis = instances[current].get('image_orientation_patient')
+        if basis is None:
+            return None
+        basis = np.asarray(basis, dtype=float)
+        normal = np.cross(basis[:3], basis[3:])
+        length = float(np.linalg.norm(normal))
+        if not np.isfinite(length) or length < 1e-9:
+            return None
+        normal /= length
+        candidates = []
+        for k, inst in enumerate(instances):
+            iop, ipp = inst.get('image_orientation_patient'), inst.get('image_position_patient')
+            if iop is None or ipp is None or not np.allclose(iop, basis, atol=1e-4):
+                continue
+            candidates.append((abs(float(np.dot(point - ipp, normal))), k, inst))
+        if not candidates:
+            return None
+        positions = [float(np.dot(item[2]['image_position_patient'], normal)) for item in candidates]
+        location = float(np.dot(point, normal))
+        gaps = np.diff(sorted(set(positions)))
+        tolerance = float(np.median(gaps)) / 2 if len(gaps) else 1e-3
+        if location < min(positions) - tolerance or location > max(positions) + tolerance:
+            return None
+        _, k, inst = min(candidates, key=lambda item: (item[0], abs(item[1] - current)))
+        frame = meta['_advanced_presentation_frames'][k]
+        spacing, origin = frame.GetSpacing(), frame.GetOrigin()
+        delta = point - np.asarray(inst['image_position_patient'])
+        x = float(np.dot(delta, basis[:3])) / spacing[0]
+        y = float(np.dot(delta, basis[3:])) / spacing[1]
+        cols, rows, _ = frame.GetDimensions()
+        if not (-.5 <= x <= cols - .5 and -.5 <= y <= rows - .5):
+            return None
+        y = rows - 1 - y
+        mapped = (origin[0] + x * spacing[0], origin[1] + y * spacing[1], float(k))
+        return mapped, (x, y, float(k)), False, ''
+
+    @staticmethod
     def _map_sync_dicom(source_viewer, target_viewer, world_pos):
         """
         Map a world/patient-LPS position from source to target viewer using
@@ -855,6 +916,10 @@ class _PWSyncMixin:
         src_sp    = np.asarray(src_img.GetSpacing(),     dtype=float)
         src_dims  = np.asarray(src_img.GetDimensions(),  dtype=int)
         _src_is_qt = getattr(source_viewer, 'IS_QT_BRIDGE', False)
+        src_frames = (getattr(source_viewer, 'metadata', None) or {}).get('_advanced_presentation_frames')
+        tgt_frames = (getattr(target_viewer, 'metadata', None) or {}).get('_advanced_presentation_frames')
+        if (src_frames or tgt_frames) and not _PWSyncMixin._presentation_spaces_match(source_viewer, target_viewer):
+            return None, (0., 0., 0.), True, 'unmatched_patient_space'
 
         if _src_is_qt:
             # Qt source pick_world_point() already returns true patient-LPS.
@@ -869,6 +934,8 @@ class _PWSyncMixin:
             # VTK source: convert VTK-world click -> source display index.
             idx_src = (np.asarray(world_pos, dtype=float) - src_orig) / src_sp
             k_src   = int(round(float(np.clip(idx_src[2], 0, src_dims[2] - 1))))
+            if src_frames:
+                k_src = int(source_viewer.GetSlice())
 
         src_instances = _PWSyncMixin._geometry_instances_for_viewer(
             source_viewer,
@@ -911,6 +978,9 @@ class _PWSyncMixin:
                 P_flip_s, center_s, col_s, row_s)
 
         # ── Diagnostic: source geometry ──────────────────────────────────────────────────
+        if tgt_frames:
+            return (_PWSyncMixin._map_lps_to_presentation(target_viewer, P_lps)
+                    or (None, (0., 0., 0.), True, 'unavailable_frame_plane'))
         _n_s = np.cross(col_s, row_s)
         _orient_src = ['Sagittal', 'Coronal', 'Axial'][int(np.argmax(np.abs(_n_s)))]
         logger.info(
@@ -1280,7 +1350,7 @@ class _PWSyncMixin:
             # ---------------------------------------------------------------
             # Same VTK object → pass through (same coordinate space)
             # ---------------------------------------------------------------
-            if imageA is imageB:
+            if imageA is imageB and not (source_viewer.metadata or {}).get('_advanced_presentation_frames'):
                 return world_pos
 
             # ---------------------------------------------------------------
@@ -1336,6 +1406,9 @@ class _PWSyncMixin:
             # ---------------------------------------------------------------
             # FALLBACK 1: ITK direction matrix from field data
             # ---------------------------------------------------------------
+            if ((source_viewer.metadata or {}).get('_advanced_presentation_frames')
+                    or (target_viewer.metadata or {}).get('_advanced_presentation_frames')):
+                return None  # display-only frames have no fallback volume affine
             if geom_A is not None and geom_B is not None:
                 slice_axis = orientA
                 half_slice = imageA.GetSpacing()[slice_axis] / 2.0
@@ -1726,6 +1799,10 @@ class _PWSyncMixin:
                 for srec in records:
                     if srec is trec:
                         continue  # a viewport never draws its own plane on itself
+                    if ((iv.metadata or {}).get('_advanced_presentation_frames')
+                            or (srec['iv'].metadata or {}).get('_advanced_presentation_frames')):
+                        if not self._presentation_spaces_match(srec['iv'], iv):
+                            continue
                     plane = srec.get('plane')
                     if plane is None:
                         continue
@@ -1741,6 +1818,8 @@ class _PWSyncMixin:
                         P1_lps = reference_line.rl_apply_flip_y_in_plane(P1_lps, center, col2, row2)
                     I0 = reference_line.rl_lps_to_target_index(P0_lps, pos2, col2, row2, sx, sy, t_slice)
                     I1 = reference_line.rl_lps_to_target_index(P1_lps, pos2, col2, row2, sx, sy, t_slice)
+                    if (iv.metadata or {}).get('_advanced_presentation_frames'):
+                        I0[2] = I1[2] = 0.0
                     if is_qt:
                         qt_segments.append((
                             float(I0[0]), float(I0[1]), float(I1[0]), float(I1[1]),
@@ -1889,6 +1968,11 @@ class _PWSyncMixin:
 
             try:
                 # Phase 2 proof-only log path: emit contract reference-line
+                if ((src_iv.metadata or {}).get('_advanced_presentation_frames')
+                        or (iv.metadata or {}).get('_advanced_presentation_frames')):
+                    if not self._presentation_spaces_match(src_iv, iv):
+                        reference_line.rl_hide_actor_if_any(iv)
+                        continue
                 # intersection diagnostics when both viewers are contract-bound.
                 try:
                     from modules.viewer.geometry.geometry_api import GeometryAPI
@@ -1978,6 +2062,8 @@ class _PWSyncMixin:
                 # LPS → target index (i, j, k) on the current slice
                 I0 = reference_line.rl_lps_to_target_index(P0_lps, pos2, col2, row2, sx, sy, t_slice)
                 I1 = reference_line.rl_lps_to_target_index(P1_lps, pos2, col2, row2, sx, sy, t_slice)
+                if (iv.metadata or {}).get('_advanced_presentation_frames'):
+                    I0[2] = I1[2] = 0.0
 
                 # Index → target "world" used by the viewer (origin/spacing from vtk_image_data)
                 spacing = np.asarray(iv.vtk_image_data.GetSpacing(), dtype=float)

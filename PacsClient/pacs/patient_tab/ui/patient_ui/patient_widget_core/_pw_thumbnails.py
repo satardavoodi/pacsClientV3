@@ -58,13 +58,9 @@ def series_is_clinical_history(series) -> bool:
     present so a multi-study OFFSET key (slot*1_000_000 + n) can never trigger
     it. Pure + defensive: any error → False.
     """
-    try:
-        raw = series.get('_orig_series_number')
-        if raw in (None, ''):
-            raw = series.get('series_number')
-        return int(str(raw).strip()) == _HISTORY_SERIES_NUMBER
-    except (TypeError, ValueError, AttributeError):
-        return False
+    from PacsClient.utils.series_identity import is_clinical_history_series
+
+    return is_clinical_history_series(series)
 
 
 class _PWThumbnailsMixin:
@@ -1148,6 +1144,7 @@ class _PWThumbnailsMixin:
             source_root = None
 
         _hist_on = _history_first_enabled()
+        from PacsClient.utils.series_identity import series_presentation_order_key
 
         def _series_order_key(s):
             """History-first, then numeric series-number order: a study's
@@ -1156,11 +1153,7 @@ class _PWThumbnailsMixin:
             (1,10,11,2). Non-numeric series sort last, preserving stability.
             Detection uses the ORIGINAL series number (pre-offset), so offset
             keys are unaffected; only DISPLAY order changes, never the keys."""
-            hist = 0 if (_hist_on and series_is_clinical_history(s)) else 1
-            try:
-                return (hist, 0, int(str(_get_series_number(s)).strip()))
-            except (TypeError, ValueError):
-                return (hist, 1, 0)
+            return series_presentation_order_key(s, history_first=_hist_on)
 
         # One pure projection owns stable slots, offset keys and per-entry paths.
         # The tab keeps its lifetime slot history and presentation ordering policy.
@@ -1642,14 +1635,10 @@ class _PWThumbnailsMixin:
                 prepared_entries = False
             admitted_entries = []
             _hist_on = _history_first_enabled()
+            from PacsClient.utils.series_identity import series_presentation_order_key
 
             def _sort_key(item):
-                # History-first, then the EXISTING numeric series-number order.
-                hist = 0 if (_hist_on and series_is_clinical_history(item)) else 1
-                try:
-                    return (hist, int(item.get('series_number', 0)))
-                except (TypeError, ValueError):
-                    return (hist, 0)
+                return series_presentation_order_key(item, history_first=_hist_on)
 
             # Collect series numbers + counts for background DB update.
             db_update_entries: list = []
@@ -1867,44 +1856,18 @@ class _PWThumbnailsMixin:
             # number; detection looks up _server_series_info[stem] for
             # modality/description, falling back to the stem number alone.
             _hist_on = _history_first_enabled()
+            from PacsClient.utils.series_identity import series_presentation_order_key
 
             def _file_sort_key(p):
                 stem = p.stem
-                hist = 1
-                if _hist_on:
-                    ssi = getattr(self, '_server_series_info', None)
-                    info = ssi.get(str(stem)) if isinstance(ssi, dict) else None
-                    det = dict(info) if isinstance(info, dict) else {}
-                    det.setdefault('series_number', stem)
-                    if series_is_clinical_history(det):
-                        hist = 0
-                return (hist, int(stem) if stem.isdigit() else float('inf'), stem)
+                ssi = getattr(self, '_server_series_info', None)
+                info = ssi.get(str(stem)) if isinstance(ssi, dict) else None
+                det = dict(info) if isinstance(info, dict) else {}
+                det.setdefault('series_number', stem)
+                return series_presentation_order_key(det, history_first=_hist_on)
 
             thumbnails = sorted(thumbnails, key=_file_sort_key)
             self._thumbnails_shown = True  # Mark as shown
-            # Check if check_logo_patient method exists and has an event loop
-            if hasattr(self, 'check_logo_patient') and callable(getattr(self, 'check_logo_patient', None)):
-                try:
-                    loop = asyncio.get_running_loop()
-                    if loop and loop.is_running():
-                        # Store the event loop reference for cleanup
-                        self._event_loop = loop
-                        logo_check_result = self.check_logo_patient(thumbnails[0])
-                        # Only create task if result is a coroutine
-                        if logo_check_result is not None and asyncio.iscoroutine(logo_check_result):
-                            task = asyncio.create_task(logo_check_result)
-                            self._background_tasks.add(task)
-                            # Safe cleanup using QTimer
-                            def cleanup_task(t):
-                                try:
-                                    self._background_tasks.discard(t)
-                                except:
-                                    pass  # Ignore errors during cleanup
-                            task.add_done_callback(lambda t: QTimer.singleShot(0, lambda: cleanup_task(t)))
-                except RuntimeError:
-                    # No running event loop - skip logo check
-                    pass
-
             if self._start_sidebar_build(files=thumbnails):
                 # This exact inventory count controls startup hit/miss routing;
                 # pending presentation must never look like an empty cache.

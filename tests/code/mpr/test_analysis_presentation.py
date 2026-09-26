@@ -227,3 +227,61 @@ def test_grid_panel_keeps_positions_spans_and_controls_below_brand_header(ui):
     assert panel.layout().count() == 2
     assert layout.getItemPosition(layout.indexOf(field)) == (0, 0, 1, 2)
     assert layout.rowStretch(0) == 1 and field.text() == 'unchanged'
+
+
+def test_chrome_locks_toolbars_and_hides_menu_without_changing_actions(ui):
+    app, p = ui
+    window = QtWidgets.QMainWindow()
+    menu = window.menuBar().addMenu('File')
+    save = menu.addAction('Save')
+    events = []
+    save.triggered.connect(lambda: events.append('save'))
+    allowed = QtWidgets.QToolBar(window); allowed.setObjectName('ModuleSelectorToolBar')
+    other = QtWidgets.QToolBar(window); other.setObjectName('MouseModeToolBar')
+    window.addToolBar(allowed); window.addToolBar(other)
+    panel = QtWidgets.QWidget(window); window.setCentralWidget(panel)
+    internal = QtWidgets.QToolBar(panel); internal.setObjectName('ModuleInternalTools')
+    adapter = p.install(window)
+    window.show(); app.processEvents()
+    assert window.menuBar().isHidden()
+    assert allowed.isVisible() and other.isHidden()
+    assert internal.isVisible() and internal.toggleViewAction().isEnabled()
+    for toolbar in (allowed, other):
+        assert not toolbar.isMovable() and not toolbar.isFloatable()
+        assert not toolbar.toggleViewAction().isEnabled()
+        assert not toolbar.toggleViewAction().isVisible()
+    other.show(); window.menuBar().show(); app.processEvents()
+    assert other.isHidden() and window.menuBar().isHidden()
+    late = QtWidgets.QToolBar(window); late.setObjectName('ExtensionToolBar')
+    window.addToolBar(late); late.show(); app.processEvents()
+    assert late.isHidden() and not late.toggleViewAction().isEnabled()
+    save.trigger()
+    assert events == ['save'] and save.isEnabled()
+    window.close(); window.deleteLater(); app.processEvents()
+
+
+def test_save_dialog_branding_preserves_destination_selection_and_callbacks(ui):
+    app, p = ui
+    dialog = QtWidgets.QDialog(); dialog.setObjectName('qSlicerSaveDataDialog')
+    layout = QtWidgets.QVBoxLayout(dialog)
+    buttons = []
+    events = []
+    for name in ('SelectSceneDataButton', 'SelectDataButton', 'DataBundleButton'):
+        button = QtWidgets.QToolButton(dialog); button.setObjectName(name)
+        button.setCheckable(True); button.setChecked(True)
+        button.clicked.connect(lambda: events.append('original'))
+        layout.addWidget(button); buttons.append(button)
+    destination = QtWidgets.QLineEdit('synthetic-destination', dialog); layout.addWidget(destination)
+    box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+    layout.addWidget(box)
+    p.brand_save_dialog(dialog)
+    assert dialog.windowTitle() == 'AI-PACS | Save Scene and Data'
+    assert not dialog.windowIcon().isNull()
+    assert all(not b.icon().isNull() and b.isChecked() for b in buttons)
+    assert destination.text() == 'synthetic-destination'
+    assert box.standardButtons() == (QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+    buttons[0].click(); assert events == ['original']
+    unrelated = QtWidgets.QDialog(); unrelated.setWindowTitle('Unrelated')
+    p.brand_save_dialog(unrelated)
+    assert unrelated.windowTitle() == 'Unrelated' and not unrelated.styleSheet()
+    dialog.deleteLater(); unrelated.deleteLater(); app.processEvents()

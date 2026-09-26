@@ -16,10 +16,19 @@ class QuotedPath(str):
 
 
 def adapt_registration(module):
+    # Greedy's default seed 0 is stochastic, including affine sampling jitter.
+    # Pair the seed with one registration thread; two-thread repetitions diverged
+    # even with a fixed seed. The model's separate PyTorch budget is unchanged.
+    greedy = module._greedy
+    def seeded_greedy(arguments):
+        return greedy('-seed 1729 ' + arguments)
+    module._greedy = seeded_greedy
     def wrap(function):
         signature = inspect.signature(function)
         def call(*args, **kwargs):
             bound = signature.bind(*args, **kwargs)
+            if 'n_threads' in signature.parameters:
+                bound.arguments['n_threads'] = 1
             for key, value in bound.arguments.items():
                 if isinstance(value, str):
                     bound.arguments[key] = QuotedPath(value)

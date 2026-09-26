@@ -109,7 +109,126 @@ class EagleEyeWorkspaceController(QObject):
         self._source_identity = (context["study_uid"], context["series_uid"], context["series_number"])
         self._source_modality = context["modality"]
 
-    def choose_function(self):
+    def run_controlled(self, function, inputs=None):
+        """Invoke a catalog action without opening the function-picker dialog."""
+        from .eagle_eye_function_catalog import function_options_for_modality
+        context = active_viewer_context(self.window.imaging_tab.patient_widget)
+        if (context['study_uid'] != str(self.window._study_uid)
+                or not context['series_uid'] or context['image_viewer'] is None):
+            raise ValueError('Wait for the exact study series to finish loading.')
+        options = function_options_for_modality(context['modality'], context['eagle_eye_mode'])
+        if not any(option.key == function and option.enabled for option in options):
+            raise ValueError('The function is not supported for the loaded series.')
+        if self._choosing:
+            raise ValueError('A function selection is already in progress.')
+        status = self.control_status()
+        if status['state'] == 'running':
+            raise ValueError('Wait for the current analysis before starting another function.')
+        inputs = dict(inputs or {})
+        if function == FUNCTION_LEGION_CONSULT:
+            return {'state': 'needs_input', 'reason': 'Legion requires its source-viewer ROI workflow.', 'function': function}
+        if function == FUNCTION_TOTAL_SPINE and inputs.get('projection') not in ('coronal', 'lateral'):
+            return {'state': 'needs_input', 'required': ['projection'], 'function': function}
+        is_brain = context['eagle_eye_mode'] == 'brain_mri'
+        if is_brain and (inputs.get('inputs_verified') is not True or not inputs.get('t1_series_uid')):
+            return {'state': 'needs_input', 'required': ['t1_series_uid', 'inputs_verified'], 'function': function}
+        if function == FUNCTION_BRAIN_LESIONS and (not inputs.get('flair_series_uid') or not inputs.get('clinical_context')):
+            return {'state': 'needs_input', 'required': ['flair_series_uid', 'clinical_context'], 'function': function}
+        if is_brain:
+            name = 'lesion' if function == FUNCTION_BRAIN_LESIONS else 'brain'
+            previous = getattr(self, '_' + name + '_widget', None)
+            same_series = getattr(self, '_session_keys', {}).get(name) == context['series_uid']
+            if (same_series and previous is not None and previous._result is not None
+                    and getattr(previous, '_control_inputs', None) != inputs):
+                raise ValueError('An existing result has different inputs. Open a fresh workspace for a new analysis.')
+        self._controlled_function = function
+        self._controlled_series_uid = context['series_uid']
+        self._controlled_brain = is_brain
+        if function == FUNCTION_TOTAL_SPINE:
+            self.open_total_spine(control_inputs=inputs)
+        elif function == FUNCTION_BRAIN_LESIONS:
+            self.open_lesions(control_inputs=inputs)
+        elif is_brain:
+            self.open_brain(control_inputs=inputs)
+        elif function == FUNCTION_ALIGNMENT:
+            self.open_alignment()
+        else:
+            self.window.eagle_eye_mode = context['eagle_eye_mode']
+            self.window.imaging_tab.eagle_eye_mode = context['eagle_eye_mode']
+            self._controlled_native_ready = False
+            self._start_native(context['modality'])
+        return {'state': 'submitted', 'function': function, 'series_uid': context['series_uid']}
+
+    def apply_control_inputs(self, inputs):
+        """Apply explicit source-pixel ROI through the existing Total Spine editor."""
+        import math
+        function = getattr(self, '_controlled_function', None)
+        if 'image_index' in inputs and function in (FUNCTION_ALIGNMENT, FUNCTION_TOTAL_SPINE):
+            widget = self._alignment_widget if function == FUNCTION_ALIGNMENT else self._total_spine_widget
+            if widget is None or widget._future is not None:
+                raise ValueError('Wait for the image inventory to finish loading.')
+            editor = widget if function == FUNCTION_ALIGNMENT else widget.tabs.currentWidget()
+            index = inputs['image_index']
+            if type(index) is not int or not 0 <= index < editor.files.count():
+                raise ValueError('Choose an image_index returned by status.')
+            editor.files.setCurrentIndex(index)
+            if function == FUNCTION_ALIGNMENT:
+                widget.load_selected()
+            else:
+                widget.load_image(editor)
+            return {'state': 'submitted', 'function': function}
+        if getattr(self, '_controlled_function', None) != FUNCTION_TOTAL_SPINE:
+            raise ValueError('No controlled Total Spine session is active.')
+        widget = self._total_spine_widget
+        if widget is None or widget._future is not None:
+            raise ValueError('Wait for the selected image to finish loading.')
+        editor = widget.editors[0]
+        if editor.image is None:
+            raise ValueError('A loaded coronal image is required.')
+        region = inputs.get('region')
+        if (not isinstance(region, list) or len(region) != 4
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in region)):
+            raise ValueError('region must contain four finite source-pixel coordinates.')
+        if not editor._set_region(region):
+            raise ValueError('The region must lie inside the image and be at least 32 pixels per side.')
+        if not widget._automatic:
+            widget.start_ai(editor, requested=True)
+        return {'state': 'submitted', 'function': FUNCTION_TOTAL_SPINE}
+
+    def control_status(self):
+        """Read worker-owned state; never infer completion from an open window."""
+        function = getattr(self, '_controlled_function', None)
+        widget = (self._alignment_widget if function == FUNCTION_ALIGNMENT else
+                  self._total_spine_widget if function == FUNCTION_TOTAL_SPINE else None)
+        if getattr(self, '_controlled_brain', False):
+            widget = self._lesion_widget if function == FUNCTION_BRAIN_LESIONS else self._brain_widget
+        if widget is not None:
+            busy = widget._future is not None
+            ready = bool(getattr(widget, 'report_result', None))
+            if function == FUNCTION_ALIGNMENT:
+                ready = ready or getattr(widget, 'metrics', None) is not None
+            elif function == FUNCTION_TOTAL_SPINE:
+                ready = ready or any(bool(e.candidates) for e in widget.editors)
+            else:
+                ready = bool(getattr(widget, '_result', None))
+            data = {'function': function, 'state': 'running' if busy else 'failed' if getattr(widget, '_control_error', None) else 'cancelled' if widget._cancel.is_set() else 'result_ready' if ready else 'needs_input',
+                    'message': widget.status.text(), 'report_available': bool(getattr(widget, 'report_result', None) or (getattr(widget, '_result', None) or {}).get('pdf_available')),
+                    'series_uid': getattr(self, '_controlled_series_uid', '')}
+            if function in (FUNCTION_ALIGNMENT, FUNCTION_TOTAL_SPINE):
+                editor = widget if function == FUNCTION_ALIGNMENT else widget.tabs.currentWidget()
+                data['images'] = [{'image_index': i, 'label': editor.files.itemText(i)}
+                                  for i in range(editor.files.count())]
+                if editor.image is not None:
+                    data['image_shape'] = list(editor.image['pixels'].shape)
+            return data
+        style = self._native_style
+        busy = bool(style is not None and style._ai_worker_busy())
+        workflow = getattr(self.window.imaging_tab, '_eagle_eye_workflow', None)
+        busy = busy or bool(getattr(workflow, 'busy', False))
+        return {'function': function, 'state': 'running' if busy else 'result_ready' if getattr(self, '_controlled_native_ready', False) else 'idle',
+                'report_available': False}
+
+    def choose_function(self, controlled_choice=None):
         if self._choosing:
             return
         self._choosing = True
@@ -142,7 +261,7 @@ class EagleEyeWorkspaceController(QObject):
             if not modality:
                 self._resolve_study_modality()
                 return
-            choice = eagle_eye_function_dialog.choose_eagle_eye_function(modality, parent=self.window, mode=mode)
+            choice = controlled_choice if isinstance(controlled_choice, str) else eagle_eye_function_dialog.choose_eagle_eye_function(modality, parent=self.window, mode=mode)
             if choice == FUNCTION_LEGION_CONSULT:
                 self._start_legion()
             elif choice == FUNCTION_ALIGNMENT and modality in ('DX', 'CR'):
@@ -269,6 +388,7 @@ class EagleEyeWorkspaceController(QObject):
         style.check_status(patient)
 
     def _native_ready(self):
+        self._controlled_native_ready = self.window.eagle_eye_mode != "lumbar_mri"
         tab = self.window.imaging_tab
         if self.window.eagle_eye_mode == "lumbar_mri":
             from .eagle_eye_lumbar import session_request
@@ -283,7 +403,7 @@ class EagleEyeWorkspaceController(QObject):
         else:
             self.window.refresh_ai_results()
 
-    def open_brain(self):
+    def open_brain(self, *, control_inputs=None):
         """Keep the viewer on screen while the Brain tools live in an owned popup."""
         self._select_analysis_session('brain')
         if self._brain_dialog is None:
@@ -303,6 +423,7 @@ class EagleEyeWorkspaceController(QObject):
             # Keep computation alive when the popup is dismissed; pending input
             # selection is cancelled by the dialog to avoid stealing focus.
             dialog.bind_analysis(widget)
+        self._brain_widget._control_inputs = control_inputs
         self._brain_dialog.show()
         self._brain_dialog.raise_()
         self._brain_dialog.activateWindow()
@@ -310,7 +431,7 @@ class EagleEyeWorkspaceController(QObject):
             self._brain_widget.start_study_segmentation()
 
     def open_alignment(self):
-        """A study-owned review popup with independent pixels and computation."""
+        """Keep the study-owned measurements reachable through a review tab."""
         self._select_analysis_session('alignment')
         if self._alignment_dialog is None:
             from .eagle_eye_alignment.widget import AlignmentWidget
@@ -323,13 +444,28 @@ class EagleEyeWorkspaceController(QObject):
             layout.addWidget(widget)
             self._alignment_dialog, self._alignment_widget = dialog, widget
             dialog.bind_analysis(widget)
-        self._alignment_dialog.show()
-        self._alignment_dialog.raise_()
-        self._alignment_dialog.activateWindow()
+        tabs = getattr(self.window, 'tab_widget', None)
+        if isinstance(tabs, QTabWidget):
+            widget = self._alignment_widget
+            page = getattr(widget, '_alignment_review_tab', None)
+            if page is None:
+                self._alignment_dialog.layout().removeWidget(widget)
+                page = QScrollArea(tabs)
+                page.setWidgetResizable(True)
+                page.setWidget(widget)
+                widget._alignment_review_tab = page
+                tabs.addTab(page, 'Lower Limb Alignment')
+            self._alignment_dialog.hide()
+            self._alignment_dialog._activity_timer.stop()
+            tabs.setCurrentWidget(page)
+        else:
+            self._alignment_dialog.show()
+            self._alignment_dialog.raise_()
+            self._alignment_dialog.activateWindow()
         if self._alignment_widget.image is None and self._alignment_widget._future is None:
             self._alignment_widget.scan_study()
 
-    def open_total_spine(self):
+    def open_total_spine(self, *, control_inputs=None):
         """Prepare proposals before adding the study-owned review tab."""
         if not str(self.window._study_uid or '').strip():
             self._message('Open a study before using Total Spine Alignment.')
@@ -345,6 +481,7 @@ class EagleEyeWorkspaceController(QObject):
             QVBoxLayout(dialog).addWidget(widget)
             dialog.bind_analysis(widget)
             self._total_spine_dialog, self._total_spine_widget = dialog, widget
+            widget._control_projection = (control_inputs or {}).get('projection')
             widget.resultsReady.connect(lambda: self._show_spine_results(widget, dialog))
             selected_uid = self.selected_series_uid()
             if selected_uid:
@@ -375,7 +512,7 @@ class EagleEyeWorkspaceController(QObject):
         else:
             dialog.setWindowTitle('Total Spine Alignment | Review results')
 
-    def open_lesions(self):
+    def open_lesions(self, *, control_inputs=None):
         self._select_analysis_session('lesion')
         if self._lesion_dialog is None:
             from .eagle_eye_brain.lesion_widget import BrainLesionWidget
@@ -392,6 +529,7 @@ class EagleEyeWorkspaceController(QObject):
             layout.addWidget(scroll)
             self._lesion_dialog, self._lesion_widget = dialog, widget
             dialog.bind_analysis(widget)
+        self._lesion_widget._control_inputs = control_inputs
         self._lesion_dialog.show()
         self._lesion_dialog.raise_()
         self._lesion_dialog.activateWindow()

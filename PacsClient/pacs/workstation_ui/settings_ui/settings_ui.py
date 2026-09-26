@@ -13,6 +13,81 @@ from .installation_module_settings import InstallationModuleSettingsWidget
 logger = logging.getLogger(__name__)
 
 
+class _SettingsGroup(QTabWidget):
+    """Small nested navigation shell; initialize only the selected child page."""
+
+    def __init__(self, pages, selected=0):
+        super().__init__()
+        self.setObjectName('SettingsSubtabs')
+        self._builders = {}
+        for label, builder in pages:
+            container = QWidget()
+            layout = QVBoxLayout(container)
+            layout.setContentsMargins(0, 8, 0, 0)
+            index = self.addTab(container, label)
+            self._builders[index] = builder
+        self.setCurrentIndex(selected)
+        self.tabBar().setUsesScrollButtons(True)
+        self.tabBar().setElideMode(Qt.ElideNone)
+        self.tabBar().setExpanding(False)
+        # Apply at the child bar so both parent theme variants retain hierarchy.
+        self.tabBar().setObjectName('SettingsSubnavigation')
+        self.tabBar().setStyleSheet("""
+            QTabBar#SettingsSubnavigation {
+                background: transparent;
+            }
+            QTabBar#SettingsSubnavigation::tab {
+                background: transparent;
+                color: #a8b5c7;
+                border: none;
+                border-bottom: 3px solid transparent;
+                border-radius: 0px;
+                padding: 8px 14px;
+                margin: 0px 14px 0px 0px;
+                min-width: 0px;
+                min-height: 0px;
+                font-size: 13px;
+                font-weight: 400;
+            }
+            QTabBar#SettingsSubnavigation::tab:selected {
+                background: transparent;
+                color: #7dd3fc;
+                border-bottom: 3px solid #38bdf8;
+                font-weight: 600;
+            }
+            QTabBar#SettingsSubnavigation::tab:hover:!selected {
+                background: #172334;
+                color: #e2e8f0;
+                border-bottom: 3px solid #475569;
+            }
+        """)
+        self.setStyleSheet("""
+            QTabWidget#SettingsSubtabs::pane {
+                border: none;
+                border-top: 1px solid #29384b;
+                background: transparent;
+                top: 0px;
+            }
+        """)
+        self.currentChanged.connect(self._initialize)
+
+    def _initialize(self, index):
+        builder = self._builders.get(index)
+        if builder is None:
+            return
+        try:
+            widget = builder()
+        except Exception:
+            logger.exception('[SETTINGS_LAZY] failed to build nested page idx=%s', index)
+            return
+        self._builders.pop(index, None)
+        self.widget(index).layout().addWidget(widget)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._initialize(self.currentIndex())
+
+
 class SettingsTabWidget(QTabWidget):
     # Emitted once the (lazily built) Viewer Configuration tab is created, so
     # external code can wire its configChanged signal without forcing the heavy
@@ -34,6 +109,7 @@ class SettingsTabWidget(QTabWidget):
         # (~3s), so each tab starts as an empty container and its real widget
         # is built the first time that tab becomes visible.
         self.server_settings = None
+        self.eagle_eye_settings = None
         self.tools_settings = None
         self.viewer_config = None
         self.image_filter = None
@@ -45,24 +121,20 @@ class SettingsTabWidget(QTabWidget):
 
         self._tab_creators = {}    # tab index -> zero-arg builder callable
         self._tab_containers = {}  # tab index -> container QWidget
+        self.viewer_group = None
+        self.ai_group = None
+        self._requested_ai_page = None
 
         self._add_lazy_tab('Server Settings', self._create_server_settings)
-        self._add_lazy_tab('Tools Settings', self._create_tools_settings)
-        self._add_lazy_tab('Viewer Configuration', self._create_viewer_config)
-        self._add_lazy_tab('Image Filter', self._create_image_filter)
+        self._add_lazy_tab('Viewer Configuration', self._create_viewer_group)
+        self._ai_index = self._add_lazy_tab('AI', self._create_ai_group)
         self._add_lazy_tab('Installation & Updates', self._create_installation_settings)
-        self._add_lazy_tab('Agent', self._create_agent_settings)
         # Always present (not module-gated): this tab is where the identity /
         # consultation / education gates themselves are viewed and enabled, so
         # hiding it behind those same gates would be circular. Sections degrade
         # to "not available in this build" when a module is absent.
         self._add_lazy_tab('Consultation & Education',
                            self._create_consultation_education_settings)
-
-        if is_module_enabled("run_cd"):
-            self._add_lazy_tab('Light Viewer', self._create_lightviewer_settings)
-        if is_module_enabled("echomind"):
-            self._add_lazy_tab('EchoMind', self._create_echomind_settings)
 
         # Connect AFTER the addTab() calls so the implicit currentChanged(0)
         # emitted while adding the first tab does not build a tab during
@@ -77,6 +149,8 @@ class SettingsTabWidget(QTabWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
+        if label in ('Viewer Configuration', 'AI'):
+            layout.setContentsMargins(16, 16, 16, 0)
         idx = self.addTab(container, label)
         self._tab_creators[idx] = builder
         self._tab_containers[idx] = container
@@ -110,7 +184,42 @@ class SettingsTabWidget(QTabWidget):
 
     def _create_server_settings(self):
         self.server_settings = ServerSettingsWidget()
+        self.server_settings.eagleEyeSettingsRequested.connect(self._open_eagle_eye_settings)
         return self.server_settings
+
+    def _create_viewer_group(self):
+        pages = [('Viewer Configuration', self._create_viewer_config),
+                 ('Tools Settings', self._create_tools_settings),
+                 ('Image Filter', self._create_image_filter)]
+        if is_module_enabled('run_cd'):
+            pages.append(('Light Viewer', self._create_lightviewer_settings))
+        self.viewer_group = _SettingsGroup(pages)
+        return self.viewer_group
+
+    def _create_ai_group(self):
+        pages = []
+        if is_module_enabled('echomind'):
+            pages.append(('EchoMind', self._create_echomind_settings))
+        pages.extend([('Eagle Eye', self._create_eagle_eye_settings),
+                      ('Agent', self._create_agent_settings)])
+        selected = next((i for i, (label, _) in enumerate(pages)
+                         if label == self._requested_ai_page), 0)
+        self.ai_group = _SettingsGroup(pages, selected)
+        return self.ai_group
+
+    def _open_eagle_eye_settings(self):
+        self._requested_ai_page = 'Eagle Eye'
+        self.setCurrentIndex(self._ai_index)
+        if self.ai_group is not None:
+            for index in range(self.ai_group.count()):
+                if self.ai_group.tabText(index) == 'Eagle Eye':
+                    self.ai_group.setCurrentIndex(index)
+                    break
+
+    def _create_eagle_eye_settings(self):
+        from .eagle_eye_settings import EagleEyeSettingsWidget
+        self.eagle_eye_settings = EagleEyeSettingsWidget()
+        return self.eagle_eye_settings
 
     def _create_tools_settings(self):
         self.tools_settings = ToolsSettingsWidget()
@@ -197,6 +306,15 @@ class SettingsTabWidget(QTabWidget):
             QTabWidget#SettingsTabWidget QTabBar::tab:hover:!selected {
                 background: #2b3a4e;
                 color: #f3f4f6;
+            }
+            QTabWidget#SettingsSubtabs::pane {
+                border: none;
+                background: #0b0d10;
+            }
+            QTabWidget#SettingsSubtabs > QTabBar::tab {
+                padding: 8px 14px;
+                min-width: 80px;
+                font-size: 13px;
             }
 
             QTabWidget#SettingsTabWidget QTableWidget,

@@ -18,6 +18,18 @@ Total Spine, dataset, and workspace integrations, EchoMind template and protecte
 provider-key handling, Advanced Viewer/Slicer presentation work, and the canonical
 six-installer build workflow.
 
+This six-installer matrix records the historical 3.6.7 build. New build requests
+use the role-selected four-file Client or two-file Eagle Eye Server route in
+`BUILD.md`; this record is not a command to rebuild all six.
+
+**Installed Advanced Viewer correction, 2026-09-22:** the existing local 3.6.7
+installers predate the latest `presentation.py` source and the frozen resident
+warm-up resource-path correction. The installed Advanced MPR package on the
+development PC contains the older presentation, even though its product version
+is 3.6.7. These historical installers are not evidence of the current UI and
+must not be promoted as the corrected build. A fresh role-selected candidate,
+installation, and visible warm-up/UI acceptance are required after source freeze.
+
 The completed local build also retains the cardiac MRI Flow VM-normalization and
 DICOMDIR interoperability modules in both frozen backends. This record authorizes
 source publication only; it does not authorize installer distribution or production

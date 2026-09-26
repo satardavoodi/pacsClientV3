@@ -55,7 +55,7 @@ def test_download_series_halves_then_retries_at_min_batch():
     # Halving branch is no longer gated away at min batch size: the
     # outer check is on the message alone, with the size check nested.
     i_outer = _SRC.index('if "Response too large" in str(error_msg):')
-    i_halve = _SRC.index("batch_size = max(min_batch_size, batch_size // 2)")
+    i_halve = _SRC.index("batch_size = gcd(batch_start, max(min_batch_size, batch_size // 2))")
     i_min_retry = _SRC.index("if too_large_retries < _TOO_LARGE_MIN_BATCH_RETRIES:")
     assert i_outer < i_halve < i_min_retry
     # Bounded budget exists and resets on a successful batch.

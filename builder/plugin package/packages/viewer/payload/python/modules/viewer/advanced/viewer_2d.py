@@ -4435,6 +4435,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.hide_sync_point()
             return
 
+        from .presentation_frames import apply_sync_point
+        if apply_sync_point(self, world_pos, adjust_slice):
+            return
+
         self._ensure_sync_point_actor()
 
         if self._sync_point_source is not None:

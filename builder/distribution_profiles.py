@@ -1,4 +1,4 @@
-"""Three explicit installer outputs from one frozen core; never publish automatically."""
+"""Role-selected installer outputs from one frozen core; never publish automatically."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -71,6 +71,7 @@ def _write_release_metadata(output, inventory):
         "=" * (len(inventory["version"]) + 27),
         "",
         f"Build backend: {inventory['backend']}",
+        f"Build target: {inventory.get('build_target', 'legacy')}",
         "Installers in this folder:",
     ]
     checksums = [
@@ -79,7 +80,7 @@ def _write_release_metadata(output, inventory):
         "",
     ]
     descriptions = {
-        "eagle-eye": "Includes Slicer and the Eagle Eye Brain and Lumbar offline payloads.",
+        "eagle-eye": "Includes Slicer and available Eagle Eye offline payloads; server release qualification is separate.",
         "standard": "Includes the standard Advanced MPR/Slicer runtime without the Eagle Eye offline lumbar model.",
         "arm": "Includes the standard Advanced MPR/Slicer runtime for Windows on ARM64 emulation; not native ARM64.",
     }
@@ -102,7 +103,8 @@ def _write_release_metadata(output, inventory):
     ])
     note_text = "\n".join(notes)
     checksum_text = "\n".join(checksums + [f"Version: {inventory['version']}",
-                                             f"Backend: {inventory['backend']}", ""])
+                                             f"Backend: {inventory['backend']}",
+                                             f"Build target: {inventory.get('build_target', 'legacy')}", ""])
     # Retain the established four filenames. Repository policy requires newly
     # generated release artifacts to remain English, including compatibility files.
     for name in ("INSTALL_NOTES.txt", "INSTALL_NOTES_FA.txt"):
@@ -111,12 +113,23 @@ def _write_release_metadata(output, inventory):
         _atomic_write(output / name, checksum_text)
     serialized = json.dumps(inventory, indent=2)
     _atomic_write(output / "distributions.json", serialized)
+    if inventory.get("build_target") in {"client", "server"}:
+        # Both roles share the established folder. Preserve each role's evidence
+        # when a later build refreshes the generic latest-run files.
+        role = inventory["build_target"]
+        _atomic_write(output / f"distributions-{role}.json", serialized)
+        _atomic_write(output / f"SHA256-{role}.txt", checksum_text)
+        _atomic_write(output / f"INSTALL_NOTES-{role}.txt", note_text)
     metadata_name = ("nuitka_installer_release_metadata.json"
                      if inventory["backend"] == "nuitka" else "installer_release_metadata.json")
     _atomic_write(output / metadata_name, serialized)
 
 
 def editions_for(name):
+    if name == "client":
+        return (EDITIONS["standard"], EDITIONS["arm"])
+    if name == "server":
+        return (EDITIONS["eagle-eye"],)
     if name == "all":
         return tuple(EDITIONS.values())
     return (EDITIONS[name],)
@@ -147,8 +160,6 @@ def _edition_copy_ignore(package_root, edition):
             excluded.append("offline_lumbar")
         if current == advanced_payload and "eagle_eye" in names:
             excluded.append("eagle_eye")
-        if current == slicer_modules and "AIPacsOfflineLumbar.py" in names:
-            excluded.append("AIPacsOfflineLumbar.py")
         return tuple(excluded)
 
     return ignore
@@ -174,9 +185,9 @@ def stage_edition(source, destination, edition, *, for_distribution=True):
     if edition.include_slicer and not edition.include_offline_lumbar:
         advanced_payload = packages / "advanced_mpr/payload"
         shutil.rmtree(advanced_payload / "offline_lumbar", ignore_errors=True)
-        (advanced_payload / "python/modules/mpr/advanced_3d_slicer/slicer_modules/AIPacsOfflineLumbar.py").unlink(
-            missing_ok=True
-        )
+    if edition.include_slicer:
+        from builder.eagle_eye_client_payload import stage_client
+        stage_client(packages / 'advanced_mpr/payload')
     feed_path = source / "plugin_packages/module_package_feed.json"
     feed = json.loads(feed_path.read_text(encoding="utf-8"))
     for entry in feed.get("packages", []):
@@ -193,6 +204,7 @@ def stage_edition(source, destination, edition, *, for_distribution=True):
         "install_package": edition.install_package,
         "slicer_included": edition.include_slicer,
         "offline_lumbar_included": edition.include_offline_lumbar,
+        "eagle_eye_execution": "server" if edition.include_offline_lumbar else "client",
         "eagle_eye_features": ['brain', 'brain_lesions', 'lumbar', 'alignment', 'total_spine'] if edition.include_offline_lumbar else [],
         "model_task": "vertebrae_mr" if edition.include_offline_lumbar else None,
     }
@@ -255,8 +267,13 @@ def validate_edition(stage, edition, *, for_distribution=True):
         else:
             if (payload / 'eagle_eye').exists():
                 raise RuntimeError('Standard editions must exclude Eagle Eye Brain assets')
-            if (payload / "offline_lumbar").exists() or (modules / "AIPacsOfflineLumbar.py").exists():
+            if (payload / "offline_lumbar").exists():
                 raise RuntimeError("Standard Slicer edition must exclude the Eagle Eye offline lumbar payload")
+        if not (modules / 'AIPacsOfflineLumbar.py').is_file():
+            raise RuntimeError('The shared lumbar result-review UI is missing.')
+        from builder.eagle_eye_client_payload import FILES
+        if any(not (modules / 'eagle_eye_remote' / name).is_file() for name in FILES):
+            raise RuntimeError('The shared Slicer reference-only client is incomplete.')
     elif payload.parent.exists():
         raise RuntimeError("Compact edition must not contain Advanced MPR or model payloads")
 
@@ -326,6 +343,7 @@ def compile_editions(builder, version, selection="all", *, stage_only=False,
             temporary_target.replace(target)
             row["installer"] = str(target)
     inventory = {"version": version, "backend": getattr(builder, "BACKEND", "python"),
+                 "build_target": selection,
                  "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                  "status": "staged" if stage_only else "compiled",
                  "published": False, "compact_size_budget_bytes": compact_max_bytes, "outputs": artifacts}

@@ -1,5 +1,137 @@
 # AI-PACS Regression Catalog
 
+## 2026-09-26 Eagle Eye Client installer configuration isolation
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Local paired connection -> installer config defaults | New Eagle Eye configuration lacked a sanitizer rule, allowing the local URL and credential/certificate locations to be copied into Client installers. Ship an allowlisted unpaired template; discard inline tokens and unknown deployment fields while preserving Developer Run bytes. | `tests/code/builder/test_eagle_eye_client_sanitization.py`: both synthetic guards failed before the change. Applies to both backends and all profiles using the shared config sanitizer; installed pairing acceptance remains separate. |
+
+## 2026-09-26 Reversible MS smooth-band review
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Native 2D label-18 mask -> MS burden/PDF -> client artifacts | Smooth paired periventricular bands were counted without a morphology review. Add conservative, reversible separation; preserve raw and amber review masks, focal/irregular candidates, SVD context and manual overrides. | `test_periventricular_band_filter.py`: 11 fail-before guards; final related selection 157 passed, exit 0. One-case/PDF engineering review; new source GUI and Razi activation pending. Numerical thresholds are not clinically validated. See `docs/modules/eagle-eye-server-development/docs/LESIONS_2D_2026-09-26.md`. |
+
+## 2026-09-26 Native 2D lesion analysis
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Lesion acquisition and reporting | A 3D-only gate cannot process conventional 2D FLAIR. Add explicit separate MindGlide route in the same UI; retain the 3D gate, native geometry and sampled-slab measurement basis. | Initial 7 feature guards fail before/pass after; protocol, report and manual-revision guards in test_lesions_2d.py. Actual source GUI selected 2D, completed in 150 s, remained responsive and exported a verified PDF. |
+| Windows service artifact paths | Long patient-scoped paths failed diagnostic copy and can omit native masks from packets. Compute in short private scratch; extended-path publication and 2D export preserve mask/PDF ownership. | Dedicated publication guard and service-policy-emulation guard fail before/pass after; isolated Razi inference completed in 152.29 s. |
+
+
+## 2026-09-26 Multi-study thumbnail order and replacement rows (OPT-58 / OPT-60)
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Shared catalog presentation -> Patient sidebar/Home | Competing producer generations used different order; a reused card was not repositioned and could overlap a new row. Independent history sorting also disagreed across consumers. One original-number, per-study order authority now feeds all presentation adapters; replacement owns retained-card geometry and planned series counts exclude headers. Study offsets, UIDs, paths, downloads and viewer backends are unchanged. | `test_superseding_sidebar_generation_repositions_reused_history_card` and `test_grouped_sidebar_orders_history_within_each_study_and_counts_cards` both failed before/pass after. Canonical helper and Home dispatch guards cover offset-insensitive two-study order. Affected/adjacent: 230 passed; packaging inputs: 42 passed. Fresh source and artifacts pending. |
+
+## 2026-09-26 Browser opening card placement (OPT-22)
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Browser launch notice | Full-width top strip replaced with a bounded centered child card, wrapped-height layout and resize tracking. | `test_browser_launch_notice.py::test_notice_is_compact_centered_and_contains_wrapped_text`: three size cases fail before/pass after. Related suite 92 passed; 472 mirrors match. Synthetic visual preview inspected; live source gate pending. See `WEBENGINE_OPEN_WAIT_STATUS_2026-09-15.md`. |
+
+## 2026-09-25 Local DX presentation thumbnails (OPT-60)
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Local/import PNG repair | Spatial preview defers DX presentation and multiframe-only repair leaves blank cards. Admit one identity-checked DX object through existing stateless presentation preparation on the thumbnail worker. | `test_local_multiframe_thumbnail_repair.py`: DX PNG assertion fails before; final related suite 116 passes. Wrong identities and multi-object decode rejected. 472 mirrors match; fresh source GUI/artifacts pending. See UI-stall owner receipt. |
+
+## 2026-09-25 Advanced independent-frame reference/sync
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Frame geometry / reference lines / sync (OPT-60) | Preserve verified per-frame planes without claiming an MPR volume; preserve pixel order, select actual physical target frame, and draw actors at native Z=0. | `test_advanced_frame_reference_sync.py` and enhanced-frame guards fail before/pass after; related suite 123 passed. 606 real-input planes structurally admitted; source GUI/clinical agreement pending. |
+
+## 2026-09-25 Enhanced MR Advanced 2D presentation
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Advanced Enhanced MR admission | Spatial loader rejects frame-level geometry; prepare indexed independent frames through the existing nonspatial renderer. Reject ambiguous intensity mapping; never fabricate a volume. | `test_advanced_enhanced_mr_frames.py`: initial three fail before; eight guards pass after. Related suite 47 passed; 32 real series / 606 frames prepared read-only. Live GUI and artifact acceptance pending; see VTK owner OPT-60 receipt. |
+
+## 2026-09-24 Local Enhanced MR thumbnails and empty Advanced hint
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Native Advanced drag-hover (OPT-23) | Translucent hover QFrame exposed stale Home backing before mouse release. Paint opaque backing before blue highlight. | `test_advanced_drag_hover_backing.py`: alpha 25 failed before; opacity, parent independence and hint restoration pass after. Native failure observed; fresh post-fix GUI pending. |
+| Local/import PNG repair | Spatial Advanced preview rejected frame-level geometry. Extract one identity-checked multiframe display frame through the existing thumbnail worker; import fallback shares repair. | `test_local_multiframe_thumbnail_repair.py`: PNG assertion failed before; four final guards pass. Live and artifact gates pending; see UI-stall owner record. |
+| Native VTK / Qt empty-state label | Translucent child had no dependable native-parent backing pixels. Paint an opaque rectangle before the existing label. | `test_fast_viewer_empty_state_ui.py::test_empty_drop_hint_pixels_do_not_depend_on_parent_background`: opacity assertion failed before, passes after. Native GUI remains pending; see VTK owner record. |
+
+## Standard MPR optimized-reslice row jump (2026-09-24, OPT-48)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Standard Zeta MPR reconstructed-pane sampling | VTK optimized reslicing can jump rows at numeric grid boundaries despite a stationary phantom and invariant camera. Disable Optimization on reconstructed reslicers only; retain linear interpolation, native-grid policy, acquired-plane nearest behavior and all geometry. | `tests/code/mpr/test_mpr_reslice_sampling_stability.py`: synthetic rendered failure before (1,376 changed pixels); pixel-identical after, normal/enlarged views plus all native-plane routings. Live developer-run acceptance pending. |
+
+## Frozen role-aware Settings inclusion (2026-09-23)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Source role-aware Settings -> PyInstaller/Nuitka full core -> installed Client/Server UI | The lazily opened `EagleEyeSettingsWidget`, `ServerSettingsWidget`, and cached installed-edition resolver could be omitted or stale in a frozen package even when source/offscreen tests pass. Both packagers now explicitly pin the shared Settings and administration modules; the canonical snapshot includes their source. Standard/ARM and Server must still pass fresh installed visibility QA. | `tests/code/builder/test_role_settings_packaging.py`: snapshot case passed; both backend inclusion cases failed before pins and now pass. Frozen GUI acceptance remains pending. |
+
+## Patient-list first double-click observation gap (2026-09-23, OPT-35 / OPT-60)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Table input diagnostics | The event filter watched the table instead of its mouse-event viewport, and the open handler swallowed exceptions. Added PHI-free press/release/double-click and handler outcome logging without consuming events or changing navigation. This fixes observability, not the reported intermittent first-open failure. | `tests/code/system/test_patient_input_observation.py`: failed before, passed after; 47 focused guards pass. Fresh human source reproduction remains pending. |
+
+## Native VTK graphics admission (2026-09-23, OPT-21 / OPT-56)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Standard/Server graphics bootstrap and viewer routing | DLL presence admitted an unsupported Win32 OpenGL context; Razi crashed at a NULL native call during SetInputData. An isolated synthetic native probe now gates admission before UI startup. Failed probes keep empty/populated viewports on VTK-free Fast, override legacy/per-widget bypasses and block stale MPR admission. | `tests/code/viewer/test_native_graphics_admission.py`: 10 failures before resolver correction; strict receipt, crash/timeout, frozen dispatch, controller override and MPR checks after. Actual Razi desktop rejects native GL safely; human drag/drop acceptance pending. |
+| Early graphics child -> PyInstaller/Nuitka windowed core | A frozen import-graph change could omit the new pre-GUI child route while Developer Run still passes. Both packagers now explicitly retain `modules.viewer.native_graphics_probe` and the required VTK OpenGL/image modules; Nuitka fails compilation if those forced modules are unavailable. | `tests/code/builder/test_native_graphics_probe_packaging.py`: both inclusion guards failed before correction and now pass. Installed private receipt plus affected-workflow GUI QA remain required. |
+
+## Eagle Eye Server frozen-service input parity (2026-09-23)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Source LocalService pilot -> immutable build cache -> PyInstaller/Nuitka Server core | Source used real pywin32 311, but `.venv_build` and the current immutable cache had only `pywin32-ctypes`; frozen service/DPAPI imports would be unavailable. The role-scoped coordinator preflight now rejects Server preparation before snapshot/compilation unless genuine pywin32 311, its inventoried wheel and hashed locks, and direct native modules are present. The Client lane remains independent. A separately versioned dependency cache and clean-host frozen-service QA are still required. | `tests/code/builder/test_eagle_eye_service_build_preflight.py`: three dependency cases failed before implementation; four cases now pass, including Client isolation. Real current Server inputs fail closed with an actionable missing-wheel error. |
+
+## Portable custom Slicer VC143 initialization (2026-09-23)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| MSVC-built Slicer/VTK DLL -> older Windows Server VC runtime -> Client/Server payload | On Razi Windows Server 2022 the hash-matching native viewer failed before startup with `0xC0000142`. Isolated `LoadLibrary` identified `vtkCommon-9.5.dll` failing with Win32 1114 in both Session 0 and hidden console Session 1. The DLL loaded when the official compiler-matched VC143 14.44 runtime was supplied app-locally; `msvcp140.dll` alone was the minimal discriminating input. Assembly now pins and stages the complete 10-file VC143 x64 CRT set beside the inner viewer and the build parity gate rejects missing or changed app-local DLLs. No global redistributable or clinical service is changed. | `tests/code/builder/test_slicer_assembly_target.py::test_slicer_assembly_stages_exact_app_local_vc_runtime` and `test_slicer_runtime_current_source.py::test_portable_native_runtime_rejects_missing_or_wrong_app_local_crt` both failed before the fix (missing functions), then passed. Separate Razi candidate launcher `--version` and no-main-window synthetic Slicer/VTK probe exited 0; full installer/clinical acceptance remains pending. |
+
+## Native Slicer baseline shared by Client and Server (2026-09-23)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Canonical candidate default -> immutable assets -> both role installers | The coordinator still defaulted to the historical all-role cache after the Client's new native Slicer build. Pin the default to the new complete cache, copy only hash-verified non-Slicer donor inputs, and always snapshot the current Developer Run native runtime. Ordinary later builds reuse this baseline without recompiling Slicer; an old runtime or modified donor fails closed. | `tests/code/builder/test_client_asset_preparation.py`: donor tampering and stale Slicer exclusion failed before the reuse helper was added; the coordinator default/baseline assertion and existing native provenance/parity guards protect both roles. Installed Server acceptance remains pending. |
+| Historical Slicer downloader -> canonical Developer Run runtime | The old `slicer_runtime_v0.1.0.zip` helper defaulted to the live runtime path and `--force` could delete the current native baseline before downloading. Reject that target even with `--force`; allow legacy archive inspection only at an explicit scratch destination. | `test_client_asset_preparation.py::test_historical_slicer_downloader_cannot_replace_canonical_runtime` failed before the guard by deleting the sentinel and attempting a download; it now proves the native runtime is preserved. |
+
+## Eagle Eye service lifetime and client reconnect (2026-09-22)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Desktop entry -> Windows service | Explicit SCM commands were not dispatched. Add early edition-guarded dispatch and a gated, Job Object-owned listener child with bounded cooperative/forced shutdown. | `tests/code/ai_imaging/test_eagle_eye_service_host.py`: two dispatch guards failed before wiring; synthetic actual subprocess tests cover startup, failed ownership, descendant cleanup and stop budget. Installed Session 0 acceptance remains pending. |
+| Client transport -> server lifetime | Lost responses sent cancellation; uncertain submission had no durable reconciliation handle. Persist before POST, add bound resume and cancel only on explicit intent. | `test_eagle_eye_remote.py::test_transport_loss_does_not_cancel_server_work` and `test_uncertain_submission_resumes_same_request_without_second_inference` failed before correction. Explicit cancel, detached timeout and wrong-credential rejection are also guarded. Native recovery UI remains pending. |
+
+## Advanced MPR installed Slicer source parity (2026-09-22)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Developer Run startup/presentation -> immutable Slicer cache -> both installer backends -> same-version module upgrade | The cached runtime carried a January startup script while Developer Run used the current source plus a separate presentation adapter. The frozen launcher could prefer the legacy script without its `presentation.py`/Qss companions. Packaging now overlays the current startup into each staged runtime, records both startup and complete Slicer Python/UI payload hashes, and rejects a cached native/UI runtime that differs from the assembled Developer Run. Installed launch prefers the complete packaged script. Bootstrap reinstalls an already selected Advanced MPR package when either content revision differs, even at the same product version; an invalid bundled hash cannot replace the prior runtime. | `tests/code/builder/test_slicer_runtime_current_source.py` and the same-version bootstrap tests in `tests/code/module_system/test_module_installation_packages.py` failed before correction for the reported boundaries and now cover script selection, native-cache rejection, presentation-only change, no repeated copy and corrupt-package preservation. Installed-machine UI acceptance remains a separate gate. |
+| Frozen workstation warm-up -> external Slicer resident guard | The resident launcher used its frozen module `__file__` directory for Slicer's `--additional-module-path` and startup script, even though the authoritative Slicer files are deployed under the Advanced MPR runtime. Resolve both from that installed runtime for PyInstaller and Nuitka, retain source paths in Developer Run, and reject incomplete guard/presentation files before spawning Slicer. This prevents an unguarded stock window from being launched by automatic warm-up when packaged paths differ. | `tests/code/mpr/test_slicer_resident.py::test_frozen_warmup_loads_guard_and_presentation_from_installed_runtime` failed before the fix on the wrong module path and passed afterward; `::test_frozen_warmup_rejects_incomplete_runtime_before_process_creation` covers fail-closed startup. Fresh installed GUI validation is pending. |
+
+## Eagle Eye server phase 1 (2026-09-21)
+
+**2026-09-22 role correction:** `MamoWorker` and `BoneAgeWorker` formerly contacted
+legacy HTTP services whenever local qualification was unavailable. Explicit desktop
+Server/Standard roles now use only the common job client. Two behavioral extracted
+worker guards in `test_eagle_eye_roles.py` failed before with a recorded legacy
+network call and pass after. Hosted-service/client authentication, worker recursion,
+read-only cache completeness and listener collision/recovery are also guarded.
+Broader selection: 255 passed; final role/transport selection: 26 passed. Actual
+hosted synthetic Breast/Bone execution passed; Breast classification remains
+unavailable and clinical GUI acceptance remains open. See the phase-1 ledger.
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Breast partial classification -> completion UI | Missing classification was described as a normal case. Detection and classification availability are now distinct; no negative conclusion is inferred. | `tests/code/ai_imaging/test_eagle_eye_remote.py::test_missing_classification_is_never_presented_as_a_normal_case` failed before the correction. The same file covers reference-only requests, authentication, identity, cancellation, artifact isolation, no local fallback and lumbar geometry. Focused code/packaging: 240 passed. Actual synthetic Bone/Breast transport passed; Breast classification remains unavailable. Live GUI blocked; see `docs/modules/EAGLE_EYE_SERVER_PHASE1_2026-09-21.md`. |
+
 ## OPT-60 first-viewer graphics-profile I/O (2026-09-20)
 
 | Boundary | Defect and correction | Regression guard |
@@ -1362,3 +1494,222 @@ classifies mixed/uncertain blocks conservatively. Combined suite: 170 passed;
 |---|---|---|
 | MG/DX worker -> prepared Eagle Eye engine | Prefer verified local engine bundles on the server-edition development PC; retain remote route when absent. Reject missing/corrupt model and random FCOS fallback; no Bone API training side effect. | `test_eagle_eye_local_engines.py`: routing guard failed before the UI branches; source/bundle/sex/cancellation guards pass. Live GUI and clinical parity remain separate. |
 | Local bundle -> automatic UI selection | Require a successful synthetic smoke receipt bound to the manifest revision; reject stale/unqualified bundles and mismatched stacker feature counts. Preserve all named ensemble members when adapting serialized tuples. Use the actual attachment-directory constant. | Qualification, tuple-adapter and attachment guards each failed before their correction. The real Breast smoke exposed a nine-versus-four feature mismatch; Breast remains on its existing remote route pending matching source/weights. |
+
+### Hosted Breast/Bone execution correction (2026-09-22)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Desktop-owned server -> isolated model interpreter | Resolve MSIX-virtualized development interpreter home before bundle sealing; keep bounded private child-error evidence instead of discarding it. | `test_eagle_eye_local_engines.py::test_development_runtime_records_resolved_base_interpreter` and `::test_job_failure_never_publishes_and_releases_process`; lost-diagnostic guard failed before correction. Both real hosted jobs subsequently succeeded. |
+| Selected Bone Age acquisition -> model/result | Accept HAND/WRIST tags without rewriting source identity or guessing sex; keep coverage-review warning in the saved result and reject unrelated anatomy. | `::test_wrist_acquisition_can_be_selected_for_bone_age_without_relabeling` failed before correction; `::test_wrist_result_preserves_coverage_review_warning` guards result persistence. 60 focused tests pass; see the phase-1 live receipt. |
+| Breast server CSV -> existing series review | Emit validated portable series/SOP references in the worker and validate again at publication; preserve boxes while removing server disk paths. | `test_eagle_eye_remote.py::test_breast_export_preserves_series_binding_without_server_paths` failed before the correction; `::test_breast_worker_emits_portable_table_before_publication` covers the process boundary. Final focused suite: 60 passed. Native rerun displayed returned boxes and selectable findings; classification remains unavailable. |
+
+### Advanced application chrome and Save dialog (2026-09-22)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Native application chrome -> presentation | Hide menubar; disable toolbar customization; retain Module Selection and internal module controls, native callbacks and late-toolbar restrictions. | `tests/code/mpr/test_analysis_presentation.py::test_chrome_locks_toolbars_and_hides_menu_without_changing_actions` failed before implementation; passes after. |
+| Native Save dialog -> presentation | Custom title/icons/style without changing destinations, selection or Save/Cancel callbacks. | `tests/code/mpr/test_analysis_presentation.py::test_save_dialog_branding_preserves_destination_selection_and_callbacks` failed before implementation; passes after. Live acceptance pending; see Advanced UI audit. |
+
+### Native Slicer source -> cached installer runtime (2026-09-22)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Custom Slicer C++/CMake/UI source -> compiled inner executable -> assembled runtime -> immutable distribution cache | Developer and cache parity alone accepted matching January binaries despite September native UI changes. Assembly now refuses a compiled binary older than native source and verifies the actual CMake compiler-source copy matches the current repository; its provenance hashes native source and executable, and both assembled and cached runtimes must carry a matching record before installer packaging. This is a fail-closed build guard, not a substitute for native compilation. | `tests/code/builder/test_slicer_runtime_current_source.py::test_matching_caches_cannot_hide_stale_native_slicer_source` failed before correction and passes after; `::test_native_assembly_rejects_compiler_copy_behind_repository` failed before the compiler-copy guard and passes after. The real v3.6.7 runtime fails this gate until the custom Slicer SuperBuild is rebuilt, assembled and recached; installed GUI acceptance remains pending. |
+| Active Developer Run Viewer -> native assembly | The original assembly command replaces the active `build/` directory. Explicit `--output` now permits a fresh scratch runtime to be assembled without touching a running Viewer and rejects existing, broad, or nested-active targets; promotion still waits for the human to close the Viewer. | `tests/code/builder/test_slicer_assembly_target.py::test_explicit_slicer_assembly_output_must_be_new` covers staging target safety. |
+| Client-only asset preparation -> Standard/ARM installer inputs | The asset preparer always staged the Eagle Eye offline model, including its Python and download archives, even when only the four Client installers were requested. The explicit `--profile client` cache now contains the custom Slicer runtime and common installer inputs but omits server model assets; the Server/all profile remains unchanged. | `tests/code/builder/test_client_asset_preparation.py::test_client_asset_preparation_omits_offline_server_model` failed before the profile existed and passes afterward. |
+
+## Eagle Eye actual-execution corrections (2026-09-22)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Exact-SOP radiograph staging | Permit selected stitched DERIVED DX/CR for Alignment/Total Spine; preserve original-MR restriction | `test_eagle_eye_execution_fixes.py::test_explicit_stitched_radiograph_can_be_staged` |
+| Brain PDF | Paginate oversized sections with repeated furniture and installed fonts in Windows offscreen workers; no missing rows or blank text | `test_eagle_eye_execution_fixes.py::test_oversized_report_section_paginates_without_losing_rows` |
+| Lesion child process | Short owned scratch directory; identity-scoped outputs and private diagnostics; cleanup on failure/cancel | `test_eagle_eye_execution_fixes.py::test_lesion_engine_uses_short_private_cwd_and_preserves_output` |
+| MS fallback anatomy | Short owned computation directory; completed anatomy retained with durable provenance; cleanup on failure/cancel | `test_eagle_eye_execution_fixes.py::test_ms_fallback_anatomy_uses_short_owned_directory` |
+| Isolated SVD and subsequent review | Pass verified T1 into same-job anatomy fallback; reuse retained completed same-study anatomy, reject failed/mismatched inputs | `test_eagle_eye_execution_fixes.py::test_svd_isolated_job_computes_missing_anatomy`, `test_nested_anatomy_remains_available_for_same_study_review`; SVD cases in `test_eagle_eye_lesions.py::test_pipeline_publishes_only_completed_native_mask_report` |
+| Slicer Lumbar reference bridge | Replace unavailable CTK call with worker-owned read-only identity resolution; reject missing/mixed/duplicate instances | `test_eagle_eye_execution_fixes.py::test_lumbar_start_resolves_ctk_identity_in_worker` |
+
+Fail-before evidence, separate live gates and residual runtime findings: [execution correction report](../../reports/EAGLE_EYE_EXECUTION_FIXES_2026-09-22.md).
+
+### Brain registration repeatability (2026-09-22)
+
+`tools/eagle_eye/lesion_runner.py` fixes the registration seed and limits registration to one thread after actual two-thread repeats diverged even with a seed. Guard: `tests/code/ai_imaging/test_eagle_eye_lesions.py::test_registration_adapter_pins_seed_and_registration_thread_budget` (failed before both settings). Full post-change lesion and GUI acceptance remain pending; see the execution correction report.
+
+### Eagle Eye administration, ownership and process evidence (2026-09-22)
+
+| Boundary | Correction or added contract | Guard |
+|---|---|---|
+| Client configuration -> UI | Atomic save, stale-edit rejection, HTTPS/loopback validation and background-only I/O | `test_eagle_eye_settings.py::test_connection_save_preserves_extensions_and_checks_stale_edits`, `test_settings_widget_load_and_probe_do_not_block_gui` |
+| Server source/resource settings | Preserve credentials/mappings; validate cache paths and resource budgets before replacement | `test_eagle_eye_settings.py::test_source_settings_preserve_mappings_and_credentials_and_require_existing_cache`, `test_server_resource_save_preserves_credentials_and_rejects_invalid_budget` |
+| Authenticated job inventory | Only the requesting owner's latest jobs | `test_eagle_eye_settings.py::test_job_monitor_never_lists_another_clients_jobs` (failed before GET inventory existed) |
+| Concurrent compute ownership | Explicit CPU/RAM reservations, per-client admission, cancellation/failure/shutdown release; default serial | `test_eagle_eye_scheduling.py` (parallel guard failed before resource-aware Jobs existed) |
+| Durable job directory | Exclusive OS lock prevents a second listener recovering another service's active jobs | `test_eagle_eye_scheduling.py::test_job_directory_has_one_service_owner_even_with_different_listeners` (failed before lock) |
+| Brain native failure -> private evidence | Numeric process/resource record retained on failure, timeout and cancel; no artifact export | `test_eagle_eye_brain_study_workflow.py::test_failed_brain_process_keeps_local_diagnostics_without_exposing_them`, `test_brain_process_evidence_preserves_timeout_and_cancel`; execution scratch and remote artifact guards (evidence guard failed before instrumentation) |
+| Brain memory evidence | Distinguish process private allocation and system commit headroom from physical RAM availability | `test_eagle_eye_brain_study_workflow.py::test_process_evidence_distinguishes_commit_headroom_from_physical_ram` (failed before commit metrics; 25 workflow tests pass after) |
+| SynthSeg CPU allocation | Explicit lower-allocation oneDNN process environment and recorded backend; unchanged weights/coverage; no silent retry/profile switch | `test_eagle_eye_brain.py::test_pipeline_publishes_completion_only_after_artifacts` (four Standard/Robust cases failed before correction; 129 affected tests pass). Two actual Standard CPU experiments produced exact baseline masks and equal QC; probabilistic-volume differences are quantified in the execution report. |
+| SVD anatomy physical geometry | Reject same-size labels with changed spacing, origin or direction before registration/resampling | `test_eagle_eye_execution_fixes.py::test_assessment_rejects_anatomy_with_changed_physical_geometry` (three SVD cases failed before fix; three existing MS cases passed; 79 affected assessment/execution tests pass after) |
+| Lesion HTML transfer | Preview images remain available without access to server files | `test_eagle_eye_lesions.py::test_lesion_html_previews_survive_transfer_without_server_files` (failed on server file URI before embedding unchanged PNG bytes; 103 affected report/transport/assessment tests pass) |
+| TLS connection verification and isolation | Accept trusted matching-host TLS, reject invalid certificates, and keep accepting clients while another peer stalls before handshake | `test_eagle_eye_remote.py::test_tls_listener_requires_trusted_certificate_and_matching_host` (trust checks passed initially; added stalled-peer check timed out before deferring the handshake to its connection handler; 45 affected server tests pass after correction) |
+
+Combined verification: 119 focused tests and 40 adjacent builder tests, exit 0,
+retries disabled; 470 mirror pairs match. Actual two-client Alignment/Bone execution
+passed. Native settings and post-fix result display remain separate pending gates.
+
+Final combined selection after CPU backend and commit-diagnostic additions:
+165 passed, retries disabled, exit 0. Actual integrated Standard/Robust inference,
+measurement, PDF generation and authenticated result retrieval also passed; native
+GUI and whole-LST repeatability are separately tracked in the execution report.
+
+Later focused checks: 103 affected report/transport/assessment passes after portable
+HTML correction; 45 server transport/scheduling/roles/settings passes after TLS
+listener isolation. Counts overlap and are not additive. The selected-case full
+LST two-run comparison passed with exactly equal masks/measurements and complete
+derived reports. Native GUI acceptance remains open.
+
+### Native Slicer assembly console (2026-09-22)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Windows assembly status output | A legacy Persian Windows console code page rejected the assembly script's Unicode status glyph after the first staged file copy. Configure stdout as UTF-8 with replacement before any progress output; keep explicit staging fail-closed. | `test_slicer_assembly_target.py::test_slicer_assembly_configures_utf8_console_for_status_output` (failed before the correction) |
+| Portable Slicer launcher settings | The assembly wrote settings only beside the root launcher, while the inner binary also probes `bin/AIPacsAdvancedViewerLauncherSettings.ini`; headless version output exposed the missing file. Write byte-identical settings beside both launchers. | `test_slicer_assembly_target.py::test_slicer_assembly_writes_launcher_settings_for_root_and_inner_binary` (failed before the correction) |
+| AI-PACS-to-Slicer startup bridge | A clean native assembly copied Slicer's generated `bin/Python` tree but omitted the repository's authoritative `startup_script.py`, so the installer preflight correctly rejected the runtime. Copy the current bridge into `bin/Python/startup_script.py` during every assembly. | `test_slicer_assembly_target.py::test_slicer_assembly_copies_current_startup_bridge` (failed before the correction) |
+
+### Same-version local install-QA recovery (2026-09-23)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Existing versioned installer -> repeated local QA build | A same-version Client repair completed both expensive Nuitka installer compilations and only then failed because the canonical folder already contained the older exact filenames. Before starting each explicitly non-promotable backend, the coordinator now moves only the selected role's exact installer files and that backend's metadata into a timestamped `_superseded/local-qa-*` folder. Server artifacts and other versions remain untouched; receipt-backed release candidates remain immutable. | `test_release_candidate_packaging.py::test_local_qa_same_version_rebuild_archives_only_selected_backend_outputs` (failed before the correction because no coordinator archival boundary existed) |
+
+### Eagle Eye unattended service / PACS authentication (2026-09-23, OPT-51)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| PACS source session | Static token failed on expiry/restart. Protected endpoint-bound account supports bounded login/401 renewal, cooldown and redacted failure. | `tests/code/ai_imaging/test_eagle_eye_pacs_session.py` (five failures before fix; additional DPAPI/backoff guards) |
+| Server settings | No local preset or masked service-account control. Worker-backed settings now expose local PACS, credentials and SCM status/install. | `tests/code/ai_imaging/test_eagle_eye_settings.py::test_server_ui_has_loopback_preset_and_masked_service_password` (failed before fix) |
+| Independent service UI | Server desktop always bound its own listener, conflicting with SCM. Service-managed mode only creates client settings. | `tests/code/ai_imaging/test_eagle_eye_service_administration.py::test_service_managed_desktop_does_not_open_a_second_listener` (failed before fix) |
+| Headless service ownership | Importing the viewer Job Object helper initialized the viewer package and failed on Razi. Separate server-owned helper preserves execution boundaries. | `tests/code/ai_imaging/test_eagle_eye_service_administration.py::test_service_process_ownership_does_not_import_viewer_or_qt` (failed before fix); existing actual owned-descendant tests |
+
+### Eagle Eye role-specific settings (2026-09-23, OPT-51)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Server desktop settings | Server advertised outbound Breast/Bone Age/Segmentation endpoints. Hide legacy global and profile AI controls in server role, preserve saved hidden endpoints, and expose local service management. Standard UI retains its connections. Installed edition fallback is cached before Qt startup without changing runtime routing. | `tests/code/ai_imaging/test_eagle_eye_role_settings.py` (server case failed before fix; eight role/profile/preservation guards pass) |
+
+### Eagle Eye listener and service-managed TLS desktop (2026-09-24, OPT-51)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Listener administration | No editable server endpoint; worker validates IPv4/port/TLS and saves with stale-revision protection, preserving PACS/clients. | `tests/code/ai_imaging/test_eagle_eye_listener_settings.py` (seven initial failures; expanded endpoint/preset/UI cases pass) |
+| Service desktop | LAN/TLS was rejected even when SCM owned the listener. Service-managed desktops now derive HTTPS and CA trust without hosting a duplicate listener. | `test_service_managed_tls_desktop_does_not_bind_listener` plus existing synthetic TLS artifact round trip |
+
+### Unified Standard AI connection (2026-09-24)
+
+Standard now presents only Eagle Eye for AI connections, preserving hidden legacy
+values and PACS/Reception. Two Standard visibility guards failed before correction.
+`test_eagle_eye_role_settings.py` covers both roles, profile modes and saved-value
+preservation. Development SSH transport preflight passed; fresh source GUI pending.
+
+### Certificate-bound Eagle Eye pairing (2026-09-24, OPT-51)
+
+`tests/code/ai_imaging/test_eagle_eye_mtls.py` failed before implementation because
+a token-only caller was accepted. Server now requires a trusted client certificate
+and checks its exact fingerprint against the token owner when pairing is configured.
+Client presents its certificate and validates server trust/host; no-cert, wrong-pin
+and untrusted-server paths are rejected. Real paired8002 positive/negative probes
+passed after deployment certificate AKI/SKI correction.
+
+### Grouped Settings navigation (2026-09-24)
+
+`tests/code/startup/test_settings_groups.py` failed on the original flat tab order.
+It now verifies role parity, lazy leaf creation, no duplicate creation, direct
+AI/Eagle Eye navigation and optional module gates. Existing viewer-ready/startup
+and Agent registration guards remain active. 40 focused tests pass; live GUI pending.
+
+### Eagle Eye SCM native initialization and PACS identity (2026-09-24, OPT-51)
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| SCM child readiness | First pydicom/NumPy import stalled in a retrieval thread while the listener waited for thread startup. Initialize pydicom on the main thread after ownership admission and before listener/control threads; import failure aborts startup. | `test_eagle_eye_service_initialization.py`: two cases failed before correction, then passed; listener cannot precede native dependency initialization. |
+| PACS metadata -> source inventory | Administrative `study_id` was compared to the requested DICOM UID. Require `study_instance_uid`; never fall back to Study ID. | `test_eagle_eye_pacs_identity.py`: three red-before/green-after cases cover correct, mismatched and absent UID even when administrative ID matches. |
+
+Focused verification: service selection 25 passed; identity/source/session selection
+40 passed. Source-only Razi updates use verified per-file baselines and backups.
+Live retry succeeded on Razi, kept HTTPS8002 responsive and returned Alignment
+landmarks/overlays/measurements to the existing standard client. This is a live
+execution/UI pass, not clinical model validation; see the workstation runbook.
+
+### MG detection-only result display (2026-09-24, OPT-51)
+
+| Boundary | Defect and fix | Guard and acceptance |
+|---|---|---|
+| MG artifact selection at viewport startup/switch | Valid detection-only results were discarded when optional classification CSV was absent. Accept detection path independently in manifest and fallback branches. | `tests/code/ai_imaging/test_mg_detection_without_classification.py`: four behavioral cases red before/green after; focused suite 16 passed. Real Breast round trip passed, but updated-class overlay GUI gate requires a fresh user-launched source process. |
+
+### Lower Limb Alignment review navigation (2026-09-24, OPT-51)
+
+| Boundary | Defect and correction | Guard / live gate |
+|---|---|---|
+| Alignment function -> study workspace | Results were only held in a separate popup, with no review tab. Embed the existing series-owned widget in a scrollable Lower Limb Alignment tab and reselect it on return. | `tests/code/ai_imaging/test_alignment_review_tab.py`: real Qt guard failed before change; verifies reuse, retained measurements and distinct series sessions. Focused suite 51 passed. Fresh-source live GUI check pending user restart. |
+
+### Remote radiograph semantic binding (2026-09-24, OPT-51)
+
+| Boundary | Defect and correction | Guard / live gate |
+|---|---|---|
+| PACS server source -> client Total Spine review | Whole-file SHA rejected equivalent DICOM copies. Verify Study/Series/SOP identity and versioned decoded pixel, preprocessing, spacing/calibration and orientation evidence; retain server provenance and rebind only validated local review geometry. | `tests/code/ai_imaging/test_remote_radiograph_binding.py`: equivalent-copy acceptance and wrong-identity rejection failed before correction; changed pixels/geometry, missing evidence and tampered review binding rejected. Real paired bridge returned 17 candidates in 35.48 seconds with matching local review binding. Fresh-source GUI gate pending. |
+
+| EE-WMH-DISTRIBUTION-20260924 | Lesion distribution missing outside MS | test_eagle_eye_lesions.py::test_pipeline_publishes_only_completed_native_mask_report; test_lesion_distribution_delivery.py | Always compute distribution; keep MS interpretation context-specific; preserve PDF/archive payload |
+
+### PACS absence to server cache (2026-09-24, OPT-51)
+
+| Boundary | Correction | Verification |
+|---|---|---|
+| PACS lookup -> server local workstation DB | HTTP 404 raises typed StudyNotFound; PACS provider falls back to its explicitly configured server database. Auth, connection, server, identity and storage errors remain fatal. Existing cache completeness, root confinement and DICOM staging guards remain mandatory. | `test_eagle_eye_cache_fallback.py`: 404 case red before; 11 synthetic guards green after, including isolated SQLite staging, wrong-study/incomplete/outside-root rejection. Combined focused coverage: 49 unique tests. Real Brain request traversed fallback but has no local study record; successful real analysis/GUI remains pending import. |
+
+### Alignment remote correction (2026-09-25, OPT-51)
+
+| Boundary | Change | Evidence |
+|---|---|---|
+| Manual Alignment edits -> server measurements/report | Parent-owned correction jobs reuse retained sources, preserve original output, reject stale/foreign parents, and return authoritative metrics/PDF. UI keeps disconnected drafts locked and resumes their handles. | `test_alignment_remote_review.py`: red before; 50 focused tests after, including HTTP, restart, idempotency, geometry and Qt recovery. Real paired draft changed a point and returned changed measurements/PDF in 8.01 s. Fresh-source GUI pending; Total Spine/Brain not implemented. |
+
+| Native Alignment / Total Spine endpoint mouse affordances (2026-09-25) | Shared handles lacked hover/drag feedback and placement cursor. Add hover ring, grab cursors, larger pick target and mode-specific cursor. | `test_review_mouse_affordances.py`: 3 red-before; 48 focused/adjacent tests green. 471 mirrors match. Fresh-source GUI and remote UI update pending. |
+
+| Held landmark move cursor (2026-09-25) | Use the four-direction move cursor during left-button drag for shared Alignment and Total Spine endpoints; restore the open hand on release. | Four red-before Qt mouse-event cases cover both handle types in pan and placement modes, including viewport cursor, movement and release notification. 52 focused/adjacent tests pass. Fresh-source live GUI and remote UI deployment remain pending. |
+
+| Eagle Eye direct MCP workflow (2026-09-25, OPT-51) | Study-owned CommandBus navigation/selection/run/status, explicit Brain inputs and Spine ROI; read current search without resetting it. | `test_eagle_eye_mcp_commands.py`: red-before guards; 163 focused tests; real stdio inventory; 472 mirrors. App connection/live workflow, remote UI update and artifacts pending. |
+
+| Co-located PACS source sharing (2026-09-25, OPT-51) | Attested atomic PACS publication plus read-protected same-volume hardlinks; preserve selected-series folders, retained revisions, identity, fallback and cleanup. | `test_eagle_eye_shared_sources.py`; PACS `tests/test_atomic_dicom_storage.py`. Original PACS copy method reproduced retained-version corruption; initial new-API guards red; 125 workstation and 6 PACS tests green. 472 mirrors. Source GUI and deployment pending; see Eagle Eye server/client plan's co-located source-sharing receipt. |
+
+
+## 2026-09-25 Client batch reduction / PatientID scope
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Socket page-size reduction (OPT-04) | Integer half-size misaligns server page offsets, repeats or skips images. Reduce using gcd with current offset in both paths. | `test_batch_shrink_alignment.py`: five pre-fix failures, 16 fresh/resume cases pass. Mirror parity 472; source GUI pending. |
+| Patient demographic editor scope | Obsolete claim that PACS has no endpoint replaced with accurate local-only/no-reassignment guidance; unsafe PATCH integration deferred. | Demographic UID/rollback and override tests plus wording guard pass; see shared-pipeline September 25 PatientID contract review. |
+
+| Remote Brain / lesions / Total Spine human review (2026-09-25, OPT-51) | Client editing now uses existing server revisions, explicit reference/mask assets, bounded label uploads and server spine reports/SAM. Fix stale lesion success after failed correction. | `test_remote_review_modules.py`: red-before artifact/contract/projection/error guards; synthetic changed volume/angle, immutable parents, HTTP ownership/conflicts and resume. See the owning Eagle Eye server/client plan for final tests and pending live/deployment gates. |
+
+Remote review source verification receipt: **438 passed**, exit 0; **472 mirrors match**.
+New guard: 29 synthetic cases. Live MCP/native Slicer and Razi deployment remain pending.
+
+
+## 2026-09-26 Dual transfer modes (OPT-04)
+
+| Boundary | Defect / change | Guard and acceptance |
+|---|---|---|
+| Poor Connectivity to actual download host | Existing saved mode did not affect request size; restore per-study host-bound lookup and size-one pinning. | `test_transfer_modes.py`: mode, lifetime and disconnect/resume fail before; pass after. |
+| Normal-mode paging and bounded growth | Fixed small requests cannot use aligned larger batches; add observed-byte/time budget and exact page alignment without regrowing into an oversized error. | New-loop baseline 9 fail / 3 pass; final related suite 175 pass; 472 mirrors match. Live source GUI and artifacts pending; bounded installed-PACS probe is not GUI acceptance. |
+## Patient-tab representative thumbnail ownership (2026-09-26, OPT-58 / OPT-60)
+
+| Boundary | Defect and correction | Regression guard |
+|---|---|---|
+| Admitted sidebar card -> patient title-bar thumbnail | Cached startup depended on a running asyncio loop, while import/lazy/viewer loaders raced independent assignments; exact history 100000 could win and a delayed update targeted the currently selected tab. Make successful shared card admission the sole producer, reject history by original number, and resolve the registered producing PatientWidget. No scan, decode, download or viewer path changed. | `tests/code/ui_services/test_patient_tab_header_thumbnail.py`: 4 focused failures before; final related selection 238 passed and packaging-input selection 42 passed. Fresh-source GUI and frozen artifact acceptance pending. |
+
+## 2026-09-26 Brain bundles in Git-free source services
+
+| Boundary | Defect and correction | Regression evidence |
+|---|---|---|
+| Eagle Eye source worker -> installed Brain assets | Development fallback incorrectly required `.git`; source exports contained models but could not discover them. Anchor fallback to the owning source package. Preserve explicit overrides, installed-root precedence, frozen behavior, and model hash/qualification checks. | `tests/code/ai_imaging/test_brain_git_free_bundle.py`: 2 failed/2 passed before; 92 focused passes after, exit 0. See service record for deployment and live acceptance. |
+
+Brain discovery follow-through: Windows long-path hashing guard fails before/passes after; final focused suite 93 passed. Apparent 146 missing model files were present and matched through extended paths. No weights changed.
+
+| Eagle Eye release role guard (2026-09-26) | Retire stale phase-one interactive_edits=false expectation; assert supported revision modules, protocol and spine segmentation on the existing authenticated endpoint. | One reproduced pre-update failure; 43 role/review/Alignment tests pass. Test-only correction; no listener/server deployment or artifact acceptance. |

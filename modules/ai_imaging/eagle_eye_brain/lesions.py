@@ -18,10 +18,8 @@ def lesion_bundle():
     override = os.environ.get('AIPACS_BRAIN_LESION_BUNDLE')
     candidates = [Path(override)] if override else installed_feature_roots('brain_lesions')
     if not is_frozen() and not override:
-        for parent in Path(__file__).resolve().parents:
-            if (parent / '.git').exists():
-                candidates.append(parent / 'generated-files/eagle-eye/brain-lesions')
-                break
+        # Source service exports keep the package layout but omit Git metadata.
+        candidates.append(Path(__file__).resolve().parents[3] / 'generated-files/eagle-eye/brain-lesions')
     for root in candidates:
         if (root / 'manifest.json').is_file():
             return root.resolve()
@@ -72,11 +70,27 @@ def measure_mask(flair, mask):
 
 
 def run_lesions(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
-                cancel=None, progress=None, demographics=None, primary_disease='other', clinical_note='', fazekas_overall=None):
+                cancel=None, progress=None, demographics=None, primary_disease='other', clinical_note='', fazekas_overall=None,
+                acquisition_mode='3d'):
+    if acquisition_mode not in ('3d', '2d'):
+        raise BrainError('Select 2D or 3D acquisition mode.')
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        from ..eagle_eye_remote.routing import lesions
+        return lesions(t1_source, flair_source, study_uid, t1_uid, flair_uid, root,
+                       cancel=cancel, progress=progress, primary_disease=primary_disease,
+                       clinical_note=clinical_note, fazekas_overall=fazekas_overall,
+                       **({'acquisition_mode': '2d'} if acquisition_mode == '2d' else {}))
     from .service import _ANALYSIS_LOCK
     if not _ANALYSIS_LOCK.acquire(blocking=False):
         raise BrainError('Another brain analysis is running. Wait for it to finish or cancel it first.')
     try:
+        if acquisition_mode == '2d':
+            from .lesions_2d import run_2d
+            return run_2d(t1_source, flair_source, study_uid=study_uid, t1_uid=t1_uid,
+                          flair_uid=flair_uid, root=root, cancel=cancel, progress=progress,
+                          demographics=demographics, primary_disease=primary_disease,
+                          clinical_note=clinical_note, fazekas_overall=fazekas_overall)
         return _run_lesions(t1_source, flair_source, study_uid=study_uid, t1_uid=t1_uid,
                             flair_uid=flair_uid, root=root, cancel=cancel, progress=progress,
                             demographics=demographics, primary_disease=primary_disease, clinical_note=clinical_note,
@@ -118,10 +132,27 @@ def _run_lesions(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
         sitk.WriteImage(t1, str(directory / 't1.nii.gz'))
         sitk.WriteImage(flair, str(directory / 'flair.nii.gz'))
         progress('Registering T1/FLAIR, extracting brain and segmenting white-matter lesion candidates')
-        run_process([bundle / 'python/python.exe', bundle / 'runner.py', str(directory)], directory,
-                    cancel, timeout=7200, environment={'LST_AI_DATA_DIR': str(bundle / 'data'),
-                                                     'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2',
-                                                     'PYTHONUNBUFFERED': '1'})
+        # Windows CreateProcess and registration tools cannot use the deeply
+        # nested patient store as cwd. Keep engine scratch private and short;
+        # persist only outputs and diagnostics in the original identity scope.
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix='ee-lst-') as temporary:
+            scratch = Path(temporary)
+            for name in ('t1.nii.gz', 'flair.nii.gz'):
+                shutil.copyfile(directory / name, scratch / name)
+            try:
+                run_process([bundle / 'python/python.exe', bundle / 'runner.py', str(scratch)], scratch,
+                            cancel, timeout=7200, environment={'LST_AI_DATA_DIR': str(bundle / 'data'),
+                                                             'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2',
+                                                             'PYTHONUNBUFFERED': '1'})
+                if cancel.is_set():
+                    raise BrainError('Lesion analysis cancelled.')
+                shutil.copytree(scratch / 'output', directory / 'output')
+            finally:
+                for name in ('process.log', 'process-diagnostics.jsonl'):
+                    if (scratch / name).is_file():
+                        shutil.copyfile(scratch / name, directory / name)
         mask_path = directory / 'output/space-flair_seg-lst.nii.gz'
         mask = sitk.ReadImage(str(mask_path))
         metrics = measure_mask(flair, mask)
@@ -141,10 +172,15 @@ def _run_lesions(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
         from .lesion_report import write_lesion_report
         if primary_disease == 'svd':
             from .svd_assessment import enrich_svd
-            result['svd_spatial'] = enrich_svd(result, directory, cancel=cancel, progress=progress)
-        elif primary_disease == 'ms':
-            from .ms_assessment import enrich_ms
-            result['ms_topography'] = enrich_ms(result, directory, t1_source=t1_source, cancel=cancel, progress=progress)
+            result['svd_spatial'] = enrich_svd(result, directory, t1_source=t1_source, cancel=cancel, progress=progress)
+        from .ms_assessment import enrich_ms
+        topography = enrich_ms(result, directory, t1_source=t1_source, cancel=cancel, progress=progress)
+        # Anatomical distribution is required for every white-matter report.
+        # Diagnostic-criteria interpretation remains specific to clinician-selected MS.
+        result['lesion_topography'] = {k: v for k, v in topography.items()
+                                      if k not in ('conclusion', 'potential_brain_dis_support', 'diagnosis')}
+        if primary_disease == 'ms':
+            result['ms_topography'] = topography
         write_lesion_report(result, flair, mask, directory)
         if cancel.is_set():
             raise BrainError('Lesion analysis cancelled; partial files remain marked incomplete.')

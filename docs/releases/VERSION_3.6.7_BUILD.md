@@ -6,6 +6,68 @@ Build lane: local install-QA
 Publication status: NOT PUBLISHED
 Production approval: NOT GIVEN
 
+## Shared native Slicer baseline for subsequent builds — 2026-09-23
+
+The definitive custom native Slicer runtime is documented in
+[`docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md`](../release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md).
+The default immutable build-input cache now snapshots that runtime and is
+selected by the canonical coordinator for **both** Client and Eagle Eye Server.
+Normal future product builds reuse it without rebuilding Slicer. The old
+`generated-files/distribution-assets/` and the pre-VC143
+`generated-files/distribution-assets-native-3.6.7-20260923/` caches are not
+valid fallbacks. The corrected default is
+`generated-files/distribution-assets-native-3.6.7-vc143-20260923/`.
+The VC143 correction packages compiler-matched CRT DLLs beside the unchanged
+native executable; its verified server candidate and source locations are in
+the linked baseline. Existing Client installer hashes below predate that
+correction and must not be presented as newly rebuilt CRT-corrected installers.
+The Server installers listed in the historical six-file section below still
+predate this native baseline: they were not rebuilt, accepted, or published by
+the Client-only run. A later Server request must build two new artifacts from
+the shared baseline and repeat installed acceptance.
+The stale Nuitka Eagle Eye 3.6.7 installer previously present at the top level
+of `builder nuitka/output/installer/` was moved recoverably to
+`_superseded/2026-09-23-pre-native-slicer-server/`; do not deliver it. There is
+no current Server installer from the definitive native baseline.
+
+## Latest Client-only native Slicer rebuild — 2026-09-23
+
+This later local install-QA candidate supersedes the Client Standard and
+ARM64-emulated rows recorded below. It does not supersede or rebuild the Eagle
+Eye Server artifacts. The pinned custom Slicer source was compiled natively and
+the same current inner viewer binary and startup bridge were verified in the
+Developer Run runtime, immutable Client asset cache, PyInstaller stage, and
+Nuitka stage. The isolated coordinator and cross-backend coherence check both
+completed successfully.
+
+| Backend | Client edition | Bytes | SHA-256 |
+|---|---|---:|---|
+| PyInstaller | Standard | 627,196,743 | `9D2C9945AD30AC4DB1C6FE3A07AEA8AD95570BA8E14021AEAF019EB149483907` |
+| PyInstaller | ARM64-emulated | 627,196,913 | `868C040A114AB3C9A008127968CAA79B38C8DE675B806A4671CC91C72E8D998F` |
+| Nuitka | Standard | 609,307,527 | `5FF5F7462E25F34ABC5B139AD120B22F3A93BF6BE4A8C18B5412DF0E686C6B2F` |
+| Nuitka | ARM64-emulated | 609,307,587 | `6D9889770049057A058B45630E7D118003CE6D14025115164956F08F2700417A` |
+
+The local candidate remains unpublished, unsigned, and non-promotable. Installed
+clean-host UI acceptance, hidden-warm-up acceptance, Git synchronization,
+credential remediation, and explicit production approval remain open gates.
+
+**Superseded UI evidence, 2026-09-22:** these installer outputs predate the
+latest Advanced Viewer presentation source and installed resident warm-up path
+correction. Their version number alone does not establish UI parity with current
+Developer Run. Preserve this historical record, but rebuild the selected Client
+or Server role after source freeze and repeat installed acceptance before delivery.
+The native inner Slicer executable is a January 2026 binary while custom native
+source changed in September. It was not rebuilt for this candidate. The new
+native-source provenance gate correctly rejects this runtime and its asset cache.
+
+**Client rebuild attempt, 2026-09-22:** the canonical coordinator was invoked
+with `--prepare-only --local-install-qa --target client`. It exited 1 at native
+Slicer provenance preflight, before creating a candidate or replacing an
+installer. The documented SuperBuild and pinned Qt 5.15.2 SDK were not found.
+MSVC and CMake were later located in Visual Studio 2022 Build Tools outside the
+default PATH. The existing Standard/ARM files in the two output
+folders remain historical artifacts and are not a new Client build.
+
 ## Outcome and scope
 
 This record covers the completed six-installer v3.6.7 local install-QA candidate.
@@ -54,7 +116,7 @@ failed or partial installer was promoted.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Version parity | `pyproject.toml`, application metadata, Information panel, Advanced Viewer title, and all installer version resources report 3.6.7 | PASS |
+| Version parity | Application and installer resources report 3.6.7; native Slicer remains an older compiled executable and the reported installed welcome dialog showed 0.1 | PARTIAL; native rebuild required |
 | Python environment | `.venv_build` dependency check: no broken requirements | PASS |
 | Plugin mirror parity | 470 pairs matched; 0 plugin-only files | PASS |
 | Distribution assets | 34,529 files / 4,329,814,502 bytes verified | PASS |

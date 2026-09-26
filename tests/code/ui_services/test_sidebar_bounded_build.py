@@ -58,6 +58,8 @@ def make_owner(count=20):
     owner._log_open_thumbnail_trace = lambda *a, **k: None
     owner._get_correct_study_path = lambda: 'synthetic-root'
     owner._is_series_downloaded = lambda *a, **k: False
+    owner.logo_patient = None
+    owner.check_logo_patient = lambda path, info=None: None
     owner.thumbnail_manager = ThumbnailManager(lambda *a: None)
     owner.scroll = QScrollArea(owner)
     owner.scroll.resize(240, 700)
@@ -691,3 +693,144 @@ def test_late_study_growth_queues_one_followup_prefetch(monkeypatch):
         owner.thumbnail_manager.dispose()
         owner.close()
         owner.deleteLater()
+
+
+def test_superseding_sidebar_generation_repositions_reused_history_card(monkeypatch):
+    """A retained card must move to its canonical row, never overlap its replacement."""
+    from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import ThumbnailImageSourceService
+
+    app = QApplication.instance() or QApplication([])
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    owner = make_owner(3)
+    history = dict(
+        series_number='100000', series_uid='synthetic-history',
+        study_uid=owner.study_uid, image_count=1, display_image_count=1,
+    )
+    owner._server_series_info['100000'] = history
+    entered = threading.Event()
+    release = threading.Event()
+    blocked_once = False
+
+    def prepare(_study_uid, storage_key, _path):
+        nonlocal blocked_once
+        if storage_key == '1' and not blocked_once:
+            blocked_once = True
+            entered.set()
+            assert release.wait(2)
+        image = QImage(8, 8, QImage.Format_RGB32)
+        image.fill(Qt.white)
+        return image
+
+    monkeypatch.setattr(ThumbnailImageSourceService, 'prepare_image', prepare)
+
+    def card_rows():
+        result = {}
+        for key, widget in owner.thumbnail_manager.series_widgets.items():
+            index = owner.thumb_grid.indexOf(widget)
+            assert index >= 0
+            result[key] = owner.thumb_grid.getItemPosition(index)[0]
+        return result
+
+    async def run():
+        owner._start_sidebar_build(files=[
+            Path('100000.png'), Path('1.png'), Path('2.png'), Path('3.png')])
+        first_task = owner._sidebar_build_task
+        for _ in range(300):
+            if entered.is_set() and owner.added == ['100000']:
+                break
+            await asyncio.sleep(.002)
+        assert entered.is_set() and owner.added == ['100000']
+
+        owner._start_sidebar_build(files=[
+            Path('1.png'), Path('2.png'), Path('3.png'), Path('100000.png')])
+        replacement_task = owner._sidebar_build_task
+        release.set()
+        await asyncio.gather(first_task, replacement_task, return_exceptions=True)
+
+        rows = card_rows()
+        assert set(rows) == {'1', '2', '3', '100000'}
+        assert len(set(rows.values())) == 4, 'A reused history card overlaps another series row'
+        assert [key for key, _row in sorted(rows.items(), key=lambda item: item[1])] == [
+            '100000', '1', '2', '3']
+        assert owner.thumb_grid.count() == 4
+        assert owner.thumb_count_label.text() == '4 series'
+
+    try:
+        with loop:
+            loop.run_until_complete(run())
+    finally:
+        release.set()
+        owner.thumbnail_manager.dispose()
+        owner.close()
+        owner.deleteLater()
+        asyncio.set_event_loop(None)
+
+
+def test_grouped_sidebar_orders_history_within_each_study_and_counts_cards(monkeypatch):
+    """Study headers do not enter counters; offset keys do not alter local order."""
+    from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import ThumbnailImageSourceService
+
+    app = QApplication.instance() or QApplication([])
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    owner = make_owner(1)
+    owner._studies_series = {'synthetic-a': [], 'synthetic-b': []}
+    groups = []
+    owner._server_series_info = {}
+    for study_uid, slot, rows in (
+        ('synthetic-a', 0, [('1', '1'), ('100000', '100000')]),
+        ('synthetic-b', 1, [('1000001', '1'), ('1100000', '100000')]),
+    ):
+        group = []
+        for display_key, original in rows:
+            info = dict(
+                study_uid=study_uid,
+                series_uid=f'{study_uid}-{original}',
+                series_number=display_key,
+                _orig_series_number=original,
+                folder_key=original,
+                series_path=f'synthetic-root/{study_uid}/{original}',
+                image_count=1,
+                display_image_count=1,
+            )
+            owner._server_series_info[display_key] = info
+            owner._studies_series[study_uid].append(info)
+            group.append((display_key, info))
+        groups.append((study_uid, slot, group))
+    owner._multistudy_viewer_groups = groups
+    monkeypatch.setitem(
+        owner._start_sidebar_build.__func__.__globals__, 'check_and_get_thumbnails',
+        lambda _root, _study_uid: [Path('1.png'), Path('100000.png')],
+    )
+    monkeypatch.setattr(
+        ThumbnailImageSourceService, 'prepare_image',
+        lambda *_args: QImage(8, 8, QImage.Format_RGB32),
+    )
+
+    async def run():
+        assert owner._render_multistudy_grouped()
+        await owner._sidebar_build_task
+
+        positions = {}
+        for key, widget in owner.thumbnail_manager.series_widgets.items():
+            index = owner.thumb_grid.indexOf(widget)
+            assert index >= 0
+            positions[key] = owner.thumb_grid.getItemPosition(index)[0]
+        assert [key for key, _row in sorted(positions.items(), key=lambda item: item[1])] == [
+            '100000', '1', '1100000', '1000001']
+        assert len(set(positions.values())) == 4
+        headers = owner.findChildren(QLabel, 'multiStudyHeader')
+        assert len(headers) == 2
+        assert all('(2 series)' in header.text() for header in headers)
+        assert owner.thumb_count_label.text() == '4 series'
+        assert owner.thumb_grid.count() == 6
+
+    try:
+        with loop:
+            loop.run_until_complete(run())
+    finally:
+        owner.thumbnail_manager.dispose()
+        owner.close()
+        owner.deleteLater()
+        asyncio.set_event_loop(None)

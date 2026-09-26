@@ -1,4 +1,18 @@
-param([switch]$TestServer)
+param(
+    [switch]$TestServer,
+    [switch]$EagleEyeServer,
+    [switch]$Standard,
+    [string]$EagleEyeConfig
+)
+
+if ($EagleEyeServer -and $Standard) { throw 'Choose one workstation role.' }
+$roleArgs = @()
+if ($EagleEyeServer -or $Standard) {
+    if (-not $EagleEyeConfig) {
+        $EagleEyeConfig = Join-Path $PSScriptRoot ('generated-files\eagle-eye\deployment\' + $(if ($EagleEyeServer) { 'server.json' } else { 'client.json' }))
+    }
+    $roleArgs = @('--eagle-eye-mode', $(if ($EagleEyeServer) { 'server' } else { 'standard' }), '--eagle-eye-config', $EagleEyeConfig)
+}
 
 # Normal launches use all default features without the automation test endpoint.
 $env:AIPACS_TEST_SERVER = if ($TestServer) { '1' } else { '0' }
@@ -30,7 +44,7 @@ if (-not (Test-Path $venvPython)) {
     }
 }
 
-& $venvPython $teeRunner --cwd $PSScriptRoot --log-file $sessionLog -- $venvPython main.py
+& $venvPython $teeRunner --cwd $PSScriptRoot --log-file $sessionLog -- $venvPython main.py @roleArgs
 $appExitCode = $LASTEXITCODE
 
 Add-Content -Path $sessionLog -Value ("[run_app] ExitCode={0}" -f $appExitCode) -Encoding UTF8

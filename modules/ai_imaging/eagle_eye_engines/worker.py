@@ -79,11 +79,6 @@ def breast(root, job, request):
     import CASE_DICOM_TO_PNG as d2p
     import XGBOOST_INFERENCE as xgb
     fcos, model = breast_model(root)
-    xgb.preload_models(str(root / 'weights/models_stacked'))
-    validate_stacker_schema(xgb._GLOBAL_CACHE)
-    xgb._GLOBAL_CACHE['base_models'] = {
-        kind: normalize_estimators(members)
-        for kind, members in xgb._GLOBAL_CACHE['base_models'].items()}
     png_dir = job / 'png'
     png_dir.mkdir()
     sources = request['files']
@@ -119,12 +114,27 @@ def breast(root, job, request):
             lesions.append({**row, **dict(zip(('xmin', 'ymin', 'xmax', 'ymax'), box))})
     if request['smoke'] and not lesions:
         lesions = [{**rows[0], 'xmin': 100, 'ymin': 100, 'xmax': 300, 'ymax': 350}]
-    classified = classify(root, job, lesions) if lesions else None
+    classified = None
+    classification_status = 'no_detections'
+    if lesions:
+        try:
+            xgb.preload_models(str(root / 'weights/models_stacked'))
+            validate_stacker_schema(xgb._GLOBAL_CACHE)
+            xgb._GLOBAL_CACHE['base_models'] = {
+                kind: normalize_estimators(members)
+                for kind, members in xgb._GLOBAL_CACHE['base_models'].items()}
+            classified = classify(root, job, lesions)
+            classification_status = 'completed'
+        except Exception:
+            if request['smoke']:
+                raise
+            classification_status = 'unavailable'
+            (job / 'classification.csv').unlink(missing_ok=True)
     if classified:
         fcos.regenerate_overlays_with_classification(str(job), classified, verbose=False)
     return dict(csv=str(detection), csv_classification=classified, auxiliary_head_available=False,
                 images=[str(p) for p in sorted((job / 'ALL_VIZ').glob('*.png'))],
-                image_count=len(rows), classification_status='completed' if classified else 'no_detections')
+                image_count=len(rows), classification_status=classification_status)
 
 
 def bone(root, job, request):

@@ -36,10 +36,11 @@ whole study back from the backup.
 
 SCOPE
 -----
-LOCAL ONLY. The AI-PACS server exposes no demographic-write endpoint (the
-socket protocol is read-only apart from ``UpdateReportStatus``; the REST
-surface only writes report content/status, approval flags, comments and
-assignment). Edited values therefore live on this workstation until the
+LOCAL ONLY. This client has no coordinated server demographic correction.
+The PACS REST PatientID rename updates database/capture records, but does not
+rewrite stored DICOM headers or support reassignment to an existing patient.
+It is not a substitute for a study-scoped correction transaction.
+Edited values therefore live on this workstation until the
 server-side record is corrected too — and a subsequent
 "Refresh / Sync from server" will overwrite the local DB values with the
 server's originals. ``server_push_supported()`` reports this so the UI can say
@@ -113,11 +114,10 @@ _RE_AGE_LOOSE = re.compile(r"^\s*(\d{1,3})\s*([DWMYdwmy])?\s*$")
 def server_push_supported() -> bool:
     """Whether edited demographics can be pushed back to the AI-PACS server.
 
-    Always ``False`` today: no socket command and no REST endpoint accepts a
-    demographic field (verified 2026-07-18). Exposed as a function rather than
-    a constant so the UI has one honest place to ask, and so enabling a future
-    server endpoint is a one-line change here instead of a copy-pasted string
-    in a dialog.
+    False until a coordinated, study-scoped correction is implemented and
+    verified end to end. The existing PACS REST rename is not sufficient:
+    stored DICOM headers remain unchanged and existing target IDs are rejected.
+    Discovering a rename endpoint alone must not enable this capability.
     """
     return False
 

@@ -95,6 +95,8 @@ def build_command_bus(
             home_adapter = HomeCommandAdapter(legacy_home)
             reg.register("home", home_adapter, actions={
                 "list_patients":    "list_patients",
+                "read_patients":    "read_patients",
+                "search_patients":  "search_patients",
                 "open_patient":     "open_patient",
                 "select_patient":   "select_patient",
                 "download_patient": "download_patient",
@@ -141,6 +143,10 @@ def build_command_bus(
     # forward / refresh. Education: consultation, courses, case of the
     # day, library search. Both degrade to typed MODULE_UNAVAILABLE
     # envelopes when the launcher yields no widget.
+    if module_launchers and "eagle_ai" in module_launchers:
+        from .adapters.eagle_eye_command_adapter import EagleEyeCommandAdapter, ACTIONS
+        reg.register("eagle_eye", EagleEyeCommandAdapter(module_launchers["eagle_ai"]), actions=ACTIONS)
+
     if module_launchers and "web_browser" in module_launchers:
         try:
             from .adapters.browser_command_adapter import (

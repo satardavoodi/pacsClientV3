@@ -1561,6 +1561,68 @@ def clear_study_cache(study_uid=None):
         _thumbnail_cache.clear()
 
 
+def _local_multiframe_thumbnail_preview(series_path, study_uid, series_uid):
+    """Decode one display frame for a PNG, without a viewer geometry contract.
+
+    This is a worker-only thumbnail adapter, not a spatial volume loader. Keep
+    the exact persisted folder and validate identity before decoding its pixels.
+    GDCM owns pixel decoding/rescale; no viewer-private cache is involved.
+    """
+    for path in sorted(Path(series_path).glob('*')):
+        if not path.is_file() or path.suffix.lower() != '.dcm':
+            continue
+        header = _safe_dcmread(path, stop_before_pixels=True)
+        if (str(header.get('StudyInstanceUID', '')) != str(study_uid)
+                or str(header.get('SeriesInstanceUID', '')) != str(series_uid)):
+            raise ValueError('Local thumbnail source identity mismatch')
+        if int(header.get('NumberOfFrames', 1) or 1) <= 1:
+            from .advanced_presentation import DX_PRESENTATION, load_presentation_sequence
+            if str(header.get('SOPClassUID', '')) == DX_PRESENTATION:
+                # Reuse the existing stateless presentation decoder for this
+                # worker-owned thumbnail only. Never prepare an entire sequence
+                # or enter a viewer cache just to create one PNG.
+                files = [p for p in Path(series_path).iterdir()
+                         if p.is_file() and p.suffix.lower() == '.dcm']
+                if len(files) != 1:
+                    return None
+                frame, metadata = load_presentation_sequence(
+                    [str(path)], series_number=Path(series_path).name,
+                    max_itk_threads=1)
+                identity = metadata['series']
+                if (identity.get('study_instance_uid') != str(study_uid)
+                        or identity.get('series_instance_uid') != str(series_uid)):
+                    raise ValueError('Local thumbnail source identity changed')
+                return frame, metadata, None, 1
+            return None  # The existing single-frame path remains authoritative.
+        reader = sitk.ImageFileReader()
+        reader.SetFileName(str(path))
+        reader.ReadImageInformation()
+        size = list(reader.GetSize())
+        if len(size) != 3 or size[2] < 1:
+            return None
+        reader.SetExtractIndex([0, 0, 0])
+        reader.SetExtractSize([size[0], size[1], 1])
+        image = reader.Execute()
+        # VOI may live per-frame, shared, or at top level. Pixels are already
+        # modality-rescaled by GDCM; do not apply that transform a second time.
+        voi = header
+        for groups in (header.get('PerFrameFunctionalGroupsSequence', []),
+                       header.get('SharedFunctionalGroupsSequence', [])):
+            if groups and groups[0].get('FrameVOILUTSequence'):
+                voi = groups[0].FrameVOILUTSequence[0]
+                break
+        def first_number(value):
+            if isinstance(value, (list, tuple, pydicom.multival.MultiValue)):
+                value = value[0] if value else None
+            return float(value) if value is not None else None
+        metadata = {'series': {}, 'instances': [{
+            'window_width': first_number(voi.get('WindowWidth')),
+            'window_center': first_number(voi.get('WindowCenter')),
+        }]}
+        return convert_itk2vtk(image), metadata, None, 1
+    return None
+
+
 def repair_local_series_thumbnail(
     study_uid: str,
     study_info: dict,
@@ -1596,12 +1658,15 @@ def repair_local_series_thumbnail(
         if not patient_pk or not study_pk or not series_pk:
             return ''
 
-        preview = load_series_preview(
-            study_path=str(persisted_path.parent),
-            series_number=folder_key,
-            patient_pk=patient_pk,
-            study_pk=study_pk,
-        )
+        preview = _local_multiframe_thumbnail_preview(
+            persisted_path, study_uid, series_uid)
+        if preview is None:
+            preview = load_series_preview(
+                study_path=str(persisted_path.parent),
+                series_number=folder_key,
+                patient_pk=patient_pk,
+                study_pk=study_pk,
+            )
         if not preview:
             return ''
 

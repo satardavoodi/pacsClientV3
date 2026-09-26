@@ -19,6 +19,18 @@ def validate_payload(source, *, for_distribution=True):
                 raise ValueError
         except (OSError, ValueError, KeyError, TypeError):
             raise RuntimeError('MS lesion distribution requires model-bound offline inference, GUI acceptance and asset rights review.') from None
+    if (source / 'mindglide/manifest.json').is_file():
+        from modules.ai_imaging.eagle_eye_brain.lesions_2d import validate_engine
+        engine, _ = validate_engine(source)
+        if for_distribution:
+            try:
+                receipt = json.loads((engine / 'acceptance.json').read_text(encoding='utf-8'))
+                if (receipt['manifest_sha256'] != sha256(engine / 'manifest.json')
+                        or receipt['offline_inference'] != 'passed' or receipt['live_gui'] != 'passed'
+                        or receipt['distribution_rights_review'] != 'approved'):
+                    raise ValueError
+            except (OSError, ValueError, KeyError, TypeError):
+                raise RuntimeError('2D lesion redistribution requires its own model-bound inference, GUI and rights acceptance.') from None
     return manifest
 
 
@@ -35,5 +47,13 @@ def stage_eagle_eye_lesions(payload, *, for_distribution=True):
             destination = target / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, destination)
+    if (source / 'mindglide/manifest.json').is_file():
+        engine_manifest = json.loads((source / 'mindglide/manifest.json').read_text(encoding='utf-8'))
+        for name in [*engine_manifest['sha256'], 'manifest.json', 'acceptance.json']:
+            item = source / 'mindglide' / name
+            if item.is_file():
+                destination = target / 'mindglide' / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, destination)
     validate_payload(target, for_distribution=for_distribution)
     return target

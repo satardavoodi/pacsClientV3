@@ -1,5 +1,23 @@
 # Multi-Study Single-Tab Viewer — Implementation Record
 
+**2026-09-26 patient-tab header thumbnail correction:** the tab header now consumes
+the same successfully admitted card sequence as the grouped sidebar. It skips the
+exact history document using `_orig_series_number`, so an offset key neither hides an
+ordinary image nor admits an offset document. The owner is resolved by PatientWidget
+identity rather than the currently selected tab. Study slots, offset handles, group
+ordering and Viewer behavior are unchanged. Four guards failed before; 238 related
+tests and 42 packaging-input tests pass. Fresh multi-study GUI acceptance is pending.
+
+**2026-09-26 canonical presentation correction:** study groups keep their stable
+slot order and collision-free offset handles, while one shared pure key orders only
+the members inside each study. Exact history series 100000 uses the original local
+number, never the offset key. A superseding bounded generation now repositions a
+retained card instead of leaving it on its prior grid row; total and header counters
+count series, not headers. Two behavioral guards failed before and pass after; 230
+affected/adjacent checks and 42 packaging-input checks pass. Fresh-source large and
+multi-study visual acceptance remains pending. No download, storage, viewport,
+decoder or study-slot behavior changed.
+
 **2026-09-17 shared enumeration correction:** grouped Local uses the same exact
 catalog/offset/header contract while its inventory avoids one redundant type-stat
 per candidate. Fresh version validation is preserved. No first-paint latency

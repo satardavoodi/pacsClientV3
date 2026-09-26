@@ -163,6 +163,7 @@ class BrainVolumetryWidget(QWidget):
         self.save_pdf.setToolTip('Choose where to save a complete copy of this report.')
         result_layout.addLayout(actions)
         self._manual_session = None
+        self._pending_manual_review = False
         self.manual_edit = QPushButton('Manual correction in 3D Slicer')
         self.manual_edit.setObjectName('brainManualCorrection')
         self.manual_edit.clicked.connect(self._manual_open)
@@ -208,6 +209,9 @@ class BrainVolumetryWidget(QWidget):
             target.setText(path)
 
     def _start(self):
+        if self._pending_manual_review:
+            self.status.setText('Resume the pending server correction before starting another analysis.')
+            return
         if self._future is not None or not self.confirm.isChecked() or not self.t1.text().strip():
             self.status.setText("Select the T1 image and confirm its protocol and examination identity.")
             return
@@ -226,7 +230,7 @@ class BrainVolumetryWidget(QWidget):
         self.run.setEnabled(False)
         self.regenerate.setEnabled(False)
         self.cancel.setEnabled(True)
-        self.status.setText("Preparing local analysis")
+        self.status.setText("Preparing analysis")
         # Snapshot all GUI state now. The worker never reads a widget or live PACS state.
         sources = self.t1.text().strip(), self.flair.text().strip()
         plan = BrainPlan(profile=self.profile.currentData())
@@ -259,6 +263,7 @@ class BrainVolumetryWidget(QWidget):
         self._begin_progress()
 
     def _begin_progress(self):
+        self._control_error = None
         self._elapsed.start()
         self.progress_bar.show()
         self._update_progress()
@@ -273,7 +278,7 @@ class BrainVolumetryWidget(QWidget):
         else:
             detail = ('Cancellation requested; waiting for the current operation to stop.'
                       if self._cancel.is_set() else
-                      'Processing locally. Some stages can take several minutes; time remaining is unavailable.')
+                      'Analysis is in progress. Some stages can take several minutes; time remaining is unavailable.')
             self.progress_detail.setText(f'Elapsed {duration} | {detail}')
 
     def _poll(self):
@@ -296,11 +301,28 @@ class BrainVolumetryWidget(QWidget):
             self.save_pdf.setEnabled(bool(self._result and self._result.get('pdf_available')))
         try:
             result = future.result()
-        except BrainError as exc:
+        except (BrainError, ValueError) as exc:
+            self._control_error = type(exc).__name__
             self._update_progress('Stopped')
             self.status.setText(str(exc))
-        except Exception:
+        except Exception as exc:
+            self._control_error = 'AnalysisError'
             self._update_progress('Stopped')
+            from ..eagle_eye_remote.client import DetachedAnalysis, AnalysisFailed
+            if isinstance(exc, AnalysisFailed) and self._future_kind == 'manual_recalculate':
+                self._pending_manual_review = False
+                self.manual_edit.setEnabled(True)
+                self.manual_recalculate.setText('Apply mask on server / recalculate')
+                self.status.setText('The server did not complete the correction. Your local draft is retained; you can retry.')
+                return
+            if isinstance(exc, DetachedAnalysis) and self._future_kind == 'manual_recalculate':
+                self._pending_manual_review = True
+                for button in (self.run, self.regenerate, self.study_button, self.manual_edit):
+                    button.setEnabled(False)
+                self.manual_recalculate.setText('Resume server correction')
+                self.manual_recalculate.setEnabled(True)
+                self.status.setText(str(exc))
+                return
             if self._future_kind == 'export':
                 self.status.setText('Could not save the PDF. Close any open destination file or choose another folder and retry.')
             elif self._future_kind == 'series':
@@ -325,12 +347,15 @@ class BrainVolumetryWidget(QWidget):
             if self._future_kind == 'manual_open':
                 self._manual_session = result
                 self.manual_recalculate.setEnabled(not self._result.get('longitudinal'))
+                self.manual_recalculate.setText('Apply mask on server / recalculate' if self._result.get('remote_analysis') else 'Recalculate corrected report')
                 self.status.setText('Edit existing segments in Slicer, then save the correction. PACS remains available.')
                 return
-            if self._future_kind != 'manual_recalculate':
+            if self._future_kind != 'manual_recalculate' or result.get('remote_analysis'):
                 self._manual_session = None
                 self.manual_recalculate.setEnabled(False)
             self._result = result
+            self._pending_manual_review = False
+            self.manual_edit.setEnabled(True)
             self.comparison_button.setVisible(bool(result.get("t1_consistency_pdf")))
             self.report.setText(
                 '<h2>Ready for review</h2>'
@@ -356,6 +381,9 @@ class BrainVolumetryWidget(QWidget):
     def _manual_open(self):
         if self._future is not None or not self._result:
             return
+        if self._result.get('remote_analysis') and not self._result.get('review_assets'):
+            self.status.setText('This older result has no editable reference bundle. Update the server and run the analysis again.')
+            return
         if self._manual_session:
             self.status.setText('A manual review session is already open. Save its correction in Slicer, then recalculate here.')
             return
@@ -373,9 +401,10 @@ class BrainVolumetryWidget(QWidget):
         from .manual_review import recalculate_review
         self._future_kind = 'manual_recalculate'
         self._cancel.clear()
-        self.status.setText('Recalculating corrected measurements and report')
+        self.status.setText('Sending the corrected mask to Eagle Eye Server for recalculation' if self._result.get('remote_analysis') else 'Recalculating corrected measurements and report')
         self._future = self._executor.submit(recalculate_review, self._manual_session,
                                             cancel=self._cancel, progress=self._messages.put)
+        self.cancel.setEnabled(True)
         self._begin_progress()
 
     def _demographics(self):
@@ -475,7 +504,31 @@ class BrainVolumetryWidget(QWidget):
         self.status.setText('Loading MRI series from the current examination...')
         self._begin_progress()
 
+    def _apply_controlled_series(self, rows):
+        inputs = getattr(self, '_control_inputs', None)
+        if inputs is None: return False
+        from .controlled_inputs import select_brain_inputs
+        try:
+            lesions = hasattr(self, 'primary_disease')
+            first, second = select_brain_inputs(rows, inputs, lesions=lesions)
+            if lesions:
+                index = self.primary_disease.findData(inputs.get('clinical_context'))
+                if index <= 0: raise ValueError('A supported clinical_context is required for lesion analysis.')
+                self.primary_disease.setCurrentIndex(index)
+            self._selected_series, self._selected_flair = first, second
+            self._supplementary = []
+            self.t1.setText(first['path'])
+            self.flair.setText(second['path'] if second else '')
+            self.confirm.setChecked(True)
+            self._control_error = None
+            self._load_demographics()
+        except ValueError as error:
+            self._control_error = str(error)
+            self.status.setText(str(error))
+        return True
+
     def _choose_t1_series(self, rows):
+        if self._apply_controlled_series(rows): return
         dialog = QDialog(self)
         dialog.setWindowTitle('Select the 3D T1 MPRAGE series')
         dialog.resize(720, 420)

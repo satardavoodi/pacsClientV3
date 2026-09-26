@@ -374,89 +374,13 @@ class MamoWorker(QThread):
 
     def run(self):
         try:
-            # URL = f"{self.base_url}/api/v1/run_by_study"
-            from modules.ai_imaging.eagle_eye_engines.service import available, run_study
-            if available('breast'):
-                out = run_study('breast', self.study_uid, threshold=self.det_eval_thr,
-                                cancelled=lambda: self.canceled)
-                if not self.canceled:
-                    self.finished.emit(out)
-                return
-            URL = f"{self.breast_url}/api/v1/run_full_analysis"
-
-            payload = {
-                "study_id": self.study_uid,
-                "output_name": self.study_uid,
-                "det_eval_thr": self.det_eval_thr,   # ← مقدار از دیالوگ
-                "aux_eval_thr": self.aux_eval_thr,
-                "run_classification": True,
-                # "save_npy": True,
-                # "save_png16": True
-
-            }
-            # (connect, read) — a DEAD host now fails in ~10 s instead of blocking
-            # this worker thread for the full 240 s (a "stuck request"). The server
-            # analysis itself is allowed the full 240 s read budget.
-            resp = requests.post(URL, json=payload, timeout=(10, 240))
-
-            print("============================")
-            print(f"[MG][REQ] url={URL}")
-            print(f"[MG][REQ] payload={payload}")
-            print(f"[MG][RESP] status={resp.status_code} ok={resp.ok}")
-            try:
-                print(f"[MG][RESP] headers={dict(resp.headers)}")
-            except Exception:
-                pass
-            print("============================")
-
-            if self.canceled:
-                raise Exception("Process canceled by user")
-
-            # NOTE: do NOT use resp.raise_for_status() here.
-            #
-            # raise_for_status() builds its HTTPError from the status LINE only and
-            # discards the response BODY — but the body is where the AI server puts
-            # the actual cause. A 502 therefore surfaced to the user as a bare
-            # "Bad Gateway" while the discarded body said, e.g.:
-            #     "PACS request failed: 127.0.0.1:8000 ... actively refused"
-            # i.e. the AI server's own PACS backend was down. The user (and we) had
-            # no way to see that. Read the body, then raise.
-            if not resp.ok:
-                detail = ""
-                try:
-                    detail = (resp.text or "").strip()
-                except Exception:
-                    pass
-                if len(detail) > 600:
-                    detail = detail[:600] + "…"
-                print(f"[MG][RESP] error body={detail!r}")
-                raise Exception(
-                    f"AI server returned {resp.status_code} {resp.reason or ''}".strip()
-                    + (f" — {detail}" if detail else "")
-                )
-
-            try:
-                data = resp.json()
-                if isinstance(data, dict):
-                    print(f"[MG][RESP] json keys={list(data.keys())}")
-                else:
-                    print(f"[MG][RESP] json type={type(data)}")
-                print(f"[MG][RESP] json={data}")
-            except ValueError:
-                raw = (resp.text or "")
-                snippet = raw[:1000]
-                raise Exception(f"Invalid JSON response: {snippet}")
-
-            # 2) دانلود فایل‌ها با چک cancel
-            out = self.download_updated_csv_and_overlays(self.study_uid, data, self.breast_url, headers=self.headers)
-
-            if self.canceled:
-                raise Exception("Process canceled by user")
-
-            self.finished.emit(out)  # خروجی دانلود را emit می‌کند (اختیاری)
-
-        except Exception as e:
-            self.error.emit(f"Error during AI process: {str(e)}")
+            from modules.ai_imaging.eagle_eye_remote.routing import study as run_study
+            out = run_study('breast', self.study_uid, threshold=self.det_eval_thr,
+                            cancelled=lambda: self.canceled)
+            if not self.canceled:
+                self.finished.emit(out)
+        except Exception as exc:
+            self.error.emit(f'Eagle Eye analysis failed: {exc}')
 
     def _with_threshold_and_no_overwrite(
             self,
@@ -578,81 +502,19 @@ class BoneAgeWorker(QThread):
 
     def run(self):
         try:
-            from modules.ai_imaging.eagle_eye_engines.service import available, run_study
-            if available('bone-age'):
-                data = run_study('bone-age', self.study_uid, sex=self.sex,
-                                 cancelled=lambda: self.canceled)
-                if self.canceled:
-                    return
-                self.data = data
-                saved = self._save_result_json(data)
-                if saved is None:
-                    raise RuntimeError('The local Bone Age result could not be saved.')
-                data['_json_path'] = str(saved)
-                self.finished.emit(data)
+            from modules.ai_imaging.eagle_eye_remote.routing import study as run_study
+            data = run_study('bone-age', self.study_uid, sex=self.sex,
+                             cancelled=lambda: self.canceled)
+            if self.canceled:
                 return
-
-            # endpoint سرویس سن استخوان
-            url = f"{self.boneage}/predict"
-            payload = {
-                "study_id": self.study_uid,
-            }
-            if self.sex:
-                if self.sex in ["m", "M", "male", "Male", "0", 0]:
-                    payload["sex"] = "male"
-                elif self.sex in ["female", "F", "Female", "1", 1]:
-                    payload["sex"] = "female"
-
-            print(f"payload in bone worker {payload}\n")
-            print("==========================")
-            print(f"bone age url is : {url}")
-            print(f"Bone age payload is : {payload}")
-            print("==========================")
-
-            # (connect, read) — a dead host fails in ~10 s instead of hanging the
-            # worker thread for the full budget (a "stuck request").
-            resp = requests.post(
-                url,
-                json=payload,
-                headers=self.headers,
-                timeout=(10, 360)
-            )
-            print("[DX] resp:", resp)
-
-            if self.canceled:
-                raise Exception("Process canceled by user")
-
-            resp.raise_for_status()
-
-            try:
-                data = resp.json()
-                # فقط برای اطمینان که keyها هستن (اگر نباشه KeyError می‌گیری)
-                _months = data["predicted_bone_age_months"]
-                _years = data["predicted_bone_age_years"]
-
-                self.data = data
-                print(f"self.data: {self.data}")
-            except ValueError:
-                raise Exception(f"Invalid JSON response: {resp.text}")
-            except KeyError as e:
-                raise Exception(f"Missing expected field in response: {e}")
-
-            if self.canceled:
-                raise Exception("Process canceled by user")
-
-            # ✅ ذخیره‌ی نتیجه DX به‌صورت JSON در دیسک (برای کش مثل MG)
-            json_path = self._save_result_json(data)
-            if json_path is not None:
-                data["_json_path"] = str(json_path)
-
-            feedback_csv_path = self._save_feedback_csv(data)
-            if feedback_csv_path is not None:
-                data["_feedback_csv_path"] = str(feedback_csv_path)
-
+            self.data = data
+            saved = self._save_result_json(data)
+            if saved is None:
+                raise RuntimeError('The Bone Age result could not be saved.')
+            data['_json_path'] = str(saved)
             self.finished.emit(data)
-
-        except Exception as e:
-            self.error.emit(f"Error during bone-age AI process: {str(e)}")
+        except Exception as exc:
+            self.error.emit(f'Eagle Eye analysis failed: {exc}')
 
     def _save_result_json(self, data: dict):
         """
@@ -1140,14 +1002,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         overlay_ref = {'overlay': loading_overlay, 'timer': None}
 
         # 3) Worker
-        breast_url = get_server_url('breast')
-        from modules.ai_imaging.eagle_eye_engines.service import available
-        if not breast_url and not available('breast'):
-            show_message(
-                "Breast AI service URL is not configured. "
-                "Go to Settings > Server Settings > AI Service URL, approve, then save URLs."
-            )
-            return
+        breast_url = ''  # Retired endpoint is never used by the Eagle Eye job client.
         worker = MamoWorker(study_uid, breast_url, det_eval_thr=det_thr)
 
         def on_finished(out: dict):
@@ -1179,8 +1034,8 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             # ✅ اگر classification نیامده → یعنی هیچ چیزی detect نشده
             if cls_path is None:
                 show_message(
-                    "AI analysis completed.\n"
-                    "ُThis case is normal with the selected threshold."
+                    "Detection results are available.\n"
+                    "No completed lesion classification is available. Review the detection output; this is not a negative classification."
                 )
             else:
                 show_message("EAGLE EYE (MG) completed successfully!")
@@ -1271,18 +1126,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         
         # Store reference to overlay for cleanup
         overlay_ref = {'overlay': loading_overlay, 'timer': None}
-        boneage_url = get_server_url('boneage')
-        from modules.ai_imaging.eagle_eye_engines.service import available
-        if not boneage_url and not available('bone-age'):
-            try:
-                AiPacsLoadingOverlay.hide_overlay(loading_overlay, fade_ms=0, delay_ms=0)
-            except RuntimeError:
-                pass
-            show_message(
-                "Bone age AI service URL is not configured. "
-                "Go to Settings > Server Settings > AI Service URL, approve, then save URLs."
-            )
-            return
+        boneage_url = ''  # Use only the configured Eagle Eye job service.
 
         worker = BoneAgeWorker(
             study_uid=study_uid,

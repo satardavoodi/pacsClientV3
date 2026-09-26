@@ -5,7 +5,7 @@ import numpy as np
 from .contracts import BrainError
 
 
-def read_volume(path, *, expected_protocol="t1"):
+def read_volume(path, *, expected_protocol="t1", allow_2d=False):
     import SimpleITK as sitk
     if expected_protocol not in {"t1", "flair"}:
         raise BrainError("Unsupported brain input protocol.")
@@ -24,7 +24,7 @@ def read_volume(path, *, expected_protocol="t1"):
             ds = pydicom.dcmread(filename, stop_before_pixels=True,
                                 specific_tags=["NumberOfFrames", "ImagePositionPatient", "ImageOrientationPatient",
                                                "Modality", "SOPClassUID", "MRAcquisitionType",
-                                               "SeriesDescription", "ProtocolName"])
+                                               "SeriesDescription", "ProtocolName", "InversionTime"])
             # Reject explicit contradictions; missing/vendor-specific descriptions
             # still require operator verification and are not positive classification.
             description = " ".join(str(getattr(ds, key, "")) for key in
@@ -32,14 +32,16 @@ def read_volume(path, *, expected_protocol="t1"):
             tokens = set(re.findall(r"[a-z0-9]+", description))
             if expected_protocol == "t1" and tokens & {"t2", "t2w", "flair", "swi", "dwi", "adc", "diff"}:
                 raise BrainError("DICOM sequence metadata contradicts the selected T1-weighted role. Select the original MPRAGE series.")
-            if expected_protocol == "flair" and (tokens & {"t1", "t1w", "mprage"}
-                                                  or (tokens & {"t2", "t2w"} and "flair" not in tokens)):
+            dark_fluid = (allow_2d and 'tirm' in tokens and {'dark', 'fluid'} <= tokens
+                          and float(getattr(ds, 'InversionTime', 0) or 0) >= 1500)
+            if expected_protocol == "flair" and (tokens & {"t1", "t1w", "mprage", "stir"}
+                                                  or (tokens & {"t2", "t2w"} and "flair" not in tokens and not dark_fluid)):
                 raise BrainError("DICOM sequence metadata contradicts the selected FLAIR role.")
             if int(getattr(ds, "NumberOfFrames", 1)) != 1:
                 raise BrainError("Export this enhanced MR series with dcm2niix and select its NIfTI file.")
             if str(getattr(ds, "Modality", "")) != "MR" or str(getattr(ds, "SOPClassUID", "")) != str(pydicom.uid.MRImageStorage):
                 raise BrainError("The direct DICOM path requires classic MR images; use a qualified NIfTI export for other objects.")
-            if str(getattr(ds, "MRAcquisitionType", "")).upper() == "2D":
+            if str(getattr(ds, "MRAcquisitionType", "")).upper() == "2D" and not allow_2d:
                 raise BrainError("This protocol requires a 3D MR acquisition.")
             current = np.asarray(getattr(ds, "ImageOrientationPatient", []), dtype=float)
             position = np.asarray(getattr(ds, "ImagePositionPatient", []), dtype=float)

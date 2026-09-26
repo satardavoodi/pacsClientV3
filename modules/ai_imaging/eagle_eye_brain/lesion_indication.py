@@ -32,7 +32,8 @@ def context_html(result):
             + '<br>This indication is not an automated diagnosis.</p>')
     if context['primary_disease'] == 'svd':
         from .wmh_reference import reference_status
-        reference_note = ('Age/sex reference: approximate graphical band; see the dedicated assessment.'
+        reference_note = ('Age/sex percentile: unavailable for this 2D backend.' if result.get('acquisition_mode') == '2d' else
+                          'Age/sex reference: approximate graphical band; see the dedicated assessment.'
                           if reference_status(result)['status'] == 'approximate_graphical_band' else
                           'Age/sex percentile: not calculated; see the reference-method explanation.')
         grade = supplied.get('fazekas_overall')
@@ -68,14 +69,40 @@ def regenerate_lesion_report(result_path, primary_disease, note='', *, fazekas_o
     flair = sitk.ReadImage(str(source.parent / 'flair.nii.gz'))
     mask = sitk.ReadImage(result['mask_path'])
     metrics = measure_mask(flair, mask)
+    two_d = result.get('acquisition_mode') == '2d'
+    if two_d:
+        from .lesions_2d import measure_slices
+        previous_context = result.get('clinical_context', {}).get('primary_disease')
+        if result.get('source_band_filter') and primary_disease != previous_context:
+            raise BrainError('Re-run analysis before changing the context of a manually revised band-filter result.')
+        if result.get('band_filter') and primary_disease != previous_context:
+            if primary_disease == 'ms':
+                raise BrainError('Re-run 2D analysis for MS context so native band review can be recalculated.')
+            raw_path = result.get('raw_mask_path')
+            if not raw_path or not Path(raw_path).is_file():
+                raise BrainError('The raw 2D mask is required when changing report context. Re-run analysis.')
+            mask = sitk.ReadImage(raw_path)
+            result.pop('band_filter', None)
+            result.pop('raw_mask_path', None)
+            result.pop('band_mask_path', None)
+        metrics = measure_slices(flair, mask, thickness_mm=result['metrics']['slice_thickness_mm'])
     directory = source.parent / 'reports' / ('revision-' + uuid.uuid4().hex[:12])
     directory.mkdir(parents=True)
     result.update(clinical_context=context, metrics=metrics, artifact_directory=str(directory),
                   source_result=str(source), revised_at=datetime.now(timezone.utc).isoformat(), pdf_available=False)
-    if primary_disease == 'svd' and spatial:
+    if two_d:
+        sitk.WriteImage(flair, str(directory / 'flair.nii.gz'))
+        sitk.WriteImage(mask, str(directory / 'labels.nii.gz'))
+        result['mask_path'] = str(directory / 'labels.nii.gz')
+        for key, name in (('raw_mask_path', 'labels-raw.nii.gz'), ('band_mask_path', 'labels-band-review.nii.gz')):
+            if result.get(key):
+                image = sitk.ReadImage(result[key])
+                sitk.WriteImage(image, str(directory / name))
+                result[key] = str(directory / name)
+    if primary_disease == 'svd' and spatial and not two_d:
         from .svd_assessment import enrich_svd
         result['svd_spatial'] = enrich_svd(result, source.parent)
-    elif primary_disease == 'ms' and spatial:
+    elif primary_disease == 'ms' and spatial and not two_d:
         from .ms_assessment import enrich_ms
         result['ms_topography'] = enrich_ms(result, source.parent)
     write_lesion_report(result, flair, mask, directory)

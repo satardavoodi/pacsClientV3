@@ -12,6 +12,12 @@ numbers (~100000). The thumbnail list now applies a PRIORITY rule:
 import os
 from pathlib import Path
 
+from PacsClient.utils.series_identity import (
+    is_clinical_history_series as canonical_history_detector,
+    order_series_for_presentation,
+    series_presentation_order_key,
+)
+
 _ROOT = Path(__file__).resolve().parents[3]
 _PW = (_ROOT / "PacsClient" / "pacs" / "patient_tab" / "ui" / "patient_ui"
        / "patient_widget_core" / "_pw_thumbnails.py")
@@ -108,11 +114,26 @@ def test_flag_off_restores_pure_numeric_order():
     assert ordered == ["1", "2", "100000"]                 # history sinks to its numeric place
 
 
+def test_canonical_order_keeps_studies_grouped_and_uses_original_number():
+    rows = [
+        {"study_uid": "study-a", "series_number": "1"},
+        {"study_uid": "study-a", "series_number": "100000"},
+        {"study_uid": "study-b", "series_number": "1000001", "_orig_series_number": "1"},
+        {"study_uid": "study-b", "series_number": "1100000", "_orig_series_number": "100000"},
+    ]
+    ordered = order_series_for_presentation(rows)
+    assert [(row["study_uid"], row["series_number"]) for row in ordered] == [
+        ("study-a", "100000"), ("study-a", "1"),
+        ("study-b", "1100000"), ("study-b", "1000001"),
+    ]
+    assert series_presentation_order_key(rows[2]) > series_presentation_order_key(rows[3])
+
+
 # ── source pins: all three sort points use the helper ────────────────────────
 def test_all_sort_points_use_history_first():
     s = _PW.read_text(encoding="utf-8", errors="ignore")
     assert "def series_is_clinical_history" in s
     assert "AIPACS_HISTORY_SERIES_FIRST" in s
-    assert "hist = 0 if (_hist_on and series_is_clinical_history(s)) else 1" in s      # multi-study group
-    assert "hist = 0 if (_hist_on and series_is_clinical_history(item)) else 1" in s   # entries
-    assert "_file_sort_key" in s and "series_is_clinical_history(det)" in s            # files path
+    assert "from PacsClient.utils.series_identity import is_clinical_history_series" in s
+    assert s.count("series_presentation_order_key(") >= 3
+    assert "_file_sort_key" in s

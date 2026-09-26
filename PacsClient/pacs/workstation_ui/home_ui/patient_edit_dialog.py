@@ -148,11 +148,12 @@ class PatientEditDialog(QDialog):
                 _alias_on = False
             _scope_msg = (
                 "This change is written to the DICOM files and database on "
-                "<b>this workstation only</b> — the server has no endpoint for "
-                "updating demographics, so the reception / RIS server stays the "
-                "<b>system of record</b> for patient identity and keeps the "
-                "original ID. To correct it everywhere (reception, billing, "
-                "other workstations), have <b>reception fix it at admission</b>."
+                "<b>this workstation only</b>. This editor does not push "
+                "corrections to PACS or reception / RIS. Changing a Patient ID "
+                "here does not reassign the server study to another patient. "
+                "Reception / RIS remains the <b>system of record</b> for admission. "
+                "Coordinate corrections with the PACS and reception staff; "
+                "verify the study belongs to the intended patient before editing."
             )
             if _alias_on:
                 _scope_msg += (

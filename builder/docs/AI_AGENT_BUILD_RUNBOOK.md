@@ -9,6 +9,9 @@
 > Before a full release build, [`../../RELEASE.md`](../../RELEASE.md) must publish
 > and verify the exact clean source commit and produce the required receipt. The
 > historical single-upstream freshness checks below cannot replace that gate.
+> A repeated same-version local install-QA run is also owned by the coordinator:
+> it archives the selected PyInstaller outputs under `_superseded` before the
+> backend starts. Do not pre-delete or manually overwrite versioned installers.
 
 > **2026-08-31 update:** default PyInstaller builds now produce three local edition
 > outputs. Follow [the distribution guide](DISTRIBUTION_EDITIONS_AND_OFFLINE_ASSETS.md)

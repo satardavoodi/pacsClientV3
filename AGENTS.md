@@ -22,7 +22,7 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 - Product: Windows desktop DICOM workstation built with Python, PySide6, VTK, SimpleITK,
   pydicom, SQLite, and packaged plugin payloads.
 - Source entry point: `main.py`.
-- Canonical current version: `3.6.7` in `pyproject.toml`, `main.py`, and release docs.
+- Canonical current version: `3.6.8` in `pyproject.toml`, `main.py`, and release docs.
 - Supported interpreter in this checkout: Python `3.13.5` from `.venv`.
 - The public AI-PACS website is a separate project. Read `WORKSPACE.md` before adding a
   website endpoint, shared identity/licensing work, Case-of-the-Day publishing, or ATI work.
@@ -79,7 +79,8 @@ item rather than creating a disconnected plan.
 - `RELEASE.md` is the only supported multi-remote release route. A full build
   requires its fresh Git synchronization receipt for the exact clean commit.
 - `BUILD.md` is the single authoritative build entry point for humans and AI agents.
-  A final three-edition PyInstaller plus Nuitka candidate must use the isolated
+  A role-selected PyInstaller plus Nuitka candidate (four Client or two Server)
+  must use the isolated
   `tools/build/build_local_candidate.py` workflow documented there. Backend-specific
   scripts and older runbooks are diagnostic/detail paths, not alternate release entry points.
 - Several runtime trees have packaged mirrors under `builder/plugin package/packages/*/payload`.

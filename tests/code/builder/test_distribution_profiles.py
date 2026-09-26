@@ -94,7 +94,11 @@ def test_compact_stage_keeps_slicer_but_excludes_eagle_eye_model(tmp_path, name)
     assert (payload / "AIPacsAdvancedViewer.exe").is_file()
     assert (payload / "python/modules/mpr/advanced_3d_slicer/slicer_modules/AIPacsBackgroundRuntime.py").is_file()
     assert not (payload / "offline_lumbar").exists()
-    assert not (payload / "python/modules/mpr/advanced_3d_slicer/slicer_modules/AIPacsOfflineLumbar.py").exists()
+    assert (payload / "python/modules/mpr/advanced_3d_slicer/slicer_modules/AIPacsOfflineLumbar.py").is_file()
+    sdk = payload / 'python/modules/mpr/advanced_3d_slicer/slicer_modules/eagle_eye_remote'
+    assert (sdk / 'client.py').is_file()
+    assert not (sdk / 'server.py').exists()
+    assert not (sdk / 'adapters.py').exists()
     assert (target / "plugin_packages/echomind/payload/code.py").is_file()
     feed = json.loads((target / "plugin_packages/module_package_feed.json").read_text())
     assert feed["packages"][0]["available"] is True
@@ -117,7 +121,7 @@ def test_compact_stage_never_copies_excluded_offline_model_bytes(tmp_path, monke
     profiles.stage_edition(source, tmp_path / "standard", profiles.EDITIONS["standard"])
 
     copied_names = {path.name for path in copied_sources}
-    assert "AIPacsOfflineLumbar.py" not in copied_names
+    assert "AIPacsOfflineLumbar.py" in copied_names
     assert not any("offline_lumbar" in path.parts for path in copied_sources)
 
 
@@ -211,7 +215,7 @@ def test_individual_standard_and_arm_builds_stage_slicer_sources():
     assert 'if args.edition != "legacy":' in python_builder
     assert "advanced_payload = stage_advanced_mpr_payload()" in python_builder
     assert "include_slicer = True" in nuitka_builder
-    assert 'if args.edition in {"all", "standard", "eagle-eye", "arm"}:' in nuitka_builder
+    assert 'if args.edition in {"all", "client", "server", "standard", "eagle-eye", "arm"}:' in nuitka_builder
 
 
 def test_three_output_contract_and_arm_identity(tmp_path, bundle, brain_payload):
@@ -373,17 +377,38 @@ def test_internal_installer_compile_explicitly_disables_distribution_receipt_gat
     assert definitions["RequireDistributionApproval"] == "0"
 
 
-def test_new_build_defaults_to_all_three_editions(monkeypatch):
+def test_backend_diagnostic_defaults_to_all_three_editions(monkeypatch):
     import sys
     from builder.build_release import parse_args
     monkeypatch.setattr(sys, "argv", ["build.py"])
     assert parse_args().edition == "all"
 
 
+def test_role_selection_never_mixes_client_and_server_installers():
+    assert [edition.name for edition in profiles.editions_for("client")] == ["standard", "arm"]
+    assert [edition.name for edition in profiles.editions_for("server")] == ["eagle-eye"]
+
+
+def test_role_metadata_survives_the_other_role_build(tmp_path):
+    client = {"version": "9.9.9", "backend": "python", "build_target": "client",
+              "outputs": [{"edition": "standard", "installer": str(tmp_path / "standard.exe"),
+                           "sha256": "a" * 64}]}
+    server = {"version": "9.9.9", "backend": "python", "build_target": "server",
+              "outputs": [{"edition": "eagle-eye", "installer": str(tmp_path / "eagle-eye.exe"),
+                           "sha256": "b" * 64}]}
+    profiles._write_release_metadata(tmp_path, client)
+    profiles._write_release_metadata(tmp_path, server)
+    assert json.loads((tmp_path / "distributions-client.json").read_text()) == client
+    assert json.loads((tmp_path / "distributions-server.json").read_text()) == server
+    assert json.loads((tmp_path / "distributions.json").read_text()) == server
+    assert "Build target: client" in (tmp_path / "INSTALL_NOTES-client.txt").read_text()
+    assert "Build target: server" in (tmp_path / "SHA256-server.txt").read_text()
+
+
 def test_asset_cache_tampering_is_detected(tmp_path):
     import hashlib
     from tools.build.prepare_distribution_assets import verify
-    names = ("slicer-runtime/AIPacsAdvancedViewer.exe", "offline_lumbar/manifest.json",
+    names = ("slicer-runtime/AIPacsAdvancedViewer.exe", "slicer-runtime/aipacs-native-build.json", "offline_lumbar/manifest.json",
              "offline_lumbar/python/python.exe", "inno-setup/ISCC.exe",
              "downloads/python-3.13.5-amd64.exe", "build-environment.lock")
     records = []
@@ -393,9 +418,32 @@ def test_asset_cache_tampering_is_detected(tmp_path):
         path.write_bytes(b"fixture")
         records.append({"path": name, "size": 7, "sha256": hashlib.sha256(b"fixture").hexdigest()})
     (tmp_path / "manifest.json").write_text(json.dumps({"format_version": 1, "platform": "win_amd64", "files": records}))
-    assert len(verify(tmp_path)["files"]) == 6
+    assert len(verify(tmp_path)["files"]) == len(names)
     (tmp_path / names[0]).write_bytes(b"changed")
     with pytest.raises(ValueError, match="hash mismatch"):
+        verify(tmp_path)
+
+
+def test_client_asset_check_does_not_require_offline_model_cache(tmp_path):
+    import hashlib
+    from tools.build.prepare_distribution_assets import verify
+
+    names = ("slicer-runtime/AIPacsAdvancedViewer.exe", "slicer-runtime/aipacs-native-build.json", "offline_lumbar/manifest.json",
+             "offline_lumbar/python/python.exe", "inno-setup/ISCC.exe",
+             "downloads/python-3.13.5-amd64.exe", "build-environment.lock")
+    records = []
+    for name in names:
+        if not name.startswith("offline_lumbar/"):
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture")
+        records.append({"path": name, "size": 7,
+                        "sha256": hashlib.sha256(b"fixture").hexdigest()})
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "format_version": 1, "platform": "win_amd64", "files": records,
+    }))
+    assert verify(tmp_path, profile="client")["files"] == records
+    with pytest.raises(ValueError, match="missing"):
         verify(tmp_path)
 
 
@@ -403,7 +451,7 @@ def test_asset_cache_verification_avoids_windows_file_digest_einval(tmp_path, mo
     import hashlib
     from tools.build.prepare_distribution_assets import verify
 
-    names = ("slicer-runtime/AIPacsAdvancedViewer.exe", "offline_lumbar/manifest.json",
+    names = ("slicer-runtime/AIPacsAdvancedViewer.exe", "slicer-runtime/aipacs-native-build.json", "offline_lumbar/manifest.json",
              "offline_lumbar/python/python.exe", "inno-setup/ISCC.exe",
              "downloads/python-3.13.5-amd64.exe", "build-environment.lock")
     records = []

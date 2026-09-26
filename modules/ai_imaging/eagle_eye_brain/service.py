@@ -13,6 +13,11 @@ _ANALYSIS_LOCK = threading.Lock()
 
 def run_analysis(t1_path, flair_path, output_root, *, plan=None, cancel=None, progress=None, bundle=None,
                  demographics=None, reference_id="volbrain"):
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        from ..eagle_eye_remote.routing import brain
+        return brain(t1_path, flair_path, output_root, plan=plan, cancel=cancel,
+                     progress=progress, reference_id=reference_id)
     if not _ANALYSIS_LOCK.acquire(blocking=False):
         raise BrainError("Another brain analysis is already running. Wait for it to complete.")
     try:
@@ -61,7 +66,10 @@ def _run_analysis(t1_path, flair_path, output_root, *, plan=None, cancel=None, p
             sitk.WriteImage(aligned, str(directory / "flair_registered.nii.gz"))
             sitk.WriteTransform(transform, str(directory / "flair_to_t1.tfm"))
         progress("Running local SynthSeg segmentation, parcellation and QC")
-        run_process(synthseg_command(root, directory, plan), directory, cancel)
+        # The Windows default CPU path can exhaust commit despite free physical RAM.
+        # Pin the measured lower-allocation backend before TensorFlow imports.
+        run_process(synthseg_command(root, directory, plan), directory, cancel,
+                    environment={'TF_ENABLE_ONEDNN_OPTS': '1'})
         volumes = read_single_subject_csv(directory / "posterior.csv")
         rows = volume_rows(volumes)
         qc = read_single_subject_csv(directory / "qc.csv")
@@ -82,6 +90,7 @@ def _run_analysis(t1_path, flair_path, output_root, *, plan=None, cancel=None, p
         slicer_result = run_slicer(directory, cancel)
         result = {"format_version": 1, "job_id": directory.name, "status": "review_required",
                   "model": "SynthSeg 2.0", "model_revision": manifest["revision"], "plan": asdict(plan),
+                  "cpu_backend": "tensorflow-onednn-cpu",
                   "bundle_manifest_sha256": sha256(root / "manifest.json"),
                   "source_sha256": sha256(directory / "t1.nii.gz"), "posterior_rows": rows,
                   "binary_rows": slicer_result["rows"], "qc_scores": qc,

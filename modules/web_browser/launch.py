@@ -19,11 +19,12 @@ _NOTICE_ATTR = "_web_browser_launch_notice"
 
 
 class _BrowserLaunchNotice(QFrame):
-    """Temporary shell-header status strip and application-local input gate.
+    """Compact centered launch card and application-local input gate.
 
     A new top-level dialog cannot reliably paint before its first expose event.
     A child of the existing shell can repaint synchronously without dispatching
-    unrelated queued work. Keep it over the Qt header, not native VTK viewports.
+    unrelated queued work. Geometry remains relative to that shell, including
+    window resizing and displays with different scaling.
     """
 
     _INPUT_EVENTS = frozenset({
@@ -48,16 +49,17 @@ class _BrowserLaunchNotice(QFrame):
             "QFrame#browserLaunchNotice QLabel { color: #ffffff; background: transparent; border: none; }"
         )
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 10, 18, 10)
-        layout.setSpacing(4)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
         self._status = QLabel("Opening Web Browser - Please wait", self)
+        self._status.setWordWrap(True)
         font = self._status.font()
         font.setBold(True)
         self._status.setFont(font)
         layout.addWidget(self._status)
         detail = QLabel(
-            "Initializing the browser engine. Other controls are temporarily locked.\n"
-            "First use may take longer; the indicator may pause during initialization.", self)
+            "Getting your browser ready. The first launch may take a little longer.\n"
+            "Please wait; the indicator may pause while the browser starts.", self)
         detail.setWordWrap(True)
         layout.addWidget(detail)
         self._progress = QProgressBar(self)
@@ -73,7 +75,13 @@ class _BrowserLaunchNotice(QFrame):
 
     def _sync_geometry(self):
         anchor = self.parentWidget()
-        self.setGeometry(0, 0, anchor.width(), min(anchor.height(), self.sizeHint().height()))
+        width = min(480, max(1, anchor.width() - 48))
+        # Wrapped labels determine height at the final width, not at sizeHint's
+        # preferred width. Qt widget coordinates are already DPI-independent.
+        height = min(anchor.height(), max(self.minimumSizeHint().height(),
+                                         self.layout().totalHeightForWidth(width)))
+        self.setGeometry((anchor.width() - width) // 2,
+                         (anchor.height() - height) // 2, width, height)
 
     def present(self):
         QApplication.instance().installEventFilter(self)

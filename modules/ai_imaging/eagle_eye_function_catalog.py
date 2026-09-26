@@ -35,8 +35,8 @@ def function_options_for_modality(modality: str, mode: str | None = None) -> tup
     if mode == "brain_mri":
         return (
             EagleEyeFunctionOption(FUNCTION_NATIVE_ANALYSIS, "Whole Brain Segmentation | T1 MPRAGE"),
-            EagleEyeFunctionOption(FUNCTION_BRAIN_LESIONS, "White-matter Lesions | T1 + 3D FLAIR",
-                                   reason="LST-AI lesion candidates and volume. Requires the Eagle Eye lesion package and image review."),
+            EagleEyeFunctionOption(FUNCTION_BRAIN_LESIONS, "White-matter Lesions | 2D or 3D FLAIR + T1",
+                                   reason="Select acquisition type in the analysis window. Requires its server model package and image review."),
         )
     native_label = _NATIVE_LABELS.get(normalized, "Eagle Eye Analysis")
     legion_enabled = normalized == "MR"

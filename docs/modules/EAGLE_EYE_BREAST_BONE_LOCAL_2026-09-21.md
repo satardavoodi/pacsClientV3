@@ -137,3 +137,86 @@ added to the runtime. Their embedded demonstration paths are not copied into doc
 Source-study attachment routing was checked against the actual `ATTACHMENTS_DIR`
 definition. Its regression guard failed with the incorrect legacy constant and
 passed after correction. No test reads the live database.
+
+## Installed Reception server investigation (2026-09-21)
+
+Read-only inspection confirmed that TCP 8002 belongs to the child process of
+`D:/FCOS_AR/dist/AI_PACS_Mammo.exe`. Its loaded Python DLL is inside the active
+PyInstaller extraction directory. The bundled API source, FCOS source, detector
+weight and stacked-classifier artifact hashes match their counterparts under
+`D:/FCOS_AR`; the loose classifier source under `dist/XGBoost_AR` also constructs
+four stacker inputs. This does not assert bytecode equivalence for every module.
+
+The running application's log identifies classification jobs under
+`%LOCALAPPDATA%/AI_PACS_Mammo/.cache_models/classify_jobs`, rather than the empty
+`dist/classify_jobs` folder. Inspection was performed on the server and returned
+only aggregate counters. No patient IDs, images, CSV rows or raw clinical logs
+were downloaded or copied into this report.
+
+In the 20 most recently modified job directories sampled from the installed
+application cache:
+
+- All 20 contain a classification CSV with all four probability columns.
+- Across 200 result rows, all 800 probability cells are missing/nonfinite.
+- All 200 rows have zero abnormal-class flags and `pred_No Finding=1`.
+- Their Stage 4 logs contain 80 nine-feature mismatch indicators, 80 stacking
+  failure indicators, and named-tuple prediction failures. A file can contain
+  repeated log indicators; these counts are not patient or independent-failure counts.
+- Sample CSV modification timestamps range from 2026-08-04 14:40 UTC through
+  2026-09-20 20:56 UTC. This is a bounded historical-output sample, not a newly
+  submitted inference request or an exhaustive audit of all server outputs.
+
+The behavior follows the inspected error path: the classifier catches a failed
+stacker prediction and fills its probability with NaN. Threshold comparisons then
+evaluate false, and the fallback sets `No Finding`. The pipeline considers the
+existence of `classification.csv` sufficient for success. Separately,
+`run_full_analysis` returns HTTP 200 and top-level `status=ok` with detection results
+even when its nested classification status is an error. The current client
+downloads output links without validating probability completeness. Consequently,
+receiving a response or a classification file does not establish successful
+classification; the sampled `No Finding` labels are failure artifacts, not valid
+negative classifier findings. Detection performance was not assessed here.
+
+No server process was restarted, no configuration or clinical output was changed,
+and no new study was submitted. The local engine's fail-closed qualification gate
+remains necessary. Follow-up work must preserve classification failure through
+server and client result handling, validate finite complete classifier outputs,
+and obtain the matching nine-feature inference contract before qualifying Breast.
+
+## Phase-1 transport follow-up
+
+The [server/client source implementation](EAGLE_EYE_SERVER_PHASE1_2026-09-21.md)
+now runs both imported engines behind the common PACS-reference job service.
+Actual synthetic loopback transport passed for both. Bone Age full model smoke
+passed again; Breast publishes detection with explicit unavailable classification
+and remains unqualified for complete classification. The missing-classification UI
+message no longer states a normal case. No existing clinic server was modified.
+The earlier network-service deferral above is superseded by that implementation
+ledger; portable packaging, GUI acceptance and server deployment remain open.
+
+## Hosted execution correction and native acceptance (2026-09-22)
+
+The [phase-1 execution receipt](EAGLE_EYE_SERVER_PHASE1_2026-09-21.md) supersedes the historical local-selection and unreachable-UI notes above. Both owner-selected studies now run through the desktop-owned local server and return results to the actual UI. Bone Age displays its prediction; Breast displays returned detection rectangles and selectable findings, with unavailable classification explicitly reported. Development venv homes use physical interpreter paths to avoid the Codex MSIX profile alias. WRIST-tagged inputs retain unchanged DICOM and a coverage-review warning. No model weights were changed and the nine-feature classifier mismatch remains unresolved. Final focused execution/transport checks: 60 passed; 470 mirrors match. No server deployment or installer qualification is claimed.
+
+### Additional training-source investigation (2026-09-22)
+
+Read-only inspection of `lina100:~/Mammography/Enhanced Mammography/XGBoost_AR`
+found the older four-kind trainer and a separate enhanced multi-engine trainer.
+The latter writes differently named artifacts, trains LogisticRegression meta
+learners for abnormal labels only, and concatenates engine probabilities across
+available kinds. It does not establish provenance or feature ordering for the
+currently supplied stackers. No training, model replacement or remote service
+change was performed.
+
+Local inspection of the already acquired artifacts confirms four used kinds,
+nine-feature stackers and a nine-feature imputer. The supplied stackers comprise
+two LogisticRegression and two LGBMClassifier objects, including No Finding;
+their saved feature-name arrays are absent. Base ensembles have three engines for
+two labels and four for the other two. Neither flattening these ensembles nor
+padding four probabilities to nine is a verified inference contract. The matching
+training/inference source or compatible qualified weight set remains required.
+
+Owner decision (2026-09-22): defer further Breast optimization and classifier
+reconciliation. Continue Brain and server/client work. Detection output remains
+available; unavailable classification must remain explicit, without guessed
+features, padding or substituted model weights.

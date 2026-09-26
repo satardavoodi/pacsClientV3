@@ -243,6 +243,37 @@ def test_empty_drop_hint_shows_for_idle_empty_viewer():
     assert label.raised is True
 
 
+def test_empty_drop_hint_pixels_do_not_depend_on_parent_background():
+    from PySide6.QtWidgets import QApplication, QWidget
+    from PySide6.QtGui import QColor, QPalette
+
+    qapp = QApplication.instance() or QApplication([])
+
+    class Host(QWidget, _VWOverlayMixin):
+        pass
+
+    host = Host()
+    host.resize(400, 240)
+    host.setAutoFillBackground(True)
+    label = host._ensure_empty_drop_hint_label()
+    label.resize(340, 85)
+    label.move(20, 80)
+    label.show()
+    host.show()
+    results = []
+    for color in ('#ff0000', '#00ff00'):
+        palette = host.palette()
+        palette.setColor(QPalette.Window, QColor(color))
+        host.setPalette(palette)
+        qapp.processEvents()
+        results.append(label.grab().toImage())
+    host.close()
+    assert results[0] == results[1], 'Empty hint must paint every pixel, including rounded corners'
+    assert all(results[0].pixelColor(x, y).alpha() == 255
+               for x, y in ((0, 0), (10, 40), (339, 84), (170, 80))), (
+        'Native VTK has no Qt backing pixels for a translucent hint to inherit')
+
+
 def test_empty_drop_hint_hides_when_viewer_is_busy_or_populated():
     label = _HintLabelStub()
 

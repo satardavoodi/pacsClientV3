@@ -12,6 +12,7 @@ import logging as _logging
 import os
 import time
 import traceback
+from collections.abc import Mapping
 import vtk
 from PySide6.QtCore import QTimer
 from PacsClient.utils import get_patient_by_patient_pk, get_studies_by_patient_pk
@@ -25,12 +26,38 @@ def print(*args, **_kw):  # noqa: A001
 class _PWMetadataMixin:
     """Series metadata, caching, grid config, patient data."""
 
-    def check_logo_patient(self, file_path):
-        # ✅ FULLY SYNCHRONOUS: No async at all to avoid task conflicts
-        if self.logo_patient is None:
-            self.logo_patient = file_path
-            # Use QTimer.singleShot to safely update UI
-            QTimer.singleShot(0, self.update_tab_manager)
+    def check_logo_patient(self, file_path, series_info=None):
+        """Publish the first admitted non-document thumbnail to the tab header.
+
+        Sidebar card admission is the single producer for this presentation
+        state.  Keep the test pure/O(1): the exact clinical-history convention
+        is resolved from metadata (including multi-study original numbers), or
+        from the already-known thumbnail filename when legacy metadata is absent.
+        No DICOM, database, network, or directory read belongs here.
+        """
+        if not file_path or self.logo_patient is not None:
+            return False
+
+        from PacsClient.utils.series_identity import is_clinical_history_series
+
+        candidate = series_info
+        if not isinstance(candidate, Mapping):
+            try:
+                candidate = {
+                    'series_number': os.path.splitext(
+                        os.path.basename(os.fspath(file_path))
+                    )[0]
+                }
+            except (TypeError, ValueError):
+                candidate = {}
+        if is_clinical_history_series(candidate):
+            return False
+
+        self.logo_patient = file_path
+        # Card admission runs on the GUI thread. Queue the small title-bar paint
+        # after the sidebar's atomic layout commit; no asyncio loop is required.
+        QTimer.singleShot(0, self.update_tab_manager)
+        return True
 
     def is_single_frame_modality(self, metadata: dict) -> bool:
         """
@@ -450,7 +477,20 @@ class _PWMetadataMixin:
 
     def update_tab_manager(self, patient_name=None, patient_id=None):
         if self.tab_manager:
-            current_index = self.tab_manager.tab_widget.currentIndex()
+            # Never use the currently selected tab as identity: a queued
+            # thumbnail callback may run after the user has activated another
+            # patient. Resolve the tab which owns this PatientWidget instead.
+            current_index = None
+            for tab_index, tab_data in getattr(self.tab_manager, 'patient_tabs', {}).items():
+                if tab_data.get('widget') is self:
+                    current_index = tab_index
+                    break
+            if current_index is None:
+                current_index = getattr(self.tab_manager, 'study_uid_to_tab', {}).get(
+                    self.study_uid
+                )
+            if current_index is None:
+                return
 
             patient_name = patient_name if patient_name else 'N/A'
             patient_id = patient_id if patient_id else 'N/A'

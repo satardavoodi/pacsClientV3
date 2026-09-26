@@ -146,7 +146,36 @@ def select_patient(patient_id: str, patient_name: str = "", study_uid: str = "")
 @mcp.tool()
 def list_patients(limit: int = 25) -> str:
     """List patients currently shown on the home table."""
-    return _j(_send("list_patients", {"limit": limit}))
+    return _j(_send("read_patients", {"limit": limit}))
+
+
+@mcp.tool()
+def search_patients(patient_id: str = "", patient_name: str = "", source: str = "local", modality: str = "") -> str:
+    """Search through the real Home search adapter; then use list_patients/open_patient.
+    Source is local or server. No screen input is used.
+    """
+    if source not in ("local", "server"):
+        return _j({"ok": False, "error_code": "INVALID_SOURCE"})
+    result = _send("search_patients", dict(patient_id=patient_id, patient_name=patient_name,
+                                        source=source, modality=modality), timeout_ms=60000)
+    if not result.get("ok"): return _j(result)
+    return _j(_send("read_patients", {"limit": 200}))
+
+
+@mcp.tool()
+def eagle_eye(action: str, study_uid: str, series_uid: str = "", function: str = "", inputs_json: str = "{}") -> str:
+    """Control the study workspace without mouse input.
+
+    action: open, series, select_series, functions, run, status.
+    Use exact series_uid from series; poll functions after select_series until loaded.
+    Run uses a function key returned by functions. Submitted does not mean completed.
+    Brain requires verified T1/FLAIR UIDs; Total Spine requires projection and then
+    inputs={"region": [x0,y0,x1,y1]} in source pixels. Legion retains its ROI workflow.
+    """
+    if action not in {"open", "series", "select_series", "functions", "run", "status", "inputs"}:
+        return _j({"ok": False, "error_code": "INVALID_ACTION"})
+    return _j(_send("eagle_eye_" + action, dict(study_uid=study_uid, series_uid=series_uid,
+                                               function=function, inputs=json.loads(inputs_json))))
 
 
 @mcp.tool()

@@ -67,6 +67,84 @@ def test_warmup_and_user_request_share_one_background_start():
         service.stop()
 
 
+def test_frozen_warmup_loads_guard_and_presentation_from_installed_runtime(monkeypatch, tmp_path):
+    from modules.mpr.advanced_3d_slicer import owned_process, resident_service
+    from modules.mpr.advanced_3d_slicer.slicer_custom_app import launch_slicer
+    from modules.ai_imaging.eagle_eye_remote import settings
+    import aipacs_runtime
+
+    installed = tmp_path / "installed-runtime"
+    relative = Path("python/modules/mpr/advanced_3d_slicer")
+    guard = installed / relative / "slicer_modules/AIPacsBackgroundRuntime.py"
+    startup = installed / relative / "slicer_custom_app/startup_script.py"
+    presentation = startup.with_name("presentation.py")
+    for path in (guard, startup, presentation):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# synthetic installed resource\n", encoding="utf-8")
+    executable = installed / "AIPacsAdvancedViewer.exe"
+    executable.write_bytes(b"synthetic viewer")
+    monkeypatch.setattr(aipacs_runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(aipacs_runtime, "advanced_mpr_runtime_root", lambda: installed)
+    monkeypatch.setattr(launch_slicer, "__file__", str(tmp_path / "frozen-core/launch_slicer.py"))
+    monkeypatch.setattr(settings, "slicer_environment", lambda: {})
+    session = tmp_path / "resident-session"
+    def make_session(prefix):
+        session.mkdir()
+        return str(session)
+    monkeypatch.setattr(resident_service.tempfile, "mkdtemp", make_session)
+    launched = {}
+
+    class FakeJob:
+        def assign(self, process):
+            pass
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def wait(self, timeout):
+            return 0
+
+    def fake_popen(command, **kwargs):
+        launched.update(command=command, environment=kwargs["env"])
+        return FakeProcess()
+
+    monkeypatch.setattr(owned_process, "ProcessJob", FakeJob)
+    monkeypatch.setattr(resident_service.subprocess, "Popen", fake_popen)
+    runtime = resident_service.LocalRuntime("viewer", executable=executable)
+    try:
+        runtime.start()
+        command = launched["command"]
+        assert command[command.index("--additional-module-path") + 1] == str(guard.parent)
+        assert launched["environment"]["AIPACS_RESIDENT_STARTUP"] == str(startup)
+    finally:
+        runtime.close()
+
+
+def test_frozen_warmup_rejects_incomplete_runtime_before_process_creation(monkeypatch, tmp_path):
+    from modules.mpr.advanced_3d_slicer import resident_service
+    import aipacs_runtime
+
+    executable = tmp_path / "AIPacsAdvancedViewer.exe"
+    executable.write_bytes(b"synthetic viewer")
+    monkeypatch.setattr(aipacs_runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(aipacs_runtime, "advanced_mpr_runtime_root", lambda: tmp_path)
+    launches = []
+    monkeypatch.setattr(resident_service.subprocess, "Popen", lambda *args, **kwargs: launches.append(True))
+    with pytest.raises(RuntimeError, match="background window guard"):
+        resident_service.LocalRuntime("viewer", executable=executable).start()
+
+    base = tmp_path / "python/modules/mpr/advanced_3d_slicer"
+    guard = base / "slicer_modules/AIPacsBackgroundRuntime.py"
+    guard.parent.mkdir(parents=True)
+    guard.write_text("# synthetic guard\n", encoding="utf-8")
+    startup = base / "slicer_custom_app/startup_script.py"
+    startup.parent.mkdir(parents=True)
+    startup.write_text("# synthetic startup\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="presentation is incomplete"):
+        resident_service.LocalRuntime("viewer", executable=executable).start()
+    assert not launches
+
+
 def test_stop_during_startup_closes_only_owned_runtime():
     import pytest
     from modules.mpr.advanced_3d_slicer.resident_service import ResidentService

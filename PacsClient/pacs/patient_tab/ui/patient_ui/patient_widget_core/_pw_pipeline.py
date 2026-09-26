@@ -665,10 +665,6 @@ class _PWPipelineMixin:
                         self._display_first_series_in_all_viewers(str(series_no))
                     self.thumbnail_manager.set_series_ready(str(series_no))
                     
-                    if file_path and not self.logo_patient:
-                        self.logo_patient = file_path
-                        self.update_tab_manager()
-                    
                     print(f"✅ [SYNC_LOAD] First series loaded: {series_no}. Breaking loop.") # لاگ اضافه شده
                     break  # فقط اولین سری را بارگذاری کن
                     
@@ -790,10 +786,6 @@ class _PWPipelineMixin:
                 'metadata': metadata,
                 'file_path': thumbnail_path
             })
-
-            if thumbnail_path and not self.logo_patient:
-                self.logo_patient = thumbnail_path
-                self.update_tab_manager()
 
             self._distribute_series_to_viewers()
 
@@ -1063,10 +1055,6 @@ class _PWPipelineMixin:
                         self._display_first_series_in_all_viewers(str(series_no))
                     self.thumbnail_manager.set_series_ready(str(series_no))
 
-                    if file_path and not self.logo_patient:
-                        self.logo_patient = file_path
-                        self.update_tab_manager()
-
                     print(f"✅ [LAZY_LOAD] First series loaded: {series_no}")
                     break  # فقط اولین سری را بارگذاری کن
 
@@ -1119,8 +1107,6 @@ class _PWPipelineMixin:
                 )
 
                 _thumbnail_time = time.time() - _series_start
-
-                self.check_logo_patient(file_path)
 
                 thumb_index = self.add_thumbnail_to_thumbnail_layout(
                     thumb_index=thumb_index, file_path_thumbnail=file_path,
@@ -1234,8 +1220,6 @@ class _PWPipelineMixin:
             )
             _thumb_time = time.time() - _thumb_start
 
-            self.check_logo_patient(file_path)
-
             thumb_index = self.add_thumbnail_to_thumbnail_layout(
                 thumb_index=thumb_index, file_path_thumbnail=file_path,
                 key_thumbnail=metadata['series']['series_number'],
@@ -1340,8 +1324,6 @@ class _PWPipelineMixin:
                 metadata['series']['series_path']
             )
             _thumb_time = time.time() - _thumb_start
-
-            self.check_logo_patient(file_path)
 
             thumb_index = self.add_thumbnail_to_thumbnail_layout(
                 thumb_index=thumb_index, file_path_thumbnail=file_path,

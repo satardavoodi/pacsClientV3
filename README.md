@@ -1,6 +1,6 @@
 # AIPacs
 
-Current project version: `v3.6.7`. Production acceptance is tracked separately
+Current project version: `v3.6.8`. Production acceptance is tracked separately
 in the current release and deployment records.
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
@@ -17,7 +17,8 @@ then prepare the supported toolchain if needed:
 ```
 
 Then follow [BUILD.md](BUILD.md). It is the authoritative human/AI procedure and the
-only supported route for the current PyInstaller + Nuitka six-installer matrix.
+only supported route for the PyInstaller + Nuitka role-selected build: four
+Standard Client installers by default or two explicit Eagle Eye Server candidates.
 Before a full release build, follow [RELEASE.md](RELEASE.md) to commit, tag, push,
 and verify the exact same source revision across all required Git repositories.
 
@@ -119,10 +120,11 @@ For development and tests:
 ## Build
 
 Use [BUILD.md](BUILD.md). It defines machine bootstrap, source validation,
-disposable fast lanes, the isolated full-matrix command, the two output folders,
-all six filenames, expected sizes, content/hash/version checks, interruption
-rules, and the production release gate. Backend-specific wrappers remain useful
-for diagnosis but are not alternate release entry points.
+disposable fast lanes, the role-selected Client or Server command, the two output
+folders, four Client or two Server installer filenames, expected sizes,
+content/hash/version checks, interruption rules, and the production release gate.
+Backend-specific wrappers remain useful for diagnosis but are not alternate
+release entry points.
 
 
 ---

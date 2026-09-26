@@ -1,5 +1,31 @@
 # OPT-22: user-initiated WebEngine opening status
 
+## September 26 compact centered notice correction
+
+The user reported that the opening notice stretched across the shell and stuck
+to its top edge. `_sync_geometry` explicitly used `(0, 0, shell.width(), height)`.
+It now centers a card in shell-local coordinates with a maximum logical width of
+480 and 24-pixel side clearance on smaller windows. Height follows wrapped text;
+the existing resize filter repositions it. Margins and spacing separate the title,
+short explanation and indeterminate bar. Synchronous paint before lazy import,
+input gating, error cleanup and default-OFF prewarm remain unchanged.
+
+Three real-Qt geometry guards failed before (3 failed / 12 passed, exit 1) and
+pass after, covering 1920x1080, 800x600, 360x480 and subsequent resizing, centered
+containment and uncut label layout. Browser/adjacent/builder checks: 92 passed,
+exit 0. A synthetic offscreen preview using Segoe UI was visually inspected:
+480x125 centered card, readable title/detail and progress bar. This is not a
+live application acceptance result, and native VTK stacking remains part of
+the fresh-source visual gate if opening from a viewer tab.
+
+Official mirror sync changed only `web_browser/launch.py`; all 472 pairs match.
+The package change applies wherever the Web Browser module is included in
+Client/Server profiles; no installer was built. The documented control client
+still reports an absent local test endpoint. Human fresh source launch/login is
+needed for first-open visual acceptance. No running app was restarted or patched.
+Rollback is limited to this card's geometry, spacing and copy in canonical source,
+followed by official mirror synchronization.
+
 ## Scope and evidence
 
 The September 15 source session started at 15:43:24. Its first browser opening

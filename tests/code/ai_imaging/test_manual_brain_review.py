@@ -76,7 +76,7 @@ def test_segment_array_uses_vtk_supported_unsigned_bytes():
 
 def test_lesion_revision_remeasures_and_invalidates_stale_spatial_scores(tmp_path, monkeypatch):
     import json
-    from modules.ai_imaging.eagle_eye_brain import lesion_report, svd_assessment
+    from modules.ai_imaging.eagle_eye_brain import lesion_report, svd_assessment, ms_assessment
     from modules.ai_imaging.eagle_eye_brain.runtime import sha256
     original = sitk.GetImageFromArray(np.ones((3, 3, 3), dtype=np.uint8))
     edited = sitk.Image(original); edited[0, 0, 0] = 0
@@ -91,6 +91,10 @@ def test_lesion_revision_remeasures_and_invalidates_stale_spatial_scores(tmp_pat
         assert 'wmh_reference' not in result and 'svd_spatial' not in result
         return {'status':'new assessment'}
     monkeypatch.setattr(svd_assessment, 'enrich_svd', spatial)
+    def topography(result, root, **kwargs):
+        assert 'lesion_topography' not in result
+        return {'regions': [], 'status': 'remeasured', 'conclusion': 'Not a diagnosis'}
+    monkeypatch.setattr(ms_assessment, 'enrich_ms', topography)
     monkeypatch.setattr(lesion_report, 'write_lesion_report', lambda r,f,m,d: (d/'report.pdf').write_bytes(b'test'))
     result = recalculate_review(tmp_path)
     assert result['metrics']['total_volume_mm3'] == 26

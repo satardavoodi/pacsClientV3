@@ -34,6 +34,12 @@ def curve_is_reviewed(view, spec):
 
 def predict_region(image, box, cancel, predictor, progress=None):
     """Owned worker path: crop pixels, then restore source coordinates and identity."""
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        from ..eagle_eye_remote.routing import radiograph
+        function = getattr(predictor, 'func', predictor)
+        model = 'scoliovis' if getattr(function, '__name__', '') == 'predict_scoliovis' else 'isbi'
+        return radiograph('total-spine', image, cancel, region=box, model=model)
     from .assist_service import image_binding
     report = progress or (lambda *_: None)
     report(0, 4, 'Preparing the selected spine region')

@@ -46,6 +46,11 @@ flowchart LR
 `AppHandler`. The first Qt event turn schedules a daemon preparation thread. Module
 profile reads, executable discovery, process creation, readiness polling and warmup
 waits occur outside the workstation GUI thread. No patient image is preloaded.
+In a frozen installation, the resident launcher resolves its window-guard module
+and startup/presentation script from the installed Advanced MPR runtime. It
+refuses to create a Slicer process if these files are incomplete. Developer Run
+uses source paths. Warm-up may start a background process, but it must not show
+the Slicer window until an explicit viewer request promotes it.
 
 | Control | Default | Behavior |
 |---|---|---|

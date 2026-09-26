@@ -9,6 +9,22 @@ import pytest
 from modules.ai_imaging.eagle_eye_engines import service
 
 
+def test_development_runtime_records_resolved_base_interpreter(tmp_path):
+    from tools.eagle_eye.prepare_breast_bone import normalize_runtime_home
+    base = tmp_path / 'base'
+    base.mkdir()
+    (base / 'python.exe').write_bytes(b'synthetic interpreter')
+    runtime = tmp_path / 'runtime'
+    runtime.mkdir()
+    cfg = runtime / 'pyvenv.cfg'
+    cfg.write_text(f'home = {base / ".." / "base"}\ninclude-system-site-packages = false\n')
+    normalize_runtime_home(runtime)
+    assert cfg.read_text() == f'home = {base.resolve()}\ninclude-system-site-packages = false\n'
+    (base / 'python.exe').unlink()
+    with pytest.raises(ValueError, match='base interpreter'):
+        normalize_runtime_home(runtime)
+
+
 def test_named_classifier_tuples_are_unwrapped_without_dropping_members():
     from modules.ai_imaging.eagle_eye_engines.worker import normalize_estimators
     first, second = object(), object()
@@ -71,6 +87,46 @@ def test_source_hash_and_verified_sex(tmp_path):
         service.validate_sources([p], '1.2.3', 'bone-age', 'F')
     with pytest.raises(ValueError):
         service.validate_sources([p, p], '1.2.3', 'bone-age')
+
+
+def test_wrist_acquisition_can_be_selected_for_bone_age_without_relabeling(tmp_path):
+    import pydicom
+    p = source(tmp_path)
+    ds = pydicom.dcmread(p)
+    ds.BodyPartExamined = 'WRIST'
+    ds.save_as(p)
+    before = service.digest(p)
+    records, sex = service.validate_sources([p], '1.2.3', 'bone-age')
+    assert records[0]['body_part'] == 'WRIST'
+    assert sex == 'M' and service.digest(p) == before
+    ds.BodyPartExamined = 'CHEST'
+    ds.save_as(p)
+    with pytest.raises(ValueError, match='hand or wrist'):
+        service.validate_sources([p], '1.2.3', 'bone-age')
+
+
+def test_wrist_result_preserves_coverage_review_warning(tmp_path, monkeypatch):
+    import sys
+    import types
+    import pydicom
+    p = source(tmp_path)
+    ds = pydicom.dcmread(p)
+    ds.BodyPartExamined = 'WRIST'
+    ds.save_as(p)
+    monkeypatch.setattr(service, 'validate_bundle', lambda *a, **k: {'revision': 'fixture'})
+    monkeypatch.setitem(sys.modules, 'modules.mpr.advanced_3d_slicer.owned_process',
+        types.SimpleNamespace(ProcessJob=lambda: types.SimpleNamespace(
+            assign=lambda p: None, close=lambda: None)))
+    def launch(command, **kwargs):
+        (Path(command[-1]) / 'result.json').write_text(json.dumps({
+            'status': 'success', 'study_id': '1.2.3', 'reliability_warnings': ['Existing warning']}))
+        return types.SimpleNamespace(returncode=0, poll=lambda: 0, wait=lambda timeout: 0)
+    monkeypatch.setattr(service.subprocess, 'Popen', launch)
+    result = service.run('bone-age', [p], '1.2.3', tmp_path / 'results', root=tmp_path)
+    assert result['input_coverage_confirmation_required'] is True
+    assert result['reliability_warnings'][0] == 'Existing warning'
+    assert 'full hand and distal forearm' in result['reliability_warnings'][1]
+    assert json.loads((Path(result['job_directory']) / 'result.json').read_text()) == result
 
 
 def test_missing_or_changed_bundle_is_rejected(tmp_path):
@@ -165,6 +221,9 @@ def test_job_failure_never_publishes_and_releases_process(tmp_path, monkeypatch,
         calls.append('started')
         job = Path(command[-1])
         (job / 'result.json').write_text(json.dumps(dict(status='success', study_id='1.2.999')))
+        if outcome == 'failed' and hasattr(kwargs['stderr'], 'write'):
+            kwargs['stderr'].write(b'x' * 70000 + b'\nSynthetic engine failure\n')
+            kwargs['stderr'].flush()
         return Child()
     monkeypatch.setitem(sys.modules, 'modules.mpr.advanced_3d_slicer.owned_process', types.SimpleNamespace(ProcessJob=Owner))
     monkeypatch.setattr(service, 'validate_bundle', lambda *a, **kw: {'revision': 'fixture'})
@@ -173,4 +232,10 @@ def test_job_failure_never_publishes_and_releases_process(tmp_path, monkeypatch,
         service.run('bone-age', [], '1.2.3', tmp_path / 'jobs', root=tmp_path, smoke=True,
                     cancelled=lambda: outcome == 'cancelled' and 'started' in calls)
     assert calls == ['started', 'assigned', 'closed', 'waited']
-    assert list((tmp_path / 'jobs').iterdir()) == []
+    remaining = list((tmp_path / 'jobs').iterdir())
+    if outcome == 'failed':
+        assert len(remaining) == 1 and remaining[0].name == 'engine-failure.log'
+        assert remaining[0].stat().st_size <= 65536
+        assert remaining[0].read_bytes().endswith(b'Synthetic engine failure\n')
+    else:
+        assert remaining == []

@@ -56,6 +56,30 @@ class BrainLesionWidget(BrainVolumetryWidget):
         self.fazekas.hide()
         self.primary_disease.currentIndexChanged.connect(self._context_changed)
         self.ms_comparison.toggled.connect(self._comparison_changed)
+        self.acquisition_mode = QComboBox()
+        self.acquisition_mode.setObjectName('lesionAcquisitionMode')
+        self.acquisition_mode.addItem('3D MRI | T1 + FLAIR', '3d')
+        self.acquisition_mode.addItem('2D MRI | FLAIR slice analysis (research)', '2d')
+        acquisition_row = QHBoxLayout()
+        acquisition_row.addWidget(QLabel('MRI acquisition'))
+        acquisition_row.addWidget(self.acquisition_mode)
+        self.layout().insertLayout(3, acquisition_row)
+        self._input_labels = [(label, label.text()) for label in self.findChildren(QLabel)
+                              if label.text() in ('3D T1-weighted', '3D FLAIR (required)')]
+        self.acquisition_mode.currentIndexChanged.connect(self._acquisition_changed)
+
+    def _acquisition_changed(self):
+        two_d = self.acquisition_mode.currentData() == '2d'
+        if two_d:
+            self.ms_comparison.setChecked(False)
+        self.ms_comparison.setEnabled(not two_d)
+        for label, original in self._input_labels:
+            label.setText(('T1-weighted (context)' if 'T1' in original else '2D FLAIR (required)') if two_d else original)
+        self.confirm.setText('I verified full-brain T1 and FLAIR from this examination.' if two_d else
+                             'I verified full-brain T1 and 3D FLAIR from this examination.')
+        self.input_summary.setText('2D: MindGlide analyzes FLAIR; T1 supplies examination context. '
+                                  'Slice gaps limit volume, count and anatomical certainty.' if two_d else
+                                  'Select one T1 and one 3D FLAIR. LST-AI measures lesion candidates for review.')
 
     def _context_changed(self):
         self.fazekas.setVisible(self.primary_disease.currentData() == 'svd')
@@ -63,6 +87,18 @@ class BrainLesionWidget(BrainVolumetryWidget):
         self.ms_comparison.setVisible(is_ms)
         if not is_ms:
             self.ms_comparison.setChecked(False)
+
+    def _apply_controlled_series(self, rows):
+        inputs = getattr(self, '_control_inputs', None)
+        if inputs is not None:
+            mode = inputs.get('acquisition_mode', '3d')
+            index = self.acquisition_mode.findData(mode)
+            if index < 0:
+                self._control_error = 'Select 2D or 3D acquisition mode.'
+                self.status.setText(self._control_error)
+                return True
+            self.acquisition_mode.setCurrentIndex(index)
+        return super()._apply_controlled_series(rows)
 
     def _comparison_changed(self):
         self._comparison_pair = None
@@ -149,16 +185,19 @@ class BrainLesionWidget(BrainVolumetryWidget):
         self._load_demographics()
 
     def _choose_t1_series(self, rows):
+        if self._apply_controlled_series(rows): return
         if self._selecting_comparison:
             self._selecting_comparison = False
             return self._choose_comparison_series(rows)
         dialog = QDialog(self)
-        dialog.setWindowTitle('Select T1 and 3D FLAIR')
+        two_d = self.acquisition_mode.currentData() == '2d'
+        dialog.setWindowTitle('Select T1 and 2D FLAIR' if two_d else 'Select T1 and 3D FLAIR')
         dialog.resize(720, 280)
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel('Select the two inputs from this examination.'))
         combos = []
-        for title, name in [('3D T1-weighted', 'lesionT1Series'), ('3D FLAIR', 'lesionFlairSeries')]:
+        for title, name in [('T1-weighted' if two_d else '3D T1-weighted', 'lesionT1Series'),
+                            ('2D FLAIR' if two_d else '3D FLAIR', 'lesionFlairSeries')]:
             layout.addWidget(QLabel(title))
             combo = QComboBox()
             combo.setObjectName(name)
@@ -208,6 +247,9 @@ class BrainLesionWidget(BrainVolumetryWidget):
         self.status.setText('Review patient details, then click Analyze white-matter lesions.')
 
     def _start(self):
+        if self._pending_manual_review:
+            self.status.setText('Resume the pending server correction before starting another analysis.')
+            return
         if self._future is not None:
             return
         if not self.confirm.isChecked() or not self._selected_series or not self._selected_flair:
@@ -219,6 +261,10 @@ class BrainLesionWidget(BrainVolumetryWidget):
             self.status.setText('Select the primary disease / reporting context before analysis.')
             return
         comparison = self.ms_comparison.isChecked()
+        acquisition_mode = self.acquisition_mode.currentData()
+        if comparison and acquisition_mode == '2d':
+            self.status.setText('2D longitudinal comparison is not qualified. Analyze each examination separately.')
+            return
         pair = self._comparison_pair
         if comparison and (indication != 'ms' or not pair):
             self.status.setText('Select the previous and current MRI series for MS comparison.')
@@ -240,6 +286,7 @@ class BrainLesionWidget(BrainVolumetryWidget):
         self.clinical_note.setEnabled(False)
         self.fazekas.setEnabled(False)
         self.ms_comparison.setEnabled(False)
+        self.acquisition_mode.setEnabled(False)
         def execute():
             from PacsClient.utils.data_paths import AI_DIR
             from .lesions import run_lesions
@@ -251,8 +298,9 @@ class BrainLesionWidget(BrainVolumetryWidget):
                                t1_uid=first['series_uid'], flair_uid=second['series_uid'],
                                root=Path(AI_DIR) / 'eagle_eye', cancel=cancel,
                                progress=messages.put, demographics=demographics,
-                               primary_disease=indication, clinical_note=note, fazekas_overall=fazekas)
-        self.status.setText('Preparing local lesion analysis')
+                               primary_disease=indication, clinical_note=note, fazekas_overall=fazekas,
+                               acquisition_mode=acquisition_mode)
+        self.status.setText('Preparing lesion analysis')
         self._future = self._executor.submit(execute)
         self._begin_progress()
 
@@ -263,8 +311,10 @@ class BrainLesionWidget(BrainVolumetryWidget):
             self.primary_disease.setEnabled(True)
             self.clinical_note.setEnabled(True)
             self.fazekas.setEnabled(True)
-            self.ms_comparison.setEnabled(True)
-        if pending and self._future is None and self._future_kind in ('analysis', 'manual_recalculate') and self._result:
+            self.acquisition_mode.setEnabled(True)
+            self.ms_comparison.setEnabled(self.acquisition_mode.currentData() != '2d')
+        if (pending and self._future is None and not getattr(self, '_control_error', None)
+                and self._future_kind in ('analysis', 'manual_recalculate') and self._result):
             metrics = self._result['metrics']
             self.report.setText('<h2>Lesion candidates ready for review</h2>'
                                 f'<p><b>{metrics["candidate_count"]} candidates</b> | '
@@ -278,3 +328,10 @@ class BrainLesionWidget(BrainVolumetryWidget):
                                     f'{c["possible_enlarged"]} possible enlarged candidates</p>'
                                     '<p>Experimental comparison. Review registration and masks before confirming change.</p>')
             self.status.setText('Lesion report ready. Open the result folder for the native FLAIR mask.')
+            if self._result.get('acquisition_mode') == '2d':
+                self.report.setText('<h2>2D FLAIR candidates ready for review</h2>'
+                                    f'<p>Sampled-slab burden: <b>{metrics["total_volume_cm3"]:.3f} cm3</b><br>'
+                                    f'{metrics["slice_candidate_count"]} slice components; '
+                                    f'{metrics["candidate_count"]} connected stack candidates.</p>'
+                                    '<p>Slice gaps can merge or split candidates. Counts are not confirmed lesion counts. '
+                                    'Open the report and review the native mask.</p>')

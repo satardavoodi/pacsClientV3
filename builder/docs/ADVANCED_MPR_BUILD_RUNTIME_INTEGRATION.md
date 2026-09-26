@@ -12,6 +12,46 @@ ship partially, or regress in installed builds.
 
 ## Canonical Flow
 
+The role-selected installer coordinator first compares every allowlisted cached Slicer
+runtime file with the assembled runtime used by Developer Run. A changed native
+binary, scripted module or UI resource absent from the cache stops the build.
+The primary startup script is a deliberate exception: packaging copies the
+current source `slicer_custom_app/startup_script.py` over the staged runtime's
+`bin/Python/startup_script.py` for both backends, then records
+`slicer_startup_sha256` and `slicer_python_sha256` in the Advanced MPR package
+manifest. The complete `payload/python` tree includes `presentation.py`,
+`unified_logging.py`, Qss styling and module sources. The frozen launcher prefers
+the packaged script under that tree, because it resolves its presentation and Qss
+companions relative to its own location. It uses the legacy `bin/Python` script
+only for older packages. Neither backend edits the immutable asset cache.
+Installing a corrected package with the same application version refreshes an
+already installed Slicer runtime on first launch when either revision changes;
+subsequent launches do not recopy an unchanged runtime.
+
+This proves parity with the *assembled runtime actually used by Developer Run*.
+It does not compile newer C++ source automatically. The coordinator now also
+requires `aipacs-native-build.json` in both assembled and cached runtimes. The
+record binds the current native C++/CMake/QSS/UI/resource tree to the inner
+`bin/Release/AIPacsAdvancedViewer.exe`. The assembly script refuses to replace
+the previous runtime when that compiled executable predates any native source.
+After a successful SuperBuild, reassemble with
+`tools/slicer/assemble_slicer_runtime.py`, prepare a fresh immutable distribution
+asset cache, and repeat the role-selected coordinator. Do not manually create
+the provenance record or recache the old executable; neither action is a build.
+Never claim uncompiled C++ edits are in the installed build.
+
+The 2026-09-22 v3.6.7 local installers and cache predate the latest Python
+presentation changes. The developer and cached native executables are identical
+January 2026 binaries, while native UI source changed in September 2026. They
+are therefore superseded evidence, not final-install acceptance. The documented
+SuperBuild tree `C:\S\NB` and Qt 5.15.2 SDK at
+`C:\Qt\5.15.2\msvc2019_64` were absent in the checked environment. A deeper
+inventory found CMake 3.31.6 and MSVC 14.44 under Visual Studio 2022 Build
+Tools at `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`;
+they are not on the default PATH. The project and prior candidate folders
+contain assembled runtime copies, not the missing SuperBuild or Qt SDK. Restore
+those two native-build inputs before making a new final candidate.
+
 1. Runtime source assembled on build machine:
 - Source root: `advanced_mpr_runtime_root()` (resolved in `aipacs_runtime.py`)
 - Nuitka/PyInstaller package materialization can override this with
@@ -43,6 +83,11 @@ ship partially, or regress in installed builds.
 
 6. Launch:
 - UI -> `slicer_launcher.py` worker -> `launch_slicer.py` -> `AIPacsAdvancedViewer.exe`
+- Automatic resident warm-up must resolve `AIPacsBackgroundRuntime.py` and
+  `startup_script.py` from the installed per-user Advanced MPR runtime, not the
+  frozen workstation module location. If the guard or presentation companion is
+  absent, it must fail before spawning Slicer; a visible unguarded viewer is not
+  an acceptable warm-up fallback. Developer Run retains source-file paths.
 
 ## Required Runtime Files (Build Gate)
 

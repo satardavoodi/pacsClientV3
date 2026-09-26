@@ -429,15 +429,26 @@ def get_startup_script_path() -> Optional[Path]:
     script_dir = Path(__file__).parent.resolve()
 
     # In development, startup_script.py lives next to launch_slicer.py.
-    candidate_paths = [script_dir / "startup_script.py"]
+    source_script = script_dir / "startup_script.py"
+    candidate_paths = [source_script]
 
     # In installed PyInstaller builds, this module may be loaded from an
     # archive path while startup_script.py exists in the Advanced MPR runtime
     # payload copied to modules_runtime/advanced_mpr/bin/Python.
     try:
-        from aipacs_runtime import advanced_mpr_runtime_root
+        from aipacs_runtime import advanced_mpr_runtime_root, is_frozen
 
         runtime_root = advanced_mpr_runtime_root()
+        packaged_script = (
+            runtime_root / "python" / "modules" / "mpr" / "advanced_3d_slicer"
+            / "slicer_custom_app" / "startup_script.py"
+        )
+        # The packaged script has presentation.py and Qss beside it. The
+        # legacy bin/Python copy does not have that source-relative layout.
+        if is_frozen():
+            candidate_paths = [packaged_script, source_script]
+        else:
+            candidate_paths.append(packaged_script)
         candidate_paths.extend([
             runtime_root / "bin" / "Python" / "startup_script.py",
             runtime_root / "bin" / "Python" / "slicer" / "startup_script.py",
@@ -565,7 +576,7 @@ def build_slicer_command(
         'import qt,slicer;'
         'qt.QCoreApplication.setApplicationName("AI-PACS Advanced Viewer");'
         'qt.QCoreApplication.setOrganizationName("AI-PACS");'
-        '[mw.setWindowTitle("AI-PACS Advanced Viewer v3.6.7") for mw in [slicer.util.mainWindow()] if mw];'
+        '[mw.setWindowTitle("AI-PACS Advanced Viewer v3.6.8") for mw in [slicer.util.mainWindow()] if mw];'
         '_rl=lambda:(lambda pd,w=qt.QWidget():[w.setFixedHeight(0),pd.setTitleBarWidget(w)] if pd else None)(slicer.util.findChild(slicer.util.mainWindow(),"PanelDockWidget"));'
         '[qt.QTimer.singleShot(t,_rl) for t in [50,100,200,500,1000]]'
     )
@@ -630,6 +641,8 @@ def get_slicer_env(
         dict of environment variables to set
     """
     env = os.environ.copy()
+    from modules.ai_imaging.eagle_eye_remote.settings import slicer_environment
+    env.update(slicer_environment())
 
     if slicer_exe:
         # Never point embedded Slicer Python at the separate model site-packages.
@@ -986,7 +999,7 @@ import qt
 import slicer
 
 # ===== BRANDING CONSTANTS =====
-BRAND_TITLE = "AI-PACS Advanced Viewer v3.6.7"
+BRAND_TITLE = "AI-PACS Advanced Viewer v3.6.8"
 
 # ===== HIDE WINDOW IMMEDIATELY - BEFORE ANYTHING ELSE =====
 # This MUST run first to prevent window from flashing

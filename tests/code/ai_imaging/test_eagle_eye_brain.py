@@ -222,7 +222,8 @@ def test_multipage_pdf_retains_table_headers(tmp_path):
 
 
 @pytest.mark.parametrize("report_fails", [False, True])
-def test_pipeline_publishes_completion_only_after_artifacts(monkeypatch, tmp_path, report_fails):
+@pytest.mark.parametrize("profile", ["standard", "robust"])
+def test_pipeline_publishes_completion_only_after_artifacts(monkeypatch, tmp_path, report_fails, profile):
     import SimpleITK as sitk
     from modules.ai_imaging.eagle_eye_brain import service, report
     source = tmp_path / "input.nii.gz"
@@ -235,7 +236,8 @@ def test_pipeline_publishes_completion_only_after_artifacts(monkeypatch, tmp_pat
         np.save(labels / f"synthseg_{kind}_labels{suffix}.npy", np.array([0, 17]))
         np.save(labels / f"synthseg_{kind}_names{suffix}.npy", np.array(["background", "left hippocampus"]))
     monkeypatch.setattr(service, "validate_bundle", lambda root: {"revision": "synthetic"})
-    def inference(command, directory, cancel):
+    def inference(command, directory, cancel, **kwargs):
+        assert kwargs.get('environment', {}).get('TF_ENABLE_ONEDNN_OPTS') == '1', 'Use the measured CPU backend before TensorFlow starts'
         (directory / "posterior.csv").write_text("subject,total intracranial,left hippocampus\nt1,1500000,3420\n")
         (directory / "qc.csv").write_text("subject,hippocampus\nt1,0.8\n")
     monkeypatch.setattr(service, "run_process", inference)
@@ -246,15 +248,16 @@ def test_pipeline_publishes_completion_only_after_artifacts(monkeypatch, tmp_pat
             raise RuntimeError("Synthetic report failure")
         monkeypatch.setattr(report, "report_html", fail)
         with pytest.raises(RuntimeError):
-            service.run_analysis(source, None, tmp_path / "jobs", bundle=bundle)
+            service.run_analysis(source, None, tmp_path / "jobs", bundle=bundle, plan=BrainPlan(profile))
         job = next((tmp_path / "jobs").iterdir())
         assert (job / "FAILED").is_file()
         assert not (job / "result.json").exists()
     else:
-        result = service.run_analysis(source, None, tmp_path / "jobs", bundle=bundle)
+        result = service.run_analysis(source, None, tmp_path / "jobs", bundle=bundle, plan=BrainPlan(profile))
         job = Path(result["artifact_directory"])
         assert (job / "result.json").is_file() and (job / "volumes.csv").is_file()
         assert result["status"] == "review_required"
+        assert result['cpu_backend'] == 'tensorflow-onednn-cpu'
         assert result["posterior_rows"][1]["percentile"] is None
 
 

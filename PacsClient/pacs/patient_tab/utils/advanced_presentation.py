@@ -12,6 +12,7 @@ import SimpleITK as sitk
 
 SC = '1.2.840.10008.5.1.4.1.1.7'
 MR = '1.2.840.10008.5.1.4.1.1.4'
+ENHANCED_MR = '1.2.840.10008.5.1.4.1.1.4.1'
 DX_PRESENTATION = '1.2.840.10008.5.1.4.1.1.1.1'
 FRAME_KEY = '_advanced_presentation_frames'
 MAX_BYTES = 512 * 1024 * 1024
@@ -74,9 +75,161 @@ def contains_presentation_frames(files):
         except (OSError, ValueError):
             continue
         if (str(ds.get('SOPClassUID', '')), str(ds.get('Modality', '')).upper()) in (
-                (SC, 'MR'), (SC, 'DOC'), (DX_PRESENTATION, 'DX')):
+                (SC, 'MR'), (SC, 'DOC'), (DX_PRESENTATION, 'DX'), (ENHANCED_MR, 'MR')):
             return True
     return False
+
+
+def _enhanced_frame_planes(ds, count):
+    """Resolve frame planes only; never manufacture a volume affine.
+
+    The known export anomaly inserts one display-only item before the final
+    spatial item. Accept that shape only with ordered, unique 1..N frame content.
+    Other mismatches retain viewable pixels with no spatial claims.
+    """
+    groups = list(ds.get('PerFrameFunctionalGroupsSequence', []))
+    shared = ds.get('SharedFunctionalGroupsSequence', [])
+    shared = shared[0] if shared else pydicom.Dataset()
+    normalized = False
+    if len(groups) != count:
+        if len(groups) != count + 1 or count < 2:
+            return [None] * count, False
+        extra = groups[count - 1]
+        if not extra or any(e.keyword not in ('FrameVOILUTSequence', 'PixelValueTransformationSequence') for e in extra):
+            return [None] * count, False
+        candidates = groups[:count - 1] + groups[count:]
+        content = [g.get('FrameContentSequence', []) for g in candidates]
+        if (any(len(c) != 1 for c in content)
+                or [int(c[0].get('InStackPositionNumber', 0)) for c in content] != list(range(1, count + 1))
+                or len({str(c[0].get('TemporalPositionIndex', '')) for c in content}) != 1):
+            return [None] * count, False
+        groups, normalized = candidates, True
+    planes = []
+    for group in groups:
+        try:
+            def value(sequence, keyword):
+                items = group.get(sequence) or shared.get(sequence)
+                return tuple(float(v) for v in items[0][keyword])
+            ipp = value('PlanePositionSequence', 'ImagePositionPatient')
+            iop = value('PlaneOrientationSequence', 'ImageOrientationPatient')
+            spacing = value('PixelMeasuresSequence', 'PixelSpacing')
+            if (len(ipp) != 3 or len(iop) != 6 or len(spacing) != 2
+                    or not np.isfinite((*ipp, *iop, *spacing)).all() or min(spacing) <= 0
+                    or not np.isclose(np.linalg.norm(iop[:3]), 1, atol=1e-4)
+                    or not np.isclose(np.linalg.norm(iop[3:]), 1, atol=1e-4)
+                    or abs(np.dot(iop[:3], iop[3:])) > 1e-4):
+                raise ValueError('Invalid frame plane')
+            planes.append(dict(image_position_patient=ipp, image_orientation_patient=iop,
+                pixel_spacing=spacing, slice_location=float(np.dot(ipp, np.cross(iop[:3], iop[3:]))),
+                frame_of_reference_uid=str(ds.get('FrameOfReferenceUID', ''))))
+        except (KeyError, IndexError, TypeError, ValueError):
+            planes.append(None)
+    return planes, normalized
+
+
+def _load_enhanced_mr_frames(headers, series_number):
+    """Worker-only 2D presentation; never claim a spatial volume for these frames.
+
+    Pixel frame index remains authoritative. Malformed group counts are allowed
+    only when every item has identical rescale transforms and declared spacing, so
+    no reassignment of ambiguous geometry or intensity transforms is necessary.
+    """
+    if len(headers) != 1:
+        raise ValueError('Enhanced MR presentation requires one image object')
+    path, ds = headers[0]
+    n, rows, cols = int(ds.get('NumberOfFrames', 0)), int(ds.get('Rows', 0)), int(ds.get('Columns', 0))
+    if (min(n, rows, cols) <= 0 or int(ds.get('SamplesPerPixel', 1)) != 1
+            or str(ds.get('PhotometricInterpretation', '')) != 'MONOCHROME2'
+            or ds.get('ModalityLUTSequence') or ds.get('VOILUTSequence')
+            or str(ds.get('PresentationLUTShape', 'IDENTITY')) != 'IDENTITY'):
+        raise ValueError('Unsupported Enhanced MR presentation pixels')
+    if n * rows * cols * 16 > MAX_BYTES:
+        raise ValueError('Enhanced MR presentation exceeds preparation memory limit')
+    identities = [str(ds.get(key, '')) for key in ('StudyInstanceUID', 'SeriesInstanceUID', 'SOPInstanceUID')]
+    if not all(identities):
+        raise ValueError('Invalid Enhanced MR identity')
+    shared = ds.get('SharedFunctionalGroupsSequence', [])
+    shared = shared[0] if shared else pydicom.Dataset()
+    groups = list(ds.get('PerFrameFunctionalGroupsSequence', []))
+
+    def display_values(group):
+        def macro(name):
+            value = group.get(name) or shared.get(name)
+            return value[0] if value else ds
+        transform, measures = macro('PixelValueTransformationSequence'), macro('PixelMeasuresSequence')
+        voi = macro('FrameVOILUTSequence')
+        if (transform.get('ModalityLUTSequence') or voi.get('VOILUTSequence')
+                or str(voi.get('VOILUTFunction', 'LINEAR')) not in ('', 'LINEAR')):
+            raise ValueError('Unsupported Enhanced MR display transform')
+        slope = float(transform.get('RescaleSlope', 1))
+        intercept = float(transform.get('RescaleIntercept', 0))
+        raw_spacing = measures.get('PixelSpacing')
+        spacing = tuple(float(v) for v in raw_spacing) if raw_spacing is not None else None
+        def first(value):
+            if value is None: return None
+            return float(value if isinstance(value, (str, float, int)) else value[0])
+        ww, wc = first(voi.get('WindowWidth')), first(voi.get('WindowCenter'))
+        if (not np.isfinite((slope, intercept)).all() or slope == 0
+                or (spacing is not None and (len(spacing) != 2
+                    or not np.isfinite(spacing).all() or min(spacing) <= 0))
+                or any(v is not None and not np.isfinite(v) for v in (ww, wc))):
+            raise ValueError('Invalid Enhanced MR display transform')
+        return slope, intercept, spacing, ww, wc
+
+    values = [display_values(g) for g in groups] or [display_values(pydicom.Dataset())]
+    if len(groups) != n:
+        transforms = {(v[0], v[1]) for v in values}
+        spacings = {v[2] for v in values if v[2] is not None}
+        if len(transforms) != 1 or len(spacings) > 1:
+            raise ValueError('Ambiguous Enhanced MR functional-group display transforms')
+        slope, intercept = next(iter(transforms))
+        # Do not assign an ambiguous item's VOI to a pixel frame. Each decoded
+        # plane receives its own scalar-range window; user windowing still works.
+        values = [(slope, intercept, next(iter(spacings), None), None, None)] * n
+    decoded = pydicom.dcmread(path)
+    if ([str(decoded.get(key, '')) for key in
+            ('StudyInstanceUID', 'SeriesInstanceUID', 'SOPInstanceUID')] != identities
+            or int(decoded.get('NumberOfFrames', 0)) != n):
+        raise ValueError('Enhanced MR identity changed during preparation')
+    pixels = decoded.pixel_array
+    if pixels.shape != (n, rows, cols):
+        raise ValueError('Enhanced MR decoded frame count or shape mismatch')
+    from .utils import convert_itk2vtk
+    frames, instances = [], []
+    planes, normalized_planes = _enhanced_frame_planes(ds, n)
+    for index, (slope, intercept, spacing, ww, wc) in enumerate(values):
+        plane = pixels[index].astype(np.float64) * slope + intercept
+        image = sitk.GetImageFromArray(plane[np.newaxis, :, :])
+        spacing = spacing or (1.0, 1.0)
+        image.SetSpacing((spacing[1], spacing[0], 1.0))
+        frame = convert_itk2vtk(image)
+        frames.append(frame)
+        lo, hi = frame.GetScalarRange()
+        if ww is None or ww <= 0 or wc is None:
+            ww, wc = max(1.0, hi - lo), (lo + hi) / 2
+        instances.append(dict(instance_path=path, instance_number=index + 1,
+            frame_index=index, number_of_frames=n, sop_uid=identities[2],
+            rows=rows, columns=cols, is_rgb=False, window_width=ww, window_center=wc,
+            photometric_interpretation='MONOCHROME2', image_orientation_patient=None,
+            image_position_patient=None, pixel_spacing=None, slice_thickness=None,
+            spacing_calibration='uncalibrated'))
+        if planes[index] is not None:
+            instances[-1].update(planes[index])
+    metadata = dict(instances=instances, spatial_geometry_available=False, preview_only=False,
+        instances_order_contract='ADVANCED_PRESENTATION_FRAME_ORDER',
+        series=dict(series_number=str(series_number), series_uid=identities[1],
+            series_instance_uid=identities[1], study_instance_uid=identities[0],
+            series_path=str(Path(path).parent), modality='MR', series_thk='N/A',
+            series_name=str(ds.get('SeriesDescription', series_number)),
+            series_description=str(ds.get('SeriesDescription', '')),
+            viewer_backend='vtk_simpleitk', spatial_geometry_available=False,
+            orientation=None, geometry_plane='UNKNOWN', display_convention='UNKNOWN'))
+    metadata['frame_geometry_available'] = any(p is not None for p in planes)
+    metadata['frame_geometry_normalized'] = normalized_planes
+    metadata['series']['frame_of_reference_uid'] = str(ds.get('FrameOfReferenceUID', ''))
+    metadata[FRAME_KEY] = PresentationFrames(frames)
+    metadata[OVERLAY_KEY] = PresentationFrames([None] * n)
+    return frames[0], metadata
 
 
 def load_presentation_sequence(files, *, series_number, max_itk_threads=None):
@@ -90,6 +243,8 @@ def load_presentation_sequence(files, *, series_number, max_itk_threads=None):
         return None
     headers = [(str(path), pydicom.dcmread(str(path), stop_before_pixels=True, force=True))
                for path in files]
+    if any(str(ds.get('SOPClassUID', '')) == ENHANCED_MR for _, ds in headers):
+        return _load_enhanced_mr_frames(headers, series_number)
     is_dx = any(str(ds.get('SOPClassUID', '')) == DX_PRESENTATION for _, ds in headers)
     is_document = any(str(ds.get('Modality', '')).upper() == 'DOC' for _, ds in headers)
     modality = 'DX' if is_dx else ('DOC' if is_document else 'MR')

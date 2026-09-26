@@ -1,5 +1,14 @@
 # Advanced 3D Slicer Module — Deployment & Setup Guide
 
+> **Current-build precedence (2026-09-23):** The native custom Slicer runtime
+> described in the [definitive baseline](../../../../../docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md)
+> is already built and is required for both Client and Eagle Eye Server. The
+> `slicer_runtime_v0.1.0.zip` download and manual extraction recipes below are
+> historical recovery notes, **not** inputs to a new 3.6.7 or later installer.
+> For an ordinary build, follow root [`BUILD.md`](../../../../../BUILD.md) and
+> reuse the verified native cache. Only native-source changes require the
+> [source-build guide](BUILD_FROM_SOURCE.md). Do not launch or copy a stock Slicer.
+
 > **Purpose:** This document ensures any developer can deploy, rebuild, or troubleshoot
 > the AI-PACS Advanced Viewer (custom 3D Slicer) module without day-long discovery sessions.
 >

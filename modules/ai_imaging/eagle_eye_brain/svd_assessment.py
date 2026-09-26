@@ -56,30 +56,43 @@ def spatial_burden(mask, anatomy, names):
                 total_volume_mm3=float(positive.sum()*voxel))
 
 
-def enrich_svd(result, source_directory, *, cancel=None, progress=None):
+def enrich_svd(result, source_directory, *, t1_source=None, cancel=None, progress=None):
     """Find only completed same-study anatomy, then explicitly register its T1 to FLAIR."""
     import threading
     import SimpleITK as sitk
     from .lesion_longitudinal import register_previous
+    cancel=cancel or threading.Event()
+    progress=progress or (lambda text:None)
     source=Path(source_directory)
-    candidates=sorted(source.parent.glob('brain-*/result.json'),key=lambda p:p.stat().st_mtime,reverse=True)
+    candidates=[source/'svd-anatomy/result.json',
+                *sorted(source.parent.glob('brain-*/result.json'),key=lambda p:p.stat().st_mtime,reverse=True)]
     context=result['patient_context']
     selected=None
     for path in candidates:
-        other=json.loads(path.read_text(encoding='utf-8'))
-        if all(context.get(k) and context.get(k)==other.get('patient_context',{}).get(k)
-               for k in ('patient_id','birth_date','study_uid')) and (path.parent/'labels.nii.gz').is_file():
-            selected=path.parent; break
+        try:
+            other=json.loads(path.read_text(encoding='utf-8'))
+            if (other.get('pdf_available') and not (path.parent/'FAILED').exists()
+                and all(context.get(k) and context.get(k)==other.get('patient_context',{}).get(k)
+                        for k in ('patient_id','birth_date','study_uid'))
+                and (path.parent/'labels.nii.gz').is_file()):
+                selected=path.parent; break
+        except (OSError, ValueError, TypeError):
+            continue
     if selected is None:
-        return dict(status='Anatomical localization unavailable: complete same-study brain volumetry first.')
-    progress=progress or (lambda text:None)
+        if not t1_source:
+            return dict(status='Anatomical localization unavailable: complete same-study brain volumetry first.')
+        from .anatomy_context import compute_anatomy
+        progress('Preparing T1 anatomical segmentation for SVD spatial review')
+        selected=compute_anatomy(t1_source, source/'svd-anatomy', cancel=cancel, progress=progress)
+        other=json.loads((selected/'result.json').read_text(encoding='utf-8'))
     progress('Aligning same-study anatomical segmentation for SVD spatial review')
-    cancel=cancel or threading.Event()
     target=sitk.ReadImage(str(source/'flair.nii.gz'))
     moving=sitk.ReadImage(str(selected/'resampled.nii.gz'))
     anatomy=sitk.ReadImage(str(selected/'labels.nii.gz'))
-    if moving.GetSize()!=anatomy.GetSize():
-        raise BrainError('Anatomical labels do not match their source image.')
+    if (moving.GetSize()!=anatomy.GetSize() or any(not np.allclose(a,b,atol=1e-5,rtol=0) for a,b in
+        ((moving.GetSpacing(),anatomy.GetSpacing()),(moving.GetOrigin(),anatomy.GetOrigin()),
+         (moving.GetDirection(),anatomy.GetDirection())))):
+        raise BrainError('SVD anatomy does not match its source geometry.')
     transform=register_previous(moving,target,cancel)
     mapped=sitk.Resample(anatomy,target,transform,sitk.sitkNearestNeighbor,0,sitk.sitkUInt16)
     mask=sitk.ReadImage(result['mask_path'])

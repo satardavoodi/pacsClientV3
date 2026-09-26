@@ -2,11 +2,14 @@
 
 > **Canonical current route (2026-09-06):** start at [`../BUILD.md`](../BUILD.md).
 > The simple/monolithic command documented below is useful for diagnostics but is
-> not an official Standard/Eagle Eye/ARM64-emulated release candidate. The only
-> final matrix entry point is the isolated coordinator defined by `BUILD.md`.
+> not an official role-selected Client/Server release candidate. The only
+> final installer entry point is the isolated coordinator defined by `BUILD.md`.
 > A versioned full build also requires the multi-remote synchronization receipt
 > created through [`../RELEASE.md`](../RELEASE.md).
 > Documentation map: [`../docs/release-and-build/README.md`](../docs/release-and-build/README.md).
+> For a repeated same-version local install-QA run, the coordinator preserves the
+> selected Nuitka outputs under `_superseded` before Stage 10. Do not invoke Stage
+> 10 directly to overwrite an existing versioned installer.
 
 This document describes the **Nuitka** build pipeline for AIPacs. Nuitka compiles
 the Python source into C/C++ and then into a native binary, which is

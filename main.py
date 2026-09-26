@@ -31,6 +31,17 @@ except NameError:
 import sys
 import os
 
+if __name__ == '__main__':
+    if '--aipacs-native-graphics-probe' in sys.argv[1:]:
+        from modules.viewer.native_graphics_probe import dispatch_probe
+        dispatch_probe(sys.argv)
+        raise SystemExit(0)
+    from modules.ai_imaging.eagle_eye_remote.bootstrap import dispatch
+    if dispatch(sys.argv):
+        raise SystemExit(0)
+    from modules.ai_imaging.eagle_eye_remote.launch import configure as configure_eagle_eye_launch
+    _eagle_eye_hosted_service = configure_eagle_eye_launch(sys.argv)
+
 # ---------------------------------------------------------------------------
 # Qt Multimedia backend selection (must run before any QtMultimedia use).
 # Qt 6.8+ defaults to the FFmpeg media backend, which on this workstation
@@ -603,6 +614,14 @@ def configure_graphics_fallback():
                 except Exception:
                     pass
 
+    from modules.viewer.native_graphics_probe import (
+        apply_native_graphics_result, probe_native_graphics,
+    )
+    native_graphics = probe_native_graphics(dll_directories=path_prefixes)
+    apply_native_graphics_result(native_graphics)
+    profile["native_vtk_graphics"] = native_graphics
+    print(f"[GRAPHICS] Native VTK: {native_graphics['reason']}")
+
     # ========================================================================
     # Logging (minimal, before logging subsystem fully initialized)
     # ========================================================================
@@ -636,6 +655,10 @@ def configure_graphics_fallback():
 
 # Configure graphics BEFORE any Qt/VTK imports
 GRAPHICS_PROFILE = configure_graphics_fallback()
+
+# Cache edition metadata before the GUI; settings construction does no disk probe.
+from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+settings_role()
 
 # Viewer widgets are created later on the Qt thread. Reuse the graphics probe
 # completed above instead of re-reading runtime_profile.json and probing the
@@ -1337,7 +1360,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.6.7")
+    app.setApplicationVersion("3.6.8")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1498,6 +1521,8 @@ if __name__ == "__main__":
             loop.run_forever()
     finally:
         # Clean up single-instance lock on shutdown
+        if _eagle_eye_hosted_service is not None:
+            _eagle_eye_hosted_service.close()
         instance_lock.release()
         logging.getLogger(__name__).info("Application shutdown: instance lock released")
         # B3.11: Shutdown decode service subprocess

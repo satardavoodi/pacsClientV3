@@ -21,11 +21,30 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def normalize_runtime_home(runtime):
+    """Record the physical base path, not an MSIX-virtualized user-profile alias."""
+    cfg = Path(runtime) / 'pyvenv.cfg'
+    if not cfg.is_file():
+        return  # A self-contained packaged interpreter need not use a venv.
+    lines = cfg.read_text(encoding='utf-8').splitlines()
+    for index, line in enumerate(lines):
+        key, separator, value = line.partition('=')
+        if separator and key.strip() == 'home':
+            base = Path(value.strip()).resolve()
+            if not (base / 'python.exe').is_file():
+                raise ValueError('The development runtime base interpreter is unavailable.')
+            lines[index] = f'home = {base}'
+            cfg.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+            return
+    raise ValueError('The development runtime has no base interpreter home.')
+
+
 def prepare(snapshot, engine):
     root = REPO / 'generated-files/eagle-eye' / engine
     source = REPO / 'modules/ai_imaging/eagle_eye_engines'
     if not (root / 'runtime/Scripts/python.exe').is_file():
         raise ValueError('Provision the isolated runtime first.')
+    normalize_runtime_home(root / 'runtime')
     (root / 'weights').mkdir(parents=True, exist_ok=True)
     names = {'final_model.pth': 'final_model.pth'} if engine == 'bone-age' else {
         'best_fcos_csv_delivery.pth': 'best_fcos_csv_delivery.pth',

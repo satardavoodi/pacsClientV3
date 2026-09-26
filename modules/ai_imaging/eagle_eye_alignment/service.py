@@ -132,6 +132,8 @@ def load_image(path,study_uid,series_uid=None):
     elif str(ds.PhotometricInterpretation)!='MONOCHROME2':raise ValueError('Unsupported photometric interpretation.')
     pixels[~valid]=0
     spacing,calibrated,method=_spacing(ds)
+    from ..eagle_eye_remote.radiograph_binding import fingerprint
+    semantic_binding = fingerprint(ds, raw, pixels, valid, spacing, calibrated, method)
     return dict(pixels=pixels.astype(np.uint8),spacing=spacing,calibrated=calibrated,calibration_method=method,
                 identity={'study_uid':study_uid,'series_uid':str(ds.SeriesInstanceUID),'sop_uid':str(ds.SOPInstanceUID),
                           'patient_id':str(ds.get('PatientID','')),'patient_name':str(ds.get('PatientName','')),
@@ -142,10 +144,15 @@ def load_image(path,study_uid,series_uid=None):
                           'sex':str(ds.get('PatientSex','')),
                           'series_number':str(ds.get('SeriesNumber','')),
                           'series_description':str(ds.get('SeriesDescription','')),
-                          'instance_number':str(ds.get('InstanceNumber',''))},source_sha256=digest(path))
+                          'instance_number':str(ds.get('InstanceNumber',''))},source_sha256=digest(path),
+                radiograph_binding=semantic_binding)
 
 
 def predict(image,cancel,root=None):
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        from ..eagle_eye_remote.routing import radiograph
+        return radiograph('alignment', image, cancel)
     from modules.mpr.advanced_3d_slicer.owned_process import ProcessJob
     root=Path(root or bundle_root()).resolve()
     validate_bundle(root,cancel)

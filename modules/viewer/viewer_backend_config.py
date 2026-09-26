@@ -76,17 +76,14 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
         os.environ.get(SAFE_VIEWER_BACKEND_ENV, "").strip().lower(),
         default="",
     )
-    safe_backend_forced = bool(
-        forced_backend in {BACKEND_PYDICOM, BACKEND_PYDICOM_QT}
-        and configured_backend in {BACKEND_VTK, BACKEND_PYDICOM}
-    )
-    requested_backend = forced_backend if safe_backend_forced else configured_backend
+    safe_backend_forced = forced_backend in {BACKEND_PYDICOM, BACKEND_PYDICOM_QT}
+    requested_backend = BACKEND_PYDICOM_QT if safe_backend_forced else configured_backend
 
     # v2.3.3 Stage 2: Emergency escape hatch — revert FAST to the old VTK
     # lazy-hybrid backend without a code change.  Set the env var to "1"
     # and restart the application.
     _force_legacy = os.environ.get("AIPACS_FORCE_PYDICOM_2D", "").strip() == "1"
-    if _force_legacy and requested_backend in {BACKEND_PYDICOM_QT, BACKEND_PYDICOM}:
+    if _force_legacy and not safe_backend_forced and requested_backend in {BACKEND_PYDICOM_QT, BACKEND_PYDICOM}:
         logger.warning(
             "[BACKEND_SWITCH_V2.3.3] AIPACS_FORCE_PYDICOM_2D=1 — "
             "overriding %s -> %s (emergency escape hatch)",
@@ -145,15 +142,12 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
             backend = BACKEND_VTK
             metadata_complete = False
 
-    if safe_backend_forced and backend in {BACKEND_VTK, BACKEND_PYDICOM} and instances:
+    if safe_backend_forced:
         backend = BACKEND_PYDICOM_QT
-        metadata_complete = True
+        metadata_complete = bool(instances)
 
-    # NOTE: pydicom_2d renders through VTK.  When Mesa software-rendering
-    # DLLs are present the VTK pipeline works correctly.  When they are
-    # missing, build_windows_graphics_environment() sets
-    # AIPACS_FORCE_SAFE_VIEWER_BACKEND=pydicom_qt and the guard above
-    # promotes pydicom_2d → pydicom_qt automatically (same as vtk_simpleitk).
+    # pydicom_2d also renders through VTK. Missing DLLs OR a failed native
+    # context probe force the VTK-free path, including empty placeholders.
 
     return {
         "backend": backend,
@@ -165,7 +159,7 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
         "force_vtk_fallback": force_vtk_fallback,
         "safe_backend_forced": safe_backend_forced,
         "safe_backend_reason": (
-            "Software OpenGL runtime is unavailable, so the workstation is forcing "
+            "Native OpenGL is unavailable, so the workstation is forcing "
             f"{requested_backend or SAFE_VIEWER_BACKEND_DEFAULT} as the safe CPU viewer backend."
             if safe_backend_forced
             else ""

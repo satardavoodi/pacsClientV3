@@ -76,6 +76,94 @@ After first launch:
    - load images
    - close app cleanly
 
+### Role-specific Settings visibility (PyInstaller and Nuitka)
+
+In a fresh installed launch, open Settings and record the visible controls for
+each role without saving credentials or starting a service merely for this QA.
+
+For both roles, the top level must show `Server Settings`, `Viewer Configuration`,
+`AI`, `Installation & Updates`, and `Consultation & Education`. The nested
+`Viewer Configuration` group contains `Viewer Configuration`, `Tools Settings`,
+`Image Filter`, and `Light Viewer` only when that module is installed. The
+nested `AI` group contains `EchoMind` only when installed, plus `Eagle Eye` and
+`Agent`. Open each leaf in a fresh frozen process to catch missing imports or
+blank lazy pages. Confirm that selecting the viewer configuration still wires
+its change notification, and that the Server Settings link opens `AI > Eagle
+Eye` directly without constructing the EchoMind page. Do not confuse these
+navigation checks with approval of any configured connection or clinical AI.
+
+- Standard/ARM Client: Eagle Eye client connection URL/credential and paired
+  client certificate/private-key file controls are visible as the single AI
+  connection. Legacy Breast, Bone Age,
+  Segmentation and Mammography connection editors are hidden in both global
+  and server-profile UI; their previously saved values are preserved, not
+  deleted. PACS/Reception connections remain available. Server-local PACS
+  source, resource and SCM management are hidden.
+- Eagle Eye Server: Eagle Eye client connection form and outbound legacy AI
+  service editors are hidden. Local PACS source, resource reservations and
+  independent service management labels/panels are visible. The listener panel
+  exposes IPv4 bind address, request/result port, TLS certificate and private
+  key paths, clearly marked as applying after a controlled service restart.
+  The installed edition, not a test-only environment flag, must select the
+  Server role. Existing saved hidden endpoints and PACS/Reception settings
+  remain intact.
+- Repeat for both frozen backends. Missing Settings modules, the wrong role,
+  duplicate listener startup or a modal import failure is a failed installed
+  GUI gate. Source tests and the Razi source copy do not replace
+  this fresh-launch frozen check.
+
+On an authorized isolated Server QA host, check that invalid bind IP/port,
+network bind without TLS, missing or mismatched cert/key files, and a stale
+settings revision are rejected without changing the running listener. With a
+valid certificate whose SANs cover the client-facing address and loopback,
+verify a service-managed HTTPS desktop connects to the independent SCM service
+without hosting a second listener. An authenticated synthetic request and
+result retrieval must use the same configured port; the Standard client must
+reach that HTTPS address with its paired client certificate/key and owner token,
+verifying the Server CA and address SAN. The Server must require trusted client
+certificates and an exact certificate SHA-256 pin for each token owner. Test a
+successful synthetic request/result plus rejection of a missing client
+certificate, a trusted certificate with another owner's pin, an incorrect
+token, an untrusted Server, and a wrong-host Server certificate. Check missing
+or malformed paired key-file input and document cert renewal/revocation without
+recording secrets. This installation pairing is not commercial-license
+attestation. The successful source cutover and source tests are not frozen
+acceptance. Use an isolated QA host; do not disturb the live Razi 8002 service.
+
+Check the local PACS and Reception presets separately: they retain a user-entered
+port; an empty local Reception port resolves to the product default 8080.
+Reception HTTP, DICOM, patient/download socket and Eagle Eye request/result
+ports remain distinct. The Razi full-source SCM and paired Standard Client now
+use TLS port 8002, while Reception remains on local 8080. The control PC's
+public-address check originated from that same PC, not an independent outside
+network. Frozen Server/Client installers, fresh GUI/PACS account acceptance,
+and full clinical inference remain pending.
+
+### Frozen native-graphics child route (both backends and roles)
+
+The QA operator, not the build automation, runs the installed windowed
+`AIPacs.exe` once with `--aipacs-native-graphics-probe` and a fresh private
+`AIPACS_GRAPHICS_PROBE_RECEIPT` JSON path outside patient storage. It must
+exit promptly, create a small `{"supported": true}` or
+`{"supported": false}` receipt, and never
+open the normal workstation UI. Do not rely on stdout from a windowed build.
+The probe uses synthetic pixels; do not copy clinical images into this test.
+
+- On a known supported graphics host, record `supported: true`, then verify
+  normal viewer launch and affected-series GUI input/output.
+- On a host where native Win32 VTK admission fails, record `supported: false`
+  (or the isolated child fault) and verify the parent remains usable in
+  VTK-free Fast mode; stale MPR preflight PASS must not re-enable native VTK.
+- Repeat for PyInstaller and Nuitka, for Standard/ARM and any Server candidate
+  actually built. A missing child module, timeout, crash in the parent, absent
+  receipt, or fallback to VTK despite failed admission is a failed QA gate.
+- Successful child admission is not a substitute for live patient-list,
+  drag/drop, rendered-image, and Server model acceptance. On 2026-09-23 Razi,
+  an initial source GUI attempt failed; a later normal-source patient-open and
+  actual-image-display workflow passed. That scoped pass does not qualify the
+  frozen installers, Advanced/MPR, AI, or the outstanding UI stall and
+  download-progress warnings.
+
 Also verify inside `installation_profile.json`:
 
 - `app_version` matches the installer version

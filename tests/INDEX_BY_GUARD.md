@@ -1,5 +1,174 @@
 # AI-PACS Test Inventory — Index by Guard
 
+## Reversible 2D MS band review (2026-09-26)
+
+`code/ai_imaging/test_periventricular_band_filter.py` covers lossless raw/retained/separated masks, paired versus focal/bulging/radial/unilateral geometry, oblique/axis-flipped inputs, MS-to-SVD restoration and explicit report limitations. `test_lesions_2d.py` also covers manual override provenance and additional remote artifact paths. Clinical qualification is separate from these synthetic guards.
+
+## Native 2D lesion route (2026-09-26)
+
+`tests/code/ai_imaging/test_lesions_2d.py`: acquisition choice, DICOM gates, native slab/gap math, report claims, revision basis and long-path artifact publication. `tests/code/builder/test_eagle_eye_lesion_payload.py`: independent optional-engine acceptance and sealed payload parity.
+
+
+## Patient-tab representative thumbnail (2026-09-26)
+
+`code/ui_services/test_patient_tab_header_thumbnail.py` protects the unified title-bar
+thumbnail boundary. It requires exact history SeriesNumber 100000 to be excluded,
+uses `_orig_series_number` for multi-study offsets, targets the producing PatientWidget
+instead of `currentIndex()`, and source-pins sidebar card admission as the only producer.
+All four tests failed before correction. Final affected/adjacent result: 238 passed;
+packaging-input result: 42 passed. Fresh-source GUI remains a separate mandatory gate.
+
+## Canonical thumbnail order and replacement geometry (2026-09-26)
+
+`code/ui_services/test_sidebar_bounded_build.py` reproduces the real partial-generation
+failure: an exact history card survives while the replacement generation reserves the
+same row for another series. It asserts unique final rows, canonical history-first
+order, two-study offset handling, per-study header counts and a header-free total.
+Both main assertions failed before and pass after.
+
+`code/viewer/test_history_series_first.py` covers the shared pure detector/order key,
+including exact-only 100000 matching, `_orig_series_number` precedence, stable study
+groups and the rollback flag. `code/ui_services/test_right_panel_render_lifecycle.py`
+pins Home dispatch to the same per-study order. Affected/adjacent result: 230 passed;
+`code/builder/test_release_candidate_packaging.py`: 42 passed. Fresh GUI remains open.
+
+September 26 browser launch geometry: `code/web_browser/test_browser_launch_notice.py`
+adds three real-Qt cases for bounded width, shell centering, resize tracking and
+wrapped-text containment. Fail-before/pass-after evidence is in the OPT-22 opening
+status receipt; 92 related tests pass, fresh source GUI acceptance remains open.
+
+## Local multiframe PNG and native empty hint (2026-09-24)
+
+September 25 DX correction: `code/ui_services/test_local_multiframe_thumbnail_repair.py`
+also covers real PNG creation for geometry-free single-frame DX, import preparation,
+Study/Series identity rejection and refusal to decode multiple presentation objects
+for one thumbnail. Fail-before/pass-after evidence and the 116-test receipt are in
+the UI-stall owner report; fresh source GUI acceptance remains open.
+
+September 25 follow-up: `code/viewer/test_advanced_frame_reference_sync.py` covers
+independent-frame physical mapping, both reference-line modes, bidirectional
+orthogonal/oblique sync, logical frame selection/native marker Z separation,
+outside rejection and patient-space compatibility. Enhanced-frame guards cover
+verified plane retention and rejection of ambiguous group ordinals. 123 related
+checks pass; VTK owner receipt records the remaining live gate.
+
+September 25: `code/viewer/test_advanced_enhanced_mr_frames.py` covers Advanced
+2D frame presentation, full-loader routing, exact pixel order, single rescale,
+malformed-group VOI isolation, memory admission and decode identity stability.
+See the VTK owner report for 47-test and 606-frame preparation evidence and limits.
+
+`code/viewer/test_advanced_drag_hover_backing.py` covers opaque Advanced hover,
+parent-background independence, mouse pass-through and empty-hint restoration.
+Related loading/drop suite: 32 passed; see the VTK owner OPT-23 recurrence receipt.
+
+`code/ui_services/test_local_multiframe_thumbnail_repair.py` covers synthetic
+Enhanced MR PNG production without top-level geometry, collision-aware output,
+identity rejection, import preparation and unchanged single-frame routing.
+`code/viewer/test_fast_viewer_empty_state_ui.py` adds rendered opacity/background
+independence for the empty Advanced hint. Both main assertions failed before
+their fixes. Owner receipts: UI-stall and VTK-domain reports; live gates pending.
+
+## Standard MPR sampling stationarity (2026-09-24, OPT-48)
+
+`code/mpr/test_mpr_reslice_sampling_stability.py` renders a fully invented
+Y-invariant phantom through the production reconstructed-pane policy in an
+isolated process. Normal/enlarged views must remain pixel-identical during
+scroll. Native-plane role permutations retain nearest interpolation and volume/
+slice-plane geometry. The rendered guard failed before the sampling correction.
+
+## Frozen role-aware Settings payload (2026-09-23)
+
+`code/builder/test_role_settings_packaging.py` proves the shared Settings UI
+and Eagle Eye role resolver enter the canonical source snapshot and are
+explicitly retained by PyInstaller and Nuitka full-core builds. The two
+backend inclusion cases failed before pinning and now pass. Fresh installed
+Server-vs-Standard visibility is still a separate GUI gate.
+
+## Patient-list input observation (2026-09-23)
+
+`code/system/test_patient_input_observation.py` exercises a real Qt viewport
+double-click event against the production filter method and requires a PHI-free
+record without event consumption. This guards diagnostic coverage, not resolution
+of the intermittent first-double-click failure (OPT-35 / OPT-60).
+
+## Native graphics admission (2026-09-23)
+
+`code/viewer/test_native_graphics_admission.py` guards failed/crashed/timed-out
+native VTK probes, strict private receipts for windowed builds, empty/populated
+Fast routing, controller overrides and MPR cached-pass bypasses. Ten cases failed
+before the resolver correction. See the native graphics diagnosis in
+`docs/reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md`.
+`code/builder/test_native_graphics_probe_packaging.py` pins the early probe
+child and its four synthetic VTK imports in PyInstaller and Nuitka full-core
+packaging. Both guards failed before explicit inclusion and now pass; installed
+windowed receipt and live GUI acceptance remain separate gates.
+
+## Eagle Eye Server frozen-service dependencies (2026-09-23)
+
+`code/builder/test_eagle_eye_service_build_preflight.py` guards the role-scoped
+Server dependency gate: the real pywin32 311 wheel and locked native imports
+are required, `pywin32-ctypes` cannot substitute, and Client preparation remains
+independent. The first three cases failed before the guard existed. The current
+Server build cache fails closed; frozen Session 0 acceptance is still required.
+
+## Eagle Eye service lifecycle and reconnect (2026-09-22)
+
+`tests/code/ai_imaging/test_eagle_eye_service_host.py` covers early service dispatch,
+frozen edition rejection, absolute service paths, SCM pending-state/failure handling,
+actual source listener children, ownership gating and bounded descendant cleanup.
+Two dispatch guards failed before wiring; Session 0/installed acceptance is separate.
+`test_eagle_eye_remote.py` adds fail-before transport-loss and lost-acknowledgement
+reconciliation guards plus explicit cancellation, detached timeout and credential
+binding checks. See section 13 of the existing server/client plan for evidence and
+pending UI/service qualification.
+
+## Advanced MPR installer/source parity (2026-09-22)
+
+`code/builder/test_slicer_assembly_target.py::test_slicer_assembly_stages_exact_app_local_vc_runtime`
+and `code/builder/test_slicer_runtime_current_source.py::test_portable_native_runtime_rejects_missing_or_wrong_app_local_crt`
+guard the pinned app-local VC143 x64 DLL set needed for the custom Slicer/VTK
+binary on older Windows Server hosts. The assembly refuses a mismatched donor;
+build parity refuses a missing or changed cached/runtime CRT. The isolated
+2026-09-23 Razi candidate passed normal launcher and synthetic no-window
+startup; installed clinical acceptance is separate.
+`code/builder/test_slicer_runtime_current_source.py` proves runtime-payload
+materialization replaces the cached Slicer startup entry point with the exact
+Developer Run source, packages the presentation/Qss companions, records content
+hashes, prefers the complete package when frozen, and rejects changed assembled
+Slicer files absent from the immutable distribution cache.
+`test_matching_caches_cannot_hide_stale_native_slicer_source` fails before the
+native-provenance correction: even byte-identical old developer/cache binaries
+must not pass after C++/CMake/UI-resource changes. The assembler must first
+record a compiled executable newer than native source, and the coordinator
+requires matching source/executable hashes in both runtime copies.
+`code/module_system/test_module_installation_packages.py` proves an existing
+same-version Advanced MPR installation refreshes once for startup or presentation
+changes and does not lose its old runtime to a corrupt bundled package. The
+reported-defect guards failed before the fix.
+
+`code/mpr/test_slicer_resident.py::test_frozen_warmup_loads_guard_and_presentation_from_installed_runtime`
+fails on the former frozen-core resource paths and requires warm-up to pass the
+installed Slicer module guard and current presentation paths instead. Its
+incomplete-runtime companion requires refusal before any external process starts.
+Installed GUI acceptance remains separate from these synthetic tests.
+
+## Eagle Eye server/client boundary (2026-09-21)
+
+2026-09-22: `code/ai_imaging/test_eagle_eye_roles.py` exercises the actual worker
+method bodies to forbid legacy network fallback, plus explicit launch roles,
+authenticated loopback hosting, server-cache read-only completeness and listener
+collision ordering. Both fallback guards failed before the change. The latest
+broader selection passed 255 tests; final role/transport selection passed 26 tests.
+
+`code/ai_imaging/test_eagle_eye_remote.py` covers reference-only requests, per-client
+job access, immutable artifact identity/hashes, cancellation/restart, forbidden
+source exports, Standard no-local-fallback and regular lumbar geometry. It also
+guards the corrected missing-classification message. Edition/Slicer thin-client
+guards live in `code/builder/test_distribution_profiles.py` and
+`code/builder/test_offline_lumbar_payload.py`. Full focused selection: 240 passed;
+real synthetic Bone/Breast loopback transport passed. GUI and server deployment are
+not accepted; see `docs/modules/EAGLE_EYE_SERVER_PHASE1_2026-09-21.md`.
+
 ## First-viewer graphics snapshot reuse (2026-09-20)
 
 `code/viewer/test_viewer_gpu_boost.py` guards the shared Fast/Advanced graphics-policy
@@ -620,6 +789,13 @@ model pins with stage-specific precedence. All five pass after correction.
 
 ## Canonical Git release route (2026-09-07)
 
+`code/builder/test_eagle_eye_client_sanitization.py` prevents local Eagle Eye
+pairing URLs, credential/certificate file paths, custom token environment names,
+inline tokens and unknown deployment fields from entering installed defaults.
+Two synthetic fail-before guards verify the allowlisted unpaired template and
+preservation of Developer Run configuration. This shared build-time boundary
+applies to PyInstaller and Nuitka without a runtime or clinical behavior change.
+
 `code/git/test_release_manager.py` protects the fixed three-repository/two-branch
 target matrix, clean reviewed release commits, version and release-record parity,
 fast-forward-only publication, path-only secret reporting, annotated tag identity,
@@ -652,6 +828,17 @@ keeps full-candidate resume inside stages 0/6/7/8/9/10, and
 `test_candidate_resume_skips_completed_python_and_resumes_nuitka` proves the root
 coordinator retains a complete PyInstaller backend, recovers Nuitka, and reruns
 coherence. The canonical runbook/candidate/profile selection passes 60 tests.
+
+## Client/Server build-role selection (2026-09-22)
+
+`code/builder/test_distribution_profiles.py` pins Client to Standard plus
+ARM64-emulated and Server to Eagle Eye only. The client asset-cache guard proves
+offline-lumbar model files are not needed to verify Client inputs.
+`code/builder/test_release_candidate_packaging.py` checks four-file Client and
+two-file Server command selection, role-specific expected outputs, retained
+legacy six-output resume, and the fail-closed Server release gate while portable
+Breast/Bone and service acceptance are unfinished. The focused
+runbook/profile/candidate selection passes 70 tests (direct pytest, exit 0).
 
 ## Release candidate staging capacity (2026-09-06)
 
@@ -2442,3 +2629,159 @@ See `docs/echomind/TEMPLATE_MERGE_VALIDATION_2026-09-21.md`. `tests/code/echomin
 multiframe, duplicated inputs, verified sex, source hashes, bundle corruption,
 cancellation, strict weight loading, API/training isolation and MG/DX local routing.
 See `docs/modules/EAGLE_EYE_BREAST_BONE_LOCAL_2026-09-21.md` for execution evidence.
+
+### Hosted Breast/Bone runtime corrections (2026-09-22)
+
+`test_eagle_eye_local_engines.py` additionally covers resolved development-runtime home, missing base interpreter, bounded retained private failure evidence, unchanged WRIST-tagged sources, unrelated-anatomy rejection and persisted coverage-review warnings. See `docs/modules/EAGLE_EYE_SERVER_PHASE1_2026-09-21.md` for separate API and native GUI evidence.
+
+`test_eagle_eye_remote.py::test_breast_export_preserves_series_binding_without_server_paths` and `::test_breast_worker_emits_portable_table_before_publication` guard portable series/SOP references, unchanged boxes, idempotence, foreign-source rejection and worker-side preparation before the long-lived host publishes artifacts. The export identity assertion failed before correction.
+
+## Advanced chrome / Save presentation (2026-09-22)
+
+`code/mpr/test_analysis_presentation.py` adds fail-before guards for locked native
+application toolbar visibility/toggles, late toolbar creation, preserved internal
+module controls and native Save callbacks; Save dialog icon/title replacement
+preserves destinations, selections, buttons and unrelated dialogs. 19 presentation
+tests pass; native GUI verification is separately pending in the Advanced UI audit.
+
+## Eagle Eye actual-execution guards (2026-09-22)
+
+`code/ai_imaging/test_eagle_eye_execution_fixes.py` exercises selected DERIVED radiographs versus rejected derived MR, complete PDF text/rows/footer across continuation pages, bounded lesion and nested MS anatomy cwd with success/failure/cancel cleanup, and asynchronous CTK identity resolution with read-only synthetic databases and missing/mixed/duplicate rejection. See the [execution report](../docs/reports/EAGLE_EYE_EXECUTION_FIXES_2026-09-22.md) for fail-before evidence and the separate native gates.
+
+The same file also guards isolated SVD anatomy computation and completed same-study nested anatomy reuse for MS/SVD review. `test_eagle_eye_lesions.py` covers SVD T1 dependency delivery and cancelled-report nonpublication. The final affected selection passed 89 tests; counts and live limits are recorded in the execution report.
+
+### Brain registration repeatability (2026-09-22)
+
+`code/ai_imaging/test_eagle_eye_lesions.py::test_registration_adapter_pins_seed_and_registration_thread_budget` checks fixed nonzero Greedy seed, overridden/default single registration thread and preserved quoted paths. Actual registration repeats support this narrow correction; no whole-model reproducibility claim.
+
+### Eagle Eye settings, scheduling and native process evidence (2026-09-22)
+
+`code/ai_imaging/test_eagle_eye_settings.py` guards background-only configuration I/O,
+atomic stale-edit checks, endpoint validation, credential/mapping preservation and
+owner-filtered job inventory. `test_eagle_eye_scheduling.py` covers explicit parallel
+budgets, default serialization, per-client bounds, cancel/failure/shutdown release,
+two independent owners and exclusive durable-directory ownership.
+`test_eagle_eye_brain_study_workflow.py` adds numeric private diagnostics for failed,
+cancelled and timed-out children; execution and remote artifact guards prove scratch
+retention without diagnostic export. Startup lazy-tab and runtime config-migration
+guards include the Eagle Eye tab and versioned client connection family. Combined
+selection: 119 passes; adjacent builder selection: 40 passes. Native GUI acceptance
+and native Brain stability are separately pending.
+
+`test_eagle_eye_brain.py::test_pipeline_publishes_completion_only_after_artifacts`
+now covers Standard/Robust with success/report-failure outcomes, explicit measured
+CPU backend selection before TensorFlow startup and backend metadata in completed
+results. Four cases failed before correction. The affected Brain/workflow/execution/
+lesion/transport selection passed 129 tests. The process-evidence guard additionally
+distinguishes system commit headroom from physical RAM availability.
+
+`test_eagle_eye_execution_fixes.py::test_assessment_rejects_anatomy_with_changed_physical_geometry`
+covers same-sized synthetic anatomy with mismatched spacing, origin or direction
+in both MS and SVD. Three SVD cases failed before the physical-geometry check;
+the affected execution, MS, lesion-context, manual-review and lesion selection
+passed 79 tests afterward, retries disabled, direct exit 0.
+
+`test_eagle_eye_lesions.py::test_lesion_html_previews_survive_transfer_without_server_files`
+removes the synthetic server PNGs, then verifies the transferred HTML retains
+decodable, byte-identical preview images without local file references. It failed
+before embedding; 103 affected lesion/transport/assessment tests pass afterward.
+
+`test_eagle_eye_remote.py::test_tls_listener_requires_trusted_certificate_and_matching_host`
+exercises the production TLS listener with an ephemeral synthetic certificate,
+authenticated synthetic job and result retrieval. It verifies SSL certificate
+errors for untrusted and hostname-mismatched peers, not merely generic connection
+failure. This is loopback TLS acceptance, not separate-machine deployment testing.
+The same guard now holds open a raw TCP peer without starting TLS and requires a
+second authenticated client to receive capabilities within two seconds. It failed
+before handshake deferral; 45 transport/scheduling/roles/settings tests pass after
+the listener correction, retries disabled, direct exit 0.
+
+The full post-registration-correction LST engineering comparison subsequently
+completed: two runs with equal source/model hashes returned exactly equal masks
+(zero differing voxels), equal published measurements and complete eight-page
+reports. Actual private outputs are not committed test fixtures. Broader/native/
+clinical acceptance remains separate; see the current execution-report ledger.
+
+## Eagle Eye unattended service and PACS session (2026-09-23)
+
+`code/ai_imaging/test_eagle_eye_pacs_session.py` covers restart, expired-token renewal,
+retry bound, origin confinement, 403 behavior, failed-login cooldown and DPAPI binding.
+`test_eagle_eye_service_administration.py` covers service-managed UI separation,
+delayed boot/recovery policy and headless ownership imports. Settings tests cover
+local PACS ports and masked account entry. Combined transport/service/settings/
+scheduling selection: 66 passed, retries disabled; live source GUI remains blocked.
+
+- `tests/code/ai_imaging/test_eagle_eye_role_settings.py`: server/client endpoint
+  visibility, multi-profile parity, hidden endpoint preservation and cached frozen
+  edition fallback; synthetic settings only, no live credentials or databases.
+
+- `tests/code/ai_imaging/test_eagle_eye_listener_settings.py`: validated listener
+  changes, stale-write protection, service-managed TLS desktop, local Reception
+  preset and server listener UI. Synthetic inputs only.
+
+- `tests/code/ai_imaging/test_eagle_eye_mtls.py`: mutual TLS, owner fingerprint binding, missing client certificate rejection and authenticated synthetic artifact delivery.
+
+- `tests/code/startup/test_settings_groups.py`: grouped Viewer/AI navigation, role parity, module gates and lazy leaf lifetime; synthetic leaf widgets only.
+
+## Eagle Eye native startup and PACS identity (2026-09-24)
+
+`code/ai_imaging/test_eagle_eye_service_initialization.py` guards main-thread
+pydicom/NumPy readiness before listener creation and startup failure propagation.
+`code/ai_imaging/test_eagle_eye_pacs_identity.py` guards canonical Study Instance
+UID matching and rejects missing/mismatched UIDs regardless of administrative Study ID.
+Both suites failed before their respective minimal corrections.
+
+## MG detection-only viewport artifacts (2026-09-24)
+
+`code/ai_imaging/test_mg_detection_without_classification.py` executes the production
+startup/switch methods with a synthetic viewport base. Four cases require the
+actual detection path and absent optional classification to survive both manifest
+and fallback loading. All four failed before the minimal condition correction.
+
+## Lower Limb Alignment review tab (2026-09-24)
+
+`code/ai_imaging/test_alignment_review_tab.py` exercises the actual controller,
+AlignmentWidget and Qt tabs with synthetic identity and a stubbed disk scan.
+It requires a scrollable named tab, reuse without rescanning a loaded image,
+retained measurements, and distinct per-series review sessions.
+
+## Remote radiograph ownership (2026-09-24)
+
+`code/ai_imaging/test_remote_radiograph_binding.py` uses synthetic DICOM copies
+to prove equivalent-encoding acceptance, strict identity and pixel/geometry
+rejection, evidence fail-closed behavior and validated local review rebinding.
+
+## Universal lesion distribution (2026-09-24)
+`code/ai_imaging/test_lesion_distribution_delivery.py` covers neutral distribution pages and derived artifact delivery. The lesion pipeline guard requires topography in MS, SVD and other contexts.
+
+- `code/ai_imaging/test_eagle_eye_cache_fallback.py`: explicit PACS absence versus
+  auth/transport/server errors; PACS priority; isolated read-only SQLite cache
+  staging with completeness, identity and allowed-root rejection.
+
+- `code/ai_imaging/test_alignment_remote_review.py`: synthetic parent-owned correction jobs, stale/foreign access rejection, restart/idempotency, retained source reuse, measured edits, HTTP conflicts and Qt disconnected draft recovery.
+
+- `code/ai_imaging/test_review_mouse_affordances.py`: native Alignment and inherited Spine handle pick area/cursor, placement crosshair and pan restoration without coordinate mutation.
+
+- `code/ai_imaging/test_eagle_eye_mcp_commands.py`: direct command registration, workspace reuse, foreign identity rejection, function dispatch without picker, explicit distinct Brain inputs, current-table reads and permission/ROI boundaries.
+
+- Eagle Eye MCP route audit: the same guard also exercises existing stdio and Gateway wrappers against one CommandBus and verifies read-only denial before workspace launch.
+
+- `code/ai_imaging/test_eagle_eye_shared_sources.py`: actual Windows hardlink identity/read protection, child-process write denial, atomic source replacement, retained revisions, source selection, capability negotiation, safe copy fallback and job success/failure/cancel lease release. Paired PACS atomic-writer guards live in its `tests/test_atomic_dicom_storage.py`; evidence in the Eagle Eye server/client plan.
+
+
+## Socket adaptive shrink (2026-09-25)
+
+`tests/code/download_manager/test_batch_shrink_alignment.py` exercises actual download_series against synthetic server page-index semantics, sizes 3/5/7/10, pressure/error reductions and retained resume files. Every pending instance must arrive once with no gaps. Patient edit scope remains guarded by `test_dicom_demographics_edit.py` and `test_patient_id_overrides.py`.
+
+- `code/ai_imaging/test_remote_review_modules.py`: Brain/lesion editable artifact delivery, label-only compression/geometry/limits, consecutive volume revisions, Total Spine server measurement and SAM routing, two projections in one series, authenticated owner/conflict HTTP behavior, large saved handles, reconnect and stale-success prevention. Owning record: Eagle Eye server/client plan, OPT-51 remote human review implementation.
+
+
+## Dual transfer modes (2026-09-26)
+
+`tests/code/download_manager/test_transfer_modes.py` behaviorally covers actual-host poor mode, mode lifetime, one-image disconnect/resume, normal bounded growth, exact page identity, byte/time response limits, modality safety, lower caps and oversized-error ceilings. Adjacent shrink/framing/cancel/retry/yield/distribution suite: 175 passed. GUI acceptance remains separate.
+
+## Brain Git-free source bundle discovery (2026-09-26)
+
+`code/ai_imaging/test_brain_git_free_bundle.py` covers exported-source lesion discovery, anatomy qualification, authoritative explicit overrides, and exclusion of development fallback from frozen executables. Owner: `docs/modules/eagle-eye-server-development/docs/SERVICE_AUTH.md`.
+
+The same Brain discovery guard file includes Windows MAX_PATH simulation for integrity hashing; the real remote verification matched all 146 previously inaccessible manifest entries without altering model files.

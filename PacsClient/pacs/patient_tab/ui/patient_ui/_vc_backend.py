@@ -130,7 +130,7 @@ class _VCBackendMixin:
             # Viewer Mode remains FAST. When user selects Advanced mode in
             # settings, the persisted backend must become authoritative.
             if override_backend and configured_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT):
-                return override_backend
+                configured_backend = override_backend
 
             resolution = resolve_viewer_backend(
                 metadata=None,

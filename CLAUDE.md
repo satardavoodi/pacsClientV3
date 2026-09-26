@@ -9,7 +9,7 @@ new guidance cleanly rather than overwriting existing sections.
 > the Git, build, backend-detail, or historical-evidence path.
 >
 > **Canonical build route (2026-09-06):** humans and AI agents must start with
-> [`BUILD.md`](BUILD.md). It defines the only supported six-installer release-candidate
+> [`BUILD.md`](BUILD.md). It defines the supported role-selected Client/Server candidate
 > workflow, the safe faster lanes, output folders, size/content gates, and prohibited
 > shortcuts. Backend-specific build documents are subordinate implementation references.
 >

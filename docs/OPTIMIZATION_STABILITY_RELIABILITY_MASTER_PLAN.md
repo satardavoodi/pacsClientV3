@@ -1,5 +1,98 @@
 # AI-PACS — Software Optimization, Stability & Reliability Master Plan
 
+## 2026-09-26: OPT-51 Eagle Eye 2D worker reliability
+
+The explicit 2D lesion worker retains required model/runtime hashing while avoiding unrelated 3D model/header verification. Short scratch execution and extended-path artifact publication address a reproduced Windows service failure. This does not alter PACS acquisition, download U0-U5, viewer domains or 3D inference. Actual source GUI remained interactive during a 150 s analysis; isolated Razi completion was 152.29 s. These are one-case end-to-end timings, not controlled speedup or accuracy claims. See [method and acceptance](modules/eagle-eye-server-development/docs/LESIONS_2D_2026-09-26.md).
+
+
+## 2026-09-26: OPT-58 / OPT-60 canonical thumbnail order and row ownership
+
+**State: code-verified; fresh-source GUI and artifact acceptance pending.** A large
+Patient-Tab sidebar could receive two producer generations with different order. The
+new generation reused an existing card by key but did not move it to its planned row,
+so it could overlap another card and make an exact history document appear missing.
+The same history priority was implemented independently at several producer seams.
+
+One pure `series_identity` authority now orders series within each study by original
+SeriesNumber, with exact 100000 history priority and offset-insensitive identity. Home,
+cached files, server/local entries and grouped rows consume it. Study group order,
+slot/offset allocation and storage paths are unchanged. The bounded scheduler owns
+replacement geometry and exact planned-card totals; headers retain per-study counts
+and never enter the total.
+
+Two direct guards failed before and pass after. The affected/adjacent suite is 230
+passed; release-candidate packaging inputs are 42 passed; compilation and diff checks
+pass. These core sources have no plugin payload mirrors. The repository-wide mirror
+gate remains independently red for an unrelated existing Download Manager source/
+payload drift; this fix did not edit or synchronize it. Applicable source path is
+shared by Standard Client, ARM64-emulated Client and Eagle Eye Server under both
+packagers; no candidate build or artifact acceptance was performed. Required live
+gate: fresh source launch/login, large single- and multi-study open/reopen, exact
+history visibility, unique card rows, stable headers, correct per-study/total counts,
+and unchanged thumbnail action/download behavior. This is a bounded U0 presentation
+correction and does not advance download U1-U5 or viewer-domain work.
+
+## 2026-09-25: OPT-51 co-located source storage implementation
+
+Owner-authorized paired PACS/Eagle Eye change implements atomic PACS DICOM
+publication and attested, read-protected same-volume source hardlinks. Three
+synthetic 16 MiB inputs now add zero duplicated DICOM payload instead of 48 MiB.
+Legacy, cross-volume and unsupported storage retain copies. Existing model/viewer
+domains and Download Manager are unchanged. 125 workstation plus 6 PACS tests
+pass (exit 0); 472 mirrors match. Source GUI unavailable; no deployment/artifact
+acceptance. See the [owning Eagle Eye receipt](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#2026-09-25-co-located-pacs-source-sharing-opt-51)
+for source contract, rollback, limitations and next-build matrix. This does not
+advance or bypass the separate U0-U5 download queue.
+
+## 2026-09-25: OPT-04 / OPT-51 PACS client/server contract review
+
+OPT-60 Advanced frame follow-up: validated per-frame planes now support reference
+lines and synchronous navigation without opening MPR volume admission. The VTK
+owner receipt records fail-before evidence, 123 passing checks, 606 structurally
+valid real-input planes, 472 matching mirrors and pending fresh GUI/clinical
+acceptance. No advancement of the independent shared-pipeline workstream.
+
+OPT-60 Local DX thumbnail follow-up: user-authorized maintenance extends the
+existing thumbnail worker adapter to one identity-checked DX Presentation object.
+The synthetic PNG guard fails before the change; 116 affected/adjacent/builder
+checks pass afterward and 472 mirror pairs match. No viewer runtime or U0-U5
+progression changes. The UI-stall owner receipt records limits and scoped rollback.
+Fresh source GUI acceptance remains blocked by the absent test endpoint and needs
+a human fresh source launch/login; existing full-build/artifact gates remain open.
+
+Related OPT-60 viewer-owned maintenance: Enhanced MR 2D presentation is now
+code-verified (47 related tests) and prepares all 606 affected frames read-only.
+The VTK owner receipt documents frame identity, nonspatial limits, rollback,
+Client/Server applicability and pending fresh GUI/artifact acceptance. This is
+not spatial reconstruction or advancement of the independent Unify workstream.
+
+Source/offline evidence is recorded in the [existing shared-pipeline report](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md#2026-09-25-cross-repository-pacs-transfer-review-opt-04--opt-51).
+The workstation uses Socket JSON/Base64 batches; Eagle Eye Server uses REST
+location resolution plus accessible storage staging, without automatic Socket
+acquisition on a cache miss. Confirmed fragmented-prefix handling, offset overlap,
+and advisory Socket authentication require coordinated server/client correction.
+U1/OPT-04 retains ownership of SOP manifests and authoritative completion before
+throughput tuning; OPT-51 retains source preparation/reuse. Existing U0-U5 gates
+and ownership order are unchanged. No runtime fix or speedup is claimed.
+Focused baseline: 87 passed, 8 stale structural failures, 5 skipped absent-helper
+tests; exit 1. Live throughput/GUI acceptance was not performed for this review.
+
+## 2026-09-24: OPT-60 Local multiframe thumbnails and Advanced empty hint
+
+Related OPT-23 follow-up: native drag-hover exposed Home before mouse release.
+The VTK owner recurrence receipt records live pre-fix reproduction, opaque hover
+backing correction, fail-before/pass-after guard and 32 passing focused tests.
+Fresh post-fix source GUI and artifact acceptance remain pending; no U0-U5 advance.
+
+The existing UI-stall and VTK owner reports record the two explicitly requested
+maintenance fixes: Enhanced MR PNG repair independent of spatial preview admission,
+and fully opaque painting of the empty native-viewer hint. Both have fail-before /
+pass-after guards; three read-only real-input thumbnail decode probes pass. Source
+GUI acceptance and every produced-artifact gate remain pending. This does not
+advance U0-U5 or claim a performance/KPI improvement. Rollback and per-edition
+build handoff are in those owner records. MCP connection diagnosis is recorded in
+the agent control guide; no launch defaults or production gateway settings changed.
+
 ## 2026-09-20: OPT-60 first-viewer graphics-profile I/O
 
 **State: fixed and code-verified; fresh-source KPI acceptance pending.** The latest
@@ -796,6 +889,13 @@ hidden. Fresh source GUI, durable disk/manifest completion and final IPC/converg
 remain open. See [scope, provenance, tests, live gate and rollback](reports/DOWNLOAD_SOCKET_RESPONSE_REVIEW_2026-09-15.md).
 
 ## 2026-09-15: OPT-22 user-initiated browser opening feedback
+
+September 26 UI follow-up: replace the top-edge, full-width notice with a compact
+centered child card. Three geometry guards fail before/pass after; 92 browser,
+adjacent and builder checks pass; 472 mirrors match. Synthetic visual preview
+inspected. No startup scheduling/input-return contract change. Fresh source GUI
+and artifact acceptance remain open; see `reports/WEBENGINE_OPEN_WAIT_STATUS_2026-09-15.md`
+for evidence, native stacking caveat and scoped rollback.
 
 The latest first browser open produced a 35,375.9 ms GUI stall and a temporally
 correlated Windows AppHangTransient event; the process recovered. The bounded
@@ -3351,3 +3451,483 @@ latency claim). Rollback is limited to the signature/pending-generation methods 
 guards. Fresh-source verification must reopen the affected multi-study pattern and require
 the late study/header/card, correct total, blue disk-ready border, stable geometry and the
 new PHI-free supersession trace before this item is live-verified.
+
+### OPT-09: isolated Eagle Eye failure evidence (2026-09-22)
+
+The Breast/Bone engine service previously discarded child output and deleted failed work, obscuring a shared exit-103 interpreter-launch failure. It now retains only the final 64 KiB in a private server diagnostic log; completed artifacts never include logs. The failing-before retention guard and adjacent execution guards pass in the 58-test focused selection. This exposed a Codex MSIX-virtualized interpreter home that the desktop-launched app could not resolve; bundle preparation now seals the physical base path. Both actual hosted jobs completed after preparation. No latency improvement or other OPT-09 completion claim is made. Rollback is confined to engine diagnostic capture and the preparation helper; do not restore an inaccessible runtime alias. See the phase-1 execution receipt for UI and classifier limitations.
+
+### 2026-09-22 OPT-56 application chrome and Save branding
+
+Hide native menubar; lock main-window toolbar customization while preserving
+Module Selection and internal module controls. Brand native Save dialog without
+altering persistence. Fail-before guards, 45 focused passes, final 19 presentation
+passes, and 470 mirror matches. Live acceptance remains pending due to concurrent
+user input during authorized restart. See the 2026-09-22 section in
+`reports/ADVANCED_ANALYSIS_UI_UX_AUDIT_2026-09-15.md`.
+
+### 2026-09-22 OPT-56 installed warm-up resource correction
+
+An installed ARM64-emulated and x64 report showed an automatically visible,
+older Slicer interface. On this PC the installed `presentation.py` matches the
+earlier installer snapshot, not the newer Developer Run source; the native
+viewer executable matches the development/cache copy. Separately, frozen
+resident startup resolved its Slicer module guard and presentation script from
+the frozen core's module location rather than the installed Advanced MPR runtime.
+The frozen-path behavioral guard failed before correction; resident startup now
+uses the installed runtime and fails before process creation when guard or
+presentation resources are missing. Source mode retains its former paths.
+Rollback is limited to this resource resolver; the prior path is unsafe for
+installed warm-up. Automated guards and mirror parity are recorded separately
+from pending fresh-installer and GUI acceptance. No warm-up timing benefit is
+claimed.
+
+### 2026-09-22 OPT-56 native Slicer build provenance
+
+The installer coordinator previously compared only assembled Developer Run
+runtime files with the distribution cache, so identical January 2026 native
+binaries passed even though C++/CMake/UI source changed in September. A
+fail-before guard reproduced that false pass. Assembly now refuses an inner
+executable older than native source and writes a source/executable hash record;
+cache preparation and both coordinator parity checks require that record.
+Current 3.6.7 assets fail closed because they predate the native source and lack
+provenance. The pinned Slicer SuperBuild and Qt 5.15.2 SDK were absent at the
+documented paths; a deeper search found CMake 3.31.6 and MSVC 14.44 in Visual
+Studio 2022 Build Tools outside the default PATH. Native compilation,
+fresh immutable cache, role-selected installers, and source/installed GUI
+acceptance are pending. This is release correctness, not a runtime speed claim.
+
+### 2026-09-22: OPT-51 / OPT-56 Eagle Eye execution boundary corrections
+
+The actual-model audit reproduced source filtering, PDF completion, Windows child cwd and Slicer DICOM-reference failures. Guarded corrections preserve job ownership, identity checks, cancellation and viewer-domain separation. The Lumbar bridge resolves identity on a read-only worker connection; lesion and nested MS/SVD anatomy scratch are cleaned on all exit paths. Actual full lesion mask/PDF transport and both downstream assessments on that mask completed successfully. The previous local GUI success for spine is not counted as post-fix acceptance. Current verification, actual Standard/Robust PDF and selected-radiograph server receipts, Standard native-runtime residual, lesion repeatability caveat, inaccessible Lumbar menu handoff and pending GUI gates are tracked in [the execution report](reports/EAGLE_EYE_EXECUTION_FIXES_2026-09-22.md). No throughput optimization or release readiness is claimed.
+
+### OPT-51 Brain repeatability follow-up (2026-09-22)
+
+Actual repeated Greedy registration differed with two threads, including a fixed-seed experiment. Fixed seed plus one registration thread produced identical T1/FLAIR matrices in two repeats. The source runner correction has a fail-before guard; 36 affected tests and three payload tests pass. Full post-change lesion inference, native review and Standard native-abort closure remain open. Scope and rollback evidence are in [the existing execution report](reports/EAGLE_EYE_EXECUTION_FIXES_2026-09-22.md). This is repeatability work, not a throughput improvement or release qualification.
+
+### OPT-51 server admission and administration follow-up (2026-09-22)
+
+The Eagle Eye settings tab now exposes the unified client endpoint, owner-filtered
+job inventory and next-start server source/resource settings. Worker-owned I/O,
+revision-checked atomic writes, FIFO compute reservations, per-client/global bounds
+and exclusive durable-directory ownership have focused guards. Actual loopback
+Alignment and Bone jobs from two independent client identities completed with
+overlapping running states in 277.5 seconds. This establishes execution concurrency,
+not a measured throughput gain, GPU scheduling or OS-enforced RAM limits.
+119 combined runtime/configuration tests and 40 builder tests pass; all 470 mirror
+pairs match. Native GUI acceptance and automatic uncached PACS acquisition remain
+open; the latter has an explicit Unify handoff. Brain private numeric diagnostics
+now distinguish sampled physical memory from native allocation failure; the
+Standard abort remains under investigation. See the implementation ledger in
+[the existing server/client plan](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#11-implementation-ledger-settings-and-bounded-scheduling-2026-09-22)
+for files, limits, rollback and remaining gates.
+
+### OPT-51 Brain CPU commit pressure correction (2026-09-22)
+
+Two native-abort dumps identify `std::bad_alloc`. A monitored successful Standard
+baseline used 69.6 GB peak private allocation and nearly exhausted Windows system
+commit despite free physical RAM. Explicit oneDNN CPU execution completed two
+same-input comparisons in 216.7/208.6 seconds versus 402.7 seconds; first comparison
+peak private allocation was 26.5 GB. Masks and eight QC values were exactly equal;
+probabilistic volume differences are quantified in the execution report. The
+SynthSeg-only process environment and result backend metadata now select this
+measured path by default. Four fail-before cases and 129 affected passing tests
+guard the change. Fresh integrated Robust and Standard passed in 251.6/210.6 seconds
+with exact baseline masks, equal QC and complete 29-page derived PDF retrieval;
+probabilistic-volume differences are reported separately. Native GUI and broader
+clinical qualification remain open. Process evidence now distinguishes private/commit from physical RAM.
+Rollback restores the prior high-allocation backend; it is not a safer default.
+
+### OPT-51 SVD anatomical geometry correction (2026-09-22)
+
+SVD previously checked only anatomy/source array size before applying a physical
+registration transform. It now rejects differences in spacing, origin or direction
+using the existing MS tolerance. Three synthetic SVD cases failed at the registration
+boundary before the correction; the corresponding MS cases already passed. The
+affected execution, MS, lesion-context, manual-review and lesion selection passed
+79 tests, direct exit 0, retries disabled. Rollback removes this isolated additional
+check and restores acceptance of geometrically inconsistent labels. Native display
+and clinical acceptance remain separate gates; Breast optimization is deferred by
+the owner's explicit instruction.
+
+OPT-51 report transport follow-up: lesion HTML used server-only file URIs, so its
+previews were unavailable after retrieval by a client. The report now embeds the
+same generated PNG bytes, matching the other Brain reports. The transfer guard
+failed before the change; 103 affected report/transport/assessment tests pass.
+Actual MS/SVD packets contain complete 15/12-page PDFs and six portable previews
+each, with masks and without source volumes. Native display remains pending.
+Rollback is isolated to `lesion_report.py` and restores server-local image links.
+
+OPT-51 TLS listener isolation: an accepted TCP peer that sent no TLS handshake
+blocked the listener before it could dispatch other clients. The extended local
+TLS guard reproduced a second authenticated client's handshake timeout. The
+listener now defers TLS handshaking to each connection handler, where the existing
+30-second socket timeout applies. Certificate and hostname checks remain enabled.
+All 45 transport/scheduling/roles/settings tests pass, direct exit 0, retries
+disabled. This does not add a connection-count/rate limiter or certify a deployed
+network. Rollback of `do_handshake_on_connect=False` restores the reproduced stall.
+
+OPT-51 full LST repetition completed: the two post-registration-fix runs passed in
+3484.8 / 3897.8 seconds. Input and model-manifest hashes match; final binary masks
+have zero differing voxels and published measurements are exactly equal. Both
+native-geometry checks and eight-page PDF retrievals pass, with no DICOM transfer.
+NIfTI-roundtrip measurement tolerance and portable HTML verification are detailed
+in the execution report. This closes the selected-case two-run engineering gate,
+not universal determinism, native display or clinical qualification.
+
+### OPT-51 Windows service lifecycle design review (2026-09-22)
+
+The existing [server/client plan, section 12](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#12-windows-service-architecture-review-2026-09-22)
+now records the verified gaps between the current console/desktop host and an
+independent Windows service. Ordered follow-up covers SCM/Session 0 qualification,
+explicit role/storage boundaries, transactional recovery, bounded stop versus
+maintenance drain, client reconnect, the existing Unify PACS handoff, measured
+resource admission, production listener capacity and both frozen installer paths.
+Proposed 24/72-hour installed-service soak gates are not completed evidence.
+Breast optimization remains deferred. Documentation only: no runtime speed,
+service installation, native GUI acceptance or release-readiness claim is made.
+
+### OPT-51 independent service entry and client reconciliation (2026-09-22)
+
+Implementation now adds early SCM/owned-child dispatch in `main.py` and
+`eagle_eye_remote/bootstrap.py`, with `service_host.py` supervising listener startup,
+pending status and cooperative/forced descendant shutdown. The client now persists
+a handle before submission, reconciles uncertain acknowledgement and detaches on
+transport failure/observation timeout instead of canceling server work. Two dispatch
+and two transport guards failed before correction. Focused verification: 59 tests;
+subsequent service/build boundary selection: 41 tests, overlapping, direct exit 0
+with retries disabled. All 470 mirror pairs match. No throughput claim is made.
+
+Exact build-task handoff, scoped rollback and remaining work are in
+[the existing plan's implementation ledger](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#13-service-entry-and-reconnect-implementation-ledger-2026-09-22).
+Control ping/actions succeeded, but installed SCM/Session 0 tests require an
+Administrator context absent in this session; native recovery UI remains open.
+No production service, workstation process or release gate changed.
+
+### 2026-09-23: OPT-51 unattended Eagle Eye service and PACS renewal
+
+Status: code verified; isolated Razi SCM lifecycle verified; production promotion
+and GUI/real-account/reboot/model acceptance remain open. Source: eagle_eye_remote
+pacs_credentials/source/service_admin/service_host/process_owner/launch plus shared
+Eagle Eye settings UI and source settings/SCM entries. Five expiry/restart guards,
+the missing preset, duplicate listener and viewer import failed before correction.
+Focused verification: 66 passed, direct exit 0, retries disabled; 470 mirror pairs pass.
+
+Before: manual-only task; token expiry had no renewal; service import failed on Razi.
+After: independent LocalService candidate on 8043, delayed automatic startup, bounded
+SCM recovery, encrypted endpoint-bound account renewal, worker-backed administration.
+Actual empty stop/start released the listener; injected candidate failure recovered.
+Original 8042 task remains because approval review blocked replacement. No clinical
+PACS/Breast/CRM processes changed. Rollback: stop/disable only the candidate service.
+Evidence and remaining gates: docs/modules/eagle-eye-server-development/docs/SERVICE_AUTH.md.
+
+
+### 2026-09-23: OPT-51 full Razi workstation transfer; GUI gate failed
+
+The full runtime/UI source and isolated offline environment are installed in the
+Razi development workspace; source hashes and post-install pip check pass. Human
+sign-in succeeded. Read-only header verification found 128 MR DICOMs, 128 unique
+SOPs, one study and five series in this source instance's local cache. This does
+not establish source-inventory completeness, selection identity or rendered output.
+The owner reported Home freezing; a separate 6050.9 ms Reception-breaker sample
+and a session-scoped native Advanced SetInputData access violation were recorded.
+GUI acceptance FAILED. No GUI restart, Viewer code repair or feature-flag workaround
+was applied. Destination-owner handoffs are in the existing UI-stall and VTK-domain
+reports; the build task retains this as a release blocker. Model deployment and
+runtime import probes are not clinical inference qualification. The independent
+8043 service still responds; its full-source worker alignment remains open.
+Details: [deployment ledger section 19](plans/architecture/EAGLE_EYE_SERVER_CLIENT_PLAN_2026-09-21.md#19-full-workstation-deployment-and-failed-gui-acceptance-2026-09-23).
+
+
+### OPT-21 / OPT-56 follow-up: native graphics admission, 2026-09-23
+
+Razi drag/drop native crash diagnosed at GetDepthBufferSize (execute at zero).
+DLL presence was not proof of functional VTK Win32 OpenGL. Shared Standard/Server
+startup now probes in an isolated bounded child; failed admission stays on
+VTK-free Fast, including empty cells and controller overrides, and blocks MPR.
+Before: 10 regression failures. After: 71 focused + 15 parity/service guards,
+471 matching mirrors. Local actual native probe passes; Razi interactive probe
+correctly rejects unsupported graphics. Seven files deployed to the development
+source with baseline verification/backups. Native driver capability remains
+unresolved; Advanced/MPR there stay unavailable. Human drag/drop acceptance is
+pending. Evidence and rollback: existing VTK domains report, September 23 native
+graphics diagnosis section. This extends OPT-21/56, not a new workstream.
+
+### 2026-09-23: OPT-48 Standard MPR residual interaction jitter investigation
+
+Extends the August 1 reconstructed-pane scroll-stability receipt: the owner
+reports residual sagittal/coronal CT image shaking and explicitly freezes
+geometry. Standard Zeta MPR only. No runtime or mirror edits. Existing focused
+geometry/interaction suites pass 51 tests (exit 0); a real-VTK synthetic state
+probe passes 3,672 camera/plane checks across acquisition routings, anisotropic
+spacing, oblique angles and repeated position changes. These are not rendered
+image or live acceptance. Current default sampling excludes automatic VTK
+screen-grid quality switching as an established cause. Scheduling, the existing
+near-zero rotation reset and sampling appearance remain hypotheses. Local
+control-client ping is unavailable; human source test-session bootstrap and an
+affected CT are needed for reproduction. No measured before/after improvement
+and no bug-fix/closure claim. Evidence and bounded next gate are in the existing
+VTK domains report, section "2026-09-23 Standard MPR residual image jitter:
+investigation only". Existing geometry and rollback behavior remain unchanged.
+
+September 24 diagnostic update: the owner confirms the 372-frame series jumps
+through both viewer routes while the 380-frame series stays stable. A new
+standalone synthetic render probe reproduces that distinction using full-precision
+local numeric geometry: the 372 setup changes 13,902 screen pixels and its raw
+output shifts exactly one row; the 380 setup stays pixel-identical. Disabling
+only VTK reslice Optimization in the probe removes the displayed jump without
+changing geometry. Native-grid optimized reslicing is the isolated vulnerable
+boundary; the internal rounding branch and live attribution require confirmation.
+Unquoted PowerShell numeric arguments lose digits and invalidate this comparison.
+Runtime/mirrors untouched. Test-control endpoint unavailable; GUI gate unpassed.
+Evidence: VTK domains report, "OPT-48 rendered stationarity failure isolated to
+VTK optimization". This is diagnostic evidence, not a shipped correction.
+
+September 24 authorized correction: reconstructed reslicers now use general
+linear execution (OptimizationOff); native policy and all geometry unchanged.
+Four initial guards fail before; 85 focused tests pass after, including a new
+enlarged-view rendered guard. Both 372/380 synthetic geometry controls are stable.
+Matched warm Render median: 7.03 -> 7.21 ms, local synthetic only. Mirror tool
+reports 471 matching pairs, no mirror for the changed source. Rollback: remove
+the OptimizationOff block and restart source. Developer-run human visual gate
+is pending; documented test-control endpoint remains unavailable. Full receipt
+and known-case checklist are in the VTK domains report's developer-run candidate
+section. No live or release closure claim.
+
+September 24 fresh-session follow-up: owner reports preliminary success. Source
+process launch is after the correction; canonicalization logs show both 372/380
+volumes opened at 01:32/01:34, with no MPR-tagged ERROR/CRITICAL in the inspected
+interval. This supports the human observation, not independent pixel verification
+or full workflow acceptance; test-control endpoint remains unavailable. Details
+in the VTK report's fresh source-session observation. No further runtime changes.
+
+### OPT-35 / OPT-60: first-double-click observation, 2026-09-23
+Local and Razi first-open complaint remains under diagnosis. One native local double-click opened immediately; no reproducible root cause yet. Viewport mouse and handler outcome observation added (no patient content/no input behavior change), 1 fail-before guard and 47 focused passes. Fresh source reproduction pending. Evidence and rollback: UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md, first-double-click investigation section.
+
+
+### OPT-21 / OPT-35 / OPT-51 acceptance update, 2026-09-23
+Razi source patient open and actual viewport display passed in normal operation with human confirmation and first-image/native/Windows log evidence. Download logs report 12 series / 111 files, matching authoritative count; no new native crash. Remaining: first Fast import 1251.1 ms GUI stall and Download Manager missing-row/convergence warnings. This does not close model/client/concurrency or frozen acceptance. Full evidence: server-development/docs/FULL_WORKSTATION.md, patient-open / viewport receipt.
+
+
+#### OPT-51 update — role-specific server settings, 2026-09-23
+
+Server settings now separate local AI hosting from outbound client connections.
+Legacy AI endpoint controls are hidden without deleting stored values. Installed
+edition detection is cached before Qt; settings I/O remains worker-owned. Focused
+verification: 33 tests passed; 471 mirrors match. Razi development source updated
+with backup and hash verification; fresh-launch live Settings gate pending.
+
+#### OPT-51 update — local Reception and listener UI, 2026-09-24
+
+Validated worker-owned listener settings and service-managed TLS desktop startup
+implemented; local Reception configured in Razi development source. 41 focused
+tests pass, including synthetic TLS artifact transport; mirrors match. Source
+files/config backed up and verified. No 8002 cutover: client-facing address/TLS,
+SCM revision alignment and live acceptance remain pending. See FULL_WORKSTATION.
+
+#### OPT-51 update — actual SCM alignment, 2026-09-24
+
+SCM now runs the complete workstation source/venv. Empty-queue restart and
+authenticated Client transport over temporary SSH passed; PACS roots configured
+from authoritative installed storage settings. Bone Age synthetic model probe
+passed; Breast full smoke fails known deferred classifier schema. PACS service
+account, real source staging/inference, GUI and public 8002 remain pending.
+FULL_WORKSTATION and SERVICE_AUTH record rollback and mandatory future source/SCM
+update-restart-verify discipline requested by the owner.
+
+#### OPT-51 update — paired8002 transport, 2026-09-24
+
+Actual SCM now owns TLS8002 with two independent client pairings; legacy Mammography
+is stopped, other clinical listener owners unchanged. Positive and negative live
+transport tests pass on LAN and public-IP route from this PC. 36 focused tests and
+471 mirrors pass. Initial certificate AKI issue corrected without weakening TLS.
+Clinical inference, source GUI and outside-network acceptance remain open; see
+FULL_WORKSTATION for exact receipts, renewal and rollback.
+
+#### OPT-51 update — SCM native readiness and PACS identity, 2026-09-24
+
+The real Alignment request exposed a first native import/thread-start stall.
+`service_host.py` now initializes pydicom on the child main thread before opening
+the listener or starting control threads. The live retry remained responsive
+(capabilities 0.02–0.04 seconds), exposing an independent metadata rejection:
+`source.py` compared administrative Study ID to the requested Study Instance UID.
+It now requires the canonical `study_instance_uid`, retaining per-file DICOM checks.
+Five new regression cases failed before the corresponding changes. Focused
+selections: 25 service tests and 40 identity/source/session tests passed; these
+selections overlap. All 471 plugin mirror pairs match.
+Only these two source files were transferred in separate baseline-verified updates;
+only AIPacsEagleEye was restarted. Rollback copies are in the Razi development
+backups service-import-fix-20260924 and pacs-identity-fix-20260924. Live request
+now reaches model execution; full result/UI gate is recorded in FULL_WORKSTATION.md.
+PACS metadata returned HTTP200 without service credentials for this endpoint;
+missing credential_file was not the immediate blocker. Unattended authenticated
+PACS renewal remains a separate configuration/acceptance concern.
+
+Live Alignment acceptance: the final retry reached succeeded on Razi and the
+existing standard client displayed returned landmarks, overlays and measurement
+rows on the selected image. The application also reported its generated PDF ready.
+No calibration/review checkbox was attested by the operator or agent. This is a
+transport/execution/UI pass, not clinical validation of model measurements.
+
+#### OPT-51 live Bone Age/Breast follow-up, 2026-09-24
+
+Both authorized cases completed through the real paired HTTPS8002 client code:
+Razi retrieved PACS sources, ran models and returned verified artifacts. Bone Age
+returned one-image real inference with low-confidence/input-coverage flags; its
+separate native UI run displayed completion and populated the Bone Age tab, left
+pending_review. Breast returned four-image detections in about 73 seconds; lesion
+classification remains unavailable (deferred weights mismatch). No runtime edits
+or service restart were required in this lap. The native Breast UI repetition and
+final acceptance are recorded in the existing FULL_WORKSTATION development runbook.
+This establishes execution/transport, not clinical model accuracy.
+
+OPT-51 Breast UI follow-up: native submission, server execution and result
+notification passed; classification remains explicitly unavailable. A detection-only
+manifest was then discarded by the viewport's optional-classification gate. Four
+startup/switch + manifest/fallback regression cases failed before the four-condition
+correction. Focused suite: 16 passed; mirror guard: 1 passed; 471 pairs match.
+Scoped UI source deployed to Razi with backup mg-detection-only-20260924. No
+service restart or unrelated VTK geometry/decoding changes. Final overlay display
+remains pending a human-launched fresh source client, not a claimed GUI pass.
+
+#### OPT-51 Alignment result navigation, 2026-09-24
+
+A successful server Alignment job had no persistent workspace review tab. The
+controller now embeds the existing measurement widget under Lower Limb Alignment
+and reuses the correct series session when revisited. No model, geometry,
+calibration or review behavior changed. A real-Qt regression failed before the
+fix; workspace/alignment selection passed 51 tests and the extended series-session
+guard passed. Scoped source deployed to Razi with backup alignment-tab-20260924.
+The original popup/absent-tab behavior was visible in the user's screenshot;
+updated GUI acceptance remains pending a normal human source-client restart.
+
+#### OPT-51 remote radiograph semantic binding, 2026-09-24
+
+A real Total Spine server job completed but client review rejected its equivalent
+DICOM encoding because whole-file hashes differed. The image loader now computes
+a versioned fingerprint of decoded raw pixels, preprocessing output, valid mask,
+spacing/calibration and orientation. The server adapter returns that evidence;
+the remote bridge requires exact Study/Series/SOP identity, then either exact file
+bytes or matching semantic evidence. Total Spine's review binding is translated
+only after its source hash, projection and shape are verified; server provenance
+remains unchanged. Tests: `test_remote_radiograph_binding.py` demonstrated two
+red-before cases; focused runtime and payload suites passed. Razi scoped four-file
+update backed up to `backups/radiograph-binding-fix-20260924`; only AIPacsEagleEye
+restarted. Real paired round trip: 17 candidates, 35.48 seconds, local binding
+matched. This is technical transfer verification, not anatomical acceptance.
+Rollback: restore those four files using the deployment manifest (remove only the
+new helper if baseline is null), restart inference service. Fresh human-launched
+client GUI review remains pending; no hot reload or installed executable used.
+
+#### OPT-51 PACS absence fallback, 2026-09-24
+
+`source.py` now distinguishes explicit HTTP 404 from transport/authentication and
+server errors. `PacsWithCacheSource` tries the existing read-only server database
+only after StudyNotFound. No source path is accepted from clients. Cache bounds,
+completeness and identity/hash checks are reused; incomplete sources fail closed.
+Eleven dedicated guards (one red before correction) plus 38 existing PACS/remote
+guards passed. Development service updated with baseline verification and source/
+config backups under `backups/cache-fallback-20260924`; service cache points to
+the actual workstation database and allows its patients/cache roots. Real Brain
+request reached fallback but found no matching study in the five-study local DB.
+Benchmark NIfTI files are not a DICOM database import. No clinical DB writes or
+PACS uploads occurred. Successful Brain inference and GUI verification remain
+pending DICOM import. Rollback: restore source.py and server-service.json from
+that backup and restart only AIPacsEagleEye.
+
+#### OPT-51 remote human review design, 2026-09-25
+
+Code inspection confirms Alignment/Total Spine editing and Brain manual correction
+are local workflows; remote transport lacks revision/upload APIs and the complete
+Brain editing reference bundle. Extend the existing server/client plan (remote
+manual review section) with immutable server revisions, expected-base conflicts,
+reconnect/idempotency, bounded geometry-verified mask uploads and headless server
+recalculation. Sequence: Alignment vertical slice, Total Spine, Brain, cross-client
+and role/build acceptance. Status: design only; no runtime or service changes,
+no GUI/inference acceptance claimed.
+
+#### OPT-51 Alignment remote correction implementation, 2026-09-25
+
+First remote manual-review slice implemented in source and Razi development service.
+See the existing Eagle Eye server/client plan implementation section for the contract,
+eight-file rollback, 50 automated passes, 471 mirror matches and real 8.01-second
+paired correction/PDF receipt. Fresh-source GUI gate pending; no installer acceptance.
+Total Spine, Brain upload/edit round trips, revision browsing and cross-process UI
+reattachment remain open. Device ownership is verified, not clinician signature.
+
+### OPT-51 follow-up: direct Eagle Eye MCP (2026-09-25)
+Shared CommandBus study/series/function control, worker-state observation, explicit Brain input selection and Spine ROI reuse now have focused guards and stdio inventory evidence. See the owning Eagle Eye server/client plan. App attachment/live acceptance and Razi UI delivery remain pending; no mouse automation substitutes for those gates.
+
+
+### OPT-04 / OPT-51 follow-up, 2026-09-25: exact batch reduction and PatientID contract
+
+Client batch reduction now preserves the server page offset, including odd sizes and resume. Five pre-fix behavioral failures; 16 paging cases now pass. Focused suites: 133 then 85 passed (overlapping); 472 mirrors match. PatientID PATCH exists on Razi, but source semantics lack DICOM rewrite, existing-target reassignment and rollback; client push remains disabled. See the shared-pipeline report section "client paging correction and PatientID contract". Source GUI and artifacts remain pending; no separate PACS changes in this follow-up.
+
+### OPT-51 follow-up: remote Brain, lesions and Total Spine editing (2026-09-25)
+
+Source now extends existing authenticated revision jobs for client mask/endplate
+editing, bounded label uploads, server measurement/report generation and SAM box
+segmentation. Old masks/results remain immutable; stale lesion success on failed
+correction is guarded. See the owning Eagle Eye server/client plan for protocol,
+files, tests and rollout boundaries. Fresh source MCP/native Slicer and Razi paired
+acceptance are pending; do not deploy the separate in-progress source-sharing
+changes incidentally with these shared server files. No release artifact claimed.
+
+OPT-51 remote review final source receipt: 438 affected/adjacent/builder tests pass
+(exit 0), 472 mirror pairs match. Brain and lesion consecutive revisions, spine
+angle changes/SAM routing and empty-mask first-lesion editing are guarded. Live
+MCP/Slicer, coordinated Razi deployment and installed acceptance remain pending.
+
+
+### OPT-04: September 26 morning download inventory
+
+Read-only installed-Razi versus local audit: 23 studies / 16 patients, 20,095
+files, all SOP identities and per-study series counts matched. Requested large
+study: 6,218 files / 198 series, including one document. No present data deficit
+was reproduced; reported smaller UI count remains unconfirmed. Source GUI control
+unavailable; no runtime/deployment changes. See the shared-pipeline report section
+"2026-09-26: read-only morning download inventory" for scope and limitations.
+
+
+### OPT-04: September 26 speed clarification and measured bottleneck boundary
+
+Owner concern is speed/load. Actual LAN body receive reaches about 107 MiB/s;
+small installed-PACS requests yield about 24-30 MiB/s useful payload, versus
+3.67 MiB/s historical full-workflow average. Twenty slow series account for
+144.65 s of 256.19 s cumulative series time; disk write/decode totals are only
+12.62/2.53 s. Current measurements do not isolate those stalls. See the shared
+pipeline report "LAN throughput and load follow-up" for bounded probe evidence,
+resource limits and the next timing boundary. No runtime/server change was made.
+
+
+### OPT-04: diagnosis before tuning; Poor Connectivity wiring regression
+
+September 26 deeper audit confirms poor-mode configuration is disconnected from
+Download Manager batch selection: actual forced-ON replay still requests ten;
+explicit diagnostic cap one yields one. Focused legacy guards: 11 pass / 5 fail.
+No runtime patch or tuning applied during diagnosis. Historical small-series
+20.77 s replayed in 1.633 s; long stalls not reproduced. DB/index stage separately
+accounts for 35.041 s. See shared-pipeline "deeper timing / Poor Connectivity
+diagnosis" for confounders, required actual-host regression contract and missing
+authenticated per-request timing. Preserve poor-link single-image semantics.
+
+
+### OPT-04: dual transfer modes code-verified, September 26
+
+Owner-authorized Poor Connectivity restoration and normal-mode aligned byte/time-bounded growth are implemented. Single-image poor mode is tied to the actual endpoint and stable per study; normal starts at 10 and can grow to 40 within an estimated 8 MiB / 0.75 s response target. New-loop baseline: 9 fail / 3 pass; final affected/distribution suite: 175 pass. Mirrors: 472 match. Bounded 80-image real-PACS sample used 4 instead of 8 requests and about 30% less wall time; poor mode used 80 one-image requests. Historical stalls, fresh source GUI and built artifacts remain unverified. See shared-pipeline report "dual transfer modes implemented" for full evidence and rollback. No separate PACS changes or U0-U5 state-contract advancement.
+
+
+### OPT-58 / OPT-60: patient-tab representative thumbnail authority, September 26
+
+The Patient-tab title image had six effective producers across cached startup,
+patient pipelines and viewer loading. Selection depended on callback timing and one
+cached path incorrectly required an asyncio loop; the deferred write also targeted
+the currently selected tab. The shared sidebar card-admission boundary is now the
+only producer. It excludes original SeriesNumber 100000, preserves multi-study
+offset identity, and targets the registered PatientWidget. This is a U0 presentation
+ownership correction, not a new cache, loader or viewer route.
+
+Four guards failed before the change. The affected/adjacent selection passes 238;
+packaging-input checks pass 42; compilation and diff checks pass. Selection performs
+no scan, DICOM read, DB/network call, decode or VTK construction. Fresh-source GUI is
+still required for cold/cached, history, multi-study and rapid-tab-switch acceptance;
+installed PyInstaller/Nuitka artifacts remain pending under the normal build workflow.

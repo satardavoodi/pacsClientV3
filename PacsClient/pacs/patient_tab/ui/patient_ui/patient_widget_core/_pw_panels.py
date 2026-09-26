@@ -574,6 +574,11 @@ class _PWPanelsMixin:
                 series_info = None
 
         if series_name in self.thumbnail_manager.lst_buttons_name:
+            # The existing card is already an admitted presentation source and
+            # may repair a header callback which was previously missed.
+            logo_check = getattr(self, 'check_logo_patient', None)
+            if callable(logo_check):
+                logo_check(file_path_thumbnail, series_info)
             return thumb_index  # we don't add new thumbnail
 
         # Resolve the thumbnail image through the unified source: the shared
@@ -601,6 +606,13 @@ class _PWPanelsMixin:
                 pixmap=pixmap, label_text=series_name, sop_instance_uid='test uid',
                 thumbnail_index=key_thumbnail, series_info=series_info)
             self.thumb_grid.addWidget(thumb_widget, thumb_index, 0, 1, 2)
+            # A successfully admitted sidebar card is the only representative
+            # source for the patient-tab header. This keeps cached, Local,
+            # Server, Import, and multi-study paths on one identity-aware route;
+            # the sink rejects the exact clinical-history document series.
+            logo_check = getattr(self, 'check_logo_patient', None)
+            if callable(logo_check):
+                logo_check(file_path_thumbnail, series_info)
             # Explicit show occurs only after layout parenting, while painting
             # is suppressed. Hidden children otherwise have no layout geometry.
             thumb_widget.show()

@@ -81,7 +81,7 @@ new commit before publication; do not amend a commit that has reached any remote
 Run from the repository root with the supported development interpreter:
 
 ```powershell
-$version = "3.6.7"
+$version = "3.6.8"
 & .\.venv\Scripts\python.exe tools\git\release_manager.py audit --version $version
 ```
 
@@ -100,7 +100,7 @@ push or create a build receipt.
 Copy the complete SHA printed by `git rev-parse HEAD`; do not use a short SHA:
 
 ```powershell
-$version = "3.6.7"
+$version = "3.6.8"
 $releaseHead = git rev-parse HEAD
 & .\.venv\Scripts\python.exe tools\git\release_manager.py publish `
   --version $version `
@@ -120,16 +120,29 @@ force-push shared release branches.
 
 ## 3. Build handoff
 
-A full PyInstaller + Nuitka candidate requires the fresh synchronization receipt
-for the exact current HEAD and version:
+A Standard Client PyInstaller + Nuitka candidate (four installers) requires the
+fresh synchronization receipt for the exact current HEAD and version:
 
 ```powershell
-$version = "3.6.7"
+$version = "3.6.8"
 $releaseHead = git rev-parse HEAD
 $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12)).json"
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
   --git-sync-receipt $receipt
 ```
+
+The coordinator defaults to `--target client`; do not append Server outputs to a
+Client build. An explicit `--target server` selects two Eagle Eye outputs, but its
+receipt-backed release path is currently blocked pending portable Breast/Bone
+bundles, service installation, and clean-host acceptance. A non-promotable Server
+install-QA candidate uses `--local-install-qa --target server` as documented in
+`BUILD.md`. The two roles share version authority and output folders, not build
+snapshots or acceptance evidence.
+
+An explicitly local install-QA same-version rebuild archives the selected
+backend's prior exact filenames and metadata under its existing `_superseded`
+folder before compilation. This recoverable behavior never applies to a
+receipt-backed release candidate; published versioned artifacts remain immutable.
 
 The receipt expires after four hours, is bound to the policy hash, version, tag,
 current commit, all six remote branch refs, and all three tag refs. The candidate
@@ -138,7 +151,7 @@ silently using local work that was not committed and synchronized.
 
 For disposable single-edition packaging work before source freeze, use the
 documented one-command `--internal` path in `BUILD.md`. Internal snapshots are
-marked non-promotable and cannot run the canonical six-installer coordinator.
+marked non-promotable and cannot satisfy the canonical role-selected build.
 
 ## 4. Failure and recovery rules
 

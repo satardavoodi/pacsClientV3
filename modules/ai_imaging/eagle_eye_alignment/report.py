@@ -132,8 +132,12 @@ def render_html(image, points, provenance, notes=None, landmarks_reviewed=False)
     return head+'<body>'+PAGE.join((cover,advanced,audit))+'</body></html>'
 
 
-def generate_report(image,points,provenance,notes=None,landmarks_reviewed=False,*,root=None):
+def generate_report(image,points,provenance,notes=None,landmarks_reviewed=False,*,root=None,cancel=None):
     """Create a versioned private result. Never overwrite another review."""
+    from ..eagle_eye_remote.settings import remote_required
+    if remote_required():
+        from ..eagle_eye_remote.routing import alignment_correction
+        return alignment_correction(image, points, provenance, notes, landmarks_reviewed, cancel)
     from ..eagle_eye_brain.organized_report import write_paged_pdf
     from .service import digest
     from PacsClient.utils.data_paths import AI_DIR

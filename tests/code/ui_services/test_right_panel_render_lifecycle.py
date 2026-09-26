@@ -170,3 +170,28 @@ def test_progressive_timer_lifetime_belongs_to_panel(monkeypatch):
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     assert not isValid(timer)
     assert app is not None
+
+
+def test_home_dispatch_uses_canonical_per_study_series_order(render, monkeypatch):
+    """Home and Patient Tab share history ordering without mixing study groups."""
+    w = render.widget
+    received = []
+    monkeypatch.setattr(
+        w, 'display_thumbnails_immediately',
+        lambda thumbnails, generation=None: received.extend(thumbnails),
+    )
+    rows = [
+        dict(study_uid='study-a', series_uid='a-1', series_number='1', file_path='a1.png'),
+        dict(study_uid='study-a', series_uid='a-history', series_number='100000', file_path='ah.png'),
+        dict(study_uid='study-b', series_uid='b-1', series_number='1000001',
+             _orig_series_number='1', file_path='b1.png'),
+        dict(study_uid='study-b', series_uid='b-history', series_number='1100000',
+             _orig_series_number='100000', file_path='bh.png'),
+    ]
+
+    w.display_thumbnails(rows, progressive=False)
+    assert len(render.queued) == 1
+    render.queued.pop()[1]()
+
+    assert [row['series_uid'] for row in received] == [
+        'a-history', 'a-1', 'b-history', 'b-1']

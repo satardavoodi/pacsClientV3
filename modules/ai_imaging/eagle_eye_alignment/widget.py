@@ -17,15 +17,37 @@ from .references import reference_text, scope_text
 
 class LandmarkItem(QGraphicsEllipseItem):
     def __init__(self,side,key,point,color,view):
-        super().__init__(-5,-5,10,10)
+        super().__init__(-8,-8,16,16)
         self.side,self.key,self.view=side,key,view
         self.setBrush(QColor(color));self.setPen(QPen(Qt.white,1))
         self.setFlags(QGraphicsItem.ItemIsMovable|QGraphicsItem.ItemIgnoresTransformations)
-        self.setZValue(3);self.setToolTip(f'{side}: {key.replace("_"," ")}')
+        self.setAcceptHoverEvents(True); self.setCursor(Qt.OpenHandCursor)
+        self._highlighted = False
+        self.setZValue(3);self.setToolTip(f'{side}: {key.replace("_"," ")} — drag to move')
         self.setPos(*point)
+
+    def paint(self, painter, option, widget=None):
+        painter.setBrush(self.brush()); painter.setPen(self.pen())
+        painter.drawEllipse(-5, -5, 10, 10)
+        if self._highlighted:
+            painter.setBrush(Qt.NoBrush); painter.setPen(QPen(QColor('#ffffff'), 1.5))
+            painter.drawEllipse(-7, -7, 14, 14)
+
+    def hoverEnterEvent(self, event):
+        self._highlighted = True; self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._highlighted = False; self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton: self.setCursor(Qt.SizeAllCursor)
+        super().mousePressEvent(event)
 
     def mouseReleaseEvent(self,event):
         super().mouseReleaseEvent(event)
+        self.setCursor(Qt.OpenHandCursor)
         rect=self.scene().sceneRect();p=self.pos()
         self.setPos(max(0,min(p.x(),rect.width()-1)),max(0,min(p.y(),rect.height()-1)))
         self.view.pointChanged.emit(self.side,self.key,self.pos().x(),self.pos().y())
@@ -41,6 +63,18 @@ class AlignmentCanvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.manual_target=None;self.items_by_key={};self.lines=[]
+        self.setToolTip('Drag a point to correct it. Drag the background to pan. '
+                        'Mouse wheel: zoom. Choose a point in the placement menu to place it.')
+
+    @property
+    def manual_target(self):
+        return self._manual_target
+
+    @manual_target.setter
+    def manual_target(self, target):
+        self._manual_target = target
+        self.setDragMode(QGraphicsView.NoDrag if target else QGraphicsView.ScrollHandDrag)
+        self.viewport().setCursor(Qt.CrossCursor if target else Qt.OpenHandCursor)
 
     def load(self,pixels):
         self.scene().clear();self.items_by_key={};self.lines=[]
@@ -88,7 +122,7 @@ class AlignmentWidget(QWidget):
         self.setObjectName('eagleEyeAlignmentView')
         self.study_uid=str(study_uid or '')
         self.image=None;self.points={'R':{},'L':{}};self.metrics=None;self.provenance={}
-        self._file_rows=[];self.report_result=None
+        self._file_rows=[];self.report_result=None;self._pending_report_handle=None
         self._executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='alignment')
         self._cancel=threading.Event();self._future=None;self._kind='';self._disposed=False
         cancel,executor=self._cancel,self._executor
@@ -159,6 +193,7 @@ class AlignmentWidget(QWidget):
 
     def _submit(self,kind,fn,*args):
         if self._future is not None or self._disposed:return
+        self._control_error = None
         self._kind=kind;self._cancel.clear();self._future=self._executor.submit(fn,*args)
         self._timer.start();self._refresh_controls()
 
@@ -261,15 +296,22 @@ class AlignmentWidget(QWidget):
         self._refresh_controls()
 
     def save_report(self):
+        if self._pending_report_handle:
+            from functools import partial
+            from ..eagle_eye_remote.routing import resume_alignment_correction
+            self._submit('report', partial(resume_alignment_correction, cancel=self._cancel),
+                         deepcopy(self.image), self._pending_report_handle)
+            return
         if self.metrics is None or not self.review.isChecked() or not self.confirm.isChecked():return
         self._generate_pdf(landmarks_reviewed=True)
 
     def _generate_pdf(self,landmarks_reviewed=False):
+        from functools import partial
         from .report import generate_report
         notes=dict(indication=self.indication.text(),comparison=self.comparison.text(),impression=self.impression.text())
         provenance=deepcopy(self.provenance);provenance['acquisition_reviewed']=self.confirm.isChecked()
         self.status.setText('Generating the three-page Alignment PDF...')
-        self._submit('report',generate_report,deepcopy(self.image),deepcopy(self.points),provenance,notes,landmarks_reviewed)
+        self._submit('report',partial(generate_report, cancel=self._cancel),deepcopy(self.image),deepcopy(self.points),provenance,notes,landmarks_reviewed)
 
     def _open_pdf(self):
         if self.report_result:
@@ -320,14 +362,26 @@ class AlignmentWidget(QWidget):
                 self._redraw_points()
                 if self.metrics is not None:self._generate_pdf()
             elif self._kind=='report':
+                self._pending_report_handle=None
+                if result.get('remote_analysis'):
+                    self.provenance.update({key: result[key] for key in
+                        ('server_job_id', 'source_binding', 'radiograph_binding') if key in result})
+                    self.metrics = result.get('measurements', self.metrics)
                 self.report_result=result;self.status.setText('Three-page PDF ready. Open it to review or save a copy.')
             elif self._kind=='export':self.status.setText('PDF copy saved.')
         except Exception as error:
+            self._control_error = type(error).__name__
+            from ..eagle_eye_remote.client import DetachedAnalysis
+            if self._kind=='report' and isinstance(error, DetachedAnalysis):
+                self._pending_report_handle=error.handle_path
+                self.status.setText('Connection interrupted. Resume the server result before editing further.')
+                return
+            if self._kind=='report':self._pending_report_handle=None
             self.status.setText(str(error) if isinstance(error,ValueError) else 'The operation failed. Check the image or destination and try again.')
         finally:self._refresh_controls()
 
     def _refresh_controls(self):
-        busy=self._future is not None;loaded=self.image is not None
+        busy=self._future is not None or self._pending_report_handle is not None;loaded=self.image is not None
         for widget in (self.scan,self.series,self.files):widget.setEnabled(not busy)
         for widget in (self.load,self.browse):widget.setEnabled(not busy and self.series.currentData() is not None)
         for widget in (self.indication,self.comparison,self.impression):widget.setEnabled(loaded and not busy)
@@ -336,7 +390,13 @@ class AlignmentWidget(QWidget):
         self.run.setEnabled(loaded and not busy and self.confirm.isChecked())
         self.review.setEnabled(self.metrics is not None and not busy and self.confirm.isChecked())
         self.export.setEnabled(self.metrics is not None and not busy and self.review.isChecked() and self.confirm.isChecked())
-        self.cancel.setEnabled(busy and self._kind!='export')
+        if self._pending_report_handle:
+            self.export.setText('Resume server result')
+            self.export.setEnabled(self._future is None)
+        else:
+            from ..eagle_eye_remote.settings import remote_required
+            self.export.setText('Apply changes on server and generate report' if remote_required() else 'Generate reviewed PDF report')
+        self.cancel.setEnabled(self._future is not None and self._kind!='export')
 
     def teardown(self):
         self._disposed=True;self._cancel.set();self._timer.stop()

@@ -9,6 +9,26 @@
 
 ---
 
+## v3.6.8 (source preparation 2026-09-26) - Standard Client release candidate
+
+Requested installers are Standard and x64-on-ARM64-emulated Client editions for
+both PyInstaller and Nuitka: four files in the established backend installer
+folders. No Eagle Eye Server installer is requested. The candidate includes the
+latest workstation source, grouped Settings navigation, role-selected remote
+Eagle Eye client, viewer/download identity and stability guards, and corrected
+Advanced Viewer presentation with hidden automatic warm-up. It reuses the
+verified VC143 native Slicer baseline; ordinary workstation builds do not
+recompile Slicer. Cardiac Flow VM normalization and DICOMDIR interoperability
+remain required content gates. Machine configuration, pairing certificates,
+tokens, patient data and generated assets are excluded from Git publication.
+
+Source publication and installer compilation are separate from clean-host,
+ARM64, clinical, licensing, legal and signing acceptance. Progress is recorded
+in [VERSION_3.6.8_RELEASE.md](VERSION_3.6.8_RELEASE.md) and
+[VERSION_3.6.8_BUILD.md](VERSION_3.6.8_BUILD.md).
+
+---
+
 ## v3.6.7 (local install-QA build 2026-09-21) - Consolidated workstation candidate
 
 Version 3.6.7 freezes the current reviewed working state into one immutable local

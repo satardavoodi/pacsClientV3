@@ -1,4 +1,4 @@
-"""Slicer extension for locally bundled lumbar MR anatomy inference."""
+"""Slicer review interface for local or server-owned lumbar MR inference."""
 import os
 from pathlib import Path
 import queue
@@ -16,16 +16,39 @@ from slicer.ScriptedLoadableModule import ScriptedLoadableModule, ScriptedLoadab
 class AIPacsOfflineLumbar(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "AI-PACS Offline Lumbar"
+        parent.title = "AI-PACS Eagle Eye Lumbar"
         parent.categories = ["Segmentation"]
         parent.dependencies = ["Segmentations"]
         parent.contributors = ["AI-PACS"]
-        parent.helpText = "Offline MR vertebral anatomy. Requires the bundled CPU model. Not a diagnosis."
+        parent.helpText = "MR vertebral anatomy from the configured Eagle Eye engine. Review all proposed segments."
 
 
 def bundle_root():
     configured = os.environ.get("AIPACS_OFFLINE_LUMBAR_ROOT")
     return Path(configured) if configured else Path(slicer.app.slicerHome) / "offline_lumbar"
+
+
+def _dicom_reference(database_path, instances):
+    """Resolve one immutable instance snapshot using a worker-owned read-only index."""
+    import sqlite3
+    if not database_path or not instances or len(instances) > 10000 or len(set(instances)) != len(instances):
+        raise ValueError('Remote lumbar analysis requires a unique original DICOM instance inventory.')
+    connection = sqlite3.connect(Path(database_path).resolve().as_uri() + '?mode=ro', uri=True, timeout=10)
+    try:
+        identities = set()
+        for instance in instances:
+            rows = connection.execute('''SELECT i.SeriesInstanceUID, s.StudyInstanceUID
+                FROM Images i JOIN Series s ON s.SeriesInstanceUID=i.SeriesInstanceUID
+                WHERE i.SOPInstanceUID=?''', (instance,)).fetchall()
+            if len(rows) != 1 or not all(rows[0]):
+                raise ValueError('The source DICOM study identity is unavailable.')
+            identities.add(tuple(rows[0]))
+        if len(identities) != 1:
+            raise ValueError('The source volume contains instances from different DICOM series.')
+        series_uid, study_uid = identities.pop()
+        return study_uid, {'series_uid': series_uid, 'expected_count': len(instances)}
+    finally:
+        connection.close()
 
 
 def _segmentation_data(labels, affine, segments):
@@ -99,15 +122,45 @@ class AIPacsOfflineLumbarLogic:
         self._cancel.clear()
         root = bundle_root().resolve()
         work = Path(slicer.app.temporaryPath) / "aipacs-offline-lumbar"
+        # Preserve the original DICOM reference. No source pixels cross the network.
+        remote_source = None
+        package_root = os.environ.get('AIPACS_EAGLE_EYE_PACKAGE_ROOT')
+        if package_root and package_root not in sys.path:
+            sys.path.append(package_root)
+        remote = False
+        if package_root:
+            try:
+                from eagle_eye_remote.settings import remote_required
+                from eagle_eye_remote.client import Client as RemoteClient
+            except ImportError:
+                from modules.ai_imaging.eagle_eye_remote.settings import remote_required
+                from modules.ai_imaging.eagle_eye_remote.client import Client as RemoteClient
+            remote = remote_required()
+        if remote:
+            instances = (volume.GetAttribute('DICOM.instanceUIDs') or '').split()
+            if not instances:
+                raise ValueError('Remote lumbar analysis requires an original PACS-backed DICOM series.')
+            # Snapshot only properties here. CTK has no seriesForInstance API;
+            # never move its GUI-owned SQL connection into another thread.
+            remote_source = (str(slicer.dicomDatabase.databaseFilename), tuple(instances))
 
         def execute():
             try:
                 # Model and filesystem work happen outside the GUI thread.
-                app = str(root / "app")
-                if app not in sys.path:
-                    sys.path.append(app)
-                from offline_lumbar.service import run_snapshot
-                result, labels = run_snapshot(root, work, array, affine, cancel=self._cancel)
+                if remote_source is not None:
+                    remote_ref = _dicom_reference(*remote_source)
+                    result = RemoteClient().analyze('lumbar', remote_ref[0], {'primary': remote_ref[1]}, {},
+                                              work, cancel=self._cancel)
+                    labels = np.load(result['labels_file'], allow_pickle=False)
+                    if (labels.shape != array.shape or labels.dtype != np.uint8
+                            or not np.allclose(result['affine_ras'], affine, atol=1e-4)):
+                        raise ValueError('The server mask does not match the displayed DICOM geometry.')
+                else:
+                    app = str(root / "app")
+                    if app not in sys.path:
+                        sys.path.append(app)
+                    from offline_lumbar.service import run_snapshot
+                    result, labels = run_snapshot(root, work, array, affine, cancel=self._cancel)
                 data = _segmentation_data(labels, affine, result["segments"])
                 self._results.put((result, data, None))
             except Exception as exc:

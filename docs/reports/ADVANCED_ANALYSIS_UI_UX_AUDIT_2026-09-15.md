@@ -393,3 +393,51 @@ six existing SWIG warnings, direct exit 0; 465 Python mirrors match. Live gate i
 pending: native window discovery returned no source PACS or Advanced Viewer.
 Rollback only correct_startup_notice, StartupNoticeFilter and installation hooks,
 then sync the presentation mirror. Preserve prior panel/numeric/geometry changes.
+
+## 2026-09-22: locked application chrome and branded Save dialog (OPT-56)
+
+The presentation adapter hides the native menubar, locks main-window toolbars,
+and hides/disables their toggle actions. ModuleSelectorToolBar remains available;
+late-created or re-shown application toolbars stay hidden. Internal module toolbars
+remain functional. Main-window toolbar context menus are suppressed without
+replacing native Save actions or callbacks.
+
+The native qSlicerSaveDataDialog uses the short title `AI-PACS | Save Scene and Data`,
+a custom window icon, original line icons for scene/data/bundle selection, and the
+existing panel palette. Destinations, selected rows, callbacks and Save/Cancel
+semantics are preserved. No clinical warning is removed.
+
+Code gate: both new guards failed before implementation; 45 focused presentation,
+resident, promotion, launch and current-source packaging tests passed (six existing
+SWIG warnings). After restricting the lock to main-window-owned chrome, all 19
+presentation tests passed again. Scoped presentation mirror synchronization used
+sync_plugin_mirrors.add_paths; verify_plugin_mirrors reports 470 matching pairs.
+
+Live gate: old viewer reproduced the visible menubar and original Save icons.
+Save was cancelled without writing files. During authorized viewer restart the
+native tool repeatedly detected concurrent user input; viewer subsequently left
+window discovery. Further PACS input was stopped to avoid interference. Fresh
+runtime menubar/context-menu/Save acceptance remains PENDING, not a pass.
+No native binary rebuild, installed-app launch, main PACS restart or patient export.
+Rollback: remove this slice's chrome lock and save-branding hooks/icons, restore
+prior event-filter wiring, and synchronize only the presentation mirror.
+
+## 2026-09-22: installed UI mismatch traced to stale native Slicer
+
+The v3.6.7 installer snapshot predates the latest `presentation.py`; the installed
+copy matches that older snapshot. More importantly, the assembled Developer Run,
+immutable cache, and installed native executables are byte-identical January 2026
+binaries, whereas `Main.cxx`, main-window UI source and application properties
+changed in September. Existing cache-versus-developer parity therefore accepted
+two equally stale native runtimes. Developer Run appearance can be improved by
+the Python presentation adapter while still using that old native executable;
+it is not proof that the C++/CMake UI was compiled.
+
+The build path now requires native source/executable provenance in both runtime
+copies, and assembly refuses an inner executable older than native source. A
+regression guard demonstrated the old false pass before the correction. The
+current native runtime fails closed. The documented `C:\S\NB` SuperBuild and
+`C:\Qt\5.15.2\msvc2019_64` SDK were absent. A deeper project/drive inventory
+found MSVC and CMake inside Visual Studio 2022 Build Tools, not on the default
+PATH; project and candidate folders hold only assembled old runtimes. No replacement Slicer binary,
+installer, installed-GUI acceptance or clinical release claim was produced.

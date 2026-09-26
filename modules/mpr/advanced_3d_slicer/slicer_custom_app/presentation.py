@@ -10,7 +10,7 @@ _numeric_spec = importlib.util.spec_from_file_location(
 _numeric_style = importlib.util.module_from_spec(_numeric_spec)
 _numeric_spec.loader.exec_module(_numeric_style)
 
-WINDOW_TITLE = 'AI-PACS Advanced Viewer v3.6.7'
+WINDOW_TITLE = 'AI-PACS Advanced Viewer v3.6.8'
 
 # This viewer is entered with a selected series. Specialized pipelines remain
 # owned by Eagle Eye; retain their modules for programmatic use, not discovery.
@@ -57,6 +57,9 @@ QCheckBox::indicator:checked { background:#65c8dd; border:2px solid #a8ebf6; }
 
 # Original, compact line symbols. Render from memory; no icon-file I/O on the UI thread.
 SYMBOLS = {
+    'brand': '<path d="m6 26 10-20 10 20M10 19h12"/>',
+    'save': '<path d="M7 6h15l4 4v17H6V6ZM11 6v8h10V6M11 27v-8h10v8"/>',
+    'bundle': '<rect x="6" y="9" width="20" height="18" rx="2"/><path d="M5 9h22V5H5ZM12 15h8M16 15v7"/>',
     'markups': '<path d="M9 23 16 10 25 19M9 23l16-4"/><circle cx="9" cy="23" r="2"/><circle cx="16" cy="10" r="2"/><circle cx="25" cy="19" r="2"/>',
     'models': '<path d="m16 6 10 6v12l-10 5-10-5V12ZM6 12l10 6 10-6M16 18v11"/>',
     'segmenteditor': '<path d="M7 8h12M7 8v18h18v-9M12 21l2-6 10-9 4 4-10 9Z"/>',
@@ -255,10 +258,59 @@ def correct_startup_notice(widget):
 
 
 class StartupNoticeFilter(qt.QObject):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
     def eventFilter(self, obj, event):
         if event.type() == qt.QEvent.Show:
             correct_startup_notice(obj)
+            brand_save_dialog(obj)
+            if obj == self.window or (obj.inherits('QWidget') and obj.window() == self.window):
+                lock_chrome_widget(obj, self.window)
+        if event.type() == qt.QEvent.ContextMenu and (
+                obj == self.window or (obj.inherits('QToolBar') and obj.parent() == self.window)):
+            return True
         return False
+
+
+def lock_chrome_widget(widget, window):
+    """Keep native actions connected while removing toolbar customization."""
+    if widget.parent() != window:
+        return
+    if widget.inherits('QMenuBar'):
+        widget.hide()
+    elif widget.inherits('QToolBar'):
+        widget.setMovable(False)
+        widget.setFloatable(False)
+        widget.setContextMenuPolicy(qt.Qt.PreventContextMenu)
+        action = value(widget, 'toggleViewAction')
+        action.setEnabled(False)
+        action.setVisible(False)
+        if value(widget, 'objectName') != 'ModuleSelectorToolBar':
+            widget.hide()
+
+
+def brand_save_dialog(widget):
+    """Retain native save logic, destinations, statuses and confirmation behavior."""
+    if value(widget, 'objectName') != 'qSlicerSaveDataDialog' or not widget.inherits('QDialog'):
+        return
+    widget.setWindowTitle('AI-PACS | Save Scene and Data')
+    widget.setWindowIcon(module_icon('brand'))
+    widget.setStyleSheet(PANEL_STYLE)
+    icons = {'SelectSceneDataButton': 'save', 'SelectDataButton': 'data',
+             'DataBundleButton': 'bundle'}
+    for child in descendants(widget):
+        name = value(child, 'objectName')
+        if name in icons and child.inherits('QAbstractButton'):
+            child.setIcon(module_icon(icons[name]))
+        elif child.inherits('QDialogButtonBox'):
+            for button in value(child, 'buttons'):
+                role = child.standardButton(button)
+                if role == qt.QDialogButtonBox.Save:
+                    button.setIcon(module_icon('save'))
+                elif role == qt.QDialogButtonBox.Cancel:
+                    button.setIcon(qt.QIcon())
 
 
 class Presentation:
@@ -266,11 +318,14 @@ class Presentation:
         self.window = window
         self.menus = []
         self.icons = {key: module_icon(key) for key in SYMBOLS}
-        self.notice_filter = StartupNoticeFilter()
+        self.notice_filter = StartupNoticeFilter(window)
         app = qt.QApplication.instance()
         app.installEventFilter(self.notice_filter)
         for widget in value(app, 'topLevelWidgets'):
             correct_startup_notice(widget)
+            brand_save_dialog(widget)
+        for widget in descendants(window):
+            lock_chrome_widget(widget, window)
         window.setWindowTitle(WINDOW_TITLE)
         # Set display name too: old native runtimes otherwise append their old title.
         qt.QApplication.instance().setApplicationDisplayName(WINDOW_TITLE)

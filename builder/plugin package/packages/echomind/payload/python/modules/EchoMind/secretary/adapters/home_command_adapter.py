@@ -59,6 +59,27 @@ class HomeCommandAdapter:
         return None
 
     # ── action: list_patients ────────────────────────────────────────
+    def search_patients(self, plan: CommandPlan, state: dict) -> CommandResult:
+        if plan.entities.get('source', 'local') not in ('local', 'server'):
+            return CommandResult(ok=False, action=plan.action, error_code='INVALID_SOURCE')
+        query = plan.model_copy(update={'entities':{'source':'local', **plan.entities}})
+        result = self.list_patients(query, state)
+        if not result.ok:
+            result.action = plan.action
+            return result
+        return self.read_patients(query, state)
+
+    def read_patients(self, plan: CommandPlan, state: dict) -> CommandResult:
+        guard = self._available(plan.action)
+        if guard is not None: return guard
+        limit = max(1, min(int(plan.entities.get('limit', 25)), 200))
+        pending = getattr(getattr(self._home, 'home', None), '_search_task', None)
+        if pending is not None and not pending.done():
+            return CommandResult(ok=True, action=plan.action, data={'state':'searching', 'rows':[], 'count':0})
+        rows = list(self._home.list_rows() or [])
+        return CommandResult(ok=True, action=plan.action,
+                             data={'rows': rows[:limit], 'count':len(rows), 'truncated':len(rows)>limit})
+
     def list_patients(self, plan: CommandPlan, state: dict) -> CommandResult:
         guard = self._available("list_patients")
         if guard is not None:

@@ -1233,6 +1233,7 @@ class PatientTableWidget(QWidget):
         
         # Connect mouse events for cursor management
         self.results_table.installEventFilter(self)
+        self.results_table.viewport().installEventFilter(self)
         
         # Add double-click timer to prevent single-click when double-clicking
         self.click_timer = QTimer()
@@ -2305,16 +2306,23 @@ class PatientTableWidget(QWidget):
             print(f"Error in single-click timeout: {str(e)}")
 
     def eventFilter(self, obj, event):
-        """Event filter to handle double-click properly"""
-        if obj == self.results_table:
-            if event.type() == event.Type.MouseButtonDblClick:
-                print("Double-click event detected in event filter")
-                # Let the double-click handler process it
-                return False
+        """Observe actual viewport input; never consume or synthesize a click."""
+        table = getattr(self, 'results_table', None)
+        if table is not None and obj is table.viewport():
+            kind = event.type()
+            if kind in (event.Type.MouseButtonPress, event.Type.MouseButtonRelease,
+                        event.Type.MouseButtonDblClick):
+                index = table.indexAt(event.position().toPoint())
+                logger.info(
+                    '[PATIENT_INPUT] event=%s t_ms=%.1f row=%d column=%d active=%s',
+                    kind.name, time.monotonic() * 1000.0, index.row(), index.column(),
+                    table.window().isActiveWindow(),
+                )
         return super().eventFilter(obj, event)
 
     def _on_patient_double_clicked(self, item):
         try:
+            logger.info('[PATIENT_INPUT] event=open_handler_enter column=%d', item.column())
             if item.column() == COL['select']:
                 return
             # Cancel any pending single-click selection so a double-click NEVER starts
@@ -2352,8 +2360,13 @@ class PatientTableWidget(QWidget):
                     study_uid,
                     report_status
                 )
-        except Exception:
-            pass
+                logger.info('[PATIENT_INPUT] event=open_signal_emitted')
+            else:
+                logger.warning('[PATIENT_INPUT] event=open_rejected reason=missing_identity_cells')
+        except Exception as exc:
+            # Exception messages may contain patient content; record only the type.
+            logger.warning('[PATIENT_INPUT] event=open_handler_failed exception_type=%s',
+                           type(exc).__name__)
 
     def _on_download_clicked(self):
         """

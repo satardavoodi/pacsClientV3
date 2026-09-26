@@ -7,6 +7,28 @@ def frames_for(viewer):
     return (getattr(viewer, 'metadata', None) or {}).get(FRAME_KEY) or ()
 
 
+def apply_sync_point(viewer, point, adjust_slice):
+    """Consume a logical frame token without moving the marker off native Z=0."""
+    frames = frames_for(viewer)
+    if not frames:
+        return False
+    index = int(round(point[2])) if adjust_slice else int(viewer.GetSlice())
+    instances = viewer.metadata.get('instances') or []
+    if (not 0 <= index < len(frames) or index >= len(instances)
+            or instances[index].get('image_position_patient') is None
+            or instances[index].get('image_orientation_patient') is None):
+        viewer.hide_sync_point()
+        return True
+    if adjust_slice and index != viewer.GetSlice():
+        viewer.set_slice(index)
+    viewer._ensure_sync_point_actor()
+    viewer._sync_point_source.SetCenter(float(point[0]), float(point[1]), 0.0)
+    viewer._sync_point_actor.VisibilityOn()
+    viewer._sync_point_visible = True
+    viewer.Render()
+    return True
+
+
 def clear_overlay(viewer):
     actor = getattr(viewer, '_presentation_overlay_actor', None)
     if actor is not None:

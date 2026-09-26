@@ -1,5 +1,55 @@
 # Thumbnail Pipeline — As-Built Reference
 
+## September 26 patient-tab representative thumbnail authority
+
+The small thumbnail in the patient title-bar tab is derived from the same admitted
+sidebar-card stream as the visible series list. `add_thumbnail_to_thumbnail_layout`
+is the only producer: cached, Local, Server, Import, legacy and grouped/multi-study
+adapters must not assign `logo_patient` independently. A card which fails construction
+cannot become the representative; an already-admitted duplicate may repair a missed
+header publication.
+
+`_PWMetadataMixin.check_logo_patient` accepts the first admitted non-history series
+and rejects the exact DICOMized clinical-history convention (`SeriesNumber == 100000`).
+For multi-study display offsets it reads `_orig_series_number`, so an offset image is
+not mistaken for a document and an offset document is still excluded. The fallback
+for legacy metadata uses the already-known PNG filename only. Selection performs no
+directory, DICOM, database, network, decode or VTK work and requires no asyncio loop.
+The title-bar callback resolves the owning PatientWidget in `patient_tabs`; it never
+uses the currently selected tab as identity.
+
+Four focused guards failed before correction: document rejection, offset identity,
+owner-tab targeting and single-producer ownership. Final affected/adjacent result is
+238 passed; packaging-input result is 42 passed. Fresh-source GUI acceptance remains
+pending: open cached and cold cases, include an exact history document and a verified
+multi-study case, switch tabs while cards arrive, and confirm the header uses the first
+visible non-document card for the correct patient. No viewer decode/render path changed.
+
+## September 26 canonical per-study ordering and replacement geometry
+
+Home and Patient Tab now consume one pure presentation-order contract from
+`PacsClient/utils/series_identity.py`. Study groups retain first-seen order; only
+members inside a study are sorted. The exact clinical-history convention
+(`SeriesNumber == 100000`) sorts first when `AIPACS_HISTORY_SERIES_FIRST` is enabled,
+and `_orig_series_number` always wins over a multi-study offset display key. This
+changes presentation only: Study/Series UIDs, storage folders, download identity,
+offset allocation, Fast/Advanced execution and decoded caches are untouched.
+
+The bounded Patient-Tab scheduler applies the same key to cached files, admitted
+entries and grouped rows. A replacement generation must re-add every retained card
+at its planned row while painting is disabled. Merely skipping an existing manager
+key is forbidden: it can leave the retained card in the old row while a new card is
+inserted into that same row. The total counter is the sum of planned series rows;
+group headers are excluded, and each header receives only its own study's row count.
+
+Regression guards cover the fail-before overlap, two studies with repeated local
+numbers and offset handles, per-study history ordering, header/total counts, and Home
+dispatch ordering. The affected/adjacent suite passes 230 cases; release-candidate
+source inclusion passes 42 cases. Fresh-source GUI acceptance is still required:
+open a large multi-study case, confirm stable non-overlapping cards and counts, then
+confirm the exact history card is visible in every applicable study. Do not infer
+this GUI pass from the synthetic Qt guards.
+
 ## September 19 legacy-data acceptance clarification
 
 The first exact scan of an old/restored series is a migration operation, not a second

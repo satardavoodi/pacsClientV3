@@ -158,3 +158,10 @@ tools/build/**/*.pyc
 /generated-files/retired-brain-references-*/
 /generated-files/slicer-control-probe/
 /generated-files/slicer-extension-research/
+
+# Immutable local build caches, native-runtime backups, and private review evidence.
+/generated-files/distribution-assets-*/
+/generated-files/slicer-runtime-*/
+/generated-files/pacs-link-review-*/
+/generated-files/release-local-settings/
+/aqtinstall.log

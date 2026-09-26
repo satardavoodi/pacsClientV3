@@ -3502,10 +3502,6 @@ class _VCLoadMixin:
                         self._display_first_series_in_all_viewers(str(series_no))
                     self.parent_widget.thumbnail_manager.set_series_ready(str(series_no))
 
-                    if file_path and not self.parent_widget.logo_patient:
-                        self.parent_widget.logo_patient = file_path
-                        self.parent_widget.update_tab_manager()
-
                     print(f"âœ… [SYNC_LOAD] First series loaded: {series_no}. Breaking loop.") # ظ„ط§ع¯ ط§ط¶ط§ظپظ‡ ط´ط¯ظ‡
                     break  # ظپظ‚ط· ط§ظˆظ„غŒظ† ط³ط±غŒ ط±ط§ ط¨ط§ط±ع¯ط°ط§ط±غŒ ع©ظ†
 

@@ -55,6 +55,14 @@ from typing import Any, Dict, List, Tuple
 #                rewrites the template — the build, not the dev's tree, has to be
 #                the authority.
 SANITIZE: Dict[str, Dict[str, Any]] = {
+    # Paired installations are provisioned per center, never cloned from this PC.
+    "eagle_eye_client.json": {
+        "allow": ["schema_version", "url", "token_env", "token_file", "ca_file",
+                  "client_certificate", "client_private_key"],
+        "force": {"schema_version": 1, "url": "", "token_file": "", "ca_file": "",
+                  "client_certificate": "", "client_private_key": "",
+                  "token_env": "AIPACS_EAGLE_EYE_TOKEN"},
+    },
     # EchoMind — real API key today. Model names / timeouts are product defaults.
     # stt_custom_base_url / stt_auth_token belong to the Voice-to-Text section: a
     # centre's own transcription server + its token must never ship. The PROVIDER
@@ -221,6 +229,9 @@ def sanitize_obj(rel_posix: str, data: Any) -> Any:
     if not rule:
         return data
     out = copy.deepcopy(data)
+    if "allow" in rule:
+        out = {key: value for key, value in out.items() if key in rule["allow"]} if isinstance(out, dict) else {}
+        out.update(rule.get("force", {}))
     if rule.get("root_list"):
         return []
     for dotted in rule.get("blank", []):

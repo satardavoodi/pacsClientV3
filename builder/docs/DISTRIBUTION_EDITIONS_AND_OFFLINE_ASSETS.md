@@ -70,8 +70,21 @@ erase existing models or patient data, so it is not an installed-size cleanup to
 
 ## Assets available locally
 
-Cache: `generated-files/distribution-assets/` (ignored by Git).
-The completed inventory contains **34,529 files, 4,329,814,502 bytes** (about
+Current default cache for both build roles:
+`generated-files/distribution-assets-native-3.6.7-vc143-20260923/` (ignored by Git).
+It retains the offline model and wheel inputs while replacing only the native
+Slicer runtime. Its inventory is **34,459 files / 4,309,450,168 bytes**.
+The historical pre-VC143 cache
+`generated-files/distribution-assets-native-3.6.7-20260923/` inventoried
+**34,449 files / 4,307,604,656 bytes**; it is now only a verified donor of
+non-Slicer inputs, not a selectable build cache.
+It contains the 2026-09-23 custom native Slicer baseline recorded in
+[`docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md`](../../docs/release-and-build/SLICER_NATIVE_BASELINE_2026-09-23.md).
+Do not use the old `generated-files/distribution-assets/` as an installer input:
+its Slicer predates the new native provenance gate. The following counts describe
+that **historical donor cache only**. Its non-Slicer inputs were reused after
+hash validation; its Slicer files were not reused. It contained **34,529 files,
+4,329,814,502 bytes** (about
 4.33 GB / 4.03 GiB), excluding diagnostic logs and the outer inventory itself.
 An independent final `--check` verified every recorded length and SHA-256 hash.
 
@@ -123,6 +136,20 @@ Prepare a **new** cache on a connected preparation machine:
 .\.venv\Scripts\python.exe tools/build/prepare_distribution_assets.py --download-wheels --root E:/BuildAssets/AI-PACS
 ```
 
+The 2026-09-23 shared cache was prepared without re-downloading unchanged
+packages. This one-time recovery route verifies and copies only inventoried
+non-Slicer files from the complete historical cache, then snapshots the
+current Developer Run Slicer. Never reuse the historical Slicer files:
+
+```powershell
+.\.venv\Scripts\python.exe tools/build/prepare_distribution_assets.py --profile all --root generated-files/distribution-assets-native-3.6.7-vc143-20260923 --reuse-non-slicer-assets generated-files/distribution-assets-native-3.6.7-20260923
+.\.venv\Scripts\python.exe tools/build/prepare_distribution_assets.py --check --profile all
+```
+
+For normal later builds, reuse the completed immutable cache and do **not** run
+either preparation command. Native Slicer recompilation is also unnecessary
+unless its source/resources change; see the definitive baseline record.
+
 An already completed cache is not overwritten by normal preparation. The explicit
 `--refresh-wheels` operation verifies the old inventory first, refreshes locked
 wheels from the current environments, checks offline resolution, and records a
@@ -131,15 +158,16 @@ new inventory. Preparation uses the already assembled custom Slicer and the prio
 or run its extension-install UI.
 
 When release prerequisites are satisfied, follow the single coordinator command
-in root [`../../BUILD.md`](../../BUILD.md). It creates all three editions for both
-backends. For one diagnostic edition, use only the explicitly non-promotable
+in root [`../../BUILD.md`](../../BUILD.md). It creates four Client installers or,
+when explicitly selected, two Eagle Eye Server candidates. For one diagnostic
+edition, use only the explicitly non-promotable
 internal snapshot lane documented there; do not invoke `build.py` from the
 developer checkout. Git publication and the required receipt are governed by
 [`../../RELEASE.md`](../../RELEASE.md), with the complete route indexed at
 [`../../docs/release-and-build/README.md`](../../docs/release-and-build/README.md).
 
-Use `--asset-root E:/BuildAssets/AI-PACS` for another verified cache. Every
-three-edition build now requires the verified cache because every edition contains
+Use `--asset-root E:/BuildAssets/AI-PACS` for another verified current cache. Every
+role-selected build requires a verified cache because every edition contains
 the standard Slicer runtime. Eagle Eye additionally consumes the offline lumbar
 environment and weights. New metadata is an installer edition stamp inside the
 existing installation profile; no feature-flag family, licensing bypass, or
@@ -150,7 +178,7 @@ isolated build environment can resolve packages completely offline:
 
 ```powershell
 python -m venv .venv_build
-.\.venv_build\Scripts\python.exe -m pip install --no-index --find-links generated-files/distribution-assets/build-wheels --require-hashes -r generated-files/distribution-assets/build-wheels-hashed.lock
+.\.venv_build\Scripts\python.exe -m pip install --no-index --find-links generated-files/distribution-assets-native-3.6.7-vc143-20260923/build-wheels --require-hashes -r generated-files/distribution-assets-native-3.6.7-vc143-20260923/build-wheels-hashed.lock
 ```
 
 Do not run that creation command over the existing development environment during

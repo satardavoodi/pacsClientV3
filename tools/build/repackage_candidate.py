@@ -59,6 +59,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous-source", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--edition", choices=("client",), default="client")
     args = parser.parse_args()
     previous = args.previous_source.resolve()
     if previous == ROOT.resolve():
@@ -93,7 +94,7 @@ def main():
     compile_editions(
         adapter,
         args.version,
-        "all",
+        args.edition,
         for_distribution=for_distribution,
     )
     if file_hash(exe) != core_hash:

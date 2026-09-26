@@ -18,6 +18,7 @@ from aipacs_runtime import (
     MODULE_PACKAGE_MANIFEST_FILENAME,
     MODULE_PACKAGE_PAYLOAD_DIRNAME,
     advanced_mpr_runtime_root,
+    slicer_python_payload_sha256,
 )
 from builder.plugin_package_registry import PLUGIN_PACKAGES_DIR, load_plugin_package_definitions
 
@@ -340,6 +341,7 @@ def materialize_plugin_packages(
         package_dir.mkdir(parents=True, exist_ok=True)
 
         has_payload = False
+        slicer_startup_sha256 = ""
         build_strategy = str(definition.get("build_strategy") or "")
         if build_strategy == "source_tree":
             has_payload = _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
@@ -362,6 +364,11 @@ def materialize_plugin_packages(
                 )
                 _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
                 _validate_plugin_no_namespace_shadow(package_dir, module_id)
+                if module_id == "advanced_mpr":
+                    from builder.slicer_runtime_payload import stage_current_startup
+                    slicer_startup_sha256 = stage_current_startup(package_dir, PROJECT_ROOT)
+                    from builder.eagle_eye_client_payload import stage_client
+                    stage_client(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
                 if module_id == "advanced_mpr" and include_eagle_eye_assets:
                     from builder.offline_lumbar_payload import stage_offline_lumbar
                     stage_offline_lumbar(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
@@ -401,6 +408,11 @@ def materialize_plugin_packages(
             "sdk_entrypoint_group": str(definition.get("sdk_entrypoint_group") or ""),
             "sdk_entrypoint_name": str(definition.get("sdk_entrypoint_name") or ""),
         }
+        if module_id == "advanced_mpr" and has_payload:
+            manifest["slicer_startup_sha256"] = slicer_startup_sha256
+            manifest["slicer_python_sha256"] = slicer_python_payload_sha256(
+                package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python"
+            )
         (package_dir / MODULE_PACKAGE_MANIFEST_FILENAME).write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False),
             encoding="utf-8",

@@ -7,7 +7,8 @@ import json
 import logging
 import time
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFrame
+from PySide6.QtGui import QColor, QPainter
 from PacsClient.utils.diagnostic_logging import now_ms
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._drop_hover_dwell import (
     _DropHoverDwellMixin,
@@ -18,6 +19,16 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _NativeDropHighlight(QFrame):
+    """Cover native VTK without sampling Qt's stale parent backing store."""
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor('#000000'))
+        painter.end()
+        super().paintEvent(event)
 
 
 class _VWDragDropMixin(_DropHoverDwellMixin):
@@ -84,8 +95,7 @@ class _VWDragDropMixin(_DropHoverDwellMixin):
 
     def _show_drop_highlight(self, show: bool):
         if not hasattr(self, '_drop_overlay'):
-            from PySide6.QtWidgets import QFrame
-            overlay = QFrame(self)
+            overlay = _NativeDropHighlight(self)
             overlay.setObjectName("dropOverlay")
             overlay.setStyleSheet(
                 """
@@ -97,6 +107,7 @@ class _VWDragDropMixin(_DropHoverDwellMixin):
                 """
             )
             overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            overlay.setAttribute(Qt.WA_OpaquePaintEvent, True)
             overlay.hide()
             self._drop_overlay = overlay
         try:

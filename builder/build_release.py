@@ -790,6 +790,7 @@ def build_module_packages(
             shutil.rmtree(package_dir, ignore_errors=True)
 
         has_payload = False
+        slicer_startup_sha256 = ""
         if build_strategy == "runtime_payload":
             source_root = Path(str(advanced_payload.get("source") or ""))
             if can_reuse_runtime_payload:
@@ -814,6 +815,12 @@ def build_module_packages(
             _validate_staged_plugin_no_namespace_shadow(package_dir, module_id)
             if module_id == "run_cd":
                 _validate_run_cd_lite_viewer(package_dir)
+
+        if module_id == "advanced_mpr" and has_payload:
+            from builder.slicer_runtime_payload import stage_current_startup
+            slicer_startup_sha256 = stage_current_startup(package_dir, PROJECT_ROOT)
+            from builder.eagle_eye_client_payload import stage_client
+            stage_client(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
 
         if module_id == "advanced_mpr" and has_payload and include_eagle_eye_assets:
             from builder.offline_lumbar_payload import stage_offline_lumbar
@@ -851,6 +858,12 @@ def build_module_packages(
             "sdk_entrypoint_group": str(definition.get("sdk_entrypoint_group") or ""),
             "sdk_entrypoint_name": str(definition.get("sdk_entrypoint_name") or ""),
         }
+        if module_id == "advanced_mpr" and has_payload:
+            manifest["slicer_startup_sha256"] = slicer_startup_sha256
+            from aipacs_runtime import slicer_python_payload_sha256
+            manifest["slicer_python_sha256"] = slicer_python_payload_sha256(
+                package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python"
+            )
         if not has_payload:
             if package_dir.exists():
                 shutil.rmtree(package_dir, ignore_errors=True)
@@ -1428,12 +1441,12 @@ def parse_args() -> argparse.Namespace:
             "  python build.py --skip-installer-compile # no ISCC, just dist+stage\n"
         ),
     )
-    parser.add_argument("--edition", choices=("all", "eagle-eye", "standard", "arm", "legacy"), default="all",
+    parser.add_argument("--edition", choices=("all", "client", "server", "eagle-eye", "standard", "arm", "legacy"), default="all",
                         help="Default: all three local installers. ARM uses x64 emulation. Legacy retains the old publishing workflow.")
     parser.add_argument("--compact-max-mb", type=int, default=700,
                         help="Maximum compressed Standard/ARM installer size in decimal MB (target approximately 600 MiB).")
     parser.add_argument("--asset-root", type=Path,
-                        help="Verified offline asset cache; defaults to generated-files/distribution-assets.")
+                        help="Verified offline asset cache; defaults to the current native-Slicer shared cache.")
     parser.add_argument(
         "--skip-pyinstaller",
         action="store_true",
@@ -1621,7 +1634,7 @@ def main() -> int:
         if args.edition != "legacy":
             from tools.build.prepare_distribution_assets import DEFAULT_ROOT, verify
             asset_root = (args.asset_root or DEFAULT_ROOT).resolve()
-            verify(asset_root)
+            verify(asset_root, profile="client" if args.edition in {"client", "standard", "arm"} else "all")
             os.environ["AIPACS_ADVANCED_MPR_RUNTIME_SOURCE"] = str(asset_root / "slicer-runtime")
             os.environ["AIPACS_OFFLINE_LUMBAR_BUNDLE_SOURCE"] = str(asset_root / "offline_lumbar")
             os.environ["AIPACS_ISCC_EXE"] = str(asset_root / "inno-setup/ISCC.exe")
@@ -1724,7 +1737,7 @@ def main() -> int:
             version,
             advanced_payload,
             reuse_staged_payload=(incremental and args.skip_pyinstaller),
-            include_eagle_eye_assets=args.edition in {"all", "eagle-eye"},
+            include_eagle_eye_assets=args.edition in {"all", "server", "eagle-eye"},
             for_distribution=not args.internal_build,
         )
         write_manifest(version, core_dir, advanced_payload, module_packages)
@@ -1737,7 +1750,7 @@ def main() -> int:
             print("[WARN] --skip-release-gate: post-stage release gate SKIPPED (emergencies only).")
         else:
             run_release_gate_post_stage(
-                require_eagle_eye_assets=args.edition in {"all", "eagle-eye"}
+                require_eagle_eye_assets=args.edition in {"all", "server", "eagle-eye"}
             )
             # ARM64 plan §7.3: no wrong-architecture binary may ship. Enforced
             # for arm64 (an x64 DLL in the native tree = broken install);

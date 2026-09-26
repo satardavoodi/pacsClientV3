@@ -1078,13 +1078,13 @@ class AIVTKWidget(VTKWidget):
                 attachments_path=ATTACHMENT_PATH
             )
 
-            if det_csv and cls_csv:
+            if det_csv:  # Classification is optional; keep detection-only results.
                 self.csv_details_path = det_csv
                 self.csv_classification = cls_csv
                 print("[MG] CSV paths loaded from manifest")
             else:
                 det_csv, cls_csv = self._fallback_mg_csv_paths(study_uid)
-                if det_csv and cls_csv:
+                if det_csv:  # Classification is optional; keep detection-only results.
                     self.csv_details_path = det_csv
                     self.csv_classification = cls_csv
                     print("[MG] CSV paths loaded from fallback")
@@ -1130,13 +1130,13 @@ class AIVTKWidget(VTKWidget):
                     attachments_path=ATTACHMENT_PATH
                 )
 
-                if det_csv and cls_csv:
+                if det_csv:  # Classification is optional; keep detection-only results.
                     self.csv_details_path = det_csv
                     self.csv_classification = cls_csv
                     print("[MG][VTK] CSV paths loaded from manifest")
                 else:
                     det_csv, cls_csv = self._fallback_mg_csv_paths(study_uid)
-                    if det_csv and cls_csv:
+                    if det_csv:  # Classification is optional; keep detection-only results.
                         self.csv_details_path = det_csv
                         self.csv_classification = cls_csv
                         print("[MG][VTK] CSV paths loaded from fallback")

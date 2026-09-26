@@ -1,6 +1,6 @@
 ---
 name: ai-pacs-bug-fix
-description: Diagnose and fix defects, crashes, freezes, incorrect behavior, regressions, and stability or performance problems in the AI-PACS Windows DICOM workstation. Use for AI-PACS bug reports and corrective maintenance; do not use for unrelated feature design or the public website.
+description: Diagnose and fix AI-PACS workstation bugs, including numbered fix sessions, with root-cause evidence, regression guards, source GUI verification, and Standard Client / Eagle Eye Server build inclusion tracking. Use for corrective maintenance, crashes, freezes, and regressions; not unrelated feature design or the public website.
 ---
 
 # AI-PACS Bug Fix
@@ -17,6 +17,13 @@ Turn each reported symptom into an evidence-backed, minimally invasive, regressi
 
 ## Fix state model
 
+### Numbered fixes and continuity
+
+- Preserve the user's fix number and original scope. A chat called `fix 1` is a session title, not proof that every defect in it is bug #1. Qualify repeated numbers by session/date; never silently renumber historical reports. Split independent causes as A/B under the original report when necessary.
+- Before revisiting a recurring defect, find its prior conversation, existing incident record, regression-catalog row and guard. Read the actual diagnosis and final evidence, including pending gates; a title or an earlier claim of success is not proof that the current bug was fixed.
+- Maintain a compact English record in the existing owning incident document and link it from the regression catalog. Record: session/date and user number, symptom and expected result, owner/boundary, reproducer, root cause, changed files, fail-before/pass-after evidence, adjacent checks, source GUI result, edition/backend applicability, build-input checks, and pending artifact acceptance. Reuse existing `OPT-*` and owner records; do not create a competing backlog.
+- Read [references/maintenance-evidence.md](references/maintenance-evidence.md) for recurring thumbnail/lifecycle/geometry defects and for the next-build handoff. It curates earlier fixes without importing patient data or treating old instructions as new authorization.
+
 Use precise completion language:
 
 1. **Reported**: symptom recorded; reproduction and cause are unknown.
@@ -25,6 +32,8 @@ Use precise completion language:
 4. **Guarded**: a regression guard fails on the defective behavior before the implementation change.
 5. **Fixed and verified**: the guard and proportional automated suites pass with direct process exit code 0.
 6. **Live-verified**: the source build reproduces the original workflow and the expected result is observed without a new regression.
+7. **Build-input verified**: applicable edition/backend source mappings, configuration, mirrors and packaging guards pass. This is evidence for the next build, not proof of an existing installer.
+8. **Artifact-verified**: a separately authorized canonical build has a candidate/source receipt, applicable artifact inventory/hash evidence, and documented acceptance of the exact scenario under the current build runbook. Record each edition/backend separately; one passed artifact cannot close the others.
 
 Do not collapse these states. In particular, automated verification is not live clinical validation, and live validation is not release readiness.
 
@@ -86,12 +95,14 @@ Choose the smallest safe seam, not automatically the smallest diff. Prefer an ex
 
 Never blur the Fast Viewer, Advanced Viewer, or VTK-module domains. Never move blocking filesystem, network, AI, decode, or VTK construction work onto the Qt GUI thread. Never reconnect retired gRPC download paths.
 
+Follow section 0.2 of `docs/plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md` for workstream handoff. Shared identity/catalog/download coordination belongs to Unify; decoder/filter/render/private-cache work belongs to the viewer owner. A small-fix request does not authorize a parallel Unify slice or another workstream's in-progress payload. Preserve working clinical behavior such as overlays, measurements, reference lines and synchronization; disabling it is not a fix.
+
 ## Phase 5: Implement the guarded fix
 
 1. Keep the failing guard in place.
 2. Apply the minimal production change that corrects the authoritative cause.
 3. Preserve public contracts, error semantics, cancellation, cleanup, and observability. Do not swallow errors, hardcode secrets, add placeholders, or leave untracked `TODO`/`FIXME` debt.
-4. If a mirrored runtime source changes, run `tools/dev/sync_plugin_mirrors.py`, then `tools/dev/verify_plugin_mirrors.py`, and the relevant builder parity guards. Never hand-maintain only one copy or edit generated build output as source.
+4. If a mirrored runtime source changes, inspect the current CLI and run `tools/dev/sync_plugin_mirrors.py --dry-run` before mutation. The synchronizer can sweep unrelated dirty payloads: do not run a global write when its proposed changes cross workstream ownership. Use the documented scoped route if available; otherwise keep mirror completion pending and resolve the scope with the owner. Then run `tools/dev/verify_plugin_mirrors.py` and relevant builder parity guards. Never hand-maintain only one copy or edit generated build output as source.
 5. Add the required row to `docs/plans/architecture/REGRESSION_CATALOG.md` in the same fix. Update `tests/INDEX_BY_GUARD.md`, `docs/INDEX_BY_SUBSYSTEM.md`, and subsystem documentation when a new guard, document, contract, or invariant needs discovery.
 6. For an `OPT-*` change, update the canonical item's status and validation history with the changed files, before/after measurements, guard, rollback, and remaining live gate.
 
@@ -116,6 +127,18 @@ Verification must include:
 Do not claim a lint pass while Ruff is unavailable. Do not reinterpret an existing baseline failure as success; identify it as pre-existing only with concrete comparison evidence.
 
 Use the source build for visual or live validation only. The human launches and logs in once; never open the installed executable, create another instance, improvise process recovery, or expose a clinical network for test automation. A visual imaging correction requires an appropriate known-case or synthetic check and, where clinical interpretation is involved, explicit human/radiologist confirmation.
+
+Read section 0 of `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` before the live gate. Discover `aipacs-control` first; if unavailable, use its documented `tools/testing/aipacs_control_mcp/client.py` against the same local Test Control Server. Probe `ping`, then `list_actions`. Normal launches retain `AIPACS_TEST_SERVER=0`; an automation session needs an explicitly authorized source launch with test control enabled, outside clinical work, with human sign-in. A process launched before the change does not validate the change. Acknowledge a disk-space notice with OK, not Don't show again.
+
+Exercise the actual changed input boundary: a downstream `drag_series` action does not prove native drag/drop or a Home-card click. Verify output identity, counts, rendered result, and session-scoped health/lifecycle evidence where affected. Report blocked/skipped GUI acceptance separately from passing code tests. Documentation-only skill maintenance requires document validation, not a fabricated runtime acceptance pass.
+
+### Next-build and edition coverage
+
+For every runtime fix, use the edition/backend matrix in [references/maintenance-evidence.md](references/maintenance-evidence.md). Read `BUILD.md` and the release/build documentation hub to resolve actual profile names and the current source-to-payload path. Check shared fixes in Standard/ARM Client and Eagle Eye Server profiles across PyInstaller and Nuitka; use evidence-backed N/A for intentionally absent features. Do not copy server-only models/features into Client to make the matrix look complete.
+
+Record the next-build handoff in the owning fix record: corrected files and guards, applicable profiles, mirror/config/payload checks, source revision or dirty-file hash evidence, and the exact scenario still required on produced artifacts. Keep build-input verification and produced-artifact verification separate. Re-read the current Server gates; a source-service test does not prove frozen service, Session 0 or clean-host readiness.
+
+Do not start a full build for each small fix, bump versions, publish or launch an installed executable merely to close this matrix. Build/release work follows separate user authorization, `RELEASE.md`, `BUILD.md`, and applicable deployment safety instructions. A future build must bind the fix to its immutable candidate receipt and artifact acceptance; until then report artifact verification as pending.
 
 ## Phase 7: Adversarial self-review
 

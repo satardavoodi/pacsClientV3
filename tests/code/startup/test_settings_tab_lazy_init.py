@@ -37,6 +37,7 @@ def test_core_tabs_are_registered_for_lazy_creation() -> None:
     src = _src()
     for name in [
         "Server Settings",
+        "Eagle Eye",
         "Tools Settings",
         "Viewer Configuration",
         "Image Filter",

@@ -16,7 +16,7 @@ For workstation-internal work, the canonical entry points remain:
   outputs, and release evidence
 - [`RELEASE.md`](RELEASE.md) — versioned commit, tag, and multi-remote publication
 - [`BUILD.md`](BUILD.md) — source validation, internal packaging, and the official
-  six-installer candidate workflow
+  role-selected four-Client/two-Server candidate workflow
 
 This `WORKSPACE.md` file exists only to direct cross-project work to
 the right place.

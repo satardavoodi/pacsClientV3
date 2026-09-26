@@ -15,6 +15,83 @@ from pathlib import PurePath
 from typing import Any, NamedTuple
 
 
+CLINICAL_HISTORY_SERIES_NUMBER = 100000
+
+
+def _series_metadata(series: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """Return the flat identity metadata used by presentation ordering."""
+    if not isinstance(series, Mapping):
+        return {}
+    nested = series.get("series")
+    if isinstance(nested, Mapping):
+        return nested
+    return series
+
+
+def get_original_series_number(series: Mapping[str, Any] | None) -> str:
+    """Return the study-local SeriesNumber, never a multi-study display offset."""
+    info = _series_metadata(series)
+    value = info.get("_orig_series_number")
+    if value in (None, ""):
+        value = info.get("series_number", "")
+    return str(value or "").strip()
+
+
+def is_clinical_history_series(series: Mapping[str, Any] | None) -> bool:
+    """Match only the agreed DICOMized history SeriesNumber convention."""
+    try:
+        return int(get_original_series_number(series)) == CLINICAL_HISTORY_SERIES_NUMBER
+    except (TypeError, ValueError):
+        return False
+
+
+def series_presentation_order_key(
+    series: Mapping[str, Any] | None, *, history_first: bool = True
+) -> tuple[int, int, int, str]:
+    """Stable per-study order using the original number, not an opaque UI key."""
+    original = get_original_series_number(series)
+    history_rank = 0 if history_first and is_clinical_history_series(series) else 1
+    try:
+        return history_rank, 0, int(original), original
+    except (TypeError, ValueError):
+        return history_rank, 1, 0, original.casefold()
+
+
+def order_series_for_presentation(
+    series_items: Iterable[Mapping[str, Any]], *, history_first: bool = True
+) -> tuple[Mapping[str, Any], ...]:
+    """Keep study groups stable and sort only the members inside each study.
+
+    Study and series identity are deliberately not rewritten. A study label is
+    only a fallback grouping hint for legacy Home payloads that have no UID.
+    """
+    groups: dict[tuple[str, str], list[tuple[int, Mapping[str, Any]]]] = {}
+    group_order: list[tuple[str, str]] = []
+    for index, item in enumerate(series_items or ()):
+        info = _series_metadata(item)
+        study_uid = str(info.get("study_uid") or item.get("study_uid") or "").strip()
+        study_label = str(item.get("study_label") or "").strip()
+        group_key = ("uid", study_uid) if study_uid else (
+            ("label", study_label) if study_label else ("single", "")
+        )
+        if group_key not in groups:
+            groups[group_key] = []
+            group_order.append(group_key)
+        groups[group_key].append((index, item))
+
+    ordered: list[Mapping[str, Any]] = []
+    for group_key in group_order:
+        members = groups[group_key]
+        members.sort(
+            key=lambda pair: (
+                series_presentation_order_key(pair[1], history_first=history_first),
+                pair[0],
+            )
+        )
+        ordered.extend(item for _index, item in members)
+    return tuple(ordered)
+
+
 @dataclass(frozen=True)
 class SeriesActionIdentity:
     """Pre-viewport intent, not a SeriesRef or a transferable viewer handle.

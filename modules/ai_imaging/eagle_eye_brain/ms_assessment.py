@@ -90,7 +90,9 @@ def enrich_ms(result, directory, *, t1_source=None, cancel=None, progress=None):
     directory = Path(directory)
     context = result['patient_context']
     selected = None
-    for path in sorted(directory.parent.glob('brain-*/result.json'), key=lambda p:p.stat().st_mtime, reverse=True):
+    candidates = [directory/'ms-anatomy/result.json', directory/'svd-anatomy/result.json',
+                  *sorted(directory.parent.glob('brain-*/result.json'), key=lambda p:p.stat().st_mtime, reverse=True)]
+    for path in candidates:
         try:
             other = json.loads(path.read_text(encoding='utf-8'))
             if (other.get('pdf_available') and not (path.parent/'FAILED').exists()
@@ -103,11 +105,10 @@ def enrich_ms(result, directory, *, t1_source=None, cancel=None, progress=None):
         if not t1_source:
             return {'conclusion': 'Not assessed: same-study anatomical segmentation is unavailable',
                     'physician_confirmation_required': True}
-        from .service import _run_analysis
-        progress('Preparing T1 anatomical segmentation for MS topography')
-        anatomy_result = _run_analysis(t1_source, '', directory.parent, cancel=cancel, progress=progress)
-        selected = Path(anatomy_result['artifact_directory'])
-    progress('Registering anatomical boundaries for MS contact review')
+        from .anatomy_context import compute_anatomy
+        progress('Preparing T1 anatomical segmentation for lesion topography')
+        selected = compute_anatomy(t1_source, directory / 'ms-anatomy', cancel=cancel, progress=progress)
+    progress('Registering anatomical boundaries for lesion contact review')
     fixed = sitk.ReadImage(str(directory/'flair.nii.gz'))
     moving = sitk.ReadImage(str(selected/'resampled.nii.gz'))
     anatomy = sitk.ReadImage(str(selected/'labels.nii.gz'))

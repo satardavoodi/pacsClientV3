@@ -70,6 +70,43 @@ this folder's [`README.md`](./README.md), and the
 
 ## 0. Current operating memory and mandatory acceptance (2026-09-14)
 
+### 2026-09-24 Client / Eagle Eye control connectivity diagnosis
+
+In bug-fix session `01a0d48f-1b24-7e73-8578-e04d4a22a329`, read-only process
+inspection found the current source Client launch with `AIPACS_TEST_SERVER=0`.
+`run_app.ps1` explicitly sets zero unless `-TestServer` is passed. QLocalSocket
+`Invalid name` here means the expected listener was absent, not proof of an
+invalid naming algorithm. The user-level Codex MCP configuration had no
+`aipacs-control` registration. The Python MCP SDK is installed; an isolated actual
+stdio initialize/tools-list handshake succeeded and exposed 58 tools. This only
+proves the bridge process, not attachment to the app.
+
+The local Test Control Server is created after Home/CommandBus initialization,
+uses a per-Windows-user socket (or matching `AIPACS_TEST_SOCKET` overrides), and
+rejects frozen builds. There is no Standard-versus-Eagle-Eye GUI role gate in
+`maybe_start_test_server`: either source GUI role needs the opt-in flag and Home
+ready. A headless Eagle Eye service does not construct Home or this GUI endpoint.
+Separate machines/users require their own correctly targeted connection; do not
+assume a local named pipe reaches a remote center.
+
+The existing production Agent Gateway is a different authenticated transport.
+On this workstation it was already enabled; certificate-verified loopback probes
+returned HTTP 200 for `/health` and 401 for unauthenticated `/mcp`. Thus its
+listener is reachable, but this agent has not established a paired authenticated
+MCP session. No token was displayed, no pairing was bypassed, and no settings,
+launch flags or LAN exposure were changed. Production integration belongs to
+`docs/pipelines/agent-gateway.md`, not removal of the frozen test-server gate.
+
+Code evidence: 75 focused test-server, MCP inventory/health and gateway tests
+passed (exit 0). Live source attachment, authenticated production tools/call,
+Eagle Eye GUI role and installed Client/Server acceptance remain pending.
+For the next source GUI lap, the human closes the intended source instance
+outside clinical work, starts the selected role with `run_app.ps1 -TestServer`
+(plus `-Standard` or `-EagleEyeServer` and its existing role configuration), and
+signs in. Then probe ping/actions using the documented client before performing
+the affected workflows. Register the existing stdio bridge in the intended MCP
+host when configuring that integration; tools/list alone is not an app health pass.
+
 This section is the current, shared Codex/Claude operating procedure. It supersedes older
 environment, lifecycle, and blanket fidelity claims below and in June runbooks. It is a
 repository memory, not a promise that a cloud copy has automatically synchronized.
@@ -687,3 +724,50 @@ Primary directory: `user_data/logs/` — inventory and scan guidance in
 
 *Created 2026-06-21 alongside the sandbox Verify-lane setup; the in-app command-surface control
 path (§3.1) was documented the same day.*
+
+### Direct Eagle Eye MCP workflow (2026-09-25, OPT-51)
+
+The shared CommandBus now registers search_patients/read_patients and Eagle Eye
+open, series, select_series, functions, run, inputs and status actions. The stdio
+bridge exposes search_patients and eagle_eye; the authenticated Agent Gateway
+advertises the same registered actions. No new listener, role flag, authentication
+bypass or screen-input path was introduced. This is shared Standard/Server GUI
+source; the headless inference service is still controlled through its job API.
+
+Workflow: search_patients(source=local|server, patient_id=...) -> read_patients ->
+open_patient(exact patient/study) -> eagle_eye(open, study_uid) -> eagle_eye(series)
+-> eagle_eye(select_series, exact series_uid) -> poll eagle_eye(functions) until
+that series is loaded -> eagle_eye(run, catalog function) -> poll status. Series
+responses include descriptions/protocols; ambiguous UIDs are rejected, not guessed.
+No claim of anatomical suitability follows from a series number or modality.
+
+Inputs: Total Spine run requires projection=coronal|lateral. After loading, status
+returns image dimensions and indexed images; inputs accepts image_index when a
+series contains several images, or region=[x0,y0,x1,y1] in source pixels for coronal
+analysis. Existing ROI geometry validation and worker execution are reused.
+Brain requires t1_series_uid and inputs_verified=true; optional flair_series_uid
+must be distinct and available in that examination. Lesions additionally require
+FLAIR and an explicit clinical_context from the existing disease selector. These
+are caller attestations, never automatically inferred clinical review. Structured
+selection skips the modal picker and uses the existing demographics/inference
+workers. Legion's separate source-viewer ROI route is not automated by this slice.
+
+Ownership: exact study and loaded series must match before dispatch. Opening a
+workspace is not analysis completion. Active jobs reject duplicate runs. Status
+reads worker/UI state without filesystem work; Alignment/Spine/Brain return
+running, needs_input, failed, cancelled or result_ready. Native Breast/Bone callback
+completion is tracked; Lumbar idle does not certify completion, and its detailed
+structured outcome remains a follow-up. Brain input changes cannot reuse a
+completed result under different input selections. Read-only agents cannot run
+analysis or apply a region. Read results use the current Home table, not the
+accumulated server search cache, and do not launch a new empty search.
+
+Evidence: three new guards failed before implementation. The focused combined
+suite passed 163 tests (exit 0; existing SWIG warnings); 472 plugin mirror pairs
+matched. A real stdio MCP initialize/tools-list handshake exposed 60 tools,
+including the two new wrappers. Application ping still reports no local control
+listener. Thus no new patient-level MCP acceptance, installed artifact acceptance,
+Razi UI deployment or service restart is claimed. The human must select the
+source TestServer test launch or paired normal Agent Gateway path; never silently
+replace MCP with desktop clicks or enable a LAN gateway. Ordinary launch remains
+AIPACS_TEST_SERVER=0. All new UI worker paths still require live acceptance.

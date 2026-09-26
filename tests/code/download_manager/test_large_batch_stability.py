@@ -74,7 +74,7 @@ def test_soft_cap_halves_after_advance():
     i_cap = _SRC.index("_batch_payload_bytes > _BATCH_BYTES_SOFT_CAP")
     assert i_est < i_advance < i_cap
     cap_block = _SRC[i_cap:i_cap + 700]
-    assert "batch_size = max(min_batch_size, batch_size // 2)" in cap_block
+    assert "batch_size = gcd(batch_start, max(min_batch_size, batch_size // 2))" in cap_block
     # per-series only: the cap must NOT write the global adaptive size
     assert "_global_adaptive_batch_size" not in cap_block
 

@@ -39,12 +39,25 @@ class LocalRuntime:
     def start(self):
         from .slicer_custom_app import launch_slicer
         from .owned_process import ProcessJob
+        from aipacs_runtime import advanced_mpr_runtime_root, is_frozen
         exe = Path(self.executable) if self.executable else launch_slicer.find_slicer_executable()
         if exe is None or not exe.is_file():
             raise RuntimeError("Advanced Analysis runtime is unavailable")
+        if is_frozen():
+            runtime_python = advanced_mpr_runtime_root() / "python/modules/mpr/advanced_3d_slicer"
+            module_path = runtime_python / "slicer_modules"
+            startup_script = runtime_python / "slicer_custom_app/startup_script.py"
+        else:
+            module_path = Path(__file__).parent / "slicer_modules"
+            startup_script = Path(launch_slicer.__file__).with_name("startup_script.py")
+        if not (module_path / "AIPacsBackgroundRuntime.py").is_file():
+            raise RuntimeError("Advanced Analysis background window guard is unavailable")
+        if self.role == "viewer" and (
+            not startup_script.is_file() or not startup_script.with_name("presentation.py").is_file()
+        ):
+            raise RuntimeError("Advanced Analysis presentation is incomplete")
         root = Path(tempfile.mkdtemp(prefix="aipacs-resident-"))
         self.root = root
-        module_path = Path(__file__).parent / "slicer_modules"
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("PYTHON", "NEWMPR2_", "QT_"))}
         bundle = exe.parent / "offline_lumbar"
@@ -56,7 +69,9 @@ class LocalRuntime:
         env.update(AIPACS_RESIDENT_ROOT=str(root), AIPACS_RESIDENT_TOKEN=self.token,
                    AIPACS_RESIDENT_ROLE=self.role, AIPACS_OFFLINE_LUMBAR_ROOT=str(bundle),
                    AIPACS_RESIDENT_PARENT=str(os.getpid()),
-                   AIPACS_RESIDENT_STARTUP=str(Path(launch_slicer.__file__).with_name("startup_script.py")))
+                   AIPACS_RESIDENT_STARTUP=str(startup_script))
+        from modules.ai_imaging.eagle_eye_remote.settings import slicer_environment
+        env.update(slicer_environment())
         command = [str(exe), "--no-splash", "--launcher-no-splash", "--disable-settings",
                    "--ignore-slicerrc", "--launcher-ignore-user-additional-settings",
                    "--additional-module-path", str(module_path)]
@@ -234,7 +249,7 @@ class ResidentService:
                 raise
         return self._submit(execute)
 
-    def analyze_snapshot(self, array_kji, affine_ras, *, algorithm="vertebrae_mr", lower=None, upper=None):
+    def analyze_snapshot(self, array_kji, affine_ras, *, algorithm="vertebrae_mr", lower=None, upper=None, source_reference=None):
         if self.role != "analysis":
             raise ValueError("AI jobs require a separate analysis runtime")
         import numpy as np
@@ -250,6 +265,17 @@ class ResidentService:
         if algorithm not in {"threshold", "vertebrae_mr"}:
             raise ValueError("Unsupported analysis algorithm")
         def execute():
+            from modules.ai_imaging.eagle_eye_remote.settings import remote_required
+            if algorithm == 'vertebrae_mr' and remote_required():
+                if not source_reference:
+                    raise ValueError('Remote AI requires the selected DICOM study and series references.')
+                from modules.ai_imaging.eagle_eye_remote.client import Client
+                from PacsClient.utils.data_paths import AI_DIR
+                result = Client().analyze('lumbar', source_reference['study_uid'],
+                    {'primary': source_reference['primary']}, {}, Path(AI_DIR) / 'eagle_eye', cancel=self._stop)
+                if result['shape_kji'] != list(array.shape) or not np.allclose(result['affine_ras'], affine, atol=1e-4):
+                    raise ValueError('Server mask geometry differs from the selected source.')
+                return result
             runtime = self._ensure_ready()
             job_id = uuid.uuid4().hex
             directory = runtime.root / "jobs" / job_id

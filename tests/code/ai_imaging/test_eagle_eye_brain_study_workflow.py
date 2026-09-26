@@ -11,6 +11,24 @@ from modules.ai_imaging.eagle_eye_brain import study_workflow as workflow
 from modules.ai_imaging.eagle_eye_brain.contracts import BrainError
 
 
+def test_process_evidence_distinguishes_commit_headroom_from_physical_ram(tmp_path, monkeypatch):
+    import json
+    import psutil
+    from modules.ai_imaging.eagle_eye_brain import process_evidence as evidence
+    child = SimpleNamespace(children=lambda **kw: [],
+                            memory_info=lambda: SimpleNamespace(rss=100, private=700))
+    monkeypatch.setattr(psutil, 'Process', lambda pid: child)
+    monkeypatch.setattr(psutil, 'virtual_memory', lambda: SimpleNamespace(available=900))
+    monkeypatch.setattr(evidence, 'system_commit', lambda: (995, 1000), raising=False)
+    sample = evidence.ProcessEvidence(tmp_path, 'synthetic.exe')
+    sample.sample(SimpleNamespace(pid=123))
+    sample.finish(7, 'failed')
+    value = json.loads((tmp_path / 'process-diagnostics.jsonl').read_text())
+    assert value['minimum_available_memory_bytes'] == 900
+    assert value['minimum_commit_headroom_bytes'] == 5
+    assert value['peak_tree_private_bytes'] == 700
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows-owned subprocess contract')
 def test_failed_brain_process_keeps_local_diagnostics_without_exposing_them(tmp_path):
     import threading
@@ -22,6 +40,34 @@ def test_failed_brain_process_keeps_local_diagnostics_without_exposing_them(tmp_
     assert '7' in str(error.value)
     assert 'SYNTHETIC_PRIVATE_DETAIL' not in str(error.value)
     assert 'SYNTHETIC_PRIVATE_DETAIL' in (tmp_path / 'process.log').read_text()
+    import json
+    evidence = json.loads((tmp_path / 'process-diagnostics.jsonl').read_text())
+    assert evidence['returncode'] == 7
+    assert evidence['outcome'] == 'failed'
+    assert 'SYNTHETIC_PRIVATE_DETAIL' not in json.dumps(evidence)
+    assert str(tmp_path) not in json.dumps(evidence)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows-owned subprocess contract')
+@pytest.mark.parametrize('cancel_running', [False, True])
+def test_brain_process_evidence_preserves_timeout_and_cancel(tmp_path, cancel_running):
+    import json
+    import threading
+    from modules.ai_imaging.eagle_eye_brain.runtime import run_process
+    cancel = threading.Event()
+    timer = threading.Timer(.3, cancel.set) if cancel_running else None
+    if timer:
+        timer.start()
+    try:
+        with pytest.raises(BrainError):
+            run_process([sys.executable, '-c', 'import time; time.sleep(10)'], tmp_path, cancel,
+                        timeout=5 if cancel_running else .2)
+    finally:
+        if timer:
+            timer.join(timeout=2)
+    evidence = json.loads((tmp_path / 'process-diagnostics.jsonl').read_text())
+    assert evidence['outcome'] == ('cancelled' if cancel_running else 'timed_out')
+    assert evidence['returncode'] is not None
 
 
 @pytest.mark.parametrize('modality,description,picker_expected', [

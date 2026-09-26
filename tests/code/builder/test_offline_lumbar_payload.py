@@ -11,6 +11,30 @@ from modules.ai_imaging.offline_lumbar.bundle import BundleError
 from tests.code.ai_imaging.test_offline_lumbar import bundle
 
 
+def add_current_startup_fixture(runtime):
+    """Meet Slicer startup parity without copying a real native runtime."""
+    import shutil
+    from builder.slicer_runtime_payload import STARTUP_SOURCE, STARTUP_RUNTIME, PRESENTATION_COMPANIONS
+    for relative in (STARTUP_SOURCE, *PRESENTATION_COMPANIONS):
+        target = runtime / 'python' / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(offline_lumbar_payload.REPO / relative, target)
+    entry = runtime / STARTUP_RUNTIME
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text('# Synthetic startup entry point\n', encoding='utf-8')
+
+
+@pytest.fixture(autouse=True)
+def isolated_additional_model_payloads(tmp_path, monkeypatch):
+    """Packaging tests must not discover private development model bundles."""
+    from tests.code.builder.test_eagle_eye_alignment_payload import make_accepted_payload
+    from tests.code.builder.test_eagle_eye_total_spine_payload import make_spine_payload, SYNTHETIC_HASH
+    from modules.ai_imaging.eagle_eye_total_spine import service
+    monkeypatch.setattr(service, 'WEIGHT_SHA256', SYNTHETIC_HASH)
+    monkeypatch.setenv('AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE', str(make_accepted_payload(tmp_path / 'alignment')))
+    monkeypatch.setenv('AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE', str(make_spine_payload(tmp_path / 'spine')))
+
+
 def test_staging_fails_closed_when_model_bundle_is_missing(tmp_path):
     with pytest.raises(BundleError):
         offline_lumbar_payload.stage_offline_lumbar(tmp_path / "payload", tmp_path / "missing")
@@ -47,6 +71,7 @@ def test_materializer_includes_bundle_in_same_advanced_package(bundle, tmp_path,
         file = runtime / name
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_bytes(b"synthetic runtime fixture")
+    add_current_startup_fixture(runtime)
     monkeypatch.setattr(materializer, "PLUGIN_PACKAGES_DIR", tmp_path / "packages")
     monkeypatch.setattr(materializer, "_runtime_payload_source", lambda module_id: runtime)
     monkeypatch.setattr(materializer, "load_plugin_package_definitions",
@@ -59,6 +84,7 @@ def test_materializer_includes_bundle_in_same_advanced_package(bundle, tmp_path,
     assert (payload / "AIPacsAdvancedViewer.exe").exists()
     assert (payload / "offline_lumbar/manifest.json").exists()
     assert (payload / "offline_lumbar/python/python.exe").exists()
+    assert (payload / "python/modules/mpr/advanced_3d_slicer/slicer_modules/eagle_eye_remote/client.py").exists()
 
 
 @pytest.mark.parametrize("reuse", [False, True])
@@ -78,12 +104,14 @@ def test_release_staging_includes_model_for_fresh_and_reused_payload(bundle, tmp
     runtime = staged / "advanced_mpr/payload" if reuse else tmp_path / "runtime"
     runtime.mkdir(parents=True)
     (runtime / "AIPacsAdvancedViewer.exe").write_bytes(b"synthetic runtime fixture")
+    add_current_startup_fixture(runtime)
     result = build_release.build_module_packages("9.9.9", {"staged": True, "source": str(runtime)},
                                                  reuse_staged_payload=reuse)
     assert result[0]["has_payload"] is True
     payload = staged / "advanced_mpr/payload"
     assert (payload / "AIPacsAdvancedViewer.exe").read_bytes() == b"synthetic runtime fixture"
     assert (payload / "offline_lumbar/manifest.json").exists()
+    assert (payload / "python/modules/mpr/advanced_3d_slicer/slicer_modules/eagle_eye_remote/client.py").exists()
 
 
 def test_standard_package_staging_skips_eagle_eye_assets(tmp_path, monkeypatch):
@@ -103,6 +131,7 @@ def test_standard_package_staging_skips_eagle_eye_assets(tmp_path, monkeypatch):
     runtime.mkdir()
     (runtime / "AIPacsAdvancedViewer.exe").write_bytes(b"synthetic runtime fixture")
 
+    add_current_startup_fixture(runtime)
     result = build_release.build_module_packages(
         "9.9.9",
         {"staged": True, "source": str(runtime)},
