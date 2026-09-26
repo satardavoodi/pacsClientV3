@@ -2445,3 +2445,41 @@ no direct frame inspection or runtime Optimization-state readback was possible.
 The 85 automated passes remain the code gate; the owner's preliminary observation
 supports improvement on live images. Full sagittal/coronal, enlarged, oblique
 and responsiveness coverage is not explicitly confirmed. No further runtime edit.
+
+### 2026-09-26: Standard MPR VRT presentation candidate (OPT-47/48)
+
+Owner approved preset and rendering improvements. Dedicated vessel/airway
+segmentation belongs in Advanced Image Analysis, outside this implementation.
+Existing `_mpr_vrt.py` and `_mpr_views.py` now provide:
+- Bone/vessel property refinements: disable low-gradient opacity suppression and
+  tune diffuse/specular lighting. Existing color/scalar curves remain intact.
+- More translucent CT-Lung-Airways context (opacity multiplier 0.45), not an
+  airway mask. This tuning requires comparison on real cases.
+- Right-click Balanced/Detailed quality and absolute CT threshold offset
+  (-500 to +500 HU). Color/opacity nodes shift together from a copied baseline;
+  preset changes reset the offset. MR disables the HU control.
+- Explicit 1 mm opacity unit distance; spacing-aware ray steps bounded to
+  0.1-0.5 mm. Detailed uses local VTK scattering (blend 0.5, reach 0) at rest;
+  interaction disables it. Heavy volumes retain balanced lighting and gradient
+  opacity stays disabled even after switching presets. Balanced is the default.
+
+Reference designs: Slicer CT constant-gradient presets and native VTK scattering:
+https://github.com/Slicer/Slicer/blob/main/Modules/Loadable/VolumeRendering/Resources/presets.xml
+https://www.kitware.com/volumetric-rendering-in-vtk-and-paraview-introducing-the-scattering-model-on-gpu/
+No external preset/model/dependency was imported. These are local tuning values,
+not a claim of visual equivalence or clinical superiority. No source pixels,
+geometry, Advanced viewer preset registry or MPR scroll fix were changed.
+
+Bone policy guard failed before production integration (1 failed, 2 passed).
+Final focused suite: 69 passed, exit 0, no reruns; includes synthetic GPU rendering
+in both quality modes, threshold reversibility, idempotence, memory policy,
+geometry, interaction and prior scroll/deferred-VRT guards. Mirror sync changed
+zero files and all 472 pairs match; changed runtime files have no plugin mirror.
+No installer build/artifact verification. Applies to Standard Zeta MPR wherever
+enabled in either edition; Advanced Image Analysis is unchanged.
+
+Live ping/list_actions succeeded, but source processes predate these changes.
+Fresh human restart/login and bone/CTA/lung, enlarged, rotate/stop, threshold/reset
+and large-volume GUI checks remain pending. Synthetic rendering proves execution,
+not visual quality or production performance. Rollback removes this VRT property,
+menu and mapper integration, preserving the previous MPR OptimizationOff fix.

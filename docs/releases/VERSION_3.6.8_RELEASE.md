@@ -41,6 +41,7 @@ installer outputs. Cardiac Flow normalization and DICOMDIR remain required.
 | Distribution cache | 34,459 files / 4,309,450,168 bytes verified, exit 0 | PASS |
 | Native Slicer/cache parity | verify_cache_matches_developer_runtime, exit 0 | PASS |
 | Git/identity/Settings/presentation checks | Additional 60 direct tests passed, exit 0 | PASS |
+| Standard MPR VRT receipt | Owner's completed 69-test record plus 5 direct local VRT guards, exit 0; fresh source GUI pending | CODE VERIFIED; NOT CLINICALLY ACCEPTED |
 | Git synchronization | Exact commit, tag and three-remote receipt | PENDING |
 | Installer matrix | Four Client files, resources, hashes and coherence | PENDING |
 | Clean install, upgrade, ARM64 and clinical GUI | Isolated host and human acceptance | NOT RUN |

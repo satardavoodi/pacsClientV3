@@ -1,5 +1,18 @@
 # AI-PACS — Software Optimization, Stability & Reliability Master Plan
 
+## 2026-09-26: OPT-47/48 Standard MPR VRT presentation
+
+Owner-approved VRT-only property refinement, CT threshold offset and Balanced/
+Detailed quality now implemented in existing mixins. Spacing-aware ray step,
+local scattering at rest, lightweight interaction and heavy-volume gradient
+budget preserved after presets. Geometry and earlier scroll fix unchanged.
+One bone policy guard failed before integration; final focused suite 69 passes.
+Real synthetic GPU render succeeds in both modes; 472 mirror pairs match.
+Live test bridge is reachable but processes predate changes; fresh-source visual
+and performance acceptance pending. No build/artifact acceptance. Segmentation
+is reserved for Advanced Image Analysis. Full evidence and rollback: VTK domains
+report, September 26 Standard MPR VRT presentation candidate.
+
 ## 2026-09-26: OPT-51 Eagle Eye 2D worker reliability
 
 The explicit 2D lesion worker retains required model/runtime hashing while avoiding unrelated 3D model/header verification. Short scratch execution and extended-path artifact publication address a reproduced Windows service failure. This does not alter PACS acquisition, download U0-U5, viewer domains or 3D inference. Actual source GUI remained interactive during a 150 s analysis; isolated Razi completion was 152.29 s. These are one-case end-to-end timings, not controlled speedup or accuracy claims. See [method and acceptance](modules/eagle-eye-server-development/docs/LESIONS_2D_2026-09-26.md).

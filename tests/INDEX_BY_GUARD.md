@@ -1,5 +1,12 @@
 # AI-PACS Test Inventory — Index by Guard
 
+## Standard MPR VRT quality (2026-09-26)
+
+`code/mpr/test_vrt_quality_controls.py` covers absolute CT threshold shifts,
+bone interiors, reversible interactive lighting, large-volume budget after
+preset changes, idempotent airway presentation and both quality levels rendering
+a synthetic volume in a separate process. No clinical data or database access.
+
 ## Reversible 2D MS band review (2026-09-26)
 
 `code/ai_imaging/test_periventricular_band_filter.py` covers lossless raw/retained/separated masks, paired versus focal/bulging/radial/unilateral geometry, oblique/axis-flipped inputs, MS-to-SVD restoration and explicit report limitations. `test_lesions_2d.py` also covers manual override provenance and additional remote artifact paths. Clinical qualification is separate from these synthetic guards.

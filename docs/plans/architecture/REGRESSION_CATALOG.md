@@ -1,5 +1,11 @@
 # AI-PACS Regression Catalog
 
+## Standard MPR VRT presentation controls (2026-09-26, OPT-47/48)
+
+| Boundary | Change | Guard |
+|---|---|---|
+| Standard MPR VRT property/mapper only | Preserve bone interiors without gradient-opacity suppression; tune vessel/airway presentation, absolute CT threshold offset, bounded Detailed lighting at rest, and reassert large-volume gradient budget after preset application. No segmentation or geometry edits. | `tests/code/mpr/test_vrt_quality_controls.py`: bone policy failed before integration; threshold reversibility, role-local properties, large-volume budget, preset reapply and real synthetic GPU render pass. 69 focused passes; fresh-source visual acceptance pending. |
+
 ## 2026-09-26 Eagle Eye Client installer configuration isolation
 
 | Boundary | Defect and correction | Regression evidence |
