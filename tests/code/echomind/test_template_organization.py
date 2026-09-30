@@ -2,6 +2,13 @@
 import copy
 import json
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def direct_center_route(monkeypatch):
+    # These tests exercise original centers, independently of saved user settings.
+    from modules.EchoMind import remote_backend
+    monkeypatch.setattr(remote_backend, 'selected', lambda: False)
 from modules.EchoMind import normal_templates as nt
 from modules.EchoMind import reception_templates as rt
 

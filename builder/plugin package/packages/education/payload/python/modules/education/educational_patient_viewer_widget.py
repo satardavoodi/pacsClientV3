@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html as _html
 from pathlib import Path
@@ -194,7 +194,20 @@ class EducationalPatientViewerWidget(PatientWidget):
         self.content_type_label = QLabel("")
         self.content_type_label.setStyleSheet(
             "color:#9ecbff; font-size:12px; font-weight:600; padding:1px 4px;")
-        center_layout.addWidget(self.content_type_label, 0)
+        content_header = QHBoxLayout()
+        self.content_type_label.setMinimumWidth(0)
+        self.content_type_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        content_header.addWidget(self.content_type_label, 1)
+        author = str(self.course_data.get("author_name") or "").strip()
+        self.presenter_label = QLabel("Presenter: " + (author or "Not specified"))
+        self.presenter_label.setTextFormat(Qt.PlainText)
+        self.presenter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.presenter_label.setWordWrap(True)
+        self.presenter_label.setMaximumWidth(380)
+        self.presenter_label.setToolTip(self.presenter_label.text())
+        self.presenter_label.setStyleSheet("color:#d7dfeb; font-size:12px; font-weight:600;")
+        content_header.addWidget(self.presenter_label, 0)
+        center_layout.addLayout(content_header)
 
         # Content row: a compact vertical slide-nav beside the viewer/media, which
         # now own the full height (course metadata no longer lives in the dock).
@@ -235,6 +248,7 @@ class EducationalPatientViewerWidget(PatientWidget):
         # Item-focused dock (resources + item information), shorter than before so
         # the viewer/content gets the largest share of vertical space.
         footer = self._build_footer()
+        self.education_footer = footer
         # Guarantee a roomy resource browser (the teaching workflow's focus):
         # a minimum height so the dock can't collapse, with a sensible ceiling.
         footer.setMinimumHeight(196)
@@ -324,6 +338,11 @@ class EducationalPatientViewerWidget(PatientWidget):
         timer_reset_btn = QPushButton("Reset")
         timer_reset_btn.setFixedWidth(56)
         timer_reset_btn.clicked.connect(self._reset_session_timer)
+        self.dock_toggle_btn = QPushButton("Hide slides")
+        self.dock_toggle_btn.setCheckable(True)
+        self.dock_toggle_btn.setToolTip("Collapse the slide and resource browser to enlarge the image")
+        self.dock_toggle_btn.toggled.connect(self._set_dock_collapsed)
+        header_row.addWidget(self.dock_toggle_btn, 0)
         header_row.addWidget(self.course_review_btn, 0)
         header_row.addWidget(self.slide_review_btn, 0)
         header_row.addSpacing(12)
@@ -385,6 +404,13 @@ class EducationalPatientViewerWidget(PatientWidget):
         footer_v.addWidget(self.dock_body)
 
         return footer
+
+    def _set_dock_collapsed(self, collapsed: bool) -> None:
+        self.dock_body.setVisible(not collapsed)
+        self.education_footer.setMinimumHeight(0 if collapsed else 196)
+        self.education_footer.setMaximumHeight(16777215 if collapsed else 240)
+        self.dock_toggle_btn.setText("Show slides" if collapsed else "Hide slides")
+        self.education_footer.updateGeometry()
 
     def _show_slide_review(self) -> None:
         """Current item's information, on demand (kept out of the persistent UI)."""
@@ -508,6 +534,10 @@ class EducationalPatientViewerWidget(PatientWidget):
         message_page = QWidget()
         message_layout = QVBoxLayout(message_page)
         message_layout.addWidget(self.media_message, 1)
+        self.external_resource_button = QPushButton("Open in External Application")
+        self.external_resource_button.clicked.connect(self._open_current_media_external)
+        self.external_resource_button.hide()
+        message_layout.addWidget(self.external_resource_button)
         self.media_stack.addWidget(message_page)
 
         # Image page (zoom / pan / fit via a graphics view)
@@ -639,6 +669,8 @@ class EducationalPatientViewerWidget(PatientWidget):
     def _set_current_slide(self, slide_index: int) -> None:
         if not self.slides:
             return
+        self._item_generation = getattr(self, "_item_generation", 0) + 1
+        self._teardown_media()
 
         slide_index = max(0, min(slide_index, len(self.slides) - 1))
         self.current_slide_index = slide_index
@@ -649,7 +681,7 @@ class EducationalPatientViewerWidget(PatientWidget):
 
         slide = self.slides[slide_index]
         if hasattr(self, "header_item_label"):
-            self.header_item_label.setText(f"Item {slide_index + 1} / {len(self.slides)}")
+            self.header_item_label.setText(f"Slide {slide_index + 1} / {len(self.slides)}")
 
         self.items_list.clear()
         items = slide.get("content") or []
@@ -722,6 +754,8 @@ class EducationalPatientViewerWidget(PatientWidget):
         payload = item.data(Qt.UserRole)
         if not payload:
             return
+        self._item_generation = getattr(self, "_item_generation", 0) + 1
+        generation = self._item_generation
 
         # CRITICAL: release any playing media FIRST, while its page is still
         # visible. _teardown_media() stops it AND detaches the video sink from the
@@ -732,7 +766,10 @@ class EducationalPatientViewerWidget(PatientWidget):
         media_was_active = getattr(self, "_current_media_kind", None) in ("video", "audio")
         self._teardown_media()
         if media_was_active:
-            QTimer.singleShot(0, lambda p=payload: self._dispatch_item_payload(p))
+            def deliver():
+                if generation == self._item_generation and not getattr(self, "_education_closing", False):
+                    self._dispatch_item_payload(payload)
+            QTimer.singleShot(0, deliver)
         else:
             self._dispatch_item_payload(payload)
 
@@ -746,25 +783,28 @@ class EducationalPatientViewerWidget(PatientWidget):
                 self._load_media_content(ctype, cdata)
         except Exception as exc:
             logger.info("[EDU] item dispatch failed: %s", exc)
+            self._show_media_message("This item could not be displayed. Select another resource or retry.")
 
     # -----------------------------
     # DICOM loading
     # -----------------------------
     def _load_dicom_content(self, content_type: str, content_data: Dict[str, Any]) -> None:
         self._stop_media_playback()
-        self.education_content_stack.setCurrentIndex(0)
+        self._show_media_message("Loading the selected DICOM resource...")
         _dname = str(content_data.get("name") or content_data.get("study_uid") or "Study")
         _ddesc = str(content_data.get("description") or "").strip()
         self._set_content_header("DICOM", f"{_dname}  ·  {_ddesc}" if _ddesc else _dname)
 
         if content_type == "dicom":
-            folder_path = Path(str(content_data.get("path") or "").strip())
-            if not folder_path.exists():
-                QMessageBox.warning(self, "DICOM Unavailable", "The selected item has no valid folder.")
+            raw_path = str(content_data.get("path") or "").strip()
+            folder_path = Path(raw_path)
+            if not raw_path or not folder_path.is_dir():
+                self._show_media_message("The selected DICOM item has no available folder.")
                 return
 
             study_path, series_number = self._resolve_dicom_folder(folder_path, content_data)
             if not study_path or series_number is None:
+                self._show_media_message("The selected folder has no supported DICOM series.")
                 QMessageBox.warning(
                     self,
                     "DICOM Unavailable",
@@ -774,46 +814,29 @@ class EducationalPatientViewerWidget(PatientWidget):
 
             self.study_uid = str(content_data.get("study_uid") or "").strip()
             self.import_folder_path = study_path
-            self._ensure_random_ids_in_series(study_path, series_number)
-            # Populate the series-thumbnail rail for this study (same mechanism
-            # the normal patient pipeline uses) so every series is browsable and
-            # clickable -- this also gives a click-to-load fallback if the
-            # auto-load of the first series doesn't take.
-            rail_count = self._populate_education_series_rail()
-            loaded = bool(self._load_single_series_on_demand(series_number, study_path=study_path))
-            if loaded:
-                self.change_series_on_viewer(str(series_number))
-            # Always reveal the series rail so the user can pick a series.
+            # Course viewers are hosted outside the main patient-tab manager.
+            # Activate their own controller before using the normal asynchronous
+            # interactive switch; a synchronous preload rejects inactive tabs.
+            self.on_tab_activated()
+            self.education_content_stack.setCurrentIndex(0)
+            self._apply_default_education_layout()
+            self._populate_education_series_rail()
             self.switch_right_panel("series", force=True)
-            # Keep the default 1x2 teaching layout, then fit the series to its pane.
-            QTimer.singleShot(60, self._apply_default_education_layout)
-            QTimer.singleShot(180, self._fit_education_dicom)
-            if loaded:
-                return
-
-            # Auto-load didn't take: if the rail is populated the user can simply
-            # click a series, so don't block them with a modal -- only warn when
-            # there is genuinely nothing to show.
-            if not rail_count:
-                QMessageBox.warning(
-                    self,
-                    "DICOM Load Failed",
-                    f"Could not load DICOM content from folder:\n{folder_path}",
-                )
+            self.change_series_on_viewer(str(series_number))
             return
 
-        study_uid = str(content_data.get("study_uid") or self.study_uid or "").strip()
+        study_uid = str(content_data.get("study_uid") or "").strip()
         if not study_uid:
-            QMessageBox.warning(self, "DICOM Unavailable", "The selected item has no study UID.")
+            self._show_media_message("The selected item has no study reference. Edit the item to select its study.")
             return
 
         study_path, _ = get_study_source_path(study_uid)
-        if not study_path.exists():
-            QMessageBox.warning(self, "DICOM Unavailable", f"Study folder not found: {study_path}")
+        if not study_path or not Path(study_path).is_dir():
+            self._show_media_message("The selected study is not available locally.")
             return
 
         self.study_uid = study_uid
-        self.patient_id = content_data.get("patient_id") or self.patient_id
+        self.patient_id = content_data.get("patient_id") or ""
         self.import_folder_path = str(study_path)
 
         loaded = False
@@ -829,7 +852,7 @@ class EducationalPatientViewerWidget(PatientWidget):
                 except Exception:
                     loaded = False
 
-        if not loaded:
+        if not loaded and content_type == "dicom_study":
             first_series = self._find_first_series_number(study_path)
             if first_series is not None:
                 loaded = bool(self._load_single_series_on_demand(first_series, study_path=str(study_path)))
@@ -837,13 +860,10 @@ class EducationalPatientViewerWidget(PatientWidget):
                     self.change_series_on_viewer(str(first_series))
 
         if not loaded:
-            QMessageBox.warning(
-                self,
-                "DICOM Load Failed",
-                f"Could not load DICOM content for study {study_uid}.",
-            )
+            self._show_media_message("The selected DICOM study or series could not be loaded. No substitute series was selected.")
             return
 
+        self.education_content_stack.setCurrentIndex(0)
         self.switch_right_panel("series", force=True)
 
     def _populate_education_series_rail(self) -> int:
@@ -855,28 +875,41 @@ class EducationalPatientViewerWidget(PatientWidget):
         tools/migration/generate_education_thumbnails.py).  Returns the number of
         series thumbnails shown.
         """
-        # Clear the rail grid directly (PatientWidget has no clear_thumbnails);
-        # this is the same teardown the multi-study render path uses.
-        try:
-            grid = getattr(self, "thumb_grid", None)
-            if grid is not None:
-                while grid.count():
-                    item = grid.takeAt(0)
-                    w = item.widget() if item else None
-                    if w is not None:
-                        w.deleteLater()
-        except Exception:
-            pass
-        try:
-            # Education loads one study at a time -- never the multi-study grouped path.
-            self._thumbnails_shown = False
-            self._is_multistudy_hint = False
-            self._studies_series = {}
-            if hasattr(self, "show_exist_thumbnails"):
-                return int(self.show_exist_thumbnails() or 0)
-        except Exception:
-            pass
-        return 0
+        identity = (str(self.study_uid or ""), str(self.import_folder_path or ""))
+        manager = self.thumbnail_manager
+        if identity == getattr(self, "_education_rail_identity", None):
+            # Returning from a media slide retains the same live presentation.
+            # Its shared scheduler may still be filling reserved rows.
+            from shiboken6 import isValid
+            pending = getattr(self, "_sidebar_build_task", None)
+            cards = tuple(manager.series_widgets.values())
+            if ((pending is not None and not pending.done())
+                    or (cards and all(isValid(card) and self.thumb_grid.indexOf(card) >= 0
+                                     for card in cards))):
+                return int(getattr(self, "_sidebar_expected_count", None) or len(cards))
+
+        # Retire the old generation before deleting any of its Qt cards. The
+        # shared manager owns registrations, delayed effects and duplicate keys.
+        task = getattr(self, "_sidebar_build_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._sidebar_build_token = getattr(self, "_sidebar_build_token", 0) + 1
+        manager.reset_all_states()
+        while self.thumb_grid.count():
+            item = self.thumb_grid.takeAt(0)
+            widget = item.widget() if item else None
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        self._sidebar_slots = []
+        self._sidebar_reserved_rows = set()
+        self._sidebar_expected_count = None
+        self._thumbnails_shown = False
+        self._is_multistudy_hint = False
+        self._studies_series = {}
+        count = int(self.show_exist_thumbnails() or 0)
+        self._education_rail_identity = identity if count else None
+        return count
 
     def _ensure_random_ids_in_series(self, study_path: str, series_number: int) -> None:
         """Fill missing IDs in education course DICOM assets with a random 6-digit value."""
@@ -1090,6 +1123,16 @@ class EducationalPatientViewerWidget(PatientWidget):
         logger.info("[EDU_MEDIA] load type=%s name=%s", content_type,
                     str(content_data.get("path") or name)[:120])
 
+        from modules.education.document_preview import TEXT_SUFFIXES
+        path = str(content_data.get("path") or "").strip()
+        from modules.education.presentation_conversion import PRESENTATION_SUFFIXES
+        if path and Path(path).suffix.lower() in PRESENTATION_SUFFIXES:
+            self._show_presentation(path)
+            return
+        if path and Path(path).suffix.lower() in TEXT_SUFFIXES:
+            self._show_file_text(path)
+            return
+
         # Text / notes content has no file path -- render the text itself
         # instead of reporting a missing file.
         if content_type == "text":
@@ -1141,18 +1184,50 @@ class EducationalPatientViewerWidget(PatientWidget):
             self.content_type_label.setText(f"{kind}  ·  {detail}" if detail else kind)
 
     def _show_external_resource(self, label: str, file_path: str) -> None:
-        """Presentations / office docs / archives can't render in-app -- show a
-        clear message and open the file in its native application."""
+        """Offer an explicit external action without interrupting a lecture."""
         self._stop_media_playback()
         self._current_media_path = file_path
         self.media_message.setText(
-            f"{label}: {Path(file_path).name}\n\nOpening in its external application…")
+            f"{label}: {Path(file_path).name}\n\nUse Open in External Application to view this resource.")
         self.media_stack.setCurrentIndex(0)
         self._set_media_controls("none")
-        try:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
-        except Exception:
-            pass
+        self.external_resource_button.show()
+
+    def _show_presentation(self, path: str) -> None:
+        from modules.education.document_preview import start_presentation_preview
+        self._show_media_message("Preparing slide preview... This may take a moment on first use.")
+        self._set_content_header("Presentation", Path(path).name)
+        start_presentation_preview(path, getattr(self, "_item_generation", 0), self._on_presentation_ready)
+
+    def _on_presentation_ready(self, generation: int, result: dict) -> None:
+        if generation != getattr(self, "_item_generation", 0) or getattr(self, "_education_closing", False):
+            return
+        if result.get("error"):
+            self._show_external_resource("Presentation", result["path"])
+            self.media_message.setText(result["error"])
+            return
+        self._show_pdf(result["pdf"])
+        self._set_content_header("Presentation (static PDF preview)", Path(result["path"]).name)
+        self._current_media_path = result["path"]
+        self.external_resource_button.show()
+        self.external_resource_button.setToolTip("Open the original presentation for animations and embedded media.")
+
+    def _show_file_text(self, path: str) -> None:
+        from modules.education.document_preview import start_text_preview
+        self._show_media_message("Loading text document...")
+        self._set_content_header("Text", Path(path).name)
+        start_text_preview(path, getattr(self, "_item_generation", 0), self._on_text_preview_ready)
+
+    def _on_text_preview_ready(self, generation: int, result: dict) -> None:
+        if generation != getattr(self, "_item_generation", 0) or getattr(self, "_education_closing", False):
+            return
+        if result.get("error"):
+            self._show_external_resource("Text", result["path"])
+            self.media_message.setText(result["error"])
+            return
+        self._show_text(result)
+        self._current_media_path = result["path"]
+        self.external_resource_button.show()
 
     def _show_word(self, file_path: str) -> None:
         """Render a Word (.docx) document inline by converting it to HTML.
@@ -1174,6 +1249,10 @@ class EducationalPatientViewerWidget(PatientWidget):
 
     def _show_media_message(self, message: str) -> None:
         self._stop_media_playback()
+        self._current_media_path = None
+        if hasattr(self, "external_resource_button"):
+            self.external_resource_button.hide()
+        self.education_content_stack.setCurrentIndex(1)
         self.media_message.setText(message)
         self.media_stack.setCurrentIndex(0)
         if hasattr(self, "media_controls"):
@@ -1269,6 +1348,9 @@ class EducationalPatientViewerWidget(PatientWidget):
     def _show_text(self, content_data: Dict[str, Any]) -> None:
         """Render a text/notes content item (objectives, teaching points)."""
         self._stop_media_playback()
+        self._current_media_path = None
+        if hasattr(self, "external_resource_button"):
+            self.external_resource_button.hide()
         name = str(content_data.get("name") or "Notes").strip()
         body = str(content_data.get("text") or "").strip()
         parts = [f"<h3 style='color:#9ecbff;margin:0 0 10px 0;'>{_html.escape(name)}</h3>"]
@@ -1406,8 +1488,7 @@ class EducationalPatientViewerWidget(PatientWidget):
                 self._set_media_controls("pdf")
                 return
 
-        self._show_media_message("PDF preview unavailable. Use external viewer.")
-        self._open_current_media_external()
+        self._show_external_resource("PDF preview unavailable", file_path)
 
     def _pause_active_media(self) -> None:
         """PAUSE the persistent player without tearing it down.
@@ -1477,7 +1558,17 @@ class EducationalPatientViewerWidget(PatientWidget):
         self._session_seconds = 0
         self._tick_session()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.on_tab_activated()
+
+    def hideEvent(self, event):
+        self.on_tab_deactivated()
+        super().hideEvent(event)
+
     def closeEvent(self, event):
+        self._education_closing = True
+        self._item_generation = getattr(self, "_item_generation", 0) + 1
         self._stop_media_playback()
         if hasattr(self, "clock_timer"):
             self.clock_timer.stop()

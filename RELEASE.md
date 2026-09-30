@@ -133,8 +133,9 @@ $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12
 
 The coordinator defaults to `--target client`; do not append Server outputs to a
 Client build. An explicit `--target server` selects two Eagle Eye outputs, but its
-receipt-backed release path is currently blocked pending portable Breast/Bone
-bundles, service installation, and clean-host acceptance. A non-promotable Server
+receipt-backed release path is currently blocked pending installed Breast/Bone
+portability, service installation, model rights and clean-host acceptance.
+Standalone model build inputs alone do not clear these gates. A non-promotable Server
 install-QA candidate uses `--local-install-qa --target server` as documented in
 `BUILD.md`. The two roles share version authority and output folders, not build
 snapshots or acceptance evidence.
@@ -143,6 +144,9 @@ An explicitly local install-QA same-version rebuild archives the selected
 backend's prior exact filenames and metadata under its existing `_superseded`
 folder before compilation. This recoverable behavior never applies to a
 receipt-backed release candidate; published versioned artifacts remain immutable.
+For an owner-requested one-backend Server install-QA file, use the explicit
+backend selection documented in `BUILD.md`; it is not a complete Server release
+candidate and cannot claim cross-backend coherence or refresh the other backend.
 
 The receipt expires after four hours, is bound to the policy hash, version, tag,
 current commit, all six remote branch refs, and all three tag refs. The candidate

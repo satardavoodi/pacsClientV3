@@ -48,6 +48,12 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError('Unexpected analysis server redirect.')
 
 
+class ServerHTTPError(RuntimeError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
 class Client:
     def __init__(self, settings=None):
         cfg = client_settings() if settings is None else settings
@@ -70,17 +76,20 @@ class Client:
             if parsed.scheme != 'https':
                 raise ValueError('Paired clients require HTTPS.')
             context.load_cert_chain(certificate, key)
-        self.opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
+                                                 urllib.request.HTTPSHandler(context=context))
 
-    def open(self, path, body=None, method=None):
+    def open(self, path, body=None, method=None, *, timeout=30):
         raw = None if body is None else json.dumps(body, allow_nan=False).encode()
         req = urllib.request.Request(self.url + path, data=raw, method=method,
             headers={'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json'})
         try:
-            return self.opener.open(req, timeout=30)
+            return self.opener.open(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
             status = exc.code
             exc.close()
+            if path == '/v1/echomind/process':
+                raise ServerHTTPError(status, 'EchoMind server request failed.') from None
             if status == 429:
                 raise RuntimeError('The Eagle Eye server or this client has reached its job limit. Try again later.') from None
             if status == 409 and path == '/v1/jobs':

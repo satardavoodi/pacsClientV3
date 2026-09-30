@@ -198,6 +198,36 @@ def _image(data):
     return '<img width="620" src="data:image/png;base64,' + data + '"/>'
 
 
+def readable_prose(html):
+    """Break narrative sentences without rewriting tables, images or citations."""
+    def paragraph(match):
+        body=match.group(2)
+        if re.search(r'<img|https?://|doi:|et al\.',body,re.I):
+            return match.group(0)
+        tokens=re.split(r'(<[^>]+>)',body)
+        for i in range(0,len(tokens),2):
+            tokens[i]=re.sub(r'(?<!\bet al)([.!?])\s+(?=[A-Z])',r'\1<br />',tokens[i])
+        return match.group(1)+''.join(tokens)+match.group(3)
+    chunks=re.split(r'(<table\b.*?</table>)',html,flags=re.I|re.S)
+    for i in range(0,len(chunks),2):
+        chunks[i]=re.sub(r'(<p\b[^>]*>)(.*?)(</p>)',paragraph,chunks[i],flags=re.I|re.S)
+    return ''.join(chunks)
+
+
+def space_report_blocks(doc):
+    """Apply Qt-native leading; keep numeric table alignment and image sizes."""
+    from PySide6.QtGui import QTextCursor, QTextBlockFormat
+    block=doc.begin()
+    while block.isValid():
+        cursor=QTextCursor(block)
+        if not cursor.currentTable() and block.text().strip() and '\ufffc' not in block.text():
+            fmt=block.blockFormat()
+            fmt.setLineHeight(135,QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+            fmt.setBottomMargin(max(fmt.bottomMargin(),9.))
+            cursor.setBlockFormat(fmt)
+        block=block.next()
+
+
 def write_paged_pdf(html, path, *, title="AI-PACS | Brain volumetry | Review required",
                     heading="AI-PACS  |  EAGLE EYE BRAIN"):
     from html.parser import HTMLParser
@@ -233,7 +263,8 @@ def write_paged_pdf(html, path, *, title="AI-PACS | Brain volumetry | Review req
         # Let Qt lay out continuations at line/row boundaries and repeat thead.
         # Each explicit section still starts on a new physical page.
         doc.setPageSize(QSizeF(content_width, content_height))
-        doc.setHtml(head + "<body>" + part + "</body></html>")
+        doc.setHtml(readable_prose(head + "<body>" + part + "</body></html>"))
+        space_report_blocks(doc)
         for page in range(doc.pageCount()):
             documents.append((doc, page))
     painter = QPainter(writer)

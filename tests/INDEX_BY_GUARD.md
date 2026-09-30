@@ -1,5 +1,126 @@
 # AI-PACS Test Inventory — Index by Guard
 
+## Eagle Eye-hosted EchoMind (2026-09-30)
+
+- `code/echomind/test_eagle_eye_echomind.py`: actual loopback HTTP contract,
+  authentication, capabilities and no legacy PACS/provider fallback.
+- `code/echomind/test_eagle_eye_echomind_core.py`: request-local settings,
+  strict text-only fields, 14 workflows, admission, prompt parity, templates and
+  preserved Turbo Correction modality/region gate.
+- `code/echomind/test_remote_backend.py`: thin client context, no local
+  prompt/model/key forwarding, no retries/fallback and alias authorization.
+- `code/mpr/test_slicer_resident.py`: software-renderer selection survives the
+  child boundary while parent Qt6 plugin paths do not; separate native receipts.
+
+Live synthetic probes: `tools/eagle_eye/probe_echomind.py` and the isolated
+pre-activation `probe_echomind_hosted.py` save statuses, not clinical responses.
+`tools/slicer/probe_software_resident.py` uses queued status and checks READY
+plus a hidden warm-up window.
+
+## First-open patient scope (2026-09-30, OPT-58/60)
+
+`code/ui_services/test_open_patient_study_scope.py` executes production discovery
+methods with isolated socket dependencies. Fourteen cases cover hidden DOC and
+same-modality studies, absent list hints, foreign ownership, whole scalar/nested UIDs,
+selected-first order, Local no-network behavior, reused reconcile scope, legacy
+incomplete replies, socket failure and cancellation. The three core membership
+cases failed before the fix. The worker assertion protects network/UI separation.
+Pair with study-set/backfill, thumbnail convergence, bounded sidebar and Local
+offline guards; source GUI acceptance remains a separate gate.
+
+## Home Local shared-repair and grouped-order guards (2026-09-29, OPT-60)
+
+`code/ui_services/test_home_local_thumbnail_projection.py` executes the real Home
+worker projection with isolated dependencies and requires a missing canonical/hinted
+PNG to use `repair_local_series_thumbnail`; it failed before the Home seam was wired.
+`test_home_grouped_thumbnail_sort.py` executes the real nested key helper and covers
+mixed numeric/text SeriesNumbers; it failed with the production `TypeError` before the
+tagged key. `test_local_multiframe_thumbnail_repair.py` also starts two concurrent
+same-key repairs and requires one preview/decode and one published canonical file.
+Focused correction set: 23 passed. Expanded affected/adjacent set: 198 passed. All data
+is synthetic and database paths are isolated; fresh source GUI acceptance is separate.
+
+## Education Build Course item contract (2026-09-29)
+
+Presenter follow-up / OPT-61: `code/education/test_authoring_flow.py` covers actual
+Qt builder controls with isolated storage, update-in-place card/metadata edits,
+pending-save failures, atomic item order, saved preview and edit routing.
+`test_presentation_navigation.py` covers stale callbacks, failure display, explicit
+external opening and exact DICOM reference selection. `test_presenter_tasks.py`
+covers worker ownership, local-resource checks, navigation/fullscreen and closing
+while preflight runs. `test_build_course_items.py` also covers cancellation while an
+asset copy is running. All use synthetic data; no live source GUI pass is claimed.
+
+`code/education/test_build_course_items.py`: 19 synthetic Qt and isolated-database
+cases cover text authoring, type-switch source invalidation, imported-type round
+trips (including folder DICOM), cancel, persisted study/series reference types and
+text storage-to-viewer rendering. Nine initial fail-before cases plus one additional
+DICOM-folder failure. This is code verification, not live GUI acceptance.
+
+## Education search/filter contract (2026-09-28)
+
+`code/education/test_search_filter_contract.py`: 19 synthetic cases cover modality
+aliases and rejection, compound filters, case search and My Courses view/tag
+isolation. All database calls are forbidden. Eleven guards failed before the fix.
+
+## Advanced Search modality wire contract (2026-09-28)
+
+Follow-up guards also cover server body-part arrays, mixed anatomy, empty/missing
+metadata and legacy scalars. Four failures before array-aware positive matching;
+33 combined checks pass. Missing age/physician behavior remains unchanged.
+
+`code/ui_services/test_advanced_search_modality_contract.py` covers single/multiple
+modalities, bounded patient fan-out, dates, body-part refinement and no-modality
+queries. Three guards failed before scalar serialization; 24 combined checks
+pass after. Fresh source GUI and installed workflow acceptance remain pending.
+
+## First-open Patient-Tab thumbnail convergence (2026-09-28/29)
+
+`code/ui_services/test_patient_tab_thumbnail_convergence.py` guards the exact cold-cache
+failure: essential catalog bootstrap bypasses the cosmetic throttle and enters the
+existing off-GUI socket worker, actual first-series visibility comes from
+ViewerController rather than a stale widget flag, and Home cannot promote empty-shell
+completion to visible pixels or replay deferred work. The September 29 throttle and
+signal guards both failed before correction;
+the file also requires a partial cache to render the authoritative three-row catalog
+once. `test_sidebar_bounded_build.py` adds grouped missing-media retention and the shared
+Server placeholder. The complete-cache guard also requires one catalog render without a
+redundant count-persistence writer. Seven assertions failed before across the two files;
+all six convergence-file guards pass after. The affected/adjacent thumbnail/Home/identity/offline
+selection passes 187 tests. They use synthetic identities and no live database, PACS or images;
+fresh source GUI acceptance is separate.
+
+September 28 installed Server boundary:
+`code/ai_imaging/test_eagle_eye_installed_listener_boundary.py` covers literal
+service-managed admission, edition rejection, desktop attachment without hosting,
+and Nuitka-specific SCM/child dispatch. The owner recorded fifteen fail-before cases;
+40 owner checks and 60 independently combined cache/lumen/navigation/service
+checks pass. Frozen service/installer acceptance remains pending.
+
+`code/ai_imaging/test_eagle_eye_owned_service_lifecycle.py` covers exact-command
+and LocalService ownership, finite transition budgets, stop-before-delete,
+idempotent recovery, pending stop, missing service and SCM-error handle cleanup.
+Fourteen missing-API cases failed before; 18 lifecycle cases pass after. No live
+SCM change or installer upgrade acceptance is inferred.
+
+September 28 build inputs: `code/builder/test_reused_asset_dependency_refresh.py`
+guards fresh-cache build-wheel refresh, donor/model immutability, current version
+pins, failed resolution without completion, and completed-cache overwrite refusal.
+The initial guard failed before the CLI correction; the 16-test focused
+asset/lumen/Server-dependency selection passed afterward (exit 0).
+
+Attachment code-owner follow-up (September 27, OPT-28/30):
+`code/network/test_attachment_retry_identity.py` also covers corrupt identity
+preservation during bulk clear and no send after corrupt/missing/unwritable
+attempt bookkeeping. Fail-before evidence recorded; 51 attachment checks and
+76 combined attachment/queue-interaction checks pass. Fresh GUI/artifact pending.
+
+September 27: `code/viewer/test_stale_interaction_recovery.py` covers orphan
+FAST/Advanced interaction recovery, long held mouse, fresh keepalive, grace,
+GUI-thread ownership, deferred queue resumption and manual Refresh dispatch.
+Three guards failed before; 45 focused/adjacent/builder checks pass. UI-stall and
+VTK owner receipts retain the unresolved original attribution and live gates.
+
 ## Standard MPR VRT quality (2026-09-26)
 
 `code/mpr/test_vrt_quality_controls.py` covers absolute CT threshold shifts,
@@ -52,6 +173,13 @@ Study/Series identity rejection and refusal to decode multiple presentation obje
 for one thumbnail. Fail-before/pass-after evidence and the 116-test receipt are in
 the UI-stall owner report; fresh source GUI acceptance remains open.
 
+September 29 Import correction: the same file covers metadata-only Raw Data beside
+ordinary/Enhanced images and conventional multi-object MG/US without volume geometry.
+The geometry-aware preview remains first; its worker fallback decodes one representative
+only and keeps mixed-frame plus multi-object DX presentation fail-closed. The MG and US
+guards both failed before the follow-up. The expanded boundary selection passes 186;
+fresh Import/first-open/restart GUI acceptance remains open.
+
 September 25 follow-up: `code/viewer/test_advanced_frame_reference_sync.py` covers
 independent-frame physical mapping, both reference-line modes, bidirectional
 orthogonal/oblique sync, logical frame selection/native marker Z separation,
@@ -70,7 +198,7 @@ Related loading/drop suite: 32 passed; see the VTK owner OPT-23 recurrence recei
 
 `code/ui_services/test_local_multiframe_thumbnail_repair.py` covers synthetic
 Enhanced MR PNG production without top-level geometry, collision-aware output,
-identity rejection, import preparation and unchanged single-frame routing.
+identity rejection, import preparation and geometry-first single-frame fallback.
 `code/viewer/test_fast_viewer_empty_state_ui.py` adds rendered opacity/background
 independence for the empty Advanced hint. Both main assertions failed before
 their fixes. Owner receipts: UI-stall and VTK-domain reports; live gates pending.
@@ -846,6 +974,17 @@ two-file Server command selection, role-specific expected outputs, retained
 legacy six-output resume, and the fail-closed Server release gate while portable
 Breast/Bone and service acceptance are unfinished. The focused
 runbook/profile/candidate selection passes 70 tests (direct pytest, exit 0).
+
+The explicit one-backend Server install-QA exception is guarded by
+`code/builder/test_release_candidate_packaging.py::test_explicit_single_backend_server_qa_never_runs_nuitka_or_cross_backend_coherence`.
+It failed before coordinator support and now verifies only the PyInstaller
+command and output inventory are selected, while cross-backend coherence is
+recorded as not applicable. The adjacent
+`test_server_qa_archives_server_metadata_but_preserves_client_metadata`
+failed before the role-specific archive correction and now protects the
+previous Server inventory while leaving Client files and metadata intact.
+The complete candidate-packaging file passes 46 tests, exit 0. This does not
+relax the ordinary two-backend role or release gate.
 
 ## Release candidate staging capacity (2026-09-06)
 
@@ -2792,3 +2931,155 @@ rejection, evidence fail-closed behavior and validated local review rebinding.
 `code/ai_imaging/test_brain_git_free_bundle.py` covers exported-source lesion discovery, anatomy qualification, authoritative explicit overrides, and exclusion of development fallback from frozen executables. Owner: `docs/modules/eagle-eye-server-development/docs/SERVICE_AUTH.md`.
 
 The same Brain discovery guard file includes Windows MAX_PATH simulation for integrity hashing; the real remote verification matched all 146 previously inaccessible manifest entries without altering model files.
+
+## Razi EchoMind remote route (2026-09-27)
+
+`code/echomind/test_remote_backend.py` guards fixed destination, text-only payload, no prompts/provider secrets, gating conversion, original-template correction, error redaction and no fallback. Existing credential, entitlement, Turbo and backend guards remain required.
+
+## MS multi-sequence review (2026-09-27)
+
+`code/ai_imaging/test_lesion_multisequence.py` guards full-component retention, native secondary identities, gap-aware support, exact geometry, normalized subtraction, original matching T1 requirements, remote capability gating and path removal, four-role selection, manual invalidation and derived artifact export. Live GUI is a separate pending gate.
+
+MS picker follow-up: `test_picker_can_switch_to_2d_without_leaving_dialog` covers in-dialog mode switching, secondary-input enablement, unsupported-input clearing and Cancel versus Accept state.
+
+Eagle Eye numeric series ordering: `test_study_series_sort_is_numeric_not_protocol_priority` covers cross-protocol numeric order, missing/invalid values and preserved preferred metadata without a live database.
+
+
+## Attachment retry identity — 2026-09-27
+
+`code/network/test_attachment_retry_identity.py`: 9 synthetic cases for persistent
+identity, durable-manifest failure, corrupt identity preservation, capability
+negotiation, timeout/reconnect, legacy ambiguity, bookkeeping exclusion and exact
+framing/correlation. Existing pending/local-first/dedup/strict-sync selection totals
+47 passes. No live database is imported by the new AST-isolated harness.
+
+`code/ai_imaging/test_lesion_characterization.py`: synthetic native-slab contact, global intensity scaling, focal-increase screening, boundary artifact flagging, coverage/identity preservation and quality failure. Manual revision coverage is extended in `test_lesion_multisequence.py`.
+
+
+`code/mpr/test_curve_mpr_responsiveness.py`: non-dental Curve MPR worker ownership,
+legacy probe pixel parity, latest-path coalescing, clear/close/deletion cancellation,
+error recovery, duplicate points and displayed-volume/axial-only route assembly.
+
+- `tests/code/ai_imaging/test_lesion_corroboration.py`: three-class cross-plane extents, retained secondary-only/missing candidates, and T1 boundary exclusion; no FLAIR deletion from absent T1 support.
+
+
+`code/mpr/test_curve_mpr_vrt.py`: non-dental Curve MPR checked-state/restore/reopen
+selection, patient-tab cleanup discovery, straight/bent derived volume coordinates,
+cancellation/background sampling, actual offscreen GPU rendering for original and
+straightened VRT, preset/MIP switching and resource release. Native Qt GUI remains
+a separate acceptance gate.
+
+- `tests/code/ai_imaging/test_brain_report_readability.py`: narrative sentence breaks preserve decimals, table text, citations, inline emphasis and images; shared brain PDF writer readability.
+
+
+`code/mpr/test_curve_mpr_path_views.py`: full-path 0/90 CPR perpendicularity across
+source normals; path-local physical crop and rotated anisotropic direction. Extended
+Curve MPR responsiveness/VRT guards exercise source-plane switching/reset, independent
+camera rotations, local FOV, Airway availability and real slice picks/background misses.
+
+- `code/mpr/test_lumen_analysis.py`: physical segment geometry, selected shared label/cropped extent, stable path frames, sections, isolated worker cancellation and explicit diameter reference. `code/builder/test_lumen_vmtk_payload.py`: native ABI/hash/license and immutable asset override. See `docs/modules/ADVANCED_ANALYSIS_LUMEN_WORKSPACES.md`; live GUI pending.
+
+- Lumen seed preset coverage in `code/mpr/test_lumen_analysis.py`: legacy target adoption, paint/name preservation, repeated initialization, stable target identity and missing-target rejection. Native MRML-free segmentation bindings are also exercised by `tools/slicer/probe_lumen_backend.py`.
+
+
+## Curve MPR circular tube and angular scroll (2026-09-27, OPT-48)
+
+`code/mpr/test_curve_mpr_tube_orbit.py` compares circular support to independent
+physical distances, including a bent spline in an oblique anisotropic grid, verifies
+straightened circular support and centerline-preserving 0/90/360 sampling. Extended
+`test_curve_mpr_vrt.py` exercises actual Qt wheel events, GPU mask, volume reuse,
+initial vertical presentation, independent image roll and teardown. Clinical data
+is not used; native source acceptance remains a separate gate.
+
+
+Curve follow-up (2026-09-27): `code/mpr/test_curve_mpr_responsiveness.py` also
+proves continuous orbit presents a completed pair during a queued next angle and
+Curve preparation matches Standard scalars/anatomical metadata off the GUI thread.
+`test_curve_mpr_vrt.py` sends Qt appearance/zoom/rotate drags through the real GPU
+harness. `code/viewer/test_mpr_flip_offthread_opt48.py` retains single-flip and voxel
+identity checks while allowing the explicit non-dental Curve preparation caller.
+
+
+Curve VRT mask alignment (2026-09-27): `code/mpr/test_curve_mpr_tube_orbit.py`
+now renders a nonzero-source-extent tube with/without the GPU mask from three axes,
+catching support lost despite a correct CPU mask. Its decimated, oblique anisotropic
+crop guard verifies physical voxel identity and untouched source data after rebasing.
+
+- `code/mpr/test_lumen_placement.py`: execute panel callbacks against placement-state doubles; preserve owned line class/ID and count defined endpoints instead of preview positions.
+
+- `code/mpr/test_slicer_current_title.py`: future-version title replacement/application-name agreement and native foreground targeting of an active modal.
+
+- `code/mpr/test_slicer_exit_notification.py`: no modal on process completion; exit signal/state/log retain exact code; actionable launch error remains visible.
+
+- Advanced Analysis close/reopen: tests/code/mpr/test_slicer_reopen.py covers pending reopen, worker completion, preserved live scenes, 20 synthetic sessions, and private error-stage reporting. Fresh-source acceptance pending; see VTK owner report (OPT-56).
+
+- Native Slicer close during load: tests/code/mpr/test_slicer_close_during_load.py covers deferred close, reply delivery boundary, cancelled exit, shutdown reentry, late-close rejection and disconnected requester. See OPT-56 VTK owner report.
+
+- OPT-56 native resident activation: tools/slicer/probe_resident_lumen.py is the opt-in synthetic socket/DICOM probe (no added child Python script); test_slicer_close_during_load.py also checks early implicit-quit suppression and explicit accepted-close exit.
+
+
+MPR test process order (2026-09-28): `code/mpr/test_qt_application_order.py` runs
+reopen/resident/widget-close tests in fresh child pytest processes in both orders.
+It catches QCoreApplication poisoning later QWidget tests without aborting the
+parent suite. Owning evidence: VTK domains report, build preflight Qt ordering abort.
+# Installed Advanced Analysis import boundary (2026-09-28):
+`code/mpr/test_slicer_sibling_import.py` loads the Slicer background module by
+filename from an isolated synthetic installed directory, then imports its sibling
+`aipacs_lumen.routing`. The frozen-launch assertion in
+`code/mpr/test_slicer_resident.py` requires the owned child to receive only its
+installed module directory as `PYTHONPATH`. Both failed before the fix and pass
+after; see OPT-56 in the regression catalog. Source GUI and installer acceptance
+remain separate gates.
+
+
+### Education portable transfer (OPT-61, 2026-09-29)
+
+- `tests/code/education/test_portable_transfer.py`: isolated destination database, media rebasing, archived originals, case package siblings, downloaded metadata, DICOM references, duplicate import, invalid packages, cancellation and rollback.
+- `tests/code/education/test_transfer_dialog.py`: background I/O, successful import refresh and safe worker retirement on close.
+
+- Education DICOM authoring: `tests/code/education/test_dicom_source_picker.py` covers picker construction, exact ID filter, background reads, byte-preserving folder import and identity ambiguity rejection. Item dialog drop/replacement and single-row action guards live in `test_build_course_items.py` and `test_authoring_flow.py`.
+
+- Education previews and patient names: `tests/code/education/test_authoring_previews.py` verifies real synthetic preview pixels, asynchronous delivery, generation rejection and copy-only name/ID behavior; the post-selection Save path is covered in `test_build_course_items.py`.
+
+
+- Structured Report text, units/status, canonical identity, bounded reads, worker
+  delivery, stale selection and image-tool isolation:
+  `tests/code/viewer/test_structured_report_view.py`.
+- Selectable Local SR without fabricated pixel counts:
+  `tests/code/ui_services/test_local_sr_card.py`.
+
+
+### EchoMind central Assistant/Search routing (2026-09-29)
+
+`code/echomind/test_remote_backend.py` covers native-provider payloads through the central endpoint, UI worker routing and reference content preservation, image rejection, and no direct fallback on timeout. Server native dispatch is covered by the separate PACS Server `tests/test_echomind_server.py` suite.
+
+- `education/test_case_view_modes.py`: Case of the Day large/small/list switching, filtered-result and open-identity preservation, responsive columns and immediate retired-card hiding.
+
+- `education/test_document_preview.py`: file-backed text, PowerPoint routing, stale worker results, conversion cache and source preservation.
+
+
+### EchoMind Radiology Expert Web Search (2026-09-29)
+
+`code/echomind/test_remote_backend.py` also covers the three-source Assist menu,
+server-owned Web Search payload and escaped answer/citation rendering. See the
+central routing pilot document for server tests, synthetic live evidence and
+pending installed-server/GUI acceptance.
+
+
+### EchoMind Medical Consult (2026-09-29)
+
+`code/echomind/test_medical_consult.py` exercises Assist-only tab restriction,
+current displayed report selection, fresh consultation navigation with report
+preservation, and callbacks on live/restored reports. Remote reference
+standardization is guarded in `test_remote_backend.py`; server dispatch is
+covered by the separate PACS Server suite.
+
+- `education/test_education_rail_revisit.py`: Education adapter/shared ThumbnailManager revisit and study identity replacement, real Qt/qasync cards.
+
+- SR thumbnail icon, document-count wording, late-update protection and normal-image preservation: `tests/code/ui_services/test_sr_thumbnail_card.py`.
+
+- `education/test_presenter_dock.py`: presenter attribution, collapsible resource dock, persistent video sink and synthetic decoder recovery.
+
+- `education/test_slide_thumbnails.py`: custom cover worker, automatic reset, document tiles, legacy schema migration and portable round trip.
+
+- `ui_services/test_advanced_search_paging.py`: OPT-24 bounded advanced pagination, complete filters, cooperative cancellation and visible partial failures.

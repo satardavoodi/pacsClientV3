@@ -10,6 +10,8 @@ from tests.code.builder.test_eagle_eye_brain_payload import brain_payload
 from tests.code.builder.test_eagle_eye_lesion_payload import make_lesion_payload
 from tests.code.builder.test_eagle_eye_alignment_payload import make_accepted_payload
 from tests.code.builder.test_eagle_eye_total_spine_payload import make_spine_payload, SYNTHETIC_HASH
+from tests.code.builder.test_eagle_eye_engine_payload import fixture_bundle
+from builder.eagle_eye_engine_payload import digest as engine_digest
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +34,14 @@ def source_stage(tmp_path):
     return source
 
 
+def add_synthetic_engine_payloads(payload):
+    for engine in ('breast', 'bone-age'):
+        root = fixture_bundle(payload / 'eagle_eye' / engine, engine)
+        (root / 'distribution-approval.json').write_text(json.dumps(dict(
+            approved=True, manifest_sha256=engine_digest(root / 'manifest.json'),
+            rights_evidence=['synthetic test fixture'])), encoding='utf-8')
+
+
 @pytest.mark.parametrize("edition", list(profiles.EDITIONS))
 def test_every_edition_retains_current_echomind_report_renderers(tmp_path, edition, bundle, brain_payload):
     """The next edition stage must carry the reviewed report source bytes."""
@@ -44,6 +54,7 @@ def test_every_edition_retains_current_echomind_report_renderers(tmp_path, editi
     make_lesion_payload(payload / 'eagle_eye/brain-lesions')
     make_accepted_payload(payload / 'eagle_eye/alignment')
     make_spine_payload(payload / 'eagle_eye/total-spine')
+    add_synthetic_engine_payloads(payload)
     root = Path(__file__).resolve().parents[3]
     relative = Path("plugin_packages/echomind/payload/python/modules/EchoMind")
     (source / relative).mkdir(parents=True)
@@ -51,7 +62,7 @@ def test_every_edition_retains_current_echomind_report_renderers(tmp_path, editi
     for name in ("viewer_chat/ai_chat_pages.py", "viewer_chat/ai_chat_widgets.py",
                  "normal_templates.py", "reception_templates.py",
                  "viewer_chat/normal_template_dialog.py", "viewer_chat/reception_template_dialog.py",
-                 "viewer_chat/openai_reporter.py"):
+                 "viewer_chat/openai_reporter.py", "viewer_chat/ai_chat_viewer.py", "remote_backend.py"):
         canonical = root / "modules/EchoMind" / name
         mirror = root / "builder/plugin package/packages/echomind/payload/python/modules/EchoMind" / name
         expected[name] = canonical.read_bytes()
@@ -236,6 +247,7 @@ def test_three_output_contract_and_arm_identity(tmp_path, bundle, brain_payload)
     make_lesion_payload(payload / 'eagle_eye/brain-lesions')
     make_accepted_payload(payload / 'eagle_eye/alignment')
     make_spine_payload(payload / 'eagle_eye/total-spine')
+    add_synthetic_engine_payloads(payload)
     commands = []
     def compile_fixture(command, **kwargs):
         commands.append(command)
@@ -307,6 +319,7 @@ def test_internal_eagle_eye_stage_does_not_require_distribution_receipt(
     make_lesion_payload(payload_root / 'eagle_eye/brain-lesions')
     make_accepted_payload(payload_root / 'eagle_eye/alignment')
     make_spine_payload(payload_root / 'eagle_eye/total-spine')
+    add_synthetic_engine_payloads(payload_root)
     (payload_root / "eagle_eye/brain/distribution-approval.json").unlink()
 
     staged = profiles.stage_edition(
@@ -340,6 +353,7 @@ def test_internal_installer_compile_explicitly_disables_distribution_receipt_gat
     make_lesion_payload(payload_root / 'eagle_eye/brain-lesions')
     make_accepted_payload(payload_root / 'eagle_eye/alignment')
     make_spine_payload(payload_root / 'eagle_eye/total-spine')
+    add_synthetic_engine_payloads(payload_root)
     (payload_root / "eagle_eye/brain/distribution-approval.json").unlink()
     commands = []
 

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from PacsClient.utils.config import CASE_OF_DAY_STORAGE_PATH
 from PacsClient.utils.database import get_db_connection
+from modules.education.course_database import modality_matches
 
 # Subfolder names used inside every case-of-day package directory.
 # DICOM_SUBDIR is what the DB's `dicom_folder_path` actually points to, so
@@ -306,9 +307,9 @@ def search_cases(query: str = "", modality: str = None, body_part: str = None) -
 
     filtered: List[CaseOfDayEntry] = []
     for entry in rows:
-        if allowed_modality and entry.modality != allowed_modality:
+        if allowed_modality and not modality_matches(entry.modality, allowed_modality):
             continue
-        if allowed_body and entry.body_part != allowed_body:
+        if allowed_body and str(entry.body_part or '').strip().casefold() != allowed_body.casefold():
             continue
         if q:
             blob = " ".join(

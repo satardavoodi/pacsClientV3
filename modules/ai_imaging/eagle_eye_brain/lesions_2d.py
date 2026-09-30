@@ -125,7 +125,8 @@ def spatial_status():
 
 
 def run_2d(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
-           cancel=None, progress=None, demographics=None, primary_disease='other', clinical_note='', fazekas_overall=None):
+           cancel=None, progress=None, demographics=None, primary_disease='other', clinical_note='', fazekas_overall=None,
+           allow_frame_registration=False, defer_anatomy=False):
     import shutil
     import tempfile
     import SimpleITK as sitk
@@ -144,11 +145,11 @@ def run_2d(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
             or fc.get('study_uid') != study_uid or context.get('series_uid') != t1_uid
             or fc.get('series_uid') != flair_uid):
         raise BrainError('Selected 2D T1/FLAIR identities do not match this examination.')
-    require_same_examination(context, fc)
+    require_same_examination(context, fc, allow_frame_registration=allow_frame_registration)
     thickness = slice_geometry(flair_source)
     flair = read_volume(flair_source, expected_protocol='flair', allow_2d=True)
     # Validate the accompanying T1 role; it is not a model channel or registered atlas.
-    read_volume(t1_source, allow_2d=True)
+    t1_reference = read_volume(t1_source, allow_2d=True)
     if max(flair.GetSpacing()[:2]) > 2 or flair.GetSpacing()[2] > 8 or thickness > 8:
         raise BrainError('This 2D pilot supports in-plane spacing up to 2 mm and slice step/thickness up to 8 mm.')
     empty = sitk.Image(flair.GetSize(), sitk.sitkUInt8); empty.CopyInformation(flair)
@@ -203,6 +204,11 @@ def run_2d(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
                       band_filter=band_audit, raw_mask_path=str(directory / 'labels-raw.nii.gz'),
                       band_mask_path=str(directory / 'labels-band-review.nii.gz'),
                       reference=REFERENCE, normative_status='No matched 2D age/sex reference applied')
+        if primary_disease == 'ms' and not defer_anatomy and max(t1_reference.GetSpacing()) <= 2:
+            from .lesion_characterization import prepare_anatomy, locations
+            _, mapped, provenance = prepare_anatomy(t1_source, directory, flair, cancel, progress)
+            result['sampled_topography'] = locations(mask, mapped, thickness=thickness)
+            result['sampled_topography']['provenance'] = provenance
         progress('Preparing 2D measurements, native-slice previews and report')
         if cancel.is_set():
             raise BrainError('2D lesion analysis cancelled.')

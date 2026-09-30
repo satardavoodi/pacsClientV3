@@ -1,5 +1,60 @@
 # AI-PACS Documentation ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Index by Subsystem
 
+## Server first-open patient scope (2026-09-30, OPT-58/60)
+
+Filtered Home row counts are not patient-wide completeness. First-open discovery and
+Home reconcile share explicit Study UID extraction, exact-patient validation and the
+existing socket worker boundary. See [multi-study plan](MULTI_STUDY_SINGLE_TAB_PLAN.md),
+[thumbnail pipeline](pipelines/thumbnail-pipeline.md), and the September 30
+[evidence receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md).
+Guard: `tests/code/ui_services/test_open_patient_study_scope.py`. No Local network,
+viewer decode, study-slot or card-count policy change; fresh-source GUI remains open.
+
+## Home Local shared thumbnail repair (2026-09-29, OPT-60)
+
+Home Local cache misses now converge on the same off-GUI repair used by Patient Tab,
+with per-key single-flight protection and no Home-specific decoder. Grouped multi-study
+publication also accepts mixed numeric/text SeriesNumbers without aborting. See the
+[thumbnail pipeline](pipelines/thumbnail-pipeline.md),
+[UI-stall evidence](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md), and the matching
+Regression Catalog row. Code verification is green; fresh restarted source GUI remains
+pending.
+
+## Patient-Tab cold-cache convergence (2026-09-28/29, OPT-58 / OPT-60)
+
+First-open blank sidebars now treat the initial series catalog as essential navigation
+and use the existing off-GUI socket worker immediately; the obsolete retry/timer path
+was removed. ViewerController is the authority for actual first-image visibility;
+empty-shell settlement cannot publish image visibility or replay deferred work. Catalog
+metadata also owns complete card membership: partial cache/socket
+media is UID-first enrichment, missing media retains a placeholder, and duplicate raw
+numbers retain canonical storage identity without a second UI writer. Complete-cache
+reuse also avoids a redundant database count writer. See the
+[thumbnail pipeline](pipelines/thumbnail-pipeline.md),
+[UI-stall receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md), and
+`tests/code/ui_services/test_patient_tab_thumbnail_convergence.py`. Source GUI
+acceptance remains pending; no viewer-domain or download-state change is included.
+
+## Education authoring review and skill (2026-09-29)
+
+Instructor follow-up under **OPT-61** adds durable Build Course editing, atomic item
+ordering, background item copies, saved-resource preflight and a presentation window
+with resource navigation/fullscreen. Education DICOM selection fails closed rather
+than substituting the previous study or first series. See the same review below.
+
+See [the Education review](reports/EDUCATION_REVIEW_2026-09-29.md) for Build Course,
+local/Library content, Case of the Day and consultation boundaries; the reusable
+`aipacs-education` skill; and guarded text/type-source/imported-item corrections.
+Source GUI acceptance remains blocked pending human source launch and sign-in.
+
+## Education search/filter contract (2026-09-28)
+
+Library and downloaded My Courses share `course_database.search_and_filter_courses`.
+Created/imported My Courses share `course_matches_query`; Case of the Day shares
+`modality_matches` without rewriting stored metadata. See the regression catalog's
+Education alias entry and `tests/code/education/test_search_filter_contract.py`.
+Source GUI and installed artifact acceptance remain pending.
+
 ## Client installer pairing isolation (2026-09-26)
 
 Client installer pairing isolation: `builder/config_sanitizer.py` emits an
@@ -50,6 +105,9 @@ with its `test_advanced_drag_hover_backing.py` regression guard.
 Related maintenance on September 24: Local Enhanced MR thumbnail repair is in
 [UI-stall evidence](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md); empty Advanced
 hint opacity is in the [VTK owner report](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+The September 29 follow-up in the same UI-stall report covers imported Raw Data
+companions and conventional nonspatial multi-object MG/US thumbnail repair without
+changing viewer geometry.
 Client/Server control-transport diagnosis is in the
 [agent guide](for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md), section 0.
 
@@ -510,6 +568,8 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ## Master indexes
 
+- **[Eagle Eye service packaging parity](../builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md)** - genuine pywin32 input gate, fresh-cache dependency refresh, installer lifecycle and separate frozen clean-host acceptance. Guard: `tests/code/builder/test_reused_asset_dependency_refresh.py`.
+
 - **[Eagle Eye Brain UI and maintenance](modules/EAGLE_EYE_BRAIN_UI_AND_MAINTENANCE.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ result card, anatomical PDF, background export and client acceptance boundaries.
 
 - **[Eagle Eye development contract](modules/EAGLE_EYE_DEVELOPMENT_CONTRACT.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ common ownership and installer rules for Brain, Lumbar and future anatomy features.
@@ -915,6 +975,12 @@ fresh-source GUI/completion-proof gates remain open. UI and scheduling unchanged
 ---
 
 ### Web browser module + startup / engine warm-up
+
+Download-queue reliability follow-up (September 27, OPT-60): orphan interaction
+protection and Refresh recovery are documented in
+[UI-stall evidence](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md) and the
+[VTK owner receipt](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+Guard: `tests/code/viewer/test_stale_interaction_recovery.py`; fresh GUI gate open.
 
 September 26 OPT-22 correction: the opening notice is now a compact centered
 card with wrapped-height sizing and resize tracking. The existing opening-status
@@ -1551,3 +1617,31 @@ The shared-pipeline report section "dual transfer modes implemented" documents p
 ## Brain source-service model discovery (2026-09-26)
 
 [Service record](modules/eagle-eye-server-development/docs/SERVICE_AUTH.md) documents Git-free model discovery and the separate 2D-input limitation. Guard: `tests/code/ai_imaging/test_brain_git_free_bundle.py`.
+
+## Razi EchoMind server pilot (2026-09-27)
+
+Current owner-directed migration: [EchoMind on Eagle Eye Server](echomind/EAGLE_EYE_SERVER_ROUTING_2026-09-30.md), including authenticated text-only processing, private server prompts, template workflows, provenance and acceptance gates.
+
+See `docs/echomind/RAZI_SERVER_PILOT_2026-09-27.md` for opt-in text routing, preserved STT, direct-IP test authorization and pending native/Turbo Correction gates.
+
+### Eagle Eye MS multi-sequence source candidate (2026-09-27)
+
+[Cross-plane FLAIR and T1 contrast review](modules/eagle-eye-server-development/docs/MS_MULTISEQUENCE_2026-09-27.md): worker, client/server contract, PDF, scientific references, synthetic verification and pending GUI/Razi gates.
+
+Eagle Eye location/contrast follow-up: `modules/ai_imaging/eagle_eye_brain/lesion_characterization.py`; method, source/worker integration and unqualified clinical boundaries are recorded in [MS multi-sequence development](modules/eagle-eye-server-development/docs/MS_MULTISEQUENCE_2026-09-27.md#anatomical-location-and-focal-increase-evidence-follow-up).
+
+- Advanced Analysis vascular and bronchoscopy workspaces: [implementation, native engine and acceptance](modules/ADVANCED_ANALYSIS_LUMEN_WORKSPACES.md).
+
+
+Curve MPR tube/orbit follow-up (2026-09-27): the existing VTK domains report's
+"Curve MPR circular tube and angular scrolling (OPT-48)" section owns physical
+radial support, angle sampling, initial presentation and pending live acceptance.
+Guards: `tests/code/mpr/test_curve_mpr_tube_orbit.py` and existing CurveMPR suites.
+
+
+- DICOM Structured Report viewport text and multi-document selection: see the
+  "Structured Report viewport routing (2026-09-29)" section in
+  [VTK domains review](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+  Reader: PacsClient/utils/structured_report.py; UI: patient_ui/structured_report_view.py.
+
+- SR document thumbnail artwork: `PacsClient/pacs/patient_tab/utils/sr_thumbnail.py`, used by the shared Home/patient thumbnail manager.

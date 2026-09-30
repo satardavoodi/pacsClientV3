@@ -1,5 +1,12 @@
 # EchoMind â€” architecture documentation
 
+## Eagle Eye Server routing (2026-09-30)
+
+[Server-owned EchoMind routing and acceptance](EAGLE_EYE_SERVER_ROUTING_2026-09-30.md)
+supersedes the older PACS HTTP pilot for registered RAZI_SERVER aliases. It covers
+the text-only client contract, headless prompt core, authenticated Eagle Eye TLS
+listener and Developer-versus-installer acceptance boundaries.
+
 ## Fresh restart and native input staging (2026-09-11)
 
 [Verified restart and complete MONAI input loading](ECHOMIND_RESTART_AND_INPUT_STAGING_2026-09-11.md):

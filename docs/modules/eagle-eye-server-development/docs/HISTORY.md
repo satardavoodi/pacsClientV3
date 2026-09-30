@@ -1,5 +1,20 @@
 # Decisions and history
 
+## 2026-09-30: EchoMind moved to the Eagle Eye service
+
+Added a headless server-owned prompt core and strict text endpoint; removed the
+client's legacy PACS login route and repaired Turbo Correction modality context.
+Versioned Developer cutover retains paired TLS 8002, LocalService, PACS/CRM and
+immutable baseline. 252 local/94 target guards passed; all 15 real synthetic
+client requests passed. Current-native app-local Mesa startup/hidden warm-up
+passed; human-authorized GUI launched with explicit TestServer and existing
+bridge responds. Full model/GUI, rollback drill and installer gates remain open.
+See [the checkpoint](ECHOMIND_SERVER_2026-09-30.md).
+
+## 2026-09-27: Independent FLAIR support and contrast review
+
+Added optional second 2D FLAIR and matching 3D post-T1 roles, reference-only remote transport, acquired-slab corroboration, preserved disagreement masks, normalized subtraction review and PDF panels. Real local inference and synthetic tests passed. No server activation, installer or clinical qualification was performed. See [method and evidence](MS_MULTISEQUENCE_2026-09-27.md).
+
 ## 2026-09-26: Reversible periventricular band review
 
 Added a source candidate for conservative MS-only smooth paired-band separation on native axial 2D FLAIR. Raw mask and suspected-band mask remain downloadable; PDF distinguishes red retained candidates and amber review bands. Manual revisions bypass the classifier; MS-to-SVD restores raw measurements. 157 related tests and 472 mirror pairs passed. No clinical normality claim, model replacement, 3D change, new installer or Razi activation is implied. Fresh GUI and clinical review remain separate gates; see the 2D owner record.
@@ -72,3 +87,15 @@ cache; completeness and rendering are not certified. Breast/Bone Age private
 Python homes were relocated, and Bone Age required ten verified app-local CRT
 libraries for successful imports. Model inference remains unqualified.
 The full-workstation document records exact paths, receipts and remaining gates.
+
+2026-09-27 picker follow-up: local acquisition selector fixes the inaccessible second 2D FLAIR choice; 2 fail-before guards and 64 pass-after tests. Native GUI pending. See MS_MULTISEQUENCE_2026-09-27.md.
+
+2026-09-27 characterization follow-up: source now adds same-T1 anatomical locations and an exploratory tissue-calibrated focal-increase screen, preserving explicit boundary/coverage uncertainty. 145 automated passes; private PDF inspected. Native GUI, Razi activation and clinical validation remain pending. See MS_MULTISEQUENCE_2026-09-27.md.
+
+- 2026-09-27: Three-color FLAIR component agreement and separate exploratory pre-contrast T1 evidence added; see MS_MULTISEQUENCE_2026-09-27.md. Automated suite 147 passed; refreshed-source GUI and Razi activation pending.
+
+- 2026-09-27: Patient PDF references use scientific citations; T1 hypointensity interpretation distinguishes persistent injury-associated signal from single-scan findings. See MS_MULTISEQUENCE_2026-09-27.md.
+
+- 2026-09-27: Shared brain PDF readability updated (sentence breaks, 135% leading, paragraph spacing); 25 focused tests passed and 25-page lesion artifact visually checked.
+
+- 2026-09-27: Shared PDF readability verified for volumetry, lower-limb Alignment and Total Spine; legacy brain path unified and Total Spine methods/references reorganized. 53 focused guards pass; synthetic artifacts inspected.

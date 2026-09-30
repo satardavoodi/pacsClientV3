@@ -1303,7 +1303,8 @@ class EchoMindSettingsWidget(QWidget):
         except Exception:
             pass
 
-        self.auth_status.setText("Authenticated successfully")
+        self.auth_status.setText("Razi Server test route selected; connection checked on Send"
+            if center_code == 'RAZI_SERVER' else "Authenticated successfully")
         self.auth_status.setProperty("state", "success")
         self.style().unpolish(self.auth_status)
         self.style().polish(self.auth_status)

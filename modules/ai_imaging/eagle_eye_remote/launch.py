@@ -41,6 +41,12 @@ def configure(argv):
     config = json.loads(path.read_text(encoding='utf-8-sig'))
     service = None
     if args.eagle_eye_mode == 'server':
+        from aipacs_runtime import is_frozen, load_installation_profile
+        if is_frozen():
+            if load_installation_profile().get('distribution_edition') != 'eagle-eye':
+                raise ValueError('Installed server mode requires the Eagle Eye server edition.')
+            if config.get('service_managed') is not True:
+                raise ValueError('Installed server mode requires service-managed configuration.')
         server_config_path = str(path)
         # Desktop-hosted phase 1 uses loopback. Standalone serve supports LAN TLS.
         if not config.get('service_managed', False) and (

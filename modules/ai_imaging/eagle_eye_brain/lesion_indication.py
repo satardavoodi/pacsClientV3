@@ -66,6 +66,8 @@ def regenerate_lesion_report(result_path, primary_disease, note='', *, fazekas_o
     if result.get('analysis_type') != 'brain_lesions' or not result.get('pdf_available'):
         raise BrainError('Select a completed lesion analysis.')
     context = clinical_context(primary_disease, note, fazekas_overall)
+    if any(result.get(k) for k in ('multisequence','enhancement_review','source_multisequence','source_enhancement_review','sampled_topography','source_sampled_topography')):
+        raise BrainError('Use the original multi-sequence report or rerun analysis for a new report context.')
     flair = sitk.ReadImage(str(source.parent / 'flair.nii.gz'))
     mask = sitk.ReadImage(result['mask_path'])
     metrics = measure_mask(flair, mask)

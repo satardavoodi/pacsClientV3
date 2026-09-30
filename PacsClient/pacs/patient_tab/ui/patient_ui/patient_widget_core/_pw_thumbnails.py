@@ -43,7 +43,6 @@ _PRIMARY_BUCKET_FALLBACK = (os.getenv("AIPACS_PRIMARY_BUCKET_FALLBACK", "1") or 
 # is untouched. Default ON; AIPACS_HISTORY_SERIES_FIRST=0 restores legacy order.
 _HISTORY_SERIES_NUMBER = 100000
 
-
 def _history_first_enabled() -> bool:
     return (os.getenv("AIPACS_HISTORY_SERIES_FIRST", "1") or "1").strip() != "0"
 
@@ -208,7 +207,8 @@ class _PWThumbnailsMixin:
                         pixel_inventory.pixel_instance_count, pixel_inventory.frame_count,
                         series_path, pixel_inventory.directory_mtime_ns,
                     ))
-                if not pixel_inventory.has_pixel_data:
+                is_structured_report = str(series.get('modality') or '').upper() == 'SR'
+                if not pixel_inventory.has_pixel_data and not is_structured_report:
                     self.logger.info(
                         "[LOCAL_SERIES_SKIPPED] reason=no_pixel_data series_key=%s",
                         folder_key,
@@ -218,7 +218,9 @@ class _PWThumbnailsMixin:
                 hinted_raw = str(series.get('thumbnail_path') or '').strip()
                 hinted = Path(hinted_raw) if hinted_raw else None
                 file_path = ''
-                if canonical.is_file():
+                if is_structured_report:
+                    file_path = ''  # The report panel handles content, not a pixel thumbnail.
+                elif canonical.is_file():
                     file_path = str(canonical)
                 elif hinted is not None and hinted.is_file():
                     file_path = str(hinted)
@@ -244,6 +246,8 @@ class _PWThumbnailsMixin:
                     'protocol_name': series.get('protocol_name') or '',
                     'body_part_examined': series.get('body_part_examined') or '',
                 }
+                if is_structured_report:
+                    entry['document_count'] = pixel_inventory.instance_count
                 if series_number in early_by_number:
                     entry['display_key'] = early_by_number[series_number]['display_key']
                     entry['_orig_series_number'] = series_number
@@ -297,44 +301,6 @@ class _PWThumbnailsMixin:
             if details:
                 message = f"{message} {details}"
             getattr(logger, level, logger.info)(message)
-
-    def _reset_thumbnail_retry_state(self) -> None:
-        self._thumbnail_retry_pending = False
-        self._thumbnail_retry_attempts = 0
-
-    @Slot()
-    def _retry_deferred_server_thumbnail_load(self):
-        self._thumbnail_retry_pending = False
-        self._load_server_thumbnails()
-
-    @Slot()
-    def _schedule_deferred_server_thumbnail_retry(self):
-        # The deferred retry re-checks the LOCAL thumbnail cache, which the
-        # active download warms early (thumbnails are tiny and fetched before
-        # the bulk image data). Each retry is a cheap on-disk check — once the
-        # cache is warm it renders and the loop stops.
-        #
-        # A flat 700 ms poll made the viewer's left sidebar visibly lag behind
-        # the main page: in the common case the cache warms within a few
-        # hundred ms, but the coarse poll only noticed it up to 700 ms later.
-        # Poll fast at first (8 ticks ≈ 1.2 s) to catch that common case
-        # promptly, then back off to 700 ms for the rare slow-download tail.
-        max_retries = 18
-        if getattr(self, '_thumbnail_retry_pending', False):
-            return
-        attempts = int(getattr(self, '_thumbnail_retry_attempts', 0) or 0)
-        if attempts >= max_retries:
-            self._log_open_thumbnail_trace('patient_tab_thumb_retry_exhausted', attempts=attempts)
-            return
-        delay_ms = 150 if attempts < 8 else 700
-        self._thumbnail_retry_pending = True
-        self._thumbnail_retry_attempts = attempts + 1
-        self._log_open_thumbnail_trace(
-            'patient_tab_thumb_retry_scheduled',
-            attempts=self._thumbnail_retry_attempts,
-            delay_ms=delay_ms,
-        )
-        QTimer.singleShot(delay_ms, self._retry_deferred_server_thumbnail_load)
 
     def set_method_open_ai_module_tab(self, method_add_new_tab):
         self.method_add_new_tab = method_add_new_tab
@@ -790,6 +756,89 @@ class _PWThumbnailsMixin:
             self.logger.warning('Local thumbnail delivery rejected', exc_info=True)
             self._retire_local_thumbnail_stream()
 
+    def _reconcile_server_thumbnail_entries(self, cached_files=(), socket_entries=()):
+        """Join thumbnail media onto the authoritative single-study catalog.
+
+        Series metadata decides which cards exist. PNG paths are optional media
+        for those cards and must never shrink the catalog. Identity matching is
+        UID-first; a raw SeriesNumber fallback is accepted only when unique.
+        """
+        from collections import Counter
+
+        catalog = dict(getattr(self, '_server_series_info', {}) or {})
+        cached_paths = [Path(path) for path in cached_files or () if path]
+        cached_by_stem = {path.stem: str(path) for path in cached_paths}
+        socket_rows = [dict(row) for row in socket_entries or () if isinstance(row, dict)]
+
+        if not catalog:
+            # Compatibility path for an early/legacy caller with no metadata.
+            rows = [row for row in socket_rows if row.get('file_path')]
+            if rows:
+                return rows, 0
+            return [
+                {
+                    'display_key': path.stem,
+                    'series_number': path.stem,
+                    'file_path': str(path),
+                }
+                for path in cached_paths
+            ], 0
+
+        number_counts = Counter(
+            str(info.get('_orig_series_number') or _get_series_number(info) or key)
+            for key, info in catalog.items()
+        )
+        socket_by_uid = {
+            _get_series_uid(row): row for row in socket_rows if _get_series_uid(row)
+        }
+        socket_by_number = {}
+        for row in socket_rows:
+            number = str(_get_series_number(row) or '')
+            if number:
+                socket_by_number.setdefault(number, []).append(row)
+
+        entries = []
+        missing_media = 0
+        for display_key, catalog_info in catalog.items():
+            entry = dict(catalog_info or {})
+            display_key = str(display_key)
+            series_uid = _get_series_uid(entry)
+            series_number = str(
+                entry.get('_orig_series_number') or _get_series_number(entry) or display_key
+            )
+            media = socket_by_uid.get(series_uid) if series_uid else None
+            if media is None:
+                candidates = socket_by_number.get(series_number, ())
+                if number_counts[series_number] == 1 and len(candidates) == 1:
+                    media = candidates[0]
+
+            if media is not None:
+                for field in (
+                    'series_description', 'modality', 'protocol_name',
+                    'body_part_examined', 'image_count', 'display_image_count',
+                ):
+                    if media.get(field) not in (None, ''):
+                        entry[field] = media[field]
+
+            folder_key = str(entry.get('folder_key') or series_number)
+            file_path = str((media or {}).get('file_path') or '')
+            if not file_path:
+                for stem in (folder_key, display_key, series_number):
+                    if stem == series_number and number_counts[series_number] != 1:
+                        continue
+                    file_path = cached_by_stem.get(stem, '')
+                    if file_path:
+                        break
+            if not file_path:
+                missing_media += 1
+
+            entry['display_key'] = display_key
+            entry['series_number'] = series_number
+            entry['file_path'] = file_path
+            entries.append(entry)
+
+        return entries, missing_media
+
     async def _load_server_thumbnails_async(self):
         """Load thumbnails from local cache or socket server and render them."""
         try:
@@ -824,53 +873,64 @@ class _PWThumbnailsMixin:
                         thumbnail_count=len(series_entries),
                     )
                 if series_entries:
-                    self._reset_thumbnail_retry_state()
                     self._pending_thumbnails_entries = series_entries
+                    self._pending_thumbnails_persist_counts = True
                     QMetaObject.invokeMethod(
                         self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection
                     )
                 return
 
             if thumbnails:
-                self._reset_thumbnail_retry_state()
-                # Cache hit: the unified disk cache (THUMBNAIL_PATH/<study_uid>/...)
-                # — warmed by the home page / download write-through — is reused
-                # directly; no server fetch, no regeneration.
-                self._log_open_thumbnail_trace('ThumbnailCacheHit', thumbnail_count=len(thumbnails))
-                self._log_open_thumbnail_trace('ThumbnailReusedFromUnifiedPipeline', thumbnail_count=len(thumbnails))
-                self._log_open_thumbnail_trace('patient_tab_thumb_cache_hit', thumbnail_count=len(thumbnails))
-                # Store result then dispatch to main thread via QMetaObject.
-                # QTimer.singleShot from a non-Qt thread has no Qt event loop
-                # and is silently dropped; QueuedConnection always routes to
-                # the QObject's owning thread (main).
-                self._pending_thumbnails_files = thumbnails
-                QMetaObject.invokeMethod(self, "_render_thumbnails_from_files_slot", Qt.QueuedConnection)
-                return
-
-            # Cache miss for this study — nothing on disk yet (e.g. a multi-study
-            # secondary study the home page did not pre-warm). Will defer behind an
-            # active download or fetch from the server.
-            self._log_open_thumbnail_trace('ThumbnailCacheMiss', study_uid=self.study_uid)
-
-            try:
-                from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
-
-                if should_defer_noncritical_open_network(
-                    first_series_visible=bool(getattr(self, '_first_series_displayed', False))
-                ):
+                catalog_entries, missing_media = self._reconcile_server_thumbnail_entries(
+                    cached_files=thumbnails,
+                )
+                if catalog_entries and missing_media == 0:
                     self._log_open_thumbnail_trace(
-                        'patient_tab_thumb_deferred',
-                        retry=int(getattr(self, '_thumbnail_retry_attempts', 0) or 0) + 1,
-                        first_series_visible=bool(getattr(self, '_first_series_displayed', False)),
+                        'ThumbnailCacheHit', thumbnail_count=len(thumbnails)
                     )
+                    self._log_open_thumbnail_trace(
+                        'ThumbnailReusedFromUnifiedPipeline',
+                        thumbnail_count=len(catalog_entries),
+                    )
+                    self._log_open_thumbnail_trace(
+                        'patient_tab_thumb_cache_hit',
+                        thumbnail_count=len(catalog_entries),
+                    )
+                    self._log_open_thumbnail_trace(
+                        'patient_tab_thumb_catalog_complete',
+                        expected_count=len(catalog_entries),
+                        missing_media=0,
+                        source='cache',
+                    )
+                    self._pending_thumbnails_entries = catalog_entries
+                    self._pending_thumbnails_persist_counts = False
                     QMetaObject.invokeMethod(
-                        self,
-                        "_schedule_deferred_server_thumbnail_retry",
-                        Qt.QueuedConnection,
+                        self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection
                     )
                     return
-            except Exception:
-                pass
+                if catalog_entries:
+                    self._log_open_thumbnail_trace(
+                        'patient_tab_thumb_cache_partial',
+                        cached_count=len(thumbnails),
+                        expected_count=len(catalog_entries),
+                        missing_media=missing_media,
+                    )
+                else:
+                    # Legacy caller with no catalog: retain the old file-only
+                    # behavior rather than inventing series membership.
+                    self._pending_thumbnails_files = thumbnails
+                    QMetaObject.invokeMethod(
+                        self, "_render_thumbnails_from_files_slot", Qt.QueuedConnection
+                    )
+                    return
+
+            # Cache miss/partial cache for this study. The catalog is essential
+            # navigation in a manual-only viewer: it is how the user chooses the
+            # first series. Therefore it must not use the cosmetic open-time
+            # network throttle, which waits for first-image visibility and would
+            # create a dependency cycle. The existing socket request stays off
+            # the GUI thread and supplies the same identity-keyed catalog.
+            self._log_open_thumbnail_trace('ThumbnailCacheMiss', study_uid=self.study_uid)
 
             from modules.network.socket_client import PatientListSocketClient
             from modules.network.socket_config import get_socket_server_settings
@@ -892,7 +952,7 @@ class _PWThumbnailsMixin:
                     data = client.get_study_thumbnails(
                         self.study_uid,
                         include_base64=True,
-                            include_image_data=False,
+                        include_image_data=False,
                     )
                     if not data:
                         return None
@@ -924,10 +984,33 @@ class _PWThumbnailsMixin:
             result = await asyncio.to_thread(_fetch)
             if not result or 'thumbnails' not in result:
                 self._log_open_thumbnail_trace('patient_tab_thumb_socket_empty')
+                catalog_entries, missing_media = self._reconcile_server_thumbnail_entries(
+                    cached_files=thumbnails,
+                )
+                if catalog_entries:
+                    self._log_open_thumbnail_trace(
+                        'patient_tab_thumb_catalog_complete',
+                        expected_count=len(catalog_entries),
+                        missing_media=missing_media,
+                        source='socket_empty',
+                    )
+                    self._pending_thumbnails_entries = catalog_entries
+                    self._pending_thumbnails_persist_counts = False
+                    QMetaObject.invokeMethod(
+                        self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection
+                    )
                 return
 
-            series_entries = []
+            socket_entries = []
+            catalog_by_uid = {
+                _get_series_uid(info): (str(key), info)
+                for key, info in (getattr(self, '_server_series_info', {}) or {}).items()
+                if _get_series_uid(info)
+            }
             for series in result.get('thumbnails', []):
+                if not isinstance(series, dict):
+                    continue
+                series = dict(series)
                 series_number = str(series.get('series_number', ''))
                 thumbnail_bytes = series.get('thumbnail_data')
                 file_path = ''
@@ -936,20 +1019,42 @@ class _PWThumbnailsMixin:
                         thumbnail_bytes = base64.b64decode(thumbnail_bytes)
                     except Exception:
                         thumbnail_bytes = b''
-                if isinstance(thumbnail_bytes, (bytes, bytearray)) and series_number:
-                    file_path = save_thumbnail_with_bytes(self.study_uid, series_number, thumbnail_bytes)
+                catalog_match = catalog_by_uid.get(_get_series_uid(series))
+                storage_key = str(
+                    ((catalog_match or ('', {}))[1] or {}).get('folder_key')
+                    or series_number
+                )
+                if (isinstance(thumbnail_bytes, (bytes, bytearray))
+                        and thumbnail_bytes and storage_key):
+                    file_path = save_thumbnail_with_bytes(
+                        self.study_uid, storage_key, thumbnail_bytes
+                    )
                 elif series.get('thumbnail_path'):
                     file_path = str(series.get('thumbnail_path') or '')
-                if not file_path:
-                    continue
                 series['file_path'] = file_path
-                series_entries.append(series)
+                if catalog_match:
+                    series['display_key'] = catalog_match[0]
+                socket_entries.append(series)
 
-            if series_entries:
-                self._reset_thumbnail_retry_state()
-                self._log_open_thumbnail_trace('ThumbnailFetchedFromServer', thumbnail_count=len(series_entries))
-                self._log_open_thumbnail_trace('patient_tab_thumb_socket_done', thumbnail_count=len(series_entries))
-                self._pending_thumbnails_entries = series_entries
+            catalog_entries, missing_media = self._reconcile_server_thumbnail_entries(
+                cached_files=thumbnails,
+                socket_entries=socket_entries,
+            )
+            if catalog_entries:
+                self._log_open_thumbnail_trace(
+                    'ThumbnailFetchedFromServer', thumbnail_count=len(socket_entries)
+                )
+                self._log_open_thumbnail_trace(
+                    'patient_tab_thumb_socket_done', thumbnail_count=len(socket_entries)
+                )
+                self._log_open_thumbnail_trace(
+                    'patient_tab_thumb_catalog_complete',
+                    expected_count=len(catalog_entries),
+                    missing_media=missing_media,
+                    source='socket',
+                )
+                self._pending_thumbnails_entries = catalog_entries
+                self._pending_thumbnails_persist_counts = True
                 QMetaObject.invokeMethod(self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection)
         except Exception as e:
             self._log_open_thumbnail_trace('patient_tab_thumb_error', level='error', error=str(e))
@@ -1005,6 +1110,12 @@ class _PWThumbnailsMixin:
         target_study_uids = [str(su) for su in studies_index.keys()]
         if not target_study_uids:
             return
+        grouped_snapshot = {
+            str(study_uid): tuple((str(key), dict(info or {})) for key, info in entries or ())
+            for study_uid, _slot, entries in (
+                getattr(self, '_multistudy_viewer_groups', None) or ()
+            )
+        }
         if self._local_thumbnail_workflow():
             QMetaObject.invokeMethod(
                 self, "_render_multistudy_grouped_slot", Qt.QueuedConnection
@@ -1037,8 +1148,19 @@ class _PWThumbnailsMixin:
 
                 for su in target_study_uids:
                     try:
-                        # Skip studies whose thumbnail cache is already populated.
-                        if check_and_get_thumbnails(self.import_folder_path, su):
+                        group_entries = grouped_snapshot.get(su, ())
+                        expected_stems = {
+                            str(info.get('folder_key') or info.get('_orig_series_number')
+                                or _get_series_number(info) or key)
+                            for key, info in group_entries
+                        }
+                        cached_files = check_and_get_thumbnails(
+                            self.import_folder_path, su
+                        ) or []
+                        cached_stems = {Path(path).stem for path in cached_files}
+                        # A non-empty directory is not a complete catalog. Skip
+                        # the socket only when every admitted series has media.
+                        if expected_stems and expected_stems.issubset(cached_stems):
                             continue
                         client = PatientListSocketClient(host=host, port=port)
                         try:
@@ -1050,21 +1172,47 @@ class _PWThumbnailsMixin:
                         if not isinstance(data, dict):
                             generation_ready = False
                             continue
+                        by_uid = {
+                            _get_series_uid(info): info
+                            for _key, info in group_entries if _get_series_uid(info)
+                        }
+                        from collections import Counter
+                        number_counts = Counter(
+                            str(info.get('_orig_series_number')
+                                or _get_series_number(info) or key)
+                            for key, info in group_entries
+                        )
+                        by_number = {
+                            str(info.get('_orig_series_number')
+                                or _get_series_number(info) or key): info
+                            for key, info in group_entries
+                            if number_counts[str(info.get('_orig_series_number')
+                                or _get_series_number(info) or key)] == 1
+                        }
                         saved = 0
+                        saved_stems = set()
                         for series in data.get('series_thumbnails') or []:
                             if not isinstance(series, dict):
                                 continue
                             series_number = str(series.get('series_number', '') or '')
+                            catalog_info = by_uid.get(_get_series_uid(series))
+                            if catalog_info is None:
+                                catalog_info = by_number.get(series_number)
+                            storage_key = str(
+                                (catalog_info or {}).get('folder_key') or series_number
+                            )
                             raw = series.get('thumbnail_data') or series.get('thumbnail_base64') or ''
                             if isinstance(raw, str) and raw:
                                 try:
                                     raw = base64.b64decode(raw)
                                 except Exception:
                                     raw = b''
-                            if isinstance(raw, (bytes, bytearray)) and series_number:
-                                save_thumbnail_with_bytes(su, series_number, raw)
+                            if (isinstance(raw, (bytes, bytearray))
+                                    and raw and storage_key):
+                                save_thumbnail_with_bytes(su, storage_key, raw)
                                 saved += 1
-                        if saved <= 0:
+                                saved_stems.add(storage_key)
+                        if not expected_stems.issubset(cached_stems | saved_stems):
                             generation_ready = False
                         self._log_open_thumbnail_trace(
                             'patient_tab_thumb_multistudy_prefetch',
@@ -1394,11 +1542,16 @@ class _PWThumbnailsMixin:
                 cached = check_and_get_thumbnails(self.import_folder_path, su) or []
                 cached_by_stem = {Path(p).stem: p for p in cached}
                 renderable = [
-                    (key, entry, cached_by_stem.get(str(entry.get('_orig_series_number') or '')))
+                    (key, entry, cached_by_stem.get(str(
+                        entry.get('folder_key') or entry.get('_orig_series_number') or ''
+                    )))
                     for key, entry in group
                 ]
-                renderable = [r for r in renderable if r[2]]
-                if not renderable:
+                renderable = [
+                    (key, entry, file_path or '')
+                    for key, entry, file_path in renderable
+                ]
+                if not group:
                     continue
 
                 header = self._make_study_header_widget(slot, su, len(renderable))
@@ -1607,7 +1760,11 @@ class _PWThumbnailsMixin:
     def _render_thumbnails_from_entries_slot(self):
         """Main-thread slot: drain _pending_thumbnails_entries and render."""
         entries = getattr(self, '_pending_thumbnails_entries', None)
+        persist_counts = bool(
+            getattr(self, '_pending_thumbnails_persist_counts', True)
+        )
         self._pending_thumbnails_entries = None
+        self._pending_thumbnails_persist_counts = True
         if (getattr(self, '_pipeline_prepare_retired', False)
                 or getattr(getattr(self, 'thumbnail_manager', None), '_disposed', False)
                 or ((getattr(self, '_is_multistudy_hint', False)
@@ -1616,7 +1773,9 @@ class _PWThumbnailsMixin:
             return
         if entries:
             self._log_open_thumbnail_trace('patient_tab_thumb_render_entries', thumbnail_count=len(entries))
-            self._render_thumbnails_from_entries(entries)
+            self._render_thumbnails_from_entries(
+                entries, persist_counts=persist_counts
+            )
 
     def _render_thumbnails_from_entries(
         self, series_entries: list, *, start_index=0, local_verified=False, persist_counts=True,

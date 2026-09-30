@@ -225,6 +225,9 @@ class CourseEditorWidget(QWidget):
         self.load_course()
         self.setup_ui()
         self.load_slides()
+        if not self.course_data.get("is_editable", True):
+            self.setEnabled(False)
+            self.setToolTip("This course was exported with editing disabled.")
     
     def load_course(self):
         """Load course data from database."""

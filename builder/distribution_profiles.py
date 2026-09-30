@@ -205,7 +205,8 @@ def stage_edition(source, destination, edition, *, for_distribution=True):
         "slicer_included": edition.include_slicer,
         "offline_lumbar_included": edition.include_offline_lumbar,
         "eagle_eye_execution": "server" if edition.include_offline_lumbar else "client",
-        "eagle_eye_features": ['brain', 'brain_lesions', 'lumbar', 'alignment', 'total_spine'] if edition.include_offline_lumbar else [],
+        "eagle_eye_features": ['brain', 'brain_lesions', 'lumbar', 'alignment', 'total_spine',
+                                'breast', 'bone_age'] if edition.include_offline_lumbar else [],
         "model_task": "vertebrae_mr" if edition.include_offline_lumbar else None,
     }
     (manifest_dir / "distribution.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
@@ -260,6 +261,10 @@ def validate_edition(stage, edition, *, for_distribution=True):
             validate_alignment(payload / 'eagle_eye/alignment', for_distribution=for_distribution)
             from builder.eagle_eye_total_spine_payload import validate_payload as validate_total_spine
             validate_total_spine(payload / 'eagle_eye/total-spine', for_distribution=for_distribution)
+            from builder.eagle_eye_engine_payload import validate_payload as validate_engine
+            for engine in ('breast', 'bone-age'):
+                validate_engine(payload / 'eagle_eye' / engine, engine,
+                                for_distribution=for_distribution)
             from modules.ai_imaging.offline_lumbar.bundle import validate_bundle
             if not (modules / "AIPacsOfflineLumbar.py").is_file():
                 raise RuntimeError("Eagle Eye Slicer integration is missing: AIPacsOfflineLumbar.py")

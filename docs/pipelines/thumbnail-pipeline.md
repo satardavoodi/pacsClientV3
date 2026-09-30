@@ -1,5 +1,96 @@
 # Thumbnail Pipeline — As-Built Reference
 
+## September 30 patient-wide study discovery before Server admission
+
+Complete card membership starts with complete StudyInstanceUID discovery. A filtered
+Home row's `total_studies`, modalities and UID list describe that query, not necessarily
+the whole patient. Server double-click therefore awaits one unfiltered exact-patient
+socket read on a worker through the existing discovery method. Home reconcile reuses
+its global row at that same boundary; both normalize explicit identities with
+`PacsClient.utils.patient_study_set.patient_row_study_uids`. Reject foreign owners,
+retain selected-study-first order, and reserve existing study groups before media
+presentation. Local never enters this network step. Legacy incomplete global replies
+use the existing modality adapter and expose remaining count mismatches in logs.
+This does not add a thumbnail producer, change group offsets/counters, or guarantee
+server completeness under failure. Fresh-source latency and visual acceptance remain
+pending; see the September 30 OPT-58/60 receipt in the UI-stall report.
+
+## September 29 mixed and nonspatial series thumbnail repair
+
+Series membership and frame membership are distinct. A scanner may preserve a
+metadata-only Raw Data Storage object beside pixel-bearing MR objects under one
+SeriesInstanceUID. Keep that object in the canonical series folder, but never submit it
+as an image frame or spatial-geometry input. The shared partial-read pixel authority
+(`try_dicom_file_pixel_facts`) owns this classification for Import, Local thumbnails
+and viewers.
+
+Ordinary single-frame PNG preparation still uses the geometry-aware preview first.
+Only after that preview fails, and only when the exact folder is conclusively a
+single-frame pixel collection, the worker-owned repair decodes one representative
+middle image without constructing a volume. This covers conventional nonspatial
+MG/US as well as image objects accompanied by preserved metadata-only objects. An
+indeterminate header, UID mismatch, mixed single/multi-frame set or multi-object DX
+presentation fails closed. Import passes the already-failed preview state into repair
+to avoid repeating the same geometry scan. Enhanced
+multi-frame repair likewise steps over verified metadata-only companions before
+selecting its frame source. This is one repair boundary, not a new producer or cache;
+no Qt-thread disk/decode work, card membership/order, storage key, viewer geometry or
+download state changes. See the OPT-60 master-plan receipt and
+`test_local_multiframe_thumbnail_repair.py`.
+
+Home Local is a consumer of that same repair boundary. Its projection already runs in
+`asyncio.to_thread`; on a canonical/hinted PNG miss it may invoke shared repair there,
+never from the Qt thread and never through a Home-specific decoder. Repair is
+single-flight for one `(StudyInstanceUID, folder_key)`, rechecks the canonical PNG after
+acquiring its bounded striped lock, and returns that file to concurrent Home/Patient-Tab
+callers. Grouped multi-study ordering uses a tagged numeric/text SeriesNumber key so
+textual protocol/document labels cannot abort the final render. Placeholders remain the
+fail-closed result when shared repair rejects the input.
+
+## September 28-29 cold-cache Patient-Tab convergence
+
+Server Patient Tabs remain cache-first. On a cache miss or incomplete cache, the
+initial series catalog is essential navigation, not cosmetic open-time work: a
+manual-only viewer needs those cards before the user can select the first series.
+It therefore bypasses `should_defer_noncritical_open_network` and enters the existing
+`asyncio.to_thread` socket worker immediately. Do not reintroduce the retired retry
+timer, add a second fetcher, synchronous fallback, Home-to-Patient copy, or polling.
+A successful fetch writes the established shared cache and enters the existing entry
+renderer. Right-panel, attachment and other genuinely noncritical work retains its
+existing first-paint throttle.
+
+Actual first-series visibility belongs to `ViewerController._first_series_displayed`
+and is exposed through `PatientWidget.has_first_series_displayed()`. The widget's
+legacy flag is only an early-construction fallback. `loading_complete` can also mean
+that an intentionally empty manual layout has settled. Home must query the viewer
+before publishing `first_series_visible` or replaying deferred tasks; shell settlement
+is logged separately as `viewer_shell_settled_without_series`. This distinction avoids
+both premature task replay and the dependency cycle in which a series cannot be
+selected until its cards exist. See `test_patient_tab_thumbnail_convergence.py` and
+the OPT-58/60 UI-stall receipt. Fresh source cold-cache visual acceptance remains open.
+
+Card membership and thumbnail media are separate contracts. The authoritative
+`_server_series_info` catalog defines every admitted card exactly once. Cached PNGs,
+socket bytes and socket paths only enrich those rows, matched by SeriesInstanceUID
+first; raw SeriesNumber fallback is legal only when unique. A non-empty cache is not
+complete unless it covers every catalog storage key. Partial cache therefore continues
+through the same bounded socket worker and produces one final presentation generation,
+not an early partial render plus a second writer.
+
+Single- and multi-study schedulers retain catalog rows whose media is missing and use
+the shared lightweight placeholder. Duplicate SeriesNumbers persist media under their
+existing canonical `folder_key`, never a viewer offset or ambiguous raw number. Empty
+or invalid byte payloads are not written as PNG files. These rules preserve card count,
+order, click/drag identity and download state without adding a producer, polling loop,
+GUI-thread read or independent cache. The seven synthetic completeness/convergence
+assertions fail before their respective corrections. A complete cache is a presentation
+input only: it renders the catalog once without launching the count-persistence writer;
+only fresh authoritative entries may persist counts. The September 29 follow-up added
+two exact fail-before guards for essential-bootstrap throttle bypass and shell/image
+signal separation. All six convergence-file guards pass, and the expanded boundary
+selection is 187 passed. Fresh source single/multi-study cold and partial-cache
+acceptance remains open.
+
 ## September 26 patient-tab representative thumbnail authority
 
 The small thumbnail in the patient title-bar tab is derived from the same admitted
@@ -697,18 +788,14 @@ disk read — never to a blank thumbnail.
 3. **Multi-study flicker + ordering** (same day, first pass) — see
    `docs/MULTI_STUDY_SINGLE_TAB_PLAN.md` §"Follow-up fixes".
 
-4. **Viewer-tab sidebar latency — faster deferred-retry poll.**
-   On a cache miss while a heavy download is active,
-   `_load_server_thumbnails_async` defers the sidebar thumbnail load
-   (`should_defer_noncritical_open_network`) and polls the local cache via
-   `_schedule_deferred_server_thumbnail_retry`. The poll interval was a flat
-   **700 ms**, so the sidebar lagged the main page by up to 700 ms even
-   though the download warms the (tiny) thumbnail cache within a few hundred
-   ms. The retry is now **150 ms for the first 8 ticks** (≈1.2 s of dense
-   polling) then 700 ms for the slow-download tail — same ~8 s total budget,
-   but the common case renders ~150–300 ms after the cache is ready. Each
-   tick is only a cheap on-disk check; the heavy-download throttle policy
-   itself is unchanged.
+4. **Viewer-tab sidebar latency — historical retry path retired.**
+   The May implementation treated a cache-miss catalog request as noncritical
+   and polled the cache before entering the socket worker. September 29 evidence
+   showed that this creates a first-series dependency cycle and an observed
+   multi-second delay despite a sub-100 ms server response. The retry method and
+   timer state are now removed. The same cache-first lookup and existing off-GUI
+   socket worker remain; only the incorrect cosmetic-throttle classification was
+   removed.
 
 ---
 

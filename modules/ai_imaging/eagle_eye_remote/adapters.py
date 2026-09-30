@@ -40,9 +40,14 @@ def execute(request, records, output, cancel=None):
             reference_id=params.get('reference_id', 'volbrain'))
     if module == 'brain-lesions':
         from ..eagle_eye_brain.lesions import run_lesions
+        extras = {}
+        for role in ('flair_secondary', 't1_post'):
+            if role in request['series']:
+                extras[role + '_source'] = role_path(records, role)
+                extras[role + '_uid'] = request['series'][role]['series_uid']
         return run_lesions(role_path(records, 't1'), role_path(records, 'flair'),
             study_uid=study, t1_uid=request['series']['t1']['series_uid'],
-            flair_uid=request['series']['flair']['series_uid'], root=output, cancel=cancel, **params)
+            flair_uid=request['series']['flair']['series_uid'], root=output, cancel=cancel, **params, **extras)
     if module in ('alignment', 'total-spine'):
         from ..eagle_eye_alignment.service import load_image, predict
         ref = request['series']['primary']

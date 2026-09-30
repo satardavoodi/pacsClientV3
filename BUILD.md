@@ -5,6 +5,15 @@ Audience: human maintainers and AI agents.
 
 Documentation map: [`docs/release-and-build/README.md`](docs/release-and-build/README.md).
 
+**Pending next-build inclusion (2026-09-27):** Before freezing any candidate
+containing Advanced Analysis, complete the
+[vascular/bronchoscopy handoff](docs/release-and-build/ADVANCED_ANALYSIS_NEXT_BUILD_2026-09-27.md).
+It requires the updated Python workspaces and a fresh asset cache containing the
+verified VMTK bundle, explicitly selected with `--asset-root`. The historical
+default cache is insufficient for this change. Reuse the existing custom Slicer
+C++ baseline; these Python/UI changes do not require recompiling that core.
+Source verification is not proof of inclusion in existing installers.
+
 This is the single entry point for creating AI-PACS installers. Backend-specific
 documents explain implementation details and historical recovery, but they do not
 replace this procedure. If another build document conflicts with this file, stop
@@ -20,9 +29,11 @@ role or report one-backend diagnostic output as a completed build. The two roles
 may use the same version number but have separate build candidates, receipts,
 inventories, and acceptance decisions.
 
-The only exception is an explicit request containing words such as "diagnostic",
-"one backend", or a named single edition. That request may use the internal lane
-and remains non-promotable. If a full build is interrupted, continue or recover
+An explicit one-backend install-QA request may select that backend through the
+same coordinator and canonical installer folder, but is not the complete
+role-selected build or a release candidate. A single-edition diagnostic still
+uses the internal lane and remains inside its isolated workspace. If a full
+build is interrupted, continue or recover
 the same immutable candidate according to this runbook; do not switch to a backend
 script or invent a new output route.
 
@@ -50,17 +61,18 @@ candidate with one command:
 The official Client lane builds both backends and only Standard plus ARM. It
 does not require or stage the Eagle Eye offline model cache. Add `--target server`
 only for an explicit Eagle Eye Server request; that builds only the two Eagle Eye
-installers. The Server release lane currently fails closed because portable
-Breast/Bone bundles, service installation, and clean-host qualification are not
-finished. `--local-install-qa --target server` can produce non-promotable candidate
+installers. Standalone Breast/Bone build inputs were prepared for v3.6.9, but
+their frozen installer portability, service installation, and clean-host
+qualification are not finished. The Server release lane therefore still fails
+closed. `--local-install-qa --target server` can produce non-promotable candidate
 installers only after its required input gates pass. Brain/model preflight applies
 only to Server.
 The unattended service also needs real `pywin32==311` native modules and an
-inventoried offline wheel in a **new immutable** dependency cache.
-`pywin32-ctypes` is not a substitute. The current VC143 Slicer runtime remains
-the shared native baseline, but the current cache is not yet service-qualified
-for a frozen Server installer; the coordinator now stops Server preparation
-before compilation. Client preparation does not require pywin32. See
+inventoried offline wheel in an immutable dependency cache.
+`pywin32-ctypes` is not a substitute. The September 28 cache documented below
+passes that input preflight and retains the shared VC143 Slicer native baseline;
+it does not prove frozen service operation or installer lifecycle. The Server
+release lane remains blocked. Client preparation does not require pywin32. See
 [`builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md`](builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md)
 for the gap and installed acceptance gates.
 
@@ -84,6 +96,28 @@ The diagnostic defaults to Standard PyInstaller. `--backend nuitka` or
 `--edition eagle-eye` / `--edition arm` selects another explicit diagnostic target.
 Its isolated output is deliberately non-promotable.
 
+### Explicit one-backend Server install QA
+
+Only when the owner explicitly requests a single Server backend, keep the
+canonical coordinator and folder but select that backend:
+
+```powershell
+& .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
+  --local-install-qa --target server --backend python `
+  --asset-root generated-files/distribution-assets-native-vc143-vmtk-service-20260928
+```
+
+This creates only the PyInstaller Eagle Eye installer in
+`builder/output/installer/`; it does not invoke Nuitka or replace the existing
+Nuitka Server file. The immutable snapshot records `build_backends`, the run
+status records the selected backend, and cross-backend coherence is explicitly
+not applicable. The PyInstaller stage and installer still pass their ordinary
+Server gates. The prior same-version PyInstaller Server file and metadata are
+archived in that folder's `_superseded` directory. Do not describe this one
+file as a complete two-backend Server build, a Git-published release, or
+production-approved; normal release gates and installed Server acceptance
+remain unchanged. Use `--resume-workspace` for an interrupted candidate.
+
 ### Local role-selected install QA
 
 When the owner explicitly requests installable local artifacts before Git or legal
@@ -96,9 +130,14 @@ distribution approval, use the same role selection in local install-QA mode:
 
 The default produces four Client installers. For two Eagle Eye Server candidates,
 append `--target server`. Both modes write only to the same two canonical folders.
-The Server candidate validates available model payloads but does not imply that
-Breast/Bone or service deployment is portable or clinically qualified. Neither
-mode claims redistribution approval, publication, signing, or production acceptance.
+The Server candidate validates sealed standalone Breast/Bone payloads, but does
+not prove their installed portability, service deployment, or clinical
+qualification. The model inputs default to
+`generated-files/eagle-eye/{breast,bone-age}-portable-<version>`; prepare a new
+version with `tools/eagle_eye/prepare_portable_breast_bone.py` and the verified
+development bundle plus a complete Windows Python base. Do not replace the
+developer bundles or silently omit either model. Neither mode claims
+redistribution approval, publication, signing, or production acceptance.
 
 Advanced MPR parity preflight first requires `aipacs-native-build.json` in both
 the assembled Developer Run runtime and the immutable asset cache. That record
@@ -127,6 +166,31 @@ and verify it with `--check --profile client --root <fresh-cache-path>`.
 Pass the same path to the coordinator with `--asset-root`. This is compiler/input
 cache, not a third installer output location; Client preparation must not stage
 the Eagle Eye offline model. Do not modify a completed cache in place.
+
+When Server dependencies change, retain verified large model/tool inputs and
+refresh the build-interpreter locks/wheels **only in a fresh cache**:
+
+```powershell
+.\.venv_build\Scripts\python.exe tools/build/prepare_distribution_assets.py --profile all --root <fresh-cache-path> --reuse-non-slicer-assets <verified-complete-cache> --download-wheels
+```
+
+This reuses inventoried non-Slicer assets, snapshots the current native Slicer
+and VMTK bundle, freezes the actual `.venv_build` versions, and checks their
+hashed wheels with an offline dependency-resolution dry run. Matching wheels
+are reused; the donor's model locks and files remain unchanged. A failed wheel
+check must not create a completed manifest. It does not install dependencies,
+recompile Slicer, qualify models or authorize the Server release lane. Verify
+the new cache and run the Server dependency preflight before selecting it.
+
+The September 28 cache at
+`generated-files/distribution-assets-native-vc143-vmtk-service-20260928/`
+passed independent full-inventory/VMTK verification (34,469 files), real
+pywin32 service-dependency preflight, and Developer Run native Slicer parity.
+Select it explicitly with `--asset-root` for a candidate that contains the
+current Advanced Analysis and service inputs. This cache result does **not**
+lift the Server release block above or qualify any model, installer lifecycle,
+clean-host acceptance, source commit, or Git synchronization receipt.
+
 The parity preflight then compares the cached Slicer runtime with the
 assembled runtime used by Developer Run. Packaging overlays the current
 source startup script into each staged Slicer payload and records startup plus
@@ -157,7 +221,8 @@ Windows acceptance are documented in
 The earlier lumbar-only asset cache does not satisfy this new contract. The
 coordinator automatically uses `generated-files/eagle-eye/brain-tf212-py310` or an
 explicit `--brain-source`. Do not bypass the payload validation to build an
-incomplete Eagle Eye installer. Standard and ARM exclude both Eagle Eye models.
+incomplete Eagle Eye installer. Standard and ARM exclude every Eagle Eye model
+payload, including the standalone Breast and Bone Age runtimes.
 
 A Client candidate contains four standalone Windows installers; a Server candidate
 contains two. Each selected backend builds one core and only its requested edition
@@ -165,10 +230,10 @@ views. The 3.6.7 six-file build is historical evidence, not the new default.
 
 | Backend | Edition | Required filename | Runtime policy |
 |---|---|---|---|
-| Python/PyInstaller | Eagle Eye Server | `builder/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, and available offline models; server release qualification pending |
+| Python/PyInstaller | Eagle Eye Server | `builder/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, required offline models and standalone Breast/Bone Age; server release qualification pending |
 | Python/PyInstaller | Standard | `builder/output/installer/ai-pacs standard v<version>.exe` | x64 and Slicer; no Eagle Eye Brain/Lumbar assets |
 | Python/PyInstaller | ARM64 emulation | `builder/output/installer/ai-pacs arm64-emulated v<version>.exe` | x64-on-ARM64 and Slicer; no Eagle Eye Brain/Lumbar assets |
-| Nuitka | Eagle Eye Server | `builder nuitka/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, and available offline models; server release qualification pending |
+| Nuitka | Eagle Eye Server | `builder nuitka/output/installer/ai-pacs eagle-eye v<version>.exe` | x64, Slicer, required offline models and standalone Breast/Bone Age; server release qualification pending |
 | Nuitka | Standard | `builder nuitka/output/installer/ai-pacs standard v<version>.exe` | x64 and Slicer; no Eagle Eye Brain/Lumbar assets |
 | Nuitka | ARM64 emulation | `builder nuitka/output/installer/ai-pacs arm64-emulated v<version>.exe` | x64-on-ARM64 and Slicer; no Eagle Eye Brain/Lumbar assets |
 
@@ -293,7 +358,7 @@ Minimum commands from the repository root:
 git status --short
 & .\.venv_build\Scripts\python.exe -m pip check
 & .\.venv_build\Scripts\python.exe tools\dev\verify_plugin_mirrors.py
-& .\.venv_build\Scripts\python.exe tools\build\prepare_distribution_assets.py --check
+& .\.venv_build\Scripts\python.exe tools\build\prepare_distribution_assets.py --check --profile all --root generated-files/distribution-assets-native-vc143-vmtk-service-20260928
 $env:QT_QPA_PLATFORM = "offscreen"
 $env:PYTHONPATH = "."
 $env:AIPACS_SKIP_GIT_FETCH = "1" # Test isolation only; the candidate runner removes this override.
@@ -350,20 +415,22 @@ $version = & .\.venv_build\Scripts\python.exe -c "import pathlib,tomllib; print(
 $releaseHead = git rev-parse HEAD
 $receipt = "generated-files\release-git\v$version-$($releaseHead.Substring(0, 12)).json"
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
-  --git-sync-receipt $receipt
+  --git-sync-receipt $receipt `
+  --asset-root generated-files/distribution-assets-native-vc143-vmtk-service-20260928
 ```
 
 For an explicit Eagle Eye Server install-QA request, use the same coordinator:
 
 ```powershell
 & .\.venv_build\Scripts\python.exe tools\build\build_local_candidate.py `
-  --local-install-qa --target server
+  --local-install-qa --target server `
+  --asset-root generated-files/distribution-assets-native-vc143-vmtk-service-20260928
 ```
 
 This produces only the two Eagle Eye installers, not Standard or ARM. Do not
-describe them as release-qualified server installers while portable Breast/Bone,
-headless service installation, GPU validation, and clean-server acceptance remain
-unfinished. A receipt-backed `--target server` is deliberately blocked until
+describe them as release-qualified server installers while installed Breast/Bone
+portability, headless service installation, GPU validation, and clean-server
+acceptance remain unfinished. A receipt-backed `--target server` is deliberately blocked until
 those gates are implemented and verified. Never rename an older Eagle Eye file
 to satisfy this request.
 
@@ -443,8 +510,14 @@ Resume through the same root coordinator, never by choosing a backend command:
 The coordinator infers the recorded release/local-QA lane, revalidates the immutable
 source and external asset locations, refuses a still-running recorded process,
 skips a backend only when it completed with exit code 0 and all installers for
-the recorded `build_target` still exist (two Client or one Server per backend),
-and resumes Nuitka only across the release stages
+the recorded `build_target` still exist (two Client or one Server per backend).
+For a non-promotable local install-QA candidate only, a completed backend whose
+canonical installers were removed by a later role's former shared-folder cleanup
+may be restored from that same candidate's completed Inno compiler stage and
+log, with exact filenames and fresh SHA-256 verification. No release candidate
+may use that recovery. Clean backend preparation now leaves an externally
+directed canonical installer folder intact, preserving the other role. The
+coordinator resumes Nuitka only across the release stages
 `0, 6, 7, 8, 9, 10`. It then reruns cross-backend coherence. It
 must never enter diagnostic stages 1-5 while recovering a full candidate. Do not
 start a fresh candidate merely because the controlling terminal or agent stopped;

@@ -60,6 +60,12 @@ from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backen
 
 
 def _resolve_active_ai_identity() -> tuple[str, str | None, str | None]:
+    from modules.EchoMind import remote_backend
+    if remote_backend.selected():
+        from modules.EchoMind.entitlement import company_entitled
+        if company_entitled():
+            return 'server', 'Eagle Eye Server - EchoMind', Manage.instance().get_irannobat_key()
+        return 'server', None, None
     if get_llm_backend() == "openai":
         cfg = get_openai_settings()
         api_key = str(cfg.get("api_key") or "").strip()
@@ -256,6 +262,9 @@ def _dbg_response(tag: str, resp) -> None:
 # directive: route decisions through the one authority, not bespoke checks.
 def _ai_backend() -> str:
     """``"openai"`` or ``"company"`` — the single read of the setting."""
+    from modules.EchoMind import remote_backend
+    if remote_backend.selected():
+        return 'server'
     return "openai" if get_llm_backend() == "openai" else "company"
 
 
@@ -271,6 +280,9 @@ def _ai_module(backend: str | None = None):
     `translate_report`, `BreastExpertAssistant`, `ImageQualityAnalyzer`.
     """
     resolved = backend or _ai_backend()
+    from modules.EchoMind import remote_backend
+    if resolved == 'server' or remote_backend.selected():
+        return remote_backend
     return openai_direct if resolved == "openai" else company_direct
 
 
@@ -803,7 +815,7 @@ class ModePickerPage(QWidget):
 
         # ستون چپ
         self.left_wrap = QWidget(self)
-        self.left_wrap.setFixedWidth(260)
+        self.left_wrap.setFixedWidth(238)
         self.left = QVBoxLayout(self.left_wrap)
         self.left.setContentsMargins(8, 8, 8, 8)
         self.left.setSpacing(12)
@@ -1281,6 +1293,7 @@ class OneChatPage(QWidget):
 
     # ✅ سیگنال درست در سطح کلاس
     backRequested = Signal()
+    medicalConsultRequested = Signal(str)
 
     def __init__(self, study_uid: str = None, page_mode: str = "Chat"):
         super().__init__()
@@ -1318,6 +1331,8 @@ class OneChatPage(QWidget):
 
         # ----- LEFT -----
         self.left = QVBoxLayout()
+        self.left.setContentsMargins(10, 14, 10, 12)
+        self.left.setSpacing(8)
         self.btn_back = QPushButton(" ← Back")
         self.btn_back.setCursor(Qt.PointingHandCursor)
         self.btn_back.setStyleSheet(
@@ -1336,11 +1351,11 @@ class OneChatPage(QWidget):
         self.btn_new.setCursor(Qt.PointingHandCursor)
         self.btn_new.setStyleSheet(
             "QPushButton{"
-            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(46,139,87,0.65),stop:1 rgba(36,121,162,0.62));"
+            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #244b61,stop:1 #283c59);"
             "color:#ffffff;"
-            "border:1px solid rgba(140,208,228,0.65);"
+            "border:1px solid #496c85;"
             "border-radius:12px;padding:10px 14px;margin:6px;font-weight:700;}"
-            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(52,158,99,0.78),stop:1 rgba(42,137,184,0.74));}"
+            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #305f78,stop:1 #344e70);}"
             "QPushButton:pressed{background:rgba(38,126,167,0.82);}"
         )
 
@@ -1361,7 +1376,7 @@ class OneChatPage(QWidget):
         self.left.addWidget(self.list, 1)
 
         left_wrap = QWidget(); left_wrap.setLayout(self.left)
-        left_wrap.setFixedWidth(260)
+        left_wrap.setFixedWidth(238)
         left_wrap.setStyleSheet(
             "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
             "stop:0 rgba(33,37,44,0.98),stop:1 rgba(22,25,31,0.98));"
@@ -1370,6 +1385,7 @@ class OneChatPage(QWidget):
 
         # ----- RIGHT -----
         self.history = ChatHistory()
+        conversation_background = self.history.set_mode_background(self.page_mode)
         ph = {
             "Chat":   "Write your message…",
             "Report": "Write/paste report text",
@@ -1377,6 +1393,8 @@ class OneChatPage(QWidget):
         }.get(self.page_mode, "Write your message…")
 
         self.composer = UnifiedComposer(ph)
+        self.composer.set_reference_mode(self.page_mode == 'Assist')
+        self.composer.set_visual_mode(self.page_mode)
 
         self.composer.sendClicked.connect(self._on_send_clicked)
         self.composer.transcribeRequested.connect(self._transcribe_now)
@@ -1394,9 +1412,14 @@ class OneChatPage(QWidget):
         self.composer.btn_modality.clicked.connect(self._show_modality_menu)
 
         right = QVBoxLayout(); right.setContentsMargins(0,0,0,10); right.setSpacing(0)
+        mode_accent = {'Report': '#79b8f4', 'Assist': '#67cdb1', 'ChatGPT': '#bba1ef'}.get(self.page_mode, '#a5b6c9')
+        workspace_heading = QLabel(f'EchoMind  /  {self.page_mode}')
+        workspace_heading.setStyleSheet(f'color: {mode_accent}; background: transparent; font-size: 15px; font-weight: 600; padding: 17px 22px 13px;')
+        right.addWidget(workspace_heading)
         right.addWidget(self.history, 1); right.addWidget(self.composer, 0)
         right_wrap = QWidget(); right_wrap.setLayout(right)
-        right_wrap.setStyleSheet(f"background:{CLR_BG};")
+        right_wrap.setObjectName('echoConversationPanel')
+        right_wrap.setStyleSheet(f"QWidget#echoConversationPanel {{ background-color: {conversation_background}; }}")
 
         # 2026-08-08: per-chat case metadata as the FIRST CARD INSIDE the chat.
         # NOT a sidebar. Case metadata is conversation context, so it belongs in the
@@ -2974,6 +2997,10 @@ class OneChatPage(QWidget):
             # Correction is the final targeted-revision step → use the dedicated (stronger)
             # correction model. On the company/GapGPT path this is gpt-5.4 (was gpt-4.1-mini);
             # on the OpenAI path it resolves via the "correction" feature in Settings.
+            from modules.EchoMind import remote_backend
+            if remote_backend.selected():
+                return remote_backend.correction(report_text, note, turbo=turbo,
+                    study_profile=self._correction_gate_profile() if turbo else None)
             return _ai_module(backend).correction(
                 user_report=report_text,  # Full JSON report
                 correction_note=note,
@@ -3315,6 +3342,11 @@ class OneChatPage(QWidget):
 
         def work():
             # ── Turbo's OWN prompt (owner decision 2026-08-08) ──────────────
+            from modules.EchoMind import remote_backend
+            _gate = self._build_gate_profile(user_msg)
+            if remote_backend.selected():
+                return remote_backend.reporter(user_msg, modality, normal_template,
+                    workflow='turbo', study_profile=_gate)
             # reporter() is shared: Turbo always, and Send whenever the backend is
             # `company` (the default). So the Turbo/Send split has to be made HERE —
             # this is the only place that knows the request is Turbo. Send calls the
@@ -3322,10 +3354,8 @@ class OneChatPage(QWidget):
             # Fully swallowed: None means "use the shared builder", so a failure in
             # the Turbo prompt costs a divergence, never a report.
             _turbo_sys = None
-            _gate = None
             try:
                 from .turbo_prompt import build_turbo_system_prompt
-                _gate = self._build_gate_profile(user_msg)
                 _turbo_sys = build_turbo_system_prompt(
                     modality, normal_template or "",
                     profile=_gate,
@@ -3505,11 +3535,12 @@ class OneChatPage(QWidget):
 
         has_text = bool(text.strip()) or bool(self.controller.session_id)
         items = [
-            ("Assistant", has_text, "Enter some text or use an existing session."),
-            ("Search", bool(text.strip()), "For Search, you must enter text."),
+            ("Radiopaedia", "Assistant", has_text, "Enter some text or use an existing session."),
+            ("Textbook", "Search", bool(text.strip()), "Enter a reference question."),
+            ("Web Search", "Web Search", bool(text.strip()), "Enter a reference question."),
         ]
 
-        for name, enabled, tip in items:
+        for name, mode, enabled, tip in items:
             act = QAction(name, menu)
             icon = self._assist_menu_icon(name)
             if icon is not None:
@@ -3518,8 +3549,8 @@ class OneChatPage(QWidget):
             act.setToolTip("" if enabled else tip)
             if enabled:
                 act.triggered.connect(
-                    lambda _=False, n=name, t=text:
-                    self._send_with_mode(t, "Assistant" if n == "Assistant" else "Search")
+                    lambda _=False, m=mode, t=text:
+                    self._send_with_mode(t, m)
                 )
             menu.addAction(act)
 
@@ -4389,7 +4420,7 @@ class OneChatPage(QWidget):
                 # Enable send_to_reception for all non-user messages that have content
                 on_send_reception = self._send_to_reception if (not is_user and html) else None
 
-                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception)
+                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None)
                 b._origin = origin 
                 try:
                     b._msg_id = int(msg_id)
@@ -5219,6 +5250,15 @@ class OneChatPage(QWidget):
 
         self._run_async(work, ok, er, typing="Translating to Persian…")
 
+    def _medical_consult(self, bubble):
+        """Consult the displayed revision, including manual edits, not stale raw JSON."""
+        from PySide6.QtGui import QTextDocument
+        document = QTextDocument()
+        document.setHtml(bubble.get_html() or '')
+        text = document.toPlainText().strip()
+        if text:
+            self.medicalConsultRequested.emit(text)
+
     def _edit_bubble(self, bubble: MessageBubble):
         """
         بدون سیگنال: یک دیالوگ ساده باز می‌کنیم، HTML را ادیت می‌گیریم،
@@ -5517,6 +5557,7 @@ class OneChatPage(QWidget):
             on_edit=on_edit,
             on_persian=on_persian,
             on_send_reception=on_send_reception,
+            on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None,
         )
         # ── 2026-07-31: the Retry chip could never appear ────────────────────
         # `_send_with_mode` seeds `_pending_retry` with {"bubble": None} and
@@ -5855,6 +5896,11 @@ class OneChatPage(QWidget):
         called reporter(). The physician got a brand-new report generated from his own
         edit note, and the report he had selected was never sent at all.
         """
+        from modules.EchoMind import remote_backend
+        if remote_backend.selected():
+            note = (self.composer.box.toPlainText() or '').strip()
+            self._send_report_correction(note, force_backend='server', turbo=True)
+            return
         prefix = ""
         try:
             from .turbo_prompt import build_turbo_correction_prefix
@@ -6085,6 +6131,7 @@ class OneChatPage(QWidget):
                 on_edit=on_edit,
                 on_persian=on_persian,
                 on_send_reception=on_send_reception,
+                on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None,
             )
             try:
                 b._msg_id = int(msg_id)
@@ -6605,12 +6652,21 @@ class OneChatPage(QWidget):
         """
 
         # ✅ HARD GATE: do not allow ANY AI action without validated API key
-        if mode in ("Chat", "Report", "Assistant", "Search", "ChatGPT"):
+        if mode in ("Chat", "Report", "Assistant", "Search", "Web Search", "ChatGPT"):
             if not is_active_backend_configured():
                 self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Access denied.")
                 return
         images_b64 = list(retry_images or []) if retry_images is not None else self._collect_request_images_base64()
         has_images = bool(images_b64)
+        from modules.EchoMind import remote_backend
+        remote_route = remote_backend.selected()
+        if remote_route and (has_images or mode not in ('Report', 'Chat', 'Assistant', 'Search', 'Web Search')):
+            self.controller.bubble('AI ChatBot', 'The server route supports text Report, Chat, Assistant and Search requests.')
+            return
+
+        if remote_route and mode in ('Assistant', 'Search', 'Web Search') and not text.strip():
+            self.controller.bubble('AI ChatBot', 'Enter text for the server reference request. Local sessions are not sent to the server.')
+            return
 
         if not text and mode == "Chat" and not has_images:
             return
@@ -6676,6 +6732,8 @@ class OneChatPage(QWidget):
             self.composer.box.clear()
 
             def work():
+                if remote_route:
+                    return remote_backend.chat(sent_text)
                 if self.controller.session_id:
                     payload = {"session_id": self.controller.session_id, "user_message": sent_text}
                 else:
@@ -6726,8 +6784,11 @@ class OneChatPage(QWidget):
             self.controller.bubble("You (Report)", report_user_line)
 
 
+            remote_template = self.composer.get_normal_template_plain_text() if remote_route else ''
             # Inside the if mode == "Report": section of _send_with_mode
             def work():
+                if remote_route:
+                    return remote_backend.reporter(sent_text, modality, remote_template)
                 payload = {}
                 if sent_text:
                     payload["text"] = sent_text
@@ -6765,6 +6826,31 @@ class OneChatPage(QWidget):
 
             QTimer.singleShot(0, lambda: self._run_async(work, ok_report, _er_for("Report"),
                                                          typing="Generating report"))
+            return
+
+        # Web research never falls back to a local prompt or report generator.
+        if mode == 'Web Search':
+            if not remote_route:
+                self.controller.bubble('AI ChatBot', 'Web Search requires an EchoMind central-server account in Settings.')
+                return
+            self.controller.bubble('You (Web Search)', sent_text)
+            self.composer.box.clear()
+
+            def work():
+                return remote_backend.web_search(sent_text)
+
+            def ok_web_search(result):
+                try:
+                    html = remote_backend.render_web_search(result['content'])
+                except (ValueError, KeyError, TypeError, remote_backend.RemoteError):
+                    self.controller.bubble('AI ChatBot', 'Web Search returned an invalid cited response.')
+                    return
+                _clear_retry_if('Web Search')
+                self._log_irannobat_usage_from_resp(result)
+                self._bubble_origin_hint = 'assistant'
+                self.controller.bubble('AI ChatBot', html)
+
+            QTimer.singleShot(0, lambda: self._run_async(work, ok_web_search, _er_for('Web Search'), typing='Searching trusted radiology sources'))
             return
 
         # ---------- ASSISTANT ----------
@@ -6805,6 +6891,9 @@ class OneChatPage(QWidget):
                 self.composer.box.clear()
 
             def work():
+                if remote_route:
+                    result = remote_backend.assistant(sent_text)
+                    return {'assistant_output': result['content'], 'usage': result.get('usage', {})}
                 payload = {}
                 if sent_text:
                     payload["text"] = sent_text
@@ -6874,6 +6963,9 @@ class OneChatPage(QWidget):
             self.composer.box.clear()
 
             def work():
+                if remote_route:
+                    result = remote_backend.search(sent_text)
+                    return {'response': result['content'], 'usage': result.get('usage', {})}
                 payload = {"user_query": sent_text}
                 _dbg_request("SEARCH", URL_SEARCH, payload)
                 r = echomind_http.post(URL_SEARCH, json=payload)
@@ -8747,7 +8839,7 @@ class ChatGPTPage(OneChatPage):
                     on_persian = getattr(self, "_persian_bubble", None)
                     on_send_reception = getattr(self, "_send_to_reception", None)
 
-                    bub = self.history.add_bubble("ChatGPT", html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception)
+                    bub = self.history.add_bubble("ChatGPT", html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult)
                     try:
                         bub.raw_report_json = rep_raw_clean
                     except Exception:

@@ -7,7 +7,19 @@ from modules.network import attachment_pending_sync as pending_mod
 from modules.network import upload_download_attchments as upload_mod
 
 
-class _FakeClient:
+class _RetryCapableClient:
+    """Synthetic upgraded server; capability and reconnect are explicit."""
+    def supports_idempotent_upload(self):
+        return True
+
+    def connect(self):
+        pass
+
+    def disconnect(self):
+        pass
+
+
+class _FakeClient(_RetryCapableClient):
     def __init__(self, response=None, exc=None):
         self._response = response
         self._exc = exc
@@ -117,7 +129,7 @@ def test_upload_transient_failure_then_success_counts_attempts(tmp_path, monkeyp
     monkeypatch.setattr(upload_mod, "list_files_in_folder", lambda _p: [str(file_path)])
     monkeypatch.setattr(upload_mod, "append_attachments_uploaded", lambda **_kwargs: True)
 
-    class _TransientClient:
+    class _TransientClient(_RetryCapableClient):
         def __init__(self):
             self.calls = 0
 
@@ -157,7 +169,7 @@ def test_upload_stop_on_error_halts_after_first_failed_file(tmp_path, monkeypatc
     )
     monkeypatch.setattr(upload_mod, "append_attachments_uploaded", lambda **_kwargs: True)
 
-    class _AlwaysFailClient:
+    class _AlwaysFailClient(_RetryCapableClient):
         def __init__(self):
             self.calls = 0
 

@@ -87,6 +87,10 @@ def is_active_backend_configured() -> bool:
     The OpenAI branch is deliberately untouched: the user's own key needs no AI-PACS
     authorisation, only EchoMind being installed.
     """
+    from modules.EchoMind import remote_backend
+    if remote_backend.selected():
+        from modules.EchoMind.entitlement import company_entitled
+        return company_entitled()
     backend = _active_backend()
     if backend == "openai":
         cfg = get_openai_settings()
@@ -96,6 +100,9 @@ def is_active_backend_configured() -> bool:
 
 
 def get_active_backend_display_name() -> str:
+    from modules.EchoMind import remote_backend
+    if remote_backend.selected():
+        return 'Eagle Eye Server - EchoMind'
     if _active_backend() == "openai":
         return "OpenAI"
     try:

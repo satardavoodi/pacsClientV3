@@ -158,9 +158,11 @@ tools/build/**/*.pyc
 /generated-files/retired-brain-references-*/
 /generated-files/slicer-control-probe/
 /generated-files/slicer-extension-research/
+/generated-files/lumen-vmtk/
 
 # Immutable local build caches, native-runtime backups, and private review evidence.
 /generated-files/distribution-assets-*/
+/generated-files/server-service-dependencies-*/
 /generated-files/slicer-runtime-*/
 /generated-files/pacs-link-review-*/
 /generated-files/release-local-settings/

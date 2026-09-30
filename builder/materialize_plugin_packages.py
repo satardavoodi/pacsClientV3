@@ -369,6 +369,8 @@ def materialize_plugin_packages(
                     slicer_startup_sha256 = stage_current_startup(package_dir, PROJECT_ROOT)
                     from builder.eagle_eye_client_payload import stage_client
                     stage_client(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
+                    from builder.lumen_vmtk_payload import stage_lumen_vmtk
+                    stage_lumen_vmtk(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
                 if module_id == "advanced_mpr" and include_eagle_eye_assets:
                     from builder.offline_lumbar_payload import stage_offline_lumbar
                     stage_offline_lumbar(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
@@ -386,6 +388,10 @@ def materialize_plugin_packages(
                     from builder.eagle_eye_total_spine_payload import stage_eagle_eye_total_spine
                     stage_eagle_eye_total_spine(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
                                                for_distribution=for_distribution)
+                    from builder.eagle_eye_engine_payload import stage_engine
+                    for engine in ('breast', 'bone-age'):
+                        stage_engine(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME, engine,
+                                     for_distribution=for_distribution)
                 has_payload = True
             else:
                 _write_runtime_payload_placeholder(package_dir, definition)

@@ -22,6 +22,14 @@ def patient_output_root(root, context):
     return Path(root) / 'brain' / 'patients' / key(patient) / 'studies' / key(study)
 
 
+def series_number_key(row):
+    """Numeric DICOM series order; missing or invalid numbers follow numbered rows."""
+    try:
+        return (0, int(str(row.get('number', '')).strip()))
+    except (ValueError, TypeError):
+        return (1, 0)
+
+
 def load_study_series(study_uid):
     from PacsClient.utils.db_manager import get_series_by_study_uid
     if not study_uid:
@@ -37,10 +45,10 @@ def load_study_series(study_uid):
         preferred = any(word in blob for word in ('mprage', 'mp rage', 't1')) and not any(
             word in blob for word in ('flair', 't2', 'localizer', 'scout', 't1map', 't1 map'))
         rows.append(dict(series_uid=str(item.get('series_uid') or ''),
-                         number=str(item.get('series_number') or ''), description=description,
+                         number=str(item['series_number']) if item.get('series_number') is not None else '', description=description,
                          image_count=item.get('image_count') or 0, path=path,
                          available=bool(path and Path(path).is_dir()), preferred=preferred))
-    return sorted(rows, key=lambda row: (not row['preferred'], row['number']))
+    return sorted(rows, key=series_number_key)
 
 
 def run_study_analysis(source, study_uid, series_uid, *, root, flair_source='', flair_series_uid=None, **kwargs):

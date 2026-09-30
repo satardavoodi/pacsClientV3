@@ -4,12 +4,13 @@ import threading
 import time
 import pytest
 
-from PySide6.QtCore import QCoreApplication
+# Other MPR tests create widgets in this same process; never seed a core-only app.
+from PySide6.QtWidgets import QApplication
 
 
 def test_launcher_imports_are_not_runtime_readiness():
     from modules.mpr.advanced_3d_slicer.slicer_launcher import SlicerPrewarmManager
-    app = QCoreApplication.instance() or QCoreApplication([])
+    app = QApplication.instance() or QApplication([])
     manager = SlicerPrewarmManager.instance()
     manager._modules_preloaded = True
     assert manager.is_ready() is False
@@ -72,6 +73,8 @@ def test_frozen_warmup_loads_guard_and_presentation_from_installed_runtime(monke
     from modules.mpr.advanced_3d_slicer.slicer_custom_app import launch_slicer
     from modules.ai_imaging.eagle_eye_remote import settings
     import aipacs_runtime
+    monkeypatch.setenv('QT_OPENGL', 'software')
+    monkeypatch.setenv('QT_PLUGIN_PATH', 'synthetic-parent-qt6-plugins')
 
     installed = tmp_path / "installed-runtime"
     relative = Path("python/modules/mpr/advanced_3d_slicer")
@@ -115,7 +118,11 @@ def test_frozen_warmup_loads_guard_and_presentation_from_installed_runtime(monke
         runtime.start()
         command = launched["command"]
         assert command[command.index("--additional-module-path") + 1] == str(guard.parent)
+        assert launched["environment"]["PYTHONPATH"] == str(guard.parent)
         assert launched["environment"]["AIPACS_RESIDENT_STARTUP"] == str(startup)
+        assert launched['environment']['QT_OPENGL'] == 'software'
+        assert launched['environment']['QT_OPENGL_DLL'] == 'opengl32sw'
+        assert 'QT_PLUGIN_PATH' not in launched['environment']
     finally:
         runtime.close()
 

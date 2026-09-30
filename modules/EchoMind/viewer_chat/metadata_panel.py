@@ -110,9 +110,9 @@ _BTN_CSS = """
 #: it sits above.
 _CARD_CSS = """
     QLabel#who { color: #ffd48a; font-weight: 600; padding-left: 6px; font-size: 12px; }
-    QFrame#bubbleBox { background: #2b2b2b; border: 1px solid #3a3a3a; border-radius: 12px; }
-    QLabel#metaKey { color: #9a9a9a; font-size: 11px; }
-    QLabel#metaVal { color: #e6e6e6; font-size: 12px; }
+    QFrame#bubbleBox { background: #172332; border: 1px solid #324357; border-radius: 14px; }
+    QLabel#metaKey { color: #9cabc0; font-size: 12px; }
+    QLabel#metaVal { color: #edf2f8; font-size: 13px; }
 """
 
 

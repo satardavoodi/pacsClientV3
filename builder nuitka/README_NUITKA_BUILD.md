@@ -11,6 +11,12 @@
 > selected Nuitka outputs under `_superseded` before Stage 10. Do not invoke Stage
 > 10 directly to overwrite an existing versioned installer.
 
+For current Eagle Eye frozen-service prerequisites, read
+[Server service packaging parity](../builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md).
+Nuitka must obey the same installed edition/listener ownership and clean-host
+acceptance gates as PyInstaller. Source-only `sys.frozen` assumptions are not a
+valid Nuitka service admission guard.
+
 This document describes the **Nuitka** build pipeline for AIPacs. Nuitka compiles
 the Python source into C/C++ and then into a native binary, which is
 significantly harder to reverse-engineer than the PyInstaller build (whose `.pyc`

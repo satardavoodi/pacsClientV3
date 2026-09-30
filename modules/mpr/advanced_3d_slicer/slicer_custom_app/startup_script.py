@@ -20,7 +20,7 @@ Key behaviors:
   2. Auto-load DICOM from NEWMPR2_DICOM_DIR
   3. Set MPR layout and configure views
   4. Activate NewMPR2MPR module (if available)
-  5. Set window title to "AI-PACS Advanced Viewer v3.6.7"
+  5. Use the current workstation product title, supplied by the launcher
 
 Usage:
   Slicer.exe --no-splash --python-script startup_script.py
@@ -320,7 +320,7 @@ def apply_immediate_branding():
         qt.QCoreApplication.setOrganizationDomain("ai-pacs.local")
         # Note: setApplicationDisplayName may not exist in all Qt versions
         try:
-            qt.QCoreApplication.setApplicationDisplayName("AI-PACS Advanced Viewer v3.6.7")
+            qt.QCoreApplication.setApplicationDisplayName(os.environ.get("AIPACS_VIEWER_TITLE", "AI-PACS Advanced Viewer"))
         except AttributeError:
             pass
         print("[NewMPR2] [OK] Application identity set (immediate)")
@@ -328,7 +328,7 @@ def apply_immediate_branding():
         # Set main window title immediately
         mw = slicer.util.mainWindow()
         if mw:
-            mw.setWindowTitle("AI-PACS Advanced Viewer v3.6.7")
+            mw.setWindowTitle(os.environ.get("AIPACS_VIEWER_TITLE", "AI-PACS Advanced Viewer"))
             print("[NewMPR2] [OK] Window title set (immediate)")
         
     except Exception as e:
@@ -419,12 +419,17 @@ def _handle_remote_load(payload: dict) -> None:
 
         primary_volume = None
         if dicom_dir:
-            primary_volume = load_dicom_folder(dicom_dir, series_uid=series_uid)
+            if payload.get("workflow"):
+                from aipacs_lumen.routing import load_exact_volume
+                primary_volume = load_exact_volume(dicom_dir, series_uid)
+            else:
+                primary_volume = load_dicom_folder(dicom_dir, series_uid=series_uid)
 
         configure_views(layout, primary_volume, args)
         apply_window_level_if_present(primary_volume, args)
         store_patient_info(patient_id, study_id, window_width, window_level, series_uid)
         set_window_title(patient_id, study_id)
+        activate_analysis_workflow(payload.get("workflow"), primary_volume)
         print("[AIPACS_REMOTE] Remote series load completed")
     except Exception as e:
         print(f"[AIPACS_REMOTE] Error handling remote load: {e}")
@@ -508,6 +513,7 @@ def parse_newmpr2_args():
     args = {
         "dicom_dir": os.environ.get("NEWMPR2_DICOM_DIR"),
         "layout": os.environ.get("NEWMPR2_LAYOUT", DEFAULT_LAYOUT).lower(),
+        "workflow": os.environ.get("NEWMPR2_WORKFLOW"),
         "patient_id": os.environ.get("NEWMPR2_PATIENT_ID"),
         "study_id": os.environ.get("NEWMPR2_STUDY_ID"),
         "window_width": None,
@@ -790,6 +796,14 @@ def set_layout(layout_name):
         print(f"[NewMPR2] [OK] Layout set to: {layout_name}")
     except Exception as e:
         print(f"[NewMPR2] Error setting layout: {e}")
+
+
+def activate_analysis_workflow(workflow, volume):
+    """Explicit product navigation after loading; leave default MPR startup intact."""
+    if not workflow:
+        return
+    from aipacs_lumen.routing import activate
+    activate(workflow, volume)
 
 
 def configure_views(layout_name, primary_volume, args):
@@ -1126,6 +1140,29 @@ def apply_window_level_if_present(volume_node, args):
         print(f"[NewMPR2] Error applying window/level: {e}")
 
 
+def promote_window(window=None):
+    """One-shot promotion for a user-requested viewer, never background warmup."""
+    window = window or slicer.util.mainWindow()
+    if window is None:
+        return False
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+    if os.name != "nt":
+        return True
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    modal = slicer.app.activeModalWidget()
+    target = modal if modal and modal.isVisible() else window
+    if target is not window:
+        target.raise_()
+        target.activateWindow()
+    return bool(user32.SetForegroundWindow(int(target.winId())))
+
+
 def set_window_title(patient_id=None, study_id=None):
     """
     Set a compact product title; keep patient/study identity in the scene.
@@ -1135,12 +1172,13 @@ def set_window_title(patient_id=None, study_id=None):
         study_id: Optional study ID
     """
     try:
-        title = "AI-PACS Advanced Viewer v3.6.7"
+        title = os.environ.get("AIPACS_VIEWER_TITLE", "AI-PACS Advanced Viewer")
         
         # Case identity remains in the scene/workstation, never in the OS title.
         
         main_window = slicer.util.mainWindow()
         if main_window:
+            slicer.app.setApplicationDisplayName(title)
             main_window.setWindowTitle(title)
             print(f"[NewMPR2Slicer] Window title set: {title}")
             
@@ -1386,10 +1424,14 @@ def run_startup():
             print(f"[AIPACS_UI_PY] Loading DICOM from: {args['dicom_dir']}")
             print(f"[AIPACS_UI_PY] Series UID to load: {args.get('series_uid', 'NOT SPECIFIED')}")
             try:
-                primary_volume = load_dicom_folder(
-                    args["dicom_dir"],
-                    series_uid=args.get("series_uid")
-                )
+                if args.get("workflow"):
+                    from aipacs_lumen.routing import load_exact_volume
+                    primary_volume = load_exact_volume(args["dicom_dir"], args.get("series_uid"))
+                else:
+                    primary_volume = load_dicom_folder(
+                        args["dicom_dir"],
+                        series_uid=args.get("series_uid")
+                    )
                 if primary_volume:
                     print(f"[AIPACS_UI_PY] [OK] Primary volume loaded: {primary_volume.GetName()}")
                     print(f"[AIPACS_UI_PY]   Volume ID: {primary_volume.GetID()}")
@@ -1419,8 +1461,11 @@ def run_startup():
         # --- STEP 4: Activate NewMPR2MPR module ---
         try:
             activate_mpr_module()
+            activate_analysis_workflow(args.get("workflow"), primary_volume)
         except Exception as e:
             print(f"[AIPACS_UI_PY] Warning: Could not activate MPR module: {e}")
+            if args.get("workflow"):
+                raise
         
         # --- STEP 5: Set window title ---
         try:
@@ -1429,6 +1474,8 @@ def run_startup():
                 study_id=args.get("study_id")
             )
             print("[AIPACS_UI_PY] [OK] Window title set")
+            if not os.environ.get("AIPACS_RESIDENT_ROLE"):
+                promote_window()
         except Exception as e:
             print(f"[AIPACS_UI_PY] Warning: Could not set window title: {e}")
         

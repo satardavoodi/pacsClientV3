@@ -370,6 +370,19 @@ class PatientWidget(_PWSyncMixin, _PWAdvancedMixin, _PWPanelsMixin, _PWViewersMi
         """Dynamic access to viewer controller's node list"""
         return self.viewer_controller.lst_nodes_viewer
 
+    def has_first_series_displayed(self) -> bool:
+        """Return the authoritative rendered-series state.
+
+        ``loading_complete`` also marks an intentionally empty manual layout as
+        settled, so it is not proof that an image is visible.  ViewerController
+        owns actual placement/render state; the widget flag is retained only as
+        a compatibility fallback during early construction.
+        """
+        controller = getattr(self, 'viewer_controller', None)
+        if controller is not None:
+            return bool(getattr(controller, '_first_series_displayed', False))
+        return bool(getattr(self, '_first_series_displayed', False))
+
     @property
     def selected_widget(self):
         """Dynamic access to viewer controller's selected widget"""

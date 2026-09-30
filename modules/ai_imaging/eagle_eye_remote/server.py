@@ -234,7 +234,7 @@ class Jobs:
             self.directory_lease.close()
 
 
-def handler(jobs, credentials, certificate_pins=None):
+def handler(jobs, credentials, certificate_pins=None, *, echomind=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'EagleEye/1'
         def log_message(self, *args):
@@ -266,8 +266,10 @@ def handler(jobs, credentials, certificate_pins=None):
             try:
                 if self.command == 'GET' and self.path == '/v1/capabilities':
                     return self.reply(200, {'protocol': 1, 'modules': list(MODULES),
+                        'echomind': echomind.capabilities if echomind else None,
                         'input_mode': 'pacs_references', 'interactive_edits': True,
                         'lesion_acquisition_modes': ['3d', '2d'],
+                        'lesion_multisequence_review': True,
                         'spine_box_segmentation': True,
                         'correction_modules': ['alignment', 'total-spine', 'brain', 'brain-lesions'], 'correction_protocol': 1})
                 if self.command == 'GET' and self.path == '/v1/jobs':
@@ -275,9 +277,18 @@ def handler(jobs, credentials, certificate_pins=None):
                 if self.command == 'POST':
                     length = int(self.headers.get('Content-Length', '0'))
                     from .contracts import MAX_REVIEW_REQUEST
-                    if not 0 < length <= MAX_REVIEW_REQUEST or self.headers.get('Transfer-Encoding'):
+                    limit = 2 * 1024 * 1024 if self.path == '/v1/echomind/process' else MAX_REVIEW_REQUEST
+                    if not 0 < length <= limit or self.headers.get('Transfer-Encoding'):
                         raise ValueError('Invalid request size.')
                     body = json.loads(self.rfile.read(length))
+                    if self.path == '/v1/echomind/process':
+                        if echomind is None:
+                            return self.reply(503, {'error': 'EchoMind is not configured on this Eagle Eye server.'})
+                        from .echomind.hosting import RequestFailed
+                        try:
+                            return self.reply(200, echomind.process(owner, body))
+                        except RequestFailed as exc:
+                            return self.reply(exc.status, {'error': str(exc)})
                     if self.path == '/v1/jobs':
                         return self.reply(202, jobs.submit(owner, body))
                 match = re.fullmatch(r'/v1/jobs/([a-f0-9]{32})(/cancel|/artifacts)?', self.path)
@@ -360,7 +371,11 @@ def create_server(config):
                                                 do_handshake_on_connect=False)
         jobs = Jobs(config['job_root'], source_provider(config['pacs']),
                     resources=config.get('resources'), max_jobs_per_client=config.get('max_jobs_per_client', 4))
-        server.RequestHandlerClass = handler(jobs, credentials, pins)
+        echomind = None
+        if config.get('echomind'):
+            from .echomind.hosting import EchoMind
+            echomind = EchoMind(config['echomind'], credentials)
+        server.RequestHandlerClass = handler(jobs, credentials, pins, echomind=echomind)
         return server, jobs
     except Exception:
         if server is not None:

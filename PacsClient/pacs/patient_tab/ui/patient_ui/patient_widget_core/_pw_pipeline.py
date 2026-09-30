@@ -320,7 +320,7 @@ class _PWPipelineMixin:
         sees a clean drop-ready layout instead of a fake loading state.
         """
         try:
-            if bool(getattr(self, '_first_series_displayed', False)):
+            if self.has_first_series_displayed():
                 return
             self._hide_init_overlay()
             if hasattr(self, '_hide_viewer_loading_all'):

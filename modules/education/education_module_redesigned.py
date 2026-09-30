@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QSpacerItem, QSizePolicy, QCheckBox,
     QGroupBox, QTreeWidget, QTreeWidgetItem, QMessageBox, QDialog,
     QProgressBar, QSlider, QListWidget, QListWidgetItem, QFileDialog,
-    QStackedWidget
+    QStackedWidget, QSplitter
 )
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont, QIcon, QPixmap
+from PySide6.QtGui import QFont, QIcon, QPixmap, QShortcut, QKeySequence
 
 import json
 import re
@@ -21,10 +21,12 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from modules.education.course_database import (
+    course_matches_query,
     get_all_courses, search_and_filter_courses, insert_course,
     delete_course, get_course_with_slides, update_course,
     get_slides_for_course, insert_slide, update_slide, delete_slide,
     reorder_slides, get_content_for_slide, insert_slide_content,
+    reorder_slide_content,
     update_slide_content, delete_slide_content, save_course_asset,
     import_resource_to_my_courses
 )
@@ -738,7 +740,7 @@ class CourseDetailsPanel(QFrame):
         layout = QVBoxLayout(content)
         layout.setSpacing(20)  # Increased section spacing: 18-22px
 
-        # Course thumbnail (if available) — gives the panel a visual anchor.
+        # Course thumbnail (if available) â€” gives the panel a visual anchor.
         thumb_path = str(course_data.get('thumbnail_path') or "").strip()
         if thumb_path and Path(thumb_path).exists():
             try:
@@ -1101,7 +1103,7 @@ class LibraryPage(QWidget):
     def on_search_changed(self, text):
         """Handle search text change."""
         self.current_search = text
-        # Debounce search — reuse a single QTimer instead of leaking a new one per keystroke.
+        # Debounce search â€” reuse a single QTimer instead of leaking a new one per keystroke.
         if not hasattr(self, 'search_timer') or self.search_timer is None:
             self.search_timer = QTimer(self)
             self.search_timer.setSingleShot(True)
@@ -1505,7 +1507,7 @@ class MyCoursesPage(QWidget):
         self.downloaded_btn = QPushButton("Downloaded (from Library)")
         self.imported_btn = QPushButton("Imported")
         self.case_of_day_btn = QPushButton("Case of the Day")
-        # Case of the Day is now a top-level Education tab — the in-page shortcut
+        # Case of the Day is now a top-level Education tab â€” the in-page shortcut
         # button is hidden to avoid two entry points for the same flow. The
         # widget is still constructed so legacy `switch_view('case_of_day')`
         # calls keep working.
@@ -1716,7 +1718,7 @@ class MyCoursesPage(QWidget):
     
     def _on_search_changed(self, text):
         self.current_search = text
-        # Reuse a single debounce timer — creating a new QTimer per keystroke leaks.
+        # Reuse a single debounce timer â€” creating a new QTimer per keystroke leaks.
         if not hasattr(self, 'search_timer') or self.search_timer is None:
             self.search_timer = QTimer(self)
             self.search_timer.setSingleShot(True)
@@ -1829,11 +1831,7 @@ class MyCoursesPage(QWidget):
             if query:
                 courses = [
                     c for c in courses
-                    if query in (c.get('course_name') or '').lower()
-                    or query in (c.get('course_description') or '').lower()
-                    or query in (c.get('author_name') or '').lower()
-                    or query in (c.get('resource_type') or '').lower()
-                    or query in (c.get('content_origin') or '').lower()
+                    if course_matches_query(c, query)
                 ]
         
         self.update_grid(courses)
@@ -2156,8 +2154,11 @@ class ItemMetaDialog(QDialog):
         self.existing_item = existing_item or {}
         self.content_type = None
         self.content_data = {}
+        self._asset_worker = None
+        self._cancel_import = False
         self.setWindowTitle("Slide Item")
         self.setMinimumWidth(620)
+        self.setAcceptDrops(True)
         self.setup_ui()
         self._load_existing()
 
@@ -2200,27 +2201,29 @@ class ItemMetaDialog(QDialog):
         type_label.setStyleSheet(label_style)
         layout.addWidget(type_label)
         self.type_combo = QComboBox()
-        self.type_combo.addItem("DICOM Image Set", "dicom")
+        self.type_combo.addItem("DICOM Image Set", "dicom_reference")
         self.type_combo.addItem("Image", "image")
         self.type_combo.addItem("Audio (Voice)", "audio")
         self.type_combo.addItem("Video", "video")
         self.type_combo.addItem("PDF", "pdf")
+        self.type_combo.addItem("Text / Teaching Notes", "text")
         self.type_combo.setStyleSheet(field_style)
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         layout.addWidget(self.type_combo)
 
-        source_label = QLabel("Content Source *")
-        source_label.setStyleSheet(label_style)
-        layout.addWidget(source_label)
+        self.source_label = QLabel("Content Source *")
+        self.source_label.setStyleSheet(label_style)
+        layout.addWidget(self.source_label)
         source_row = QHBoxLayout()
         source_row.setSpacing(10)
         self.source_input = QLineEdit()
         self.source_input.setReadOnly(True)
+        self.source_input.setAcceptDrops(False)
         self.source_input.setPlaceholderText("No source selected")
         self.source_input.setStyleSheet(field_style)
         source_row.addWidget(self.source_input, stretch=1)
         self.source_btn = QPushButton("Select")
-        self.source_btn.setFixedWidth(140)
+        self.source_btn.setFixedWidth(180)
         self.source_btn.clicked.connect(self._pick_source)
         self.source_btn.setStyleSheet("""
             QPushButton {
@@ -2235,6 +2238,43 @@ class ItemMetaDialog(QDialog):
         """)
         source_row.addWidget(self.source_btn)
         layout.addLayout(source_row)
+        self.folder_btn = QPushButton("Choose DICOM Folder...")
+        self.folder_btn.clicked.connect(self._pick_dicom_folder)
+        layout.addWidget(self.folder_btn)
+        self.folder_hint = QLabel("Or drag one DICOM study folder into this window. Files are copied into the course.")
+        self.folder_hint.setWordWrap(True)
+        layout.addWidget(self.folder_hint)
+
+        self.name_options = QWidget()
+        name_layout = QVBoxLayout(self.name_options)
+        name_layout.setContentsMargins(0, 0, 0, 0)
+        self.replace_patient_name = QCheckBox("Change patient name in the educational copy")
+        name_layout.addWidget(self.replace_patient_name)
+        self.patient_alias = QLineEdit("Teaching^Case")
+        self.patient_alias.setPlaceholderText("Replacement name: Family^Given")
+        self.patient_alias.setToolTip("Replacement Patient Name (Family^Given)")
+        self.patient_alias.setEnabled(False)
+        name_layout.addWidget(self.patient_alias)
+        self.keep_patient_id = QCheckBox("Keep Patient ID for future lookup")
+        self.keep_patient_id.setChecked(True)
+        self.keep_patient_id.setEnabled(False)
+        name_layout.addWidget(self.keep_patient_id)
+        self.replace_patient_name.toggled.connect(self.patient_alias.setEnabled)
+        self.replace_patient_name.toggled.connect(self.keep_patient_id.setEnabled)
+        note = QLabel("Changes apply to a separate copy. Image labels and other identifiers may remain; this is not full anonymization.")
+        note.setWordWrap(True)
+        name_layout.addWidget(note)
+        layout.addWidget(self.name_options)
+
+        self.text_label = QLabel("Teaching Text *")
+        self.text_label.setStyleSheet(label_style)
+        layout.addWidget(self.text_label)
+        self.text_input = QTextEdit()
+        self.text_input.setAcceptRichText(False)
+        self.text_input.setPlaceholderText("Learning objectives, question, explanation, or take-home points...")
+        self.text_input.setStyleSheet(field_style)
+        self.text_input.setMinimumHeight(150)
+        layout.addWidget(self.text_input)
 
         layout.addStretch()
         actions = QHBoxLayout()
@@ -2275,10 +2315,26 @@ class ItemMetaDialog(QDialog):
         _retint_widget_tree(self, get_theme_manager().current_theme())
 
     def _on_type_changed(self):
-        if self.type_combo.currentData() == "dicom":
-            self.source_btn.setText("Pick DICOM")
-        else:
-            self.source_btn.setText("Select File")
+        # A source is meaningful only for the type under which it was selected.
+        self.content_data = {}
+        self.content_type = None
+        self.source_input.clear()
+        self.text_input.clear()
+        self._update_type_controls()
+
+    def _update_type_controls(self):
+        type_key = self.type_combo.currentData()
+        is_text = type_key == "text"
+        self.source_label.setVisible(not is_text)
+        self.source_input.setVisible(not is_text)
+        self.source_btn.setVisible(not is_text)
+        self.source_btn.setEnabled(type_key in {"dicom", "dicom_reference", "image", "audio", "video", "pdf"})
+        self.source_btn.setText("Patient ID / Study" if type_key in {"dicom_reference", "dicom"} else "Select File")
+        self.folder_btn.setVisible(type_key in {"dicom_reference", "dicom"})
+        self.name_options.setVisible(type_key in {"dicom_reference", "dicom"})
+        self.folder_hint.setVisible(type_key in {"dicom_reference", "dicom"})
+        self.text_label.setVisible(is_text)
+        self.text_input.setVisible(is_text)
 
     def _load_existing(self):
         if not self.existing_item:
@@ -2292,9 +2348,21 @@ class ItemMetaDialog(QDialog):
         self.name_input.setText(existing_data.get("name", ""))
         self.desc_input.setPlainText(existing_data.get("description", ""))
 
-        if existing_type in {"dicom_study", "dicom_series"}:
-            self.type_combo.setCurrentIndex(0)
-            if existing_data.get("series_number"):
+        type_key = "dicom_reference" if existing_type in {"dicom_study", "dicom_series"} else existing_type
+        # Loading is not a user type change: retain the saved payload and metadata.
+        previous_block = self.type_combo.blockSignals(True)
+        try:
+            idx = self.type_combo.findData(type_key)
+            if idx < 0:
+                self.type_combo.addItem(f"Imported: {existing_type}", type_key)
+                idx = self.type_combo.count() - 1
+            self.type_combo.setCurrentIndex(idx)
+        finally:
+            self.type_combo.blockSignals(previous_block)
+        self._update_type_controls()
+
+        if type_key == "dicom_reference":
+            if existing_data.get("series_number") is not None:
                 self.source_input.setText(
                     f"Study {existing_data.get('study_uid', '')} | Series {existing_data.get('series_number')}"
                 )
@@ -2302,15 +2370,14 @@ class ItemMetaDialog(QDialog):
                 self.source_input.setText(f"Study {existing_data.get('study_uid', '')}")
             return
 
-        idx = self.type_combo.findData(existing_type)
-        if idx >= 0:
-            self.type_combo.setCurrentIndex(idx)
+        if existing_type == "text":
+            self.text_input.setPlainText(str(existing_data.get("text") or ""))
         if existing_data.get("path"):
             self.source_input.setText(existing_data.get("path"))
 
     def _pick_source(self):
         type_key = self.type_combo.currentData()
-        if type_key == "dicom":
+        if type_key in {"dicom_reference", "dicom"}:
             picker = StudyPickerDialog(self)
             if picker.exec() != QDialog.Accepted:
                 return
@@ -2318,6 +2385,14 @@ class ItemMetaDialog(QDialog):
             if not selected.get("study_uid") or not selected.get("patient_id"):
                 QMessageBox.warning(self, "Selection Required", "Please select a valid DICOM study.")
                 return
+            if self.replace_patient_name.isChecked():
+                self._import_dicom_folder(None, study_uid=selected["study_uid"],
+                                          series_number=selected.get("series_number") if selected.get("mode") == "series" else None)
+                return
+            self.type_combo.blockSignals(True)
+            self.type_combo.setCurrentIndex(self.type_combo.findData("dicom_reference"))
+            self.type_combo.blockSignals(False)
+            self.content_data = {}
             self.content_data.update({
                 "study_uid": selected.get("study_uid"),
                 "patient_id": selected.get("patient_id"),
@@ -2346,14 +2421,97 @@ class ItemMetaDialog(QDialog):
         )
         if not selected_file:
             return
-        try:
-            saved_path = save_course_asset(selected_file, self.course_pk)
-        except Exception as exc:
-            QMessageBox.critical(self, "Import Failed", f"Could not import file:\n{exc}")
+        from modules.education.authoring_tasks import CourseAssetCopyTask
+        self._asset_type = type_key
+        self._cancel_import = False
+        self._asset_worker = CourseAssetCopyTask(selected_file, self.course_pk, self)
+        self._asset_worker.finished.connect(self._asset_import_finished)
+        self.source_input.setText("Importing file...")
+        self.setEnabled(False)
+        self._asset_worker.start()
+
+    def _pick_dicom_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select one DICOM study folder")
+        if folder:
+            self._import_dicom_folder(folder)
+
+    def _import_dicom_folder(self, folder, **options):
+        if self._asset_worker is not None:
             return
-        self.content_data["path"] = saved_path
-        self.content_type = type_key
-        self.source_input.setText(saved_path)
+        if self.replace_patient_name.isChecked():
+            if not self.patient_alias.text().strip():
+                QMessageBox.warning(self, "Patient Name", "Enter a replacement patient name before importing.")
+                return
+            options.update(replacement_name=self.patient_alias.text().strip(),
+                           keep_patient_id=self.keep_patient_id.isChecked())
+        from modules.education.dicom_folder_import import DicomFolderImportTask
+        self._asset_type = "dicom"
+        self._cancel_import = False
+        self._source_before_import = self.source_input.text()
+        self._asset_worker = DicomFolderImportTask(folder, self.course_pk, self, **options)
+        self._asset_worker.finished.connect(self._asset_import_finished)
+        self.source_input.setText("Checking and copying DICOM files...")
+        self.setEnabled(False)
+        self._asset_worker.start()
+
+    def _dropped_folder_url(self, event):
+        if self._asset_worker is not None or self.type_combo.currentData() not in {"dicom_reference", "dicom"}:
+            return None
+        urls = event.mimeData().urls()
+        return urls[0] if len(urls) == 1 and urls[0].isLocalFile() else None
+
+    def dragEnterEvent(self, event):
+        if self._dropped_folder_url(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        url = self._dropped_folder_url(event)
+        if url is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self._import_dicom_folder(url.toLocalFile())
+
+    def _asset_import_finished(self):
+        worker = self._asset_worker
+        self._asset_worker = None
+        self.setEnabled(True)
+        if self._cancel_import:
+            worker.deleteLater()
+            self.reject()
+            return
+        if worker.error:
+            self._save_after_import = False
+            self.source_input.setText(getattr(self, "_source_before_import", str(self.content_data.get("path") or "")))
+            QMessageBox.critical(self, "Import Failed", str(worker.error) if isinstance(worker.error, str) else "Could not copy the file. Check access and available storage, then retry.")
+        else:
+            if self._asset_type == "dicom":
+                self.content_data = dict(worker.result)
+            else:
+                self.content_data = {"path": worker.result}
+            self.content_type = self._asset_type
+            if self._asset_type == "dicom":
+                self._applied_name_options = (worker.options.get("replacement_name"), worker.options.get("keep_patient_id", True))
+            self.source_input.setText(self.content_data["path"])
+            if getattr(self, "_save_after_import", False):
+                self._save_after_import = False
+                self._save()
+        worker.deleteLater()
+
+    def reject(self):
+        if self._asset_worker is not None:
+            self._cancel_import = True
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        if self._asset_worker is not None:
+            self._cancel_import = True
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _save(self):
         item_name = self.name_input.text().strip()
@@ -2361,17 +2519,44 @@ class ItemMetaDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Item name is required.")
             return
         type_key = self.type_combo.currentData()
-        if type_key == "dicom":
+        if type_key in {"dicom_reference", "dicom"} and self.replace_patient_name.isChecked():
+            desired = (self.patient_alias.text().strip(), self.keep_patient_id.isChecked())
+            if self.content_data and getattr(self, "_applied_name_options", None) != desired:
+                if not desired[0]:
+                    QMessageBox.warning(self, "Patient Name", "Enter a replacement patient name.")
+                    return
+                self._save_after_import = True
+                if self.content_type == "dicom":
+                    self._import_dicom_folder(self.content_data.get("path"))
+                else:
+                    self._import_dicom_folder(None, study_uid=self.content_data.get("study_uid"),
+                                              series_number=self.content_data.get("series_number"))
+                return
+        if type_key == "text":
+            text = self.text_input.toPlainText()
+            if not text.strip():
+                QMessageBox.warning(self, "Validation Error", "Teaching text is required.")
+                return
+            self.content_data["text"] = text
+            self.content_type = "text"
+        elif type_key == "dicom_reference" and self.content_type == "dicom":
+            if not self.content_data.get("path"):
+                QMessageBox.warning(self, "Validation Error", "Please select a DICOM folder.")
+                return
+        elif type_key == "dicom_reference":
             if not self.content_data.get("study_uid") or not self.content_data.get("patient_id"):
                 QMessageBox.warning(self, "Validation Error", "Please select a DICOM study or series.")
                 return
             if not self.content_type:
                 self.content_type = "dicom_study"
-        else:
+        elif type_key in {"image", "audio", "video", "pdf"}:
             if not self.content_data.get("path"):
                 QMessageBox.warning(self, "Validation Error", "Please select a content file.")
                 return
             self.content_type = type_key
+        elif self.content_type != type_key or not self.content_data:
+            QMessageBox.warning(self, "Validation Error", "Select a supported content type and a new source.")
+            return
         self.content_data["name"] = item_name
         self.content_data["description"] = self.desc_input.toPlainText().strip()
         self.accept()
@@ -2384,6 +2569,7 @@ class BuildCoursePage(QWidget):
 
     FILTER_TAGS = ["Anatomy", "Pathology", "Trauma", "Oncology", "Pediatric", "Emergency"]
     course_created = Signal(dict)
+    preview_requested = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2392,54 +2578,71 @@ class BuildCoursePage(QWidget):
         self.cover_image_source = ""
         self.slides_cache: List[Dict[str, Any]] = []
         self.items_cache: List[Dict[str, Any]] = []
+        self._editing_slide_pk = None
+        self._slide_thumbnail_worker = None
+        self._cover_worker = None
+        self._cover_close_requested = False
         self.setup_ui()
+        self._card_snapshot = self._card_values()
+        self.slide_name_input.textChanged.connect(self._mark_slide_dirty)
+        self.slide_desc_input.textChanged.connect(self._mark_slide_dirty)
+        self.save_shortcut = QShortcut(QKeySequence.Save, self)
+        self.save_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.save_shortcut.activated.connect(self._save_course_card)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 20, 28, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(6)
 
         title = QLabel("Build Course")
         title_font = QFont()
-        title_font.setPointSize(22)
+        title_font.setPointSize(16)
         title_font.setWeight(QFont.DemiBold)
         title.setFont(title_font)
         title.setStyleSheet("color: #f7fafc;")
-        layout.addWidget(title)
-
-        subtitle = QLabel("Step 1: define course card data. Step 2: create and order slides/items.")
-        subtitle.setStyleSheet("color: #9fb1c5; font-size: 11pt;")
-        layout.addWidget(subtitle)
+        title.setToolTip("Create a draft, add teaching content, then preview your presentation.")
+        self.save_status = QLabel("New draft - enter a title and instructor to begin.")
+        self.save_status.setStyleSheet("color: #9fb1c5; font-size: 10pt;")
+        self.save_status.setWordWrap(True)
 
         step_row = QHBoxLayout()
+        self._heading_row = step_row
         step_row.setSpacing(10)
+        step_row.addWidget(title)
+        step_row.addSpacing(12)
         self.step_one_badge = QLabel("1  Course Card")
         self.step_two_badge = QLabel("2  Slides and Content")
         for badge in (self.step_one_badge, self.step_two_badge):
             badge.setStyleSheet(
                 "QLabel { background-color: #111722; color: #95a8bd; border: 1px solid #2a3442; "
-                "padding: 7px 12px; border-radius: 2px; font-size: 10pt; }"
+                "padding: 3px 8px; border-radius: 2px; font-size: 10pt; }"
             )
             step_row.addWidget(badge)
         step_row.addStretch()
         layout.addLayout(step_row)
 
         self.step_stack = QStackedWidget()
-        self.step_stack.addWidget(self._build_step_one())
+        card_scroll = QScrollArea()
+        card_scroll.setWidgetResizable(True)
+        card_scroll.setWidget(self._build_step_one())
+        self.step_stack.addWidget(card_scroll)
         self.step_stack.addWidget(self._build_step_two())
         layout.addWidget(self.step_stack, stretch=1)
+        layout.addWidget(self.save_status)
 
         self._set_step(1)
 
     def _set_step(self, step_number: int):
         self.step_stack.setCurrentIndex(0 if step_number == 1 else 1)
+        self.step_actions.setVisible(step_number == 2)
         active_style = (
             "QLabel { background-color: #1f4a67; color: #e8f0f8; border: 1px solid #2f6c90; "
-            "padding: 7px 12px; border-radius: 2px; font-size: 10pt; font-weight: 600; }"
+            "padding: 3px 8px; border-radius: 2px; font-size: 10pt; font-weight: 600; }"
         )
         inactive_style = (
             "QLabel { background-color: #111722; color: #95a8bd; border: 1px solid #2a3442; "
-            "padding: 7px 12px; border-radius: 2px; font-size: 10pt; }"
+            "padding: 3px 8px; border-radius: 2px; font-size: 10pt; }"
         )
         self.step_one_badge.setStyleSheet(active_style if step_number == 1 else inactive_style)
         self.step_two_badge.setStyleSheet(active_style if step_number == 2 else inactive_style)
@@ -2662,7 +2865,7 @@ class BuildCoursePage(QWidget):
         """)
         actions.addWidget(clear_btn)
 
-        create_btn = QPushButton("Create Card and Continue")
+        create_btn = QPushButton("Save and Continue")
         create_btn.setFixedHeight(42)
         create_btn.setMinimumWidth(230)
         create_btn.clicked.connect(self._create_course_card)
@@ -2691,14 +2894,18 @@ class BuildCoursePage(QWidget):
         root.setContentsMargins(0, 4, 0, 0)
         root.setSpacing(10)
 
-        header = QHBoxLayout()
+        self.step_actions = QWidget()
+        header = QHBoxLayout(self.step_actions)
+        header.setContentsMargins(0, 0, 0, 0)
+        self._heading_row.addWidget(self.step_actions)
         self.step_two_title = QLabel("No course selected")
+        self.step_two_title.setWordWrap(True)
         self.step_two_title.setStyleSheet("color: #e2e8f0; font-size: 13pt; font-weight: 600;")
-        header.addWidget(self.step_two_title)
+        root.addWidget(self.step_two_title)
         header.addStretch()
 
-        back_btn = QPushButton("Back to Card Data")
-        back_btn.setFixedHeight(38)
+        back_btn = QPushButton("Course Card")
+        back_btn.setFixedHeight(32)
         back_btn.clicked.connect(lambda: self._set_step(1))
         back_btn.setStyleSheet("""
             QPushButton {
@@ -2713,9 +2920,12 @@ class BuildCoursePage(QWidget):
         """)
         header.addWidget(back_btn)
 
-        finish_btn = QPushButton("Finish Course Setup")
-        finish_btn.setFixedHeight(38)
-        finish_btn.setMinimumWidth(190)
+        preview_btn = QPushButton("Preview / Present")
+        preview_btn.clicked.connect(self._preview_course)
+        header.addWidget(preview_btn)
+        finish_btn = QPushButton("Save to My Courses")
+        finish_btn.setFixedHeight(32)
+        finish_btn.setMinimumWidth(150)
         finish_btn.clicked.connect(self._finish_course_setup)
         finish_btn.setStyleSheet("""
             QPushButton {
@@ -2729,13 +2939,25 @@ class BuildCoursePage(QWidget):
             QPushButton:hover { background-color: #3d7a9f; }
         """)
         header.addWidget(finish_btn)
-        root.addLayout(header)
+        preview_btn.setFixedHeight(32)
+        preview_btn.setStyleSheet(finish_btn.styleSheet())
 
-        main = QHBoxLayout()
-        main.setSpacing(12)
+        self.authoring_separator = QFrame()
+        self.authoring_separator.setObjectName("authoringSectionDivider")
+        self.authoring_separator.setFixedHeight(4)
+        self.authoring_separator.setStyleSheet(
+            "QFrame#authoringSectionDivider { background-color: #527d9f; border: none; border-radius: 2px; }"
+        )
+        root.addWidget(self.authoring_separator)
+
+        from modules.education.authoring_list import AuthoringListWidget
+        main = QSplitter(Qt.Horizontal)
+        self.authoring_splitter = main
+        main.setChildrenCollapsible(False)
+        main.setHandleWidth(10)
 
         left = QFrame()
-        left.setFixedWidth(370)
+        left.setMinimumWidth(260)
         left.setStyleSheet("QFrame { background-color: #111722; border: 1px solid #1f2a37; border-radius: 2px; }")
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(12, 12, 12, 12)
@@ -2745,8 +2967,8 @@ class BuildCoursePage(QWidget):
         slides_label.setStyleSheet("color: #e2e8f0; font-size: 12pt; font-weight: 600;")
         left_layout.addWidget(slides_label)
 
-        self.slides_list = QListWidget()
-        self.slides_list.setMinimumHeight(380)
+        self.slides_list = AuthoringListWidget()
+        self.slides_list.setMinimumHeight(160)
         self.slides_list.setStyleSheet("""
             QListWidget {
                 background-color: #0d1117;
@@ -2803,9 +3025,14 @@ class BuildCoursePage(QWidget):
         right_layout.setContentsMargins(14, 12, 14, 12)
         right_layout.setSpacing(10)
 
+        metadata = QGridLayout()
+        metadata.setColumnStretch(0, 2)
+        metadata.setColumnStretch(1, 3)
+        metadata.setHorizontalSpacing(12)
+        right_layout.addLayout(metadata)
         slide_name_label = QLabel("Slide Name")
         slide_name_label.setStyleSheet("color: #e2e8f0; font-size: 11pt; font-weight: 600;")
-        right_layout.addWidget(slide_name_label)
+        metadata.addWidget(slide_name_label, 0, 0)
         self.slide_name_input = QLineEdit()
         self.slide_name_input.setPlaceholderText("e.g., Initial MRI Findings")
         self.slide_name_input.setStyleSheet("""
@@ -2818,11 +3045,11 @@ class BuildCoursePage(QWidget):
                 font-size: 10.5pt;
             }
         """)
-        right_layout.addWidget(self.slide_name_input)
+        metadata.addWidget(self.slide_name_input, 1, 0, Qt.AlignTop)
 
         slide_desc_label = QLabel("Slide Description")
         slide_desc_label.setStyleSheet("color: #e2e8f0; font-size: 11pt; font-weight: 600;")
-        right_layout.addWidget(slide_desc_label)
+        metadata.addWidget(slide_desc_label, 0, 1)
         self.slide_desc_input = QTextEdit()
         self.slide_desc_input.setFixedHeight(96)
         self.slide_desc_input.setStyleSheet("""
@@ -2835,7 +3062,7 @@ class BuildCoursePage(QWidget):
                 font-size: 10.5pt;
             }
         """)
-        right_layout.addWidget(self.slide_desc_input)
+        metadata.addWidget(self.slide_desc_input, 1, 1, 2, 1)
 
         save_slide_btn = QPushButton("Save Slide Metadata")
         save_slide_btn.setFixedHeight(36)
@@ -2851,19 +3078,31 @@ class BuildCoursePage(QWidget):
             }
             QPushButton:hover { background-color: #3d7a9f; }
         """)
-        right_layout.addWidget(save_slide_btn)
+        metadata_actions = QHBoxLayout()
+        metadata_actions.addWidget(save_slide_btn)
+        self.slide_thumbnail_button = QPushButton("Thumbnail...")
+        self.slide_thumbnail_button.setToolTip("Choose a custom image for this slide")
+        self.slide_thumbnail_button.clicked.connect(self._choose_slide_thumbnail)
+        self.slide_thumbnail_reset = QPushButton("Automatic")
+        self.slide_thumbnail_reset.setToolTip("Restore the automatic slide thumbnail")
+        self.slide_thumbnail_reset.clicked.connect(lambda: self._start_slide_thumbnail(""))
+        metadata_actions.addWidget(self.slide_thumbnail_button)
+        metadata_actions.addWidget(self.slide_thumbnail_reset)
+        metadata.addLayout(metadata_actions, 2, 0)
 
         items_header = QHBoxLayout()
         items_title = QLabel("Slide Items (max 5)")
         items_title.setStyleSheet("color: #e2e8f0; font-size: 11pt; font-weight: 600;")
         items_header.addWidget(items_title)
         items_header.addStretch()
-        helper = QLabel("Types: DICOM, Image, Audio, Video, PDF")
+        helper = QLabel("Text, DICOM, Image, Audio, Video, PDF")
+        helper.setWordWrap(True)
         helper.setStyleSheet("color: #8fa2b7; font-size: 9.5pt;")
         items_header.addWidget(helper)
         right_layout.addLayout(items_header)
 
-        self.items_list = QListWidget()
+        self.items_list = AuthoringListWidget(two_columns=True)
+        self.items_list.itemDoubleClicked.connect(lambda _item: self._edit_item())
         self.items_list.setStyleSheet("""
             QListWidget {
                 background-color: #0d1117;
@@ -2882,9 +3121,8 @@ class BuildCoursePage(QWidget):
         """)
         right_layout.addWidget(self.items_list, stretch=1)
 
-        item_buttons = QGridLayout()
-        item_buttons.setHorizontalSpacing(8)
-        item_buttons.setVerticalSpacing(8)
+        item_buttons = QHBoxLayout()
+        item_buttons.setSpacing(8)
         add_item_btn = QPushButton("Add Item")
         add_item_btn.clicked.connect(self._add_item)
         edit_item_btn = QPushButton("Edit Item")
@@ -2908,15 +3146,19 @@ class BuildCoursePage(QWidget):
                 }
                 QPushButton:hover { background-color: #2d5f82; }
             """)
-        item_buttons.addWidget(add_item_btn, 0, 0)
-        item_buttons.addWidget(edit_item_btn, 0, 1)
-        item_buttons.addWidget(delete_item_btn, 0, 2)
-        item_buttons.addWidget(up_item_btn, 1, 0)
-        item_buttons.addWidget(down_item_btn, 1, 1)
+        item_buttons.addWidget(add_item_btn)
+        item_buttons.addWidget(edit_item_btn)
+        item_buttons.addWidget(delete_item_btn)
+        item_buttons.addWidget(up_item_btn)
+        item_buttons.addWidget(down_item_btn)
         right_layout.addLayout(item_buttons)
 
-        main.addWidget(right, stretch=1)
-        root.addLayout(main, stretch=1)
+        right.setMinimumWidth(520)
+        main.addWidget(right)
+        main.setStretchFactor(0, 1)
+        main.setStretchFactor(1, 2)
+        main.setSizes([420, 760])
+        root.addWidget(main, stretch=1)
         self._set_slide_edit_enabled(False)
         return page
 
@@ -2952,7 +3194,35 @@ class BuildCoursePage(QWidget):
     def _selected_checks(self, checks: List[QCheckBox]) -> List[str]:
         return [check.text() for check in checks if check.isChecked()]
 
+    def _card_values(self):
+        return (self.title_input.text(), self.author_input.text(), self.desc_input.toPlainText(),
+                self.modality_combo.currentText(), self.level_combo.currentText(),
+                self.visibility_combo.currentText(), self.cover_image_source,
+                tuple(self._selected_checks(self.region_checks)), tuple(self._selected_checks(self.tag_checks)))
+
+    def _mark_slide_dirty(self):
+        slide = next((s for s in self.slides_cache if s["slide_pk"] == self._editing_slide_pk), None)
+        if slide is not None:
+            dirty = (self.slide_name_input.text().strip() != (slide.get("slide_title") or "")
+                     or self.slide_desc_input.toPlainText().strip() != (slide.get("slide_notes") or ""))
+            self.save_status.setText("Unsaved slide edits. Use Ctrl+S or Save; switching slides also saves them."
+                                     if dirty else "Slide saved.")
+
+    def closeEvent(self, event):
+        if self._cover_worker is not None or self._slide_thumbnail_worker is not None:
+            self._cover_close_requested = True
+            event.ignore()
+            return
+        if self.course_pk and not self._save_course_card():
+            if self._cover_worker is not None or self._slide_thumbnail_worker is not None:
+                self._cover_close_requested = True
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def _set_slide_edit_enabled(self, enabled: bool):
+        self.slide_thumbnail_button.setEnabled(enabled)
+        self.slide_thumbnail_reset.setEnabled(enabled)
         self.slide_name_input.setEnabled(enabled)
         self.slide_desc_input.setEnabled(enabled)
         self.items_list.setEnabled(enabled)
@@ -2961,12 +3231,30 @@ class BuildCoursePage(QWidget):
 
     def load_course_for_edit(self, course_pk: int):
         """Load an existing course into Build Course for continued editing."""
+        if self._cover_worker is not None or self._slide_thumbnail_worker is not None:
+            return False
+        if self._card_values() != self._card_snapshot:
+            if self.course_pk:
+                if not self._save_course_card(lambda: self.load_course_for_edit(course_pk)):
+                    return False
+            else:
+                choice = QMessageBox.question(self, "Unsaved Course", "Save this draft before editing another course?",
+                                              QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
+                if choice == QMessageBox.Cancel or (choice == QMessageBox.Save and not self._save_course_card(lambda: self.load_course_for_edit(course_pk))):
+                    return False
+        if not self._save_slide():
+            return False
         course_full = get_course_with_slides(course_pk)
         if not course_full:
             QMessageBox.warning(self, "Course Not Found", "Could not load selected course for editing.")
-            return
+            return False
+
+        if not course_full.get("is_editable", True):
+            QMessageBox.information(self, "Read-Only Resource", "This course was exported with editing disabled.")
+            return False
 
         self.course_pk = course_pk
+        self._editing_slide_pk = None
 
         tags_value = course_full.get("tags", [])
         if isinstance(tags_value, str):
@@ -3001,10 +3289,14 @@ class BuildCoursePage(QWidget):
         self.desc_input.setPlainText(str(course_full.get("course_description") or ""))
 
         modality = str(course_full.get("modality") or "")
+        if self.modality_combo.findText(modality) < 0:
+            self.modality_combo.addItem(modality)
         modality_index = self.modality_combo.findText(modality)
         self.modality_combo.setCurrentIndex(modality_index if modality_index >= 0 else 0)
 
         level = str(course_full.get("level") or "Intermediate")
+        if self.level_combo.findText(level) < 0:
+            self.level_combo.addItem(level)
         level_index = self.level_combo.findText(level)
         self.level_combo.setCurrentIndex(level_index if level_index >= 0 else self.level_combo.findText("Intermediate"))
 
@@ -3030,7 +3322,7 @@ class BuildCoursePage(QWidget):
             self.cover_preview.setPixmap(QPixmap())
             self.cover_preview.setText("No image selected")
 
-        self.course_data = {
+        self.course_data = {**course_full,
             "course_pk": course_pk,
             "course_name": str(course_full.get("course_name") or ""),
             "author_name": str(course_full.get("author_name") or ""),
@@ -3048,16 +3340,28 @@ class BuildCoursePage(QWidget):
         )
         self._set_step(2)
         self._load_slides()
+        self._card_snapshot = self._card_values()
+        self.save_status.setText("Draft loaded. Slide edits are saved when you move between slides.")
+        return True
 
     def _create_course_card(self):
+        if self._save_course_card(self._create_course_card):
+            self._set_step(2)
+            self._load_slides(select_slide_pk=self._editing_slide_pk)
+
+    def _save_course_card(self, resume=None):
+        if self._cover_worker is not None or self._slide_thumbnail_worker is not None:
+            return False
+        if not self._save_slide():
+            return False
         course_name = self.title_input.text().strip()
         instructor = self.author_input.text().strip()
         if not course_name:
             QMessageBox.warning(self, "Validation Error", "Course name is required.")
-            return
+            return False
         if not instructor:
             QMessageBox.warning(self, "Validation Error", "Instructor name is required.")
-            return
+            return False
 
         description = self.desc_input.toPlainText().strip()
         modality = self.modality_combo.currentText()
@@ -3065,10 +3369,22 @@ class BuildCoursePage(QWidget):
         visibility = self.visibility_combo.currentText()
         body_regions = self._selected_checks(self.region_checks)
         tags = self._selected_checks(self.tag_checks)
-        card_metadata = {"visibility": visibility}
+        previous = self.course_data or {}
+        # Imported taxonomies and outline fields must survive an ordinary edit.
+        tags += [tag for tag in previous.get("tags", []) if tag not in self.FILTER_TAGS and tag not in tags]
+        known_regions = {check.text() for check in self.region_checks}
+        body_regions += [region for region in previous.get("body_regions", []) if region not in known_regions and region not in body_regions]
+        raw_outline = previous.get("outline") or ""
+        try:
+            card_metadata = json.loads(raw_outline) if raw_outline else {}
+        except (ValueError, TypeError):
+            card_metadata = {"legacy_outline": raw_outline}
+        if not isinstance(card_metadata, dict):
+            card_metadata = {"legacy_outline": raw_outline}
+        card_metadata["visibility"] = visibility
 
         try:
-            course_pk = insert_course(
+            fields = dict(
                 name=course_name,
                 description=description,
                 author=instructor,
@@ -3077,17 +3393,19 @@ class BuildCoursePage(QWidget):
                 body_regions=body_regions,
                 level=level,
                 tags=tags,
-                is_my_course=True,
-                is_downloaded=False,
             )
+            if self.course_pk:
+                course_pk = self.course_pk
+                update_course(course_pk, **fields)
+            else:
+                course_pk = insert_course(**fields, is_my_course=True, is_downloaded=False)
+                # Retain the identity even if a later cover operation fails.
+                self.course_pk = course_pk
 
-            thumbnail_path = None
-            if self.cover_image_source:
-                thumbnail_path = save_course_asset(self.cover_image_source, course_pk)
-                update_course(course_pk, thumbnail_path=thumbnail_path)
+            thumbnail_path = previous.get("thumbnail_path")
 
             self.course_pk = course_pk
-            self.course_data = {
+            self.course_data = {**previous,
                 "course_pk": course_pk,
                 "course_name": course_name,
                 "author_name": instructor,
@@ -3098,30 +3416,77 @@ class BuildCoursePage(QWidget):
                 "body_regions": body_regions,
                 "thumbnail_path": thumbnail_path,
                 "visibility": visibility,
+                "outline": json.dumps(card_metadata, ensure_ascii=True),
             }
             self.step_two_title.setText(
                 f"Course: {course_name} | Visibility: {visibility} | Modality: {modality}"
             )
-            self._set_step(2)
-            self._load_slides()
-            QMessageBox.information(
-                self, "Step 1 Completed", "Course card data created. Continue by adding slides and slide items."
-            )
+            self.save_status.setText("Draft saved. Add slides and content, or preview the saved course.")
+            self._card_snapshot = self._card_values()
+            if self.cover_image_source and self.cover_image_source != thumbnail_path:
+                from modules.education.authoring_tasks import CourseAssetCopyTask
+                self._cover_resume = resume
+                self._cover_worker = CourseAssetCopyTask(self.cover_image_source, course_pk, self)
+                self._cover_worker.finished.connect(self._cover_import_finished)
+                self.save_status.setText("Draft saved. Importing the cover image...")
+                self.setEnabled(False)
+                self._cover_worker.start()
+                return False
+            return True
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to create course card:\n{exc}")
+            return False
+
+    def _cover_import_finished(self):
+        worker = self._cover_worker
+        self._cover_worker = None
+        self.setEnabled(True)
+        try:
+            if worker.error:
+                raise OSError("Cover import failed")
+            update_course(self.course_pk, thumbnail_path=worker.result)
+            self.cover_image_source = worker.result
+            self.course_data["thumbnail_path"] = worker.result
+            self._card_snapshot = self._card_values()
+            self.save_status.setText("Draft and cover saved.")
+            if self._cover_close_requested:
+                self._cover_close_requested = False
+                self.close()
+            elif self._cover_resume is not None:
+                self._cover_resume()
+        except Exception:
+            self._cover_close_requested = False
+            self.save_status.setText("Draft saved, but the cover could not be imported. Retry saving.")
+            QMessageBox.warning(self, "Cover Not Saved", "Your draft is saved. Check the cover file and available storage, then retry.")
+        finally:
+            worker.deleteLater()
 
     def _finish_course_setup(self):
         if not self.course_data:
             QMessageBox.warning(self, "No Course", "Please complete course card data first.")
             return
-        self.course_created.emit(self.course_data)
+        if not self._save_course_card(self._finish_course_setup):
+            return
+        self.course_created.emit(dict(self.course_data))
         self._reset_builder()
 
+    def _preview_course(self):
+        if not self._save_course_card(self._preview_course):
+            return
+        course = get_course_with_slides(self.course_pk)
+        if not course or not any(slide.get("content") for slide in course.get("slides", [])):
+            QMessageBox.information(self, "Draft Saved", "Add at least one content item before presenting this course.")
+            return
+        self.preview_requested.emit(course)
+
     def _reset_builder(self):
+        self._editing_slide_pk = None
         self.course_pk = None
         self.course_data = None
         self.slides_cache = []
         self.items_cache = []
+        if hasattr(self, "_thumbnails"):
+            self._thumbnails.invalidate()
         self.slides_list.clear()
         self.items_list.clear()
         self.slide_name_input.clear()
@@ -3129,9 +3494,27 @@ class BuildCoursePage(QWidget):
         self.step_two_title.setText("No course selected")
         self._set_slide_edit_enabled(False)
         self._clear_step_one()
+        self._card_snapshot = self._card_values()
         self._set_step(1)
+        self.save_status.setText("Draft saved. Enter a title and instructor to start another course.")
+
+    def _refresh_authoring_previews(self):
+        if not self.isVisible():
+            return
+        from modules.education.authoring_thumbnails import AuthoringThumbnails
+        if not hasattr(self, "_thumbnails"):
+            self._thumbnails = AuthoringThumbnails(self)
+        self._thumbnails.request("slides", self.slides_list, self.slides_cache)
+        self._thumbnails.request("items", self.items_list, self.items_cache)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_authoring_previews()
 
     def _load_slides(self, select_slide_pk: int = None):
+        if not self._save_slide():
+            return
+        self._editing_slide_pk = None
         self.slides_list.clear()
         self.slide_name_input.clear()
         self.slide_desc_input.clear()
@@ -3148,6 +3531,7 @@ class BuildCoursePage(QWidget):
             title = slide.get("slide_title", "") or "Untitled Slide"
             display = f"{slide.get('slide_order', 0)}. {title}"
             item = QListWidgetItem(display)
+            item.setToolTip(display)
             item.setData(Qt.UserRole, slide)
             self.slides_list.addItem(item)
 
@@ -3164,6 +3548,14 @@ class BuildCoursePage(QWidget):
         self.slides_list.setCurrentRow(target_row)
 
     def _on_slide_selected(self, row: int):
+        if not self._save_slide():
+            old_row = next((i for i, slide in enumerate(self.slides_cache)
+                            if slide["slide_pk"] == self._editing_slide_pk), -1)
+            self.slides_list.blockSignals(True)
+            self.slides_list.setCurrentRow(old_row)
+            self.slides_list.blockSignals(False)
+            return
+        self._editing_slide_pk = None
         if row < 0 or row >= len(self.slides_cache):
             self._set_slide_edit_enabled(False)
             self.slide_name_input.clear()
@@ -3174,11 +3566,45 @@ class BuildCoursePage(QWidget):
 
         self._set_slide_edit_enabled(True)
         slide = self.slides_cache[row]
+        self._editing_slide_pk = slide["slide_pk"]
         self.slide_name_input.setText(slide.get("slide_title", "") or "")
         self.slide_desc_input.setPlainText(slide.get("slide_notes", "") or "")
         self._load_items()
 
+    def _choose_slide_thumbnail(self):
+        source, _ = QFileDialog.getOpenFileName(self, "Choose Slide Thumbnail", "",
+                                              "Images (*.png *.jpg *.jpeg *.bmp *.webp)")
+        if source:
+            self._start_slide_thumbnail(source)
+
+    def _start_slide_thumbnail(self, source):
+        if self._slide_thumbnail_worker is not None or not self._editing_slide_pk:
+            return
+        if not self._save_slide():
+            return
+        from modules.education.authoring_tasks import SlideThumbnailTask
+        self._slide_thumbnail_worker = SlideThumbnailTask(source, self.course_pk, self._editing_slide_pk, self)
+        self._slide_thumbnail_worker.finished.connect(self._slide_thumbnail_finished)
+        self.setEnabled(False)
+        self._slide_thumbnail_worker.start()
+
+    def _slide_thumbnail_finished(self):
+        worker = self._slide_thumbnail_worker
+        self._slide_thumbnail_worker = None
+        self.setEnabled(True)
+        if worker.error:
+            QMessageBox.warning(self, "Slide Thumbnail", "Could not save the thumbnail. Choose a readable image up to 32 MB.")
+        else:
+            self._load_slides(select_slide_pk=worker.slide_pk)
+        worker.deleteLater()
+        if self._cover_close_requested:
+            self._cover_close_requested = False
+            if not worker.error:
+                self.close()
+
     def _add_slide(self):
+        if not self._save_slide():
+            return
         if not self.course_pk:
             QMessageBox.warning(self, "No Course", "Complete Step 1 before adding slides.")
             return
@@ -3195,18 +3621,25 @@ class BuildCoursePage(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to add slide:\n{exc}")
 
     def _save_slide(self):
-        current_row = self.slides_list.currentRow()
-        if current_row < 0 or current_row >= len(self.slides_cache):
-            QMessageBox.warning(self, "No Slide", "Select a slide first.")
-            return
-        slide = self.slides_cache[current_row]
-        new_title = self.slide_name_input.text().strip() or f"Slide {slide.get('slide_order', current_row + 1)}"
+        slide = next((s for s in self.slides_cache if s["slide_pk"] == self._editing_slide_pk), None)
+        if slide is None:
+            return True
+        new_title = self.slide_name_input.text().strip() or f"Slide {slide.get('slide_order', 1)}"
         new_notes = self.slide_desc_input.toPlainText().strip()
+        if new_title == slide.get("slide_title", "") and new_notes == slide.get("slide_notes", ""):
+            return True
         try:
             update_slide(slide_pk=slide["slide_pk"], title=new_title, notes=new_notes)
-            self._load_slides(select_slide_pk=slide["slide_pk"])
+            slide.update(slide_title=new_title, slide_notes=new_notes)
+            row = self.slides_cache.index(slide)
+            if self.slides_list.item(row):
+                self.slides_list.item(row).setText(f"{slide.get('slide_order', row + 1)}. {new_title}")
+            self.save_status.setText("Slide saved.")
+            return True
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to save slide:\n{exc}")
+            self.save_status.setText("Save failed. Your edits remain here; retry before leaving this slide.")
+            return False
 
     def _delete_slide(self):
         current_row = self.slides_list.currentRow()
@@ -3224,12 +3657,15 @@ class BuildCoursePage(QWidget):
             return
         try:
             delete_slide(slide["slide_pk"])
+            self._editing_slide_pk = None
             self._load_slides()
             self._normalize_slide_order()
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to delete slide:\n{exc}")
 
     def _move_slide(self, direction: int):
+        if not self._save_slide():
+            return
         current_row = self.slides_list.currentRow()
         target_row = current_row + direction
         if current_row < 0 or target_row < 0 or target_row >= len(self.slides_cache):
@@ -3253,6 +3689,8 @@ class BuildCoursePage(QWidget):
         self._load_slides()
 
     def _load_items(self, select_content_pk: int = None):
+        if hasattr(self, "_thumbnails"):
+            self._thumbnails.invalidate()
         self.items_list.clear()
         self.items_cache = []
         current_row = self.slides_list.currentRow()
@@ -3274,9 +3712,11 @@ class BuildCoursePage(QWidget):
             )
             line = f"{item.get('content_order', 0)}. {content_type.upper()} | {display_name}"
             list_item = QListWidgetItem(line)
+            list_item.setToolTip(line)
             list_item.setData(Qt.UserRole, item)
             self.items_list.addItem(list_item)
 
+        self._refresh_authoring_previews()
         if not self.items_cache:
             return
         target_row = 0
@@ -3360,8 +3800,8 @@ class BuildCoursePage(QWidget):
         ordered_items = list(self.items_cache)
         ordered_items[current_row], ordered_items[target_row] = ordered_items[target_row], ordered_items[current_row]
         try:
-            for order, item in enumerate(ordered_items, start=1):
-                update_slide_content(content_pk=item["content_pk"], content_order=order)
+            slide_pk = self.slides_cache[self.slides_list.currentRow()]["slide_pk"]
+            reorder_slide_content(slide_pk, [item["content_pk"] for item in ordered_items])
             moved_pk = ordered_items[target_row]["content_pk"]
             self._load_items(select_content_pk=moved_pk)
         except Exception as exc:
@@ -3373,8 +3813,7 @@ class BuildCoursePage(QWidget):
             return
         slide_pk = self.slides_cache[current_row]["slide_pk"]
         current_items = get_content_for_slide(slide_pk)
-        for order, item in enumerate(current_items, start=1):
-            update_slide_content(content_pk=item["content_pk"], content_order=order)
+        reorder_slide_content(slide_pk, [item["content_pk"] for item in current_items])
         self._load_items()
 
 
@@ -3496,6 +3935,10 @@ class EducationModuleRedesigned(QWidget):
         header_layout.addWidget(title)
         
         header_layout.addStretch()
+        transfer_button = QPushButton("Transfer Education...")
+        transfer_button.setToolTip("Export or import local courses, resources and Cases of the Day")
+        transfer_button.clicked.connect(self._open_education_transfer)
+        header_layout.addWidget(transfer_button)
         
         # Status - minimal indicator with better sizing
         status = QLabel("Offline")
@@ -3558,7 +4001,7 @@ class EducationModuleRedesigned(QWidget):
         self.tab_widget.addTab(self.build_page, "Build Course")
         self.tab_widget.addTab(self.case_of_day_tab, "Case of the Day")
 
-        # Online Consultation (Drive-backed physician consultation) — additive,
+        # Online Consultation (Drive-backed physician consultation) â€” additive,
         # double-flag-gated (Identity + cloud_consultation). When either flag is
         # off this block is a no-op and the Education module renders exactly as
         # before. Any failure is swallowed so Education can never break.
@@ -3588,10 +4031,11 @@ class EducationModuleRedesigned(QWidget):
         self.mycourses_page.course_opened.connect(self.on_course_opened)
         self.mycourses_page.course_edited.connect(self.on_course_edited)
         # Cases can be opened either from the legacy My Courses button OR from
-        # the new top-level tab — wire both into the same handler.
+        # the new top-level tab â€” wire both into the same handler.
         self.mycourses_page.case_of_day_opened.connect(self.on_case_of_day_opened)
         self.case_of_day_tab.case_opened.connect(self.on_case_of_day_opened)
         self.build_page.course_created.connect(self.on_course_created)
+        self.build_page.preview_requested.connect(self.on_course_presented)
         # Switch to the new tab whenever a case is created from the toolbar
         # path so the user sees the freshly-saved card.
         self.case_of_day_tab.case_created.connect(
@@ -3599,6 +4043,14 @@ class EducationModuleRedesigned(QWidget):
         )
         _retint_widget_tree(self, self._theme)
     
+    def _open_education_transfer(self):
+        from modules.education.transfer_dialog import EducationTransferDialog
+        dialog = EducationTransferDialog(self)
+        dialog.imported.connect(self.library_page.load_courses)
+        dialog.imported.connect(self.mycourses_page.load_courses)
+        dialog.imported.connect(self.case_of_day_tab.refresh)
+        dialog.exec()
+
     def on_course_opened(self, course_data):
         """Handle course open request."""
         print(f"Opening educational course viewer: {course_data['course_name']}")
@@ -3642,22 +4094,16 @@ class EducationModuleRedesigned(QWidget):
     def on_course_edited(self, course_data):
         """Handle course edit request."""
         try:
-            from modules.education.course_editor_widget import CourseEditorWidget
-
-            host_tab_widget, _, host_owner = self._resolve_tab_host()
-            editor = CourseEditorWidget(course_data['course_pk'], parent=host_owner if host_owner else self)
-
-            if host_tab_widget is not None:
-                tab_index = host_tab_widget.addTab(editor, f"Edit: {course_data['course_name']}")
-                host_tab_widget.setCurrentIndex(tab_index)
-            else:
-                editor.setWindowTitle(f"Edit Course - {course_data['course_name']}")
-                editor.showMaximized()
-
+            if (self.build_page.load_course_for_edit(course_data['course_pk'])
+                    or self.build_page._cover_worker is not None):
+                self.tab_widget.setCurrentWidget(self.build_page)
         except Exception as e:
-            print(f"Error opening course editor: {e}")
-            import traceback
-            traceback.print_exc()
+            QMessageBox.critical(self, "Unable to Edit Course", "Could not open the saved course. Please retry.")
+
+    def on_course_presented(self, course_data):
+        from modules.education.presentation_window import CoursePresentationWindow
+        window = CoursePresentationWindow(course_data, self)
+        window.show()
     
     def on_course_created(self, course_data):
         """Handle new course created."""
@@ -3670,8 +4116,8 @@ class EducationModuleRedesigned(QWidget):
         # Show success message
         QMessageBox.information(
             self,
-            "Course Created",
-            f"Course '{course_data['course_name']}' has been created!\n\nYou can now add slides and content in the editor."
+            "Draft Saved",
+            "Your course draft is saved in My Courses. Use Edit to continue or Preview / Present in Build Course."
         )
 
     def on_case_of_day_opened(self, payload: Dict[str, Any]):
@@ -3706,13 +4152,13 @@ class EducationModuleRedesigned(QWidget):
             host_tab_widget, host_custom_tab_manager, host_owner = self._resolve_tab_host()
             tab_title = f"Case - {entry.diagnosis or entry.body_part or entry.modality or 'Untitled'}"
 
-            # PREFERRED PATH — open the underlying study via the home page's
+            # PREFERRED PATH â€” open the underlying study via the home page's
             # ``add_new_tab_widget`` flow so the viewer is wired EXACTLY like
             # opening from the patient list. That route is the one that has
             # working drag-and-drop, slice scrolling, stack stepping, and
             # caching. The wrapped CaseOfDayViewerWidget had a subtle
             # interaction with the FAST viewer that pinned every series to
-            # "1 / 1" — re-using the proven path avoids that entire class of
+            # "1 / 1" â€” re-using the proven path avoids that entire class of
             # bug.
             #
             # We then enrich the new tab with the Case-of-Day clinical header
@@ -3781,7 +4227,7 @@ class EducationModuleRedesigned(QWidget):
             except Exception:
                 pass
 
-            # Switch the top tab chrome into Case-of-Day educational mode —
+            # Switch the top tab chrome into Case-of-Day educational mode â€”
             # repurposes the name slot to "Case of the Day", the ID slot to
             # the diagnosis, and switches the painted border from blue to
             # green. Underlying patient_id / patient_name / study_uid stay
@@ -3822,7 +4268,7 @@ class EducationModuleRedesigned(QWidget):
         can insert into.
 
         IDEMPOTENT: ``add_new_tab_widget`` dedupes by study_uid and may return
-        an existing widget — if we already attached a strip for this case,
+        an existing widget â€” if we already attached a strip for this case,
         update its text in place instead of inserting a second one.
         """
         from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
@@ -3846,7 +4292,7 @@ class EducationModuleRedesigned(QWidget):
                 diag = (case_data.get("diagnosis") or "").strip()
                 if diag:
                     bits.append(diag)
-                meta_text = "  ·  ".join(bits) if bits else "Case of the Day"
+                meta_text = "  آ·  ".join(bits) if bits else "Case of the Day"
                 existing_meta = getattr(existing_strip, '_meta_label', None)
                 if existing_meta is not None:
                     existing_meta.setText(meta_text)
@@ -3886,7 +4332,7 @@ class EducationModuleRedesigned(QWidget):
         diag = (case_data.get("diagnosis") or "").strip()
         if diag:
             bits.append(diag)
-        meta_text = "  ·  ".join(bits) if bits else "Case of the Day"
+        meta_text = "  آ·  ".join(bits) if bits else "Case of the Day"
         meta = QLabel(meta_text)
         meta.setStyleSheet(
             f"QLabel {{ color: {t['text_primary']}; font-size: 11pt; font-weight: 600; }}"
@@ -3901,7 +4347,7 @@ class EducationModuleRedesigned(QWidget):
         try:
             layout.insertWidget(0, strip)
         except Exception:
-            # Some layouts may not support insertWidget — fall back to addWidget
+            # Some layouts may not support insertWidget â€” fall back to addWidget
             # (lands at the bottom, but the strip is still visible).
             layout.addWidget(strip)
 

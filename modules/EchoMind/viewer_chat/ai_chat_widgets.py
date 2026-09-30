@@ -241,6 +241,7 @@ class MessageBubble(QWidget):
         on_edit: t.Callable[['MessageBubble'], None] | None = None,
         on_persian: t.Callable[['MessageBubble'], None] | None = None,
         on_send_reception: t.Callable[['MessageBubble'], None] | None = None,
+        on_medical_consult=None,
     ):
         super().__init__(parent)
         self.who = who
@@ -419,6 +420,16 @@ class MessageBubble(QWidget):
         self.btnEdit.setVisible(self._on_edit_cb is not None)
         footer.addWidget(self.btnEdit, 0, Qt.AlignRight)
 
+        self.btnMedicalConsult = None
+        if not self._is_user and on_medical_consult is not None:
+            self.btnMedicalConsult = QToolButton(box)
+            self.btnMedicalConsult.setText('Medical Consult')
+            self.btnMedicalConsult.setToolTip('Review this report with Radiology Expert Web Search')
+            self.btnMedicalConsult.setStyleSheet(self.btnCopy.styleSheet())
+            self.btnMedicalConsult.setCursor(Qt.PointingHandCursor)
+            self.btnMedicalConsult.clicked.connect(lambda: on_medical_consult(self))
+            footer.addWidget(self.btnMedicalConsult, 0, Qt.AlignRight)
+
         # Persian (only for AI responses with callback)
         self.btnPersian: QToolButton | None = None
         if (not self._is_user) and (self._on_persian_cb is not None):
@@ -482,8 +493,8 @@ class MessageBubble(QWidget):
 
         # Base stylesheet
         self.setStyleSheet("""
-            QLabel#who { color: #ffd48a; font-weight: 600; padding-left: 6px; }
-            QFrame#bubbleBox { background: #2b2b2b; border: 1px solid #3a3a3a; border-radius: 12px; }
+            QLabel#who { color: #9eb4cc; font-size: 12px; font-weight: 600; padding-left: 6px; }
+            QFrame#bubbleBox { background: #1a2634; border: 1px solid #344357; border-radius: 14px; }
             QLabel#msg { color: #e6e6e6; }
         """)
 
@@ -1001,8 +1012,8 @@ class MessageBubble(QWidget):
     def clear_retry(self):
         self.btnRetry.setVisible(False)
         self.setStyleSheet("""
-            QLabel#who { color: #ffd48a; font-weight: 600; padding-left: 6px; }
-            QFrame#bubbleBox { background: #2b2b2b; border: 1px solid #3a3a3a; border-radius: 12px; }
+            QLabel#who { color: #9eb4cc; font-size: 12px; font-weight: 600; padding-left: 6px; }
+            QFrame#bubbleBox { background: #1a2634; border: 1px solid #344357; border-radius: 14px; }
             QLabel#msg { color: #e6e6e6; }
         """)
 
@@ -1183,6 +1194,22 @@ class ChatHistory(QWidget):
         self.scroll.setWidget(self.container)
         root.addWidget(self.scroll, 1)
 
+    def set_mode_background(self, mode: str):
+        """Tint conversation surfaces without recoloring message text or controls."""
+        color = {
+            'Report': '#101e2c',
+            'Assist': '#102723',
+            'ChatGPT': '#201a30',
+            'Chat': '#191f28',
+        }.get(mode, '#191f28')
+        self.scroll.setObjectName('echoHistoryScroll')
+        self.scroll.viewport().setObjectName('echoHistoryViewport')
+        self.container.setObjectName('echoHistorySurface')
+        self.scroll.setStyleSheet(self.scroll.styleSheet() +
+            f' QScrollArea#echoHistoryScroll, QWidget#echoHistoryViewport, '
+            f'QWidget#echoHistorySurface {{ background-color: {color}; }}')
+        return color
+
     def _stick_to_bottom(self, w: QWidget | None = None):
         """
         بعد از اضافه شدن پیام جدید/typing/voice:
@@ -1259,6 +1286,7 @@ class ChatHistory(QWidget):
         on_persian=None,
         on_send_reception=None,
         force_right: bool | None = None,   # جدید: فقط برای موارد خاص مثل تصویر
+        on_medical_consult=None,
     ) -> MessageBubble:
         """
         - متن‌های معمولی: کاربر سمت راست، بات سمت چپ (مثل قبل)
@@ -1271,6 +1299,7 @@ class ChatHistory(QWidget):
             on_edit=on_edit,
             on_persian=on_persian,
             on_send_reception=on_send_reception,
+            on_medical_consult=on_medical_consult,
         )
 
         wrap = QWidget(self.container)
@@ -3087,6 +3116,8 @@ class UnifiedComposer(QWidget):
 
     # ---------- Tabs helpers (NEW) ----------
     def switch_tab(self, tab: str):
+        if getattr(self, '_reference_mode', False) and tab in ('normal_template', 'correction'):
+            tab = 'transcribe'
         if tab not in ("standard", "transcribe", "normal_template", "correction") or tab == self._active_tab:
             self._update_lang_buttons_visibility()
             self._apply_tab_styles()
@@ -4240,6 +4271,43 @@ class UnifiedComposer(QWidget):
         if self._mic_mode == "confirm":
             self._finish_record_and_transcribe()
             self._restore_mic_after_record()
+
+    def set_visual_mode(self, mode: str):
+        """Apply a restrained, consistent composer surface for each workspace."""
+        accent = {'Report': '#79b8f4', 'Assist': '#67cdb1',
+                  'ChatGPT': '#bba1ef'}.get(mode, '#a5b6c9')
+        self.mode_tabs.setStyleSheet(f'''
+            QTabBar#composerModeTabs::tab {{
+                background: transparent; color: #aebed0;
+                border: 1px solid transparent; border-radius: 8px;
+                padding: 0 14px; min-height: 32px; margin: 0 5px 8px 0;
+                font-size: 12px; font-weight: 500;
+            }}
+            QTabBar#composerModeTabs::tab:selected {{
+                background: #253448; color: {accent}; border-color: #394e66;
+                font-weight: 600;
+            }}
+            QTabBar#composerModeTabs::tab:hover {{ background: #223044; color: #f1f5fa; }}
+        ''')
+        self.input_shell.setStyleSheet(self.input_shell.styleSheet() + '''
+            QFrame#shell { background: #151e29; border: 1px solid #35465a; border-radius: 16px; }
+        ''')
+        self.box.setStyleSheet(self.box.styleSheet() + '''
+            QTextEdit { background: transparent; color: #e6edf5; border: none; padding: 8px; }
+        ''')
+        self.btn_send.setStyleSheet(f'''
+            QToolButton {{ background: #263e54; color: {accent}; border: 1px solid {accent}; border-radius: 12px; }}
+            QToolButton:hover {{ background: #365772; }}
+            QToolButton:disabled {{ background: #202b38; border-color: #3b4654; color: #657587; }}
+        ''')
+
+    def set_reference_mode(self, enabled: bool):
+        """Keep only dictation and question-standardization tabs in Assist."""
+        self._reference_mode = enabled
+        if enabled and self._active_tab in ('normal_template', 'correction'):
+            self.switch_tab('transcribe')
+        for key in ('normal_template', 'correction'):
+            self.mode_tabs.setTabVisible(self._tab_index_by_key[key], not enabled)
 
     def set_assist_mode(self, enabled: bool):
         """Show/hide the Assist & Search buttons. When enabled, hide the default Send button."""

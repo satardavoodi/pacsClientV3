@@ -1134,7 +1134,10 @@ class _HPSearchMixin:
         try:
             from pathlib import Path
             from database.manager import get_study_info_with_series
-            from PacsClient.pacs.patient_tab.utils.utils import canonical_thumbnail_path
+            from PacsClient.pacs.patient_tab.utils.utils import (
+                canonical_thumbnail_path,
+                repair_local_series_thumbnail,
+            )
             from PacsClient.utils.dicom_displayability import resolve_series_pixel_inventories
             from PacsClient.utils.patient_study_set import (
                 allocate_series_display_keys,
@@ -1188,6 +1191,17 @@ class _HPSearchMixin:
                     file_path = str(canonical)
                 elif hinted is not None and hinted.is_file():
                     file_path = str(hinted)
+                else:
+                    repaired = repair_local_series_thumbnail(
+                        str(study_uid or ''),
+                        study_info,
+                        series,
+                        folder_key,
+                        series_path,
+                    )
+                    repaired_path = Path(str(repaired or ''))
+                    if repaired_path.is_file():
+                        file_path = str(repaired_path)
                 payload['thumbnails'].append({
                     'file_path': file_path,
                     'thumbnail_path': file_path,
@@ -1294,14 +1308,10 @@ class _HPSearchMixin:
             except Exception:
                 pass
 
-            # 44534 multi-modality completeness: stash a compact per-patient meta
-            # (modality set + study count + known UIDs) as the list loads, so the
-            # OPEN path can decide — with NO extra server query — whether to enumerate
-            # the per-modality study UIDs the patient-list hid. GetPatientList returns
-            # only the latest study UID per patient, so a same-patient study of a
-            # different modality (e.g. an MRI when the latest is an X-ray) is otherwise
-            # invisible. Zero cost: the data is already in this row. Read back in
-            # _resolve_patient_study_uids_async via _server_patient_meta_by_pid.
+            # Retain list-row hints and display fields. Counts and modalities are
+            # scoped to the search filters, so they cannot certify patient-wide
+            # study completeness. Open verifies the exact patient without those
+            # filters through the shared discovery boundary.
             try:
                 if not hasattr(self, '_server_patient_meta_by_pid'):
                     self._server_patient_meta_by_pid = {}

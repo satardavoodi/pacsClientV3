@@ -839,9 +839,9 @@ Study UID: {study_uid}
         def _series_sort_value(thumb: dict):
             value = thumb.get('series_number', 0)
             try:
-                return int(str(value))
+                return 0, int(str(value))
             except Exception:
-                return str(value)
+                return 1, str(value).casefold()
 
         combined_thumbnails.sort(key=lambda t: (int(t.get('_study_order', 0) or 0), _series_sort_value(t)))
         # progressive=False: render the grouped multi-study set all-at-once into its

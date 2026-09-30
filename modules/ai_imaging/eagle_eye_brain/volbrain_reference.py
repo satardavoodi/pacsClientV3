@@ -206,9 +206,8 @@ def scientific_reference_page():
         'Exactly 25%, smaller departures and in-range values are not red. '
         'This is a user-selected visual attention threshold, not a p-value, validated atrophy cutoff '
         'or diagnosis. Starred cortical red values may reflect atlas mismatch.</p>'
-        '<h2>Reproducibility</h2><p>Publisher data: '+SOURCE+'; pinned revision '+REVISION+'. '
-        'Files: bounds_male.csv, bounds_female.csv and bounds_general.csv; integrity checked locally. '
-        'The GitHub repository distributes the data; the scientific citation above describes their provenance.</p>')
+        '<h2>Reference provenance</h2><p>Published reference tables from the cited authors are stored '
+        'locally and checked for integrity. Technical version records are retained in the internal audit documentation.</p>')
 
 
 def pages(reference):
@@ -225,7 +224,7 @@ def pages(reference):
             'Red: >25% beyond nearest interval endpoint; attention threshold, not statistical significance. '
             '* Cortical ranges are anatomical analogues only, not matched normal limits. Split/merged regions remain unavailable. '
             'Source names retain publisher naming; side is the final suffix. Z/T scores cannot be inferred from these bounds.</p>'+
-            '<p>Source: '+SOURCE+'; revision '+REVISION+'. '+
+            '<p>Scientific reference: '+
             'Coupé et al., Human Brain Mapping (2017), doi:10.1002/hbm.23743.</p>')
     output.append(scientific_reference_page())
     return output

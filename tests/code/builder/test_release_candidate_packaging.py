@@ -250,6 +250,7 @@ def test_candidate_stops_before_nuitka_when_required_python_backend_fails(tmp_pa
     )
     final_repo = tmp_path / "final"
     calls = []
+    environments = []
 
     monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
     monkeypatch.setattr(
@@ -263,6 +264,7 @@ def test_candidate_stops_before_nuitka_when_required_python_backend_fails(tmp_pa
 
     def fail_python(command, **kwargs):
         calls.append(command)
+        environments.append(kwargs["env"])
         assert kwargs["env"]["AIPACS_UPDATE_REMOTE_PUBLISH"] == "0"
         return 9
 
@@ -270,6 +272,9 @@ def test_candidate_stops_before_nuitka_when_required_python_backend_fails(tmp_pa
 
     assert candidate.run_builds(workspace, tmp_path / "assets", "3.6.5", final_repo=final_repo) == 1
     assert len(calls) == 1
+    assert environments[0]["AIPACS_LUMEN_VMTK_BUNDLE_SOURCE"] == str(
+        (tmp_path / "assets/lumen_vmtk").resolve()
+    )
     status = json.loads((workspace / "build_status.json").read_text(encoding="utf-8"))
     assert status["backends"]["python"]["status"] == "failed"
     assert status["backends"]["nuitka"]["status"] == "skipped"
@@ -410,6 +415,37 @@ def test_local_qa_same_version_rebuild_archives_only_selected_backend_outputs(tm
     assert candidate.archive_existing_local_qa_outputs(status, "nuitka") == []
 
 
+def test_server_qa_archives_server_metadata_but_preserves_client_metadata(tmp_path):
+    from tools.build import build_local_candidate as candidate
+
+    output = tmp_path / "builder/output/installer"
+    output.mkdir(parents=True)
+    server = output / "ai-pacs eagle-eye v3.6.9.exe"
+    client = output / "ai-pacs standard v3.6.9.exe"
+    server_metadata = [output / name for name in (
+        "distributions-server.json", "INSTALL_NOTES-server.txt", "SHA256-server.txt",
+    )]
+    client_metadata = [output / name for name in (
+        "distributions-client.json", "INSTALL_NOTES-client.txt", "SHA256-client.txt",
+    )]
+    generic = output / "distributions.json"
+    for path in (server, client, generic, *server_metadata, *client_metadata):
+        path.write_bytes(path.name.encode("ascii"))
+    status = {
+        "version": "3.6.9", "lane": "local-install-qa", "build_target": "server",
+        "expected_release_installers": {"python": [str(server)]},
+    }
+
+    moved = candidate.archive_existing_local_qa_outputs(status, "python")
+
+    assert {Path(row["source"]).name for row in moved} == {
+        server.name, generic.name, *(path.name for path in server_metadata),
+    }
+    assert all(Path(row["archive"]).is_file() for row in moved)
+    assert client.is_file()
+    assert all(path.is_file() for path in client_metadata)
+
+
 def test_server_qa_builds_only_eagle_eye_in_both_backends(tmp_path, monkeypatch):
     from tools.build import build_local_candidate as candidate
 
@@ -441,6 +477,43 @@ def test_server_qa_builds_only_eagle_eye_in_both_backends(tmp_path, monkeypatch)
     assert status["build_target"] == "server"
     assert all(len(paths) == 1 and "eagle-eye" in paths[0]
                for paths in status["expected_release_installers"].values())
+
+
+def test_explicit_single_backend_server_qa_never_runs_nuitka_or_cross_backend_coherence(
+    tmp_path, monkeypatch
+):
+    from tools.build import build_local_candidate as candidate
+
+    workspace = tmp_path / "candidate"
+    source = workspace / "source"
+    source.mkdir(parents=True)
+    (source / "build_source_manifest.json").write_text(json.dumps({
+        "source_sha256": "stable", "version": "3.6.9",
+        "build_target": "server", "build_backends": ["python"],
+        "github_freshness_verified": False, "release_sync": None,
+    }), encoding="utf-8")
+    final_repo = tmp_path / "final"
+    monkeypatch.setattr(candidate, "source_fingerprint", lambda _root: "stable")
+    monkeypatch.setattr(candidate, "canonical_installer_dirs", lambda _root, _version: {
+        "python": final_repo / "builder/output/installer",
+        "nuitka": final_repo / "builder nuitka/output/installer",
+    })
+    calls = []
+    monkeypatch.setattr(candidate, "run_logged_build",
+                        lambda command, **_kwargs: calls.append(command) or 0)
+
+    assert candidate.run_builds(
+        workspace, tmp_path / "assets", "3.6.9", final_repo=final_repo,
+        local_install_qa=True, target="server", selected_backends=("python",),
+    ) == 0
+    assert len(calls) == 1
+    assert "builder/build_release.py" in calls[0]
+    assert "--internal-build" in calls[0]
+    status = json.loads((workspace / "build_status.json").read_text(encoding="utf-8"))
+    assert status["selected_backends"] == ["python"]
+    assert list(status["backends"]) == ["python"]
+    assert list(status["expected_release_installers"]) == ["python"]
+    assert status["coherence_status"] == "not_applicable_single_backend"
 
 
 def test_server_release_is_not_misrepresented_as_qualified(tmp_path):
@@ -837,3 +910,63 @@ def test_candidate_final_outputs_use_only_existing_repository_installer_folders(
     }
     with pytest.raises(ValueError, match="version"):
         canonical_installer_dirs(repo, "3.6.4")
+
+
+def test_clean_backend_does_not_delete_other_role_from_canonical_installer_folder(tmp_path, monkeypatch):
+    from builder import build_release
+
+    output = tmp_path / "snapshot/builder/output"
+    installer = tmp_path / "repo/builder/output/installer"
+    installer.mkdir(parents=True)
+    prior = installer / "ai-pacs standard v3.6.9.exe"
+    prior.write_bytes(b"previous client installer")
+    for name, relative in (
+        ("OUTPUT_DIR", ""),
+        ("PACKAGE_OUTPUT_DIR", "packages"),
+        ("UPDATES_OUTPUT_DIR", "updates"),
+        ("STAGE_DIR", "stage"),
+        ("DIST_DIR", "dist"),
+        ("BUILD_DIR", "build"),
+    ):
+        monkeypatch.setattr(build_release, name, output / relative)
+    monkeypatch.setattr(build_release, "INSTALLER_OUTPUT_DIR", installer)
+    (output / "packages").mkdir(parents=True)
+
+    build_release.clean_outputs(preserve_installer=False)
+
+    assert prior.read_bytes() == b"previous client installer"
+    assert not (output / "packages").exists()
+
+
+def test_completed_local_client_compilation_recovers_without_rebuilding_or_touching_server(tmp_path):
+    from tools.build.build_local_candidate import recover_compiled_local_qa_backend
+
+    stage_root = tmp_path / "ap-stage"
+    compiled = stage_root / "r-candidate" / "compiled"
+    compiled.mkdir(parents=True)
+    output = tmp_path / "repo/builder/output/installer"
+    output.mkdir(parents=True)
+    server = output / "ai-pacs eagle-eye v3.6.9.exe"
+    server.write_bytes(b"server output from another role")
+    names = ("ai-pacs standard v3.6.9.exe", "ai-pacs arm64-emulated v3.6.9.exe")
+    for name in names:
+        (compiled / name).write_bytes(b"compiled " + name.encode("ascii"))
+    log = tmp_path / "python.log"
+    log.write_text("\n".join(str(compiled / name) for name in names), encoding="utf-8")
+    status = {
+        "version": "3.6.9", "lane": "local-install-qa", "build_target": "client",
+        "packaging_stage_root": str(stage_root),
+        "expected_release_installers": {"python": [str(output / name) for name in names]},
+        "backends": {"python": {"status": "completed", "exit_code": 0, "log": str(log)}},
+    }
+
+    assert recover_compiled_local_qa_backend(status, "python")
+    assert [path.read_bytes() for path in (output / name for name in names)] == [
+        (compiled / name).read_bytes() for name in names
+    ]
+    assert server.read_bytes() == b"server output from another role"
+    inventory = json.loads((output / "distributions-client.json").read_text(encoding="utf-8"))
+    assert inventory["build_target"] == "client"
+    assert {row["edition"] for row in inventory["outputs"]} == {"standard", "arm"}
+    status["lane"] = "release-candidate"
+    assert not recover_compiled_local_qa_backend(status, "python")

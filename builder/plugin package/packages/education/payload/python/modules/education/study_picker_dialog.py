@@ -2,13 +2,39 @@
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QLineEdit, QLabel, QHeaderView, QMessageBox, QComboBox
+    QPushButton, QLineEdit, QLabel, QHeaderView, QMessageBox, QComboBox, QWidget
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QFont
 
 from PacsClient.utils.database import get_db_connection
 import sqlite3
+
+
+class _StudyRowsTask(QThread):
+    def __init__(self, study_pk=None, parent=None):
+        super().__init__(parent)
+        self.study_pk = study_pk
+        self.rows = []
+        self.failed = False
+
+    def run(self):
+        try:
+            with get_db_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                if self.study_pk is None:
+                    query = """SELECT p.patient_id, p.patient_name, s.study_date,
+                        s.study_description, s.modality, s.number_of_series,
+                        s.study_uid, s.study_pk FROM studies s
+                        JOIN patients p ON s.patient_fk=p.patient_pk
+                        ORDER BY s.study_date DESC"""
+                    self.rows = [dict(r) for r in conn.execute(query)]
+                else:
+                    self.rows = [dict(r) for r in conn.execute(
+                        "SELECT series_number,series_description,modality,image_count,series_uid FROM series WHERE study_fk=? ORDER BY series_number",
+                        (self.study_pk,))]
+        except Exception:
+            self.failed = True
 
 
 class StudyPickerDialog(QDialog):
@@ -22,6 +48,9 @@ class StudyPickerDialog(QDialog):
         self.selected_patient_id = None
         self.selected_series_number = None
         self.mode = 'study'  # 'study' or 'series'
+        self._query_workers = []
+        self._query_generation = 0
+        self._close_pending = False
         self.setup_ui()
         self.load_studies()
 
@@ -57,6 +86,11 @@ class StudyPickerDialog(QDialog):
             }
         """)
         search_layout.addWidget(self.search_input, stretch=1)
+
+        self.search_scope = QComboBox()
+        self.search_scope.addItems(["Patient ID (exact)", "All fields"])
+        self.search_scope.currentTextChanged.connect(lambda _: self.filter_studies(self.search_input.text()))
+        search_layout.addWidget(self.search_scope)
 
         # Mode selector
         mode_label = QLabel("Select:")
@@ -203,83 +237,72 @@ class StudyPickerDialog(QDialog):
         layout.addLayout(buttons_layout)
 
     def load_studies(self):
-        """Populate table with studies from database."""
-        try:
-            with get_db_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-
-                query = """
-                    SELECT
-                        p.patient_id,
-                        p.patient_name,
-                        s.study_date,
-                        s.study_description,
-                        s.modality,
-                        s.number_of_series,
-                        s.study_uid,
-                        s.study_pk
-                    FROM studies s
-                    JOIN patients p ON s.patient_fk = p.patient_pk
-                    ORDER BY s.study_date DESC
-                """
-
-                cur.execute(query)
-                rows = cur.fetchall()
-
-                self.studies_table.setRowCount(len(rows))
-
-                for row_idx, row in enumerate(rows):
-                    self.studies_table.setItem(row_idx, 0, QTableWidgetItem(row['patient_id'] or ''))
-                    self.studies_table.setItem(row_idx, 1, QTableWidgetItem(row['patient_name'] or ''))
-                    self.studies_table.setItem(row_idx, 2, QTableWidgetItem(row['study_date'] or ''))
-                    self.studies_table.setItem(row_idx, 3, QTableWidgetItem(row['study_description'] or ''))
-                    self.studies_table.setItem(row_idx, 4, QTableWidgetItem(row['modality'] or ''))
-                    self.studies_table.setItem(row_idx, 5, QTableWidgetItem(str(row['number_of_series'] or 0)))
-                    self.studies_table.setItem(row_idx, 6, QTableWidgetItem(row['study_uid'] or ''))
-
-                    # Store study_pk in user data
-                    self.studies_table.item(row_idx, 0).setData(Qt.UserRole, row['study_pk'])
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load studies: {str(e)}")
+        self._start_rows_query()
 
     def load_series_for_study(self, study_pk):
-        """Load series for selected study."""
-        try:
-            with get_db_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
+        self.series_table.setRowCount(0)
+        self.select_btn.setEnabled(False)
+        self._start_rows_query(study_pk)
 
-                query = """
-                    SELECT
-                        series_number,
-                        series_description,
-                        modality,
-                        image_count,
-                        series_uid
-                    FROM series
-                    WHERE study_fk = ?
-                    ORDER BY series_number ASC
-                """
+    def _start_rows_query(self, study_pk=None):
+        self._query_generation += 1
+        generation = self._query_generation
+        task = _StudyRowsTask(study_pk, self)
+        self._query_workers.append(task)
+        task.finished.connect(lambda: self._rows_loaded(task, generation))
+        task.start()
 
-                cur.execute(query, (study_pk,))
-                rows = cur.fetchall()
+    def _rows_loaded(self, task, generation):
+        self._query_workers.remove(task)
+        task.deleteLater()
+        if self._close_pending:
+            if not self._query_workers:
+                super().reject()
+            return
+        if generation != self._query_generation:
+            return
+        if task.failed:
+            QMessageBox.warning(self, "Local Studies", "Could not read local studies. Please retry.")
+            return
+        is_study = task.study_pk is None
+        table = self.studies_table if is_study else self.series_table
+        fields = (["patient_id", "patient_name", "study_date", "study_description", "modality", "number_of_series", "study_uid"]
+                  if is_study else ["series_number", "series_description", "modality", "image_count", "series_uid"])
+        table.setRowCount(len(task.rows))
+        for index, row in enumerate(task.rows):
+            for col, field in enumerate(fields):
+                value = row.get(field)
+                table.setItem(index, col, QTableWidgetItem("" if value is None else str(value)))
+            if is_study:
+                table.item(index, 0).setData(Qt.UserRole, row["study_pk"])
+        if is_study:
+            self.filter_studies(self.search_input.text())
 
-                self.series_table.setRowCount(len(rows))
+    def reject(self):
+        if self._query_workers:
+            self._close_pending = True
+            self.setEnabled(False)
+            return
+        super().reject()
 
-                for row_idx, row in enumerate(rows):
-                    self.series_table.setItem(row_idx, 0, QTableWidgetItem(str(row['series_number'] or '')))
-                    self.series_table.setItem(row_idx, 1, QTableWidgetItem(row['series_description'] or ''))
-                    self.series_table.setItem(row_idx, 2, QTableWidgetItem(row['modality'] or ''))
-                    self.series_table.setItem(row_idx, 3, QTableWidgetItem(str(row['image_count'] or 0)))
-                    self.series_table.setItem(row_idx, 4, QTableWidgetItem(row['series_uid'] or ''))
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load series: {str(e)}")
+    def closeEvent(self, event):
+        if self._query_workers:
+            self.reject()
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
     def filter_studies(self, text):
         """Filter studies based on search text."""
+        self.studies_table.clearSelection()
+        if self.studies_table.rowCount():
+            self._query_generation += 1
+        self.series_table.clearSelection()
+        self.series_table.setRowCount(0)
+        self.selected_study_uid = None
+        self.selected_patient_id = None
+        self.selected_series_number = None
+        exact = self.search_scope.currentText() == "Patient ID (exact)"
         for row in range(self.studies_table.rowCount()):
             match = False
             for col in range(self.studies_table.columnCount()):
@@ -287,6 +310,9 @@ class StudyPickerDialog(QDialog):
                 if item and text.lower() in item.text().lower():
                     match = True
                     break
+            if exact and text.strip():
+                item = self.studies_table.item(row, 0)
+                match = bool(item and item.text().strip().casefold() == text.strip().casefold())
             self.studies_table.setRowHidden(row, not match)
 
     def on_mode_changed(self, text):
@@ -321,7 +347,7 @@ class StudyPickerDialog(QDialog):
                 if self.mode == 'series':
                     study_pk = self.studies_table.item(row, 0).data(Qt.UserRole)
                     self.load_series_for_study(study_pk)
-                    # Reset any prior series selection — series_number must be re-chosen for the new study.
+                    # Reset any prior series selection ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ series_number must be re-chosen for the new study.
                     self.selected_series_number = None
                     self.series_table.clearSelection()
                     self.select_btn.setEnabled(False)
@@ -366,6 +392,11 @@ class StudyPickerDialog(QDialog):
 
     def on_select(self):
         """Handle selection confirmation."""
+        if self._query_workers:
+            return
+        row = self.studies_table.currentRow()
+        if not self.studies_table.selectedItems() or row < 0 or self.studies_table.isRowHidden(row):
+            return
         if self.mode == 'series':
             # Check if series is selected
             selected_series = self.series_table.selectedItems()

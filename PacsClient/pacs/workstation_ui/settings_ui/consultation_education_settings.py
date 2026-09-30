@@ -298,6 +298,7 @@ class ConsultationEducationSettingsWidget(QWidget):
         lay.setContentsMargins(18, 18, 18, 18)
         lay.setSpacing(16)
 
+        self._build_education_transfer(lay)
         self._build_identity(lay)
         self._build_current_user(lay)
         self._build_access(lay)
@@ -306,6 +307,50 @@ class ConsultationEducationSettingsWidget(QWidget):
 
         scroll.setWidget(body)
         self._refresh()
+
+    def _build_education_transfer(self, parent_layout):
+        box = QGroupBox("Local Education - Export / Import")
+        layout = QVBoxLayout(box)
+        layout.addWidget(_note(
+            "Move saved courses, downloaded learning resources and Cases of the Day "
+            "between your computers, including their media and attachments."))
+        row = QHBoxLayout()
+        self.btn_export_education = QPushButton("Export Education...")
+        self.btn_import_education = QPushButton("Import Education...")
+        self.btn_export_education.clicked.connect(lambda: self._open_education_transfer("export"))
+        self.btn_import_education.clicked.connect(lambda: self._open_education_transfer("import"))
+        row.addWidget(self.btn_export_education)
+        row.addWidget(self.btn_import_education)
+        row.addStretch(1)
+        layout.addLayout(row)
+        parent_layout.addWidget(box)
+
+    def _open_education_transfer(self, mode):
+        if not _education_module_enabled():
+            QMessageBox.information(self, "Education unavailable",
+                                    "Enable the Education module on this workstation first.")
+            return
+        try:
+            from modules.education.transfer_dialog import EducationTransferDialog
+        except ImportError:
+            QMessageBox.warning(self, "Education unavailable",
+                                "The Education transfer component is not installed in this build.")
+            return
+        dialog = EducationTransferDialog(self, mode=mode)
+        dialog.imported.connect(self._refresh_local_education)
+        dialog.exec()
+
+    def _refresh_local_education(self):
+        # Refresh an existing workspace without loading the full viewer from Settings.
+        import sys
+        module = sys.modules.get("modules.education.education_module_redesigned")
+        if module is None:
+            return
+        workspace = module.EducationModuleRedesigned.last_instance()
+        if workspace is not None:
+            workspace.library_page.load_courses()
+            workspace.mycourses_page.load_courses()
+            workspace.case_of_day_tab.refresh()
 
     # ── 1 · Identity ──────────────────────────────────────────────────────────
     def _build_identity(self, parent_layout):

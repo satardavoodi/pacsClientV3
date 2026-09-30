@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from modules.education.course_database import (
+    modality_matches,
     delete_course,
     get_all_courses,
     get_course_with_slides,
@@ -907,7 +908,7 @@ class EducationMainWidget(QWidget):
         filtered_courses = []
         for course in courses:
             course_modality = self._normalize_modality(course.get("modality"))
-            if self.selected_modalities and course_modality not in self.selected_modalities:
+            if self.selected_modalities and not modality_matches(course_modality, self.selected_modalities):
                 continue
 
             if self.selected_body_regions:

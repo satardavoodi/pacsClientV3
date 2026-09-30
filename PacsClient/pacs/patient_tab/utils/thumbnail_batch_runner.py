@@ -97,8 +97,9 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
             for su, slot, group_entries in groups:
                 by_stem = {Path(p).stem: p for p in (list_files(folder, su) or ())}
                 rows = [(key, dict(info), by_stem.get(str(info.get('folder_key')
-                        or info.get('_orig_series_number') or ''))) for key, info in group_entries]
-                rows = order_rows([row for row in rows if row[2]])
+                        or info.get('_orig_series_number') or '')) or '')
+                        for key, info in group_entries]
+                rows = order_rows(rows)
                 if rows:
                     plan.append((su, slot, rows))
         elif entries is not None:
@@ -247,7 +248,7 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                     spacer.hide()
                     spacer.deleteLater()
                     pixmap = QPixmap.fromImage(image)
-                    if pixmap.isNull() and local:
+                    if pixmap.isNull():
                         pixmap = ThumbnailImageSourceService._placeholder_pixmap(key)
                     owner.add_thumbnail_to_thumbnail_layout(row, path, key,
                         series_info=info, prepared_pixmap=pixmap)

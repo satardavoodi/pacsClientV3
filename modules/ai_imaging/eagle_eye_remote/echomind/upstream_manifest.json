@@ -1,0 +1,114 @@
+{
+  "source": "AI-PACS workstation EchoMind",
+  "source_files_sha256": {
+    "llm_client.py": "8ca205baf7bfedde791d286b608ce4c15b4d3c98a07bd9903311dfedd7c797a8",
+    "voice_transcription.py": "d51c45c5f824e96b44bf5d3ed996b9b5cb1f15661530e0d2e424471f17155d8d",
+    "settings_store.py": "a65c91e7b75d6d1c07455f8da86d4a49916434b319da74ddf5d4e7f1c6e55c71",
+    "echomind_http.py": "031348f0e4a8e20b2ffe6abe3318c10b02e60221e07b5324f4c5836dd9add3bf",
+    "credential_envelope.py": "8db0e8b8c1e778f21d929d28a2c4db1824ce31ee034130615d6ad42e47f88404",
+    "normal_templates.py": "17f7ba5d69ad21b5c53b5e3fabd28e6db7142ec1f161a49fbe5da7b5b082d83d",
+    "viewer_chat/openai_reporter.py": "245b3d8bc4506be871e304d98b3b59a38e6cf8339b2b1228570628cb90cb7317",
+    "viewer_chat/openai_parallel_backend.py": "86460ec096eb078607811bf57ea6dca9fe121c889bcb563fc17a8f617628809c",
+    "secretary/stt/providers/openai_transcribe.py": "588e76cf3cadd94372f1e08b94a81b52d96868d6c8767da699d82ce12d47dc6a",
+    "secretary/stt/providers/v2t_google.py": "2006636c2db3d926cc7c96df5ab78d01a296fb845b06cdba2c931fa5fcd7894f",
+    "viewer_chat/turbo_mammo_modules.py": "eb7e881a8bf4c07a9cb5169db207ebdb1dabedb39771846ee95c22d7e42a73b4",
+    "viewer_chat/turbo_modules.py": "1a16eacfc332c99ab21248b9e16230e1caf0a6950ad246cffd689a6baf7b7a22",
+    "viewer_chat/turbo_mri_modules.py": "daa7f5d2d788a234ab28eafef30fd0ffc7fd937c286d5b8daf5e92e2cf125f1e",
+    "viewer_chat/turbo_prompt.py": "55d813586b65bf838419c308c9ba0dd5639ef93455bf565df4cbe1433885d90f",
+    "viewer_chat/turbo_regions.py": "7c3303cd6f1e0a72b037fb20045cb2ce2dcd87a7f13b066f43f7d3e82d6fa90a",
+    "viewer_chat/turbo_regions_extra.py": "da1f47518ab2db85e6e8a0e9624a2ca190febc13761d1c6b5bfbb3b3f85a4d44",
+    "viewer_chat/turbo_region_modules.py": "ebd4a1dd2b91d7bde622829a0911ed6243a175100efd0c1ec90a01365082c453",
+    "viewer_chat/turbo_template.py": "cea6903f00ed2e3668120d4cf1a26bc54ce0e5cdbe1847008a15f1c4a5576c68",
+    "viewer_chat/turbo_us_modules.py": "8eff79758546b7bf9addcf6bd2fb7160cf7e00ec4f773d41108f670a003c0ace",
+    "viewer_chat/turbo_xr_modules.py": "b3c0f4142bb39cb7ec1012cf66fb938f1e4ed40f8894985aa968870b0f0a7b3c",
+    "viewer_chat/prompts/correction.json": "9f4d194bc37d85a4b7a46b249d60b28a1343768b77abb796ae20e629f9f7687f",
+    "viewer_chat/prompts/standardization.json": "c1791c6079e05e10b9727b4823267823fdb76ffcf1439854c916a332b8267561",
+    "viewer_chat/prompts/translation.json": "45fb6aa4edc47e0b98a13b92b0d9c5e6129f341933c069f19385933e6802e3f3",
+    "viewer_chat/prompts/turbo_ct.json": "5a12d332c9595666689794453141d5b2443b52991f7ca8773f649859198f7ce2",
+    "viewer_chat/prompts/turbo_mammography.json": "cf27185c739118e717d0009b982bade226f1852cce5d0e6191096aa02eb7880e",
+    "viewer_chat/prompts/turbo_mri.json": "72beda17ccb0e307322e5029eef5fb77f30deb01ae8e763450988f7a80596ca6",
+    "viewer_chat/prompts/turbo_ultrasound.json": "7f7ea0181b031471d733f799b626cc10302a55574806ecaabc2b37bab8c5caee",
+    "viewer_chat/prompts/turbo_xray.json": "9b4f4e10799a7e0497629ce946675f8e8acdbaf04cc10b6c4b741f070bbea4ce",
+    "secretary/prompts/agent_phase2_prompt.txt": "6542b8221fb6e4974a29bcfb0c8e48eb24f69628e14d5bd860d781ac4f18ea4a",
+    "secretary/prompts/router_phase1_prompt.txt": "7df555b24a78e27f6478fde7bb4eef036408c96e9d225c9a24b04b0b680da819",
+    "secretary/prompts/router_phase1_prompt_v2.txt": "c5fc2228f21cfae1f0188d0bb6adc8b356461ca41c3fe9e82faf869aadf795cf",
+    "secretary/prompts/secretary_action_prompt.txt": "ee039732d26d12b7173de8a7a3d7d5ef19b19789672d6f2d9c638ded863697f7"
+  },
+  "source_commit": "f3d4de24650f3eaafe8a338cd84c22853d21b243",
+  "long_string_hashes": {
+    "voice_transcription.py": [
+      "64c925f335e11c8e150f1d393ca9dfe5f460cb52a73495f14cbdfac97da05a27"
+    ],
+    "echomind_http.py": [
+      "16deeef1bf67dc68fbfc59688a7cea9904961986fae11eccf31cee90e9017afc"
+    ],
+    "normal_templates.py": [
+      "70234d762417104c2af26983b5944783dccab4ce86c07aa1ddb939212f9c7302"
+    ],
+    "viewer_chat/openai_reporter.py": [
+      "19ab6c0d72ee92eb8266c13e2f2ad00f0674bd530dbf7ece33af7299fdafaa83",
+      "187bf25a323981341650caac5fd1c9fc998069fde2f0e3041e76530497e5ae46",
+      "b90664258ac758584a3f1f0d28d89b1ec45fc5e0f33af76751319b0990e9c6b1",
+      "db0d06250372823959be793b5763b2eb70deb73cf7f9f758f9ac0c0ce3acdf07",
+      "6ddbc928b768ac872463ca96436e35fd84b876428f72bbfaba86ba781a581669",
+      "5f9ed6457a90ee4fd6d0e396114b72145f30a734c4052d185f391490f848cf53",
+      "c0650d514a9c066059a3f11a9c46c0afc53b1e80bd5de5d89ddb5e6e9b731f93",
+      "19dc07f4a35942129af2ffb9ce0694d730e145314791f34c0b83c7351824d575",
+      "dddf9f63622e7f10b49cce9371bbddd5d6277b9fa9afa54b4e0381df39a8d89d",
+      "c2b7c6fdfd89c79175678b84f20faf0727e117e93790590ef4928b72b5e7e17f",
+      "5f50d33fa8e25a52bc202d2758ab263a3fe673633476cf74adc9cb5a652becb8",
+      "7094194e22f47bf87d395a1c46bf5f169fe1781c75b961998ae83f777f986a7d",
+      "25d250bc28f3ed48b9db87e0253277ae7b625e059d60674d560949809f4d4302",
+      "fc4b40400861111611f52139aaebae21c4a2dd2066454e570799bc0adfd09b7f",
+      "f25968b3c4fcefb584ac2f28249b44473cef2aaf6856c66c10fe6aa53b4bf433",
+      "225fc3e79a789d0af8aa64101a97d52fcf1dce5b357ff127831e4ec0f5629b1f",
+      "439ad529d1dda9b74347cf6785010341bc6162e269733ff4ff26584c8118b896",
+      "cc0c4a50dfa908865d4a9cb5c6cb21c4cb5a1ed663df259ede2c4d40bc17deb8",
+      "283fd70bef57c9ffa5cee5a9337e506e2f28ea4c926a07c98403bd0d4a1bc3f7",
+      "ea49922b088018aca523310f068205955155622e10a69a868266533b07f0cd80",
+      "541b8b73e7e175bfa5b538dbe05a783d1e45695dd05cc6fc5a6fe1904e2d6102"
+    ],
+    "viewer_chat/openai_parallel_backend.py": [
+      "c350fc97c6ed5bf8b4cad31d357f9b76fdcd23bced731a1738205fba31221a58"
+    ],
+    "viewer_chat/turbo_modules.py": [
+      "c57b0bd5b569222b233f2a0d8709659e6c76bac698c14f16ea629031bce8b9a0"
+    ],
+    "viewer_chat/turbo_mri_modules.py": [
+      "129116cef6ad28714033536604f8ac1d588b8a8449c670a8f877acbfdc345929"
+    ],
+    "viewer_chat/turbo_prompt.py": [
+      "11ddea943abe4a9d217e23c65e14a944e66fb1b3e260f3de8142ccca9e4433d5",
+      "54fe41f2eb282ddaa7ba7713f2239af611b61810800347f9cb27e168d40511f4"
+    ],
+    "viewer_chat/turbo_regions.py": [
+      "eb1b8826fb1db12b8b682f4499aa49d0178babd6915113a956c9f174d1c3e9de",
+      "a0274ecd1bc00ff75cc9641b4ea8087fca16a6e8934bfbf45c6ad6ba976ab265",
+      "6490d556e0d76e4550a69fd820fbf1aa46e79ea49117cc74a0a83b07ea93bea2",
+      "779589f154aa987ab50c9a3637dfde7abfbf6d537ae0256fc0ad016e0b2a53f2",
+      "5998bda90f9b70c1f07ae3df313d9b950c21c7fab63df8b6f62ce71b2095164f",
+      "358ab909b67e0fd0612d4f8c1baefcf0d174444ba6d25c056f8bd62c643fb160",
+      "cd6aa45fafcdbe935d1b0ebbff11f5a5c7e932691a7c4ef5ed29f5070f217b24",
+      "1a840e82ade848429b24766398787a4ed10c455f8457128b528bd095c8fc6bd4",
+      "c765d196c95866c5e6f54a7609b3718588dd2560270ea4639b6e0df966ec6dfd",
+      "53e4e937e07229a089e6cfebb75d6877126e2a3660704cfb14db6e7ebbae21e5"
+    ],
+    "viewer_chat/turbo_regions_extra.py": [
+      "b21340b51713199220bc6ad627bf2c81c64ffbad59fd9b6770a5802aac0a1994"
+    ],
+    "viewer_chat/turbo_template.py": [
+      "0435de7da310a39e081a3eff12460401708d4573704194e615130e2c6c21847a",
+      "22c324dc5e3376be0dcdce3d7f039deec6f5a860e1cc5956d83b81011e0472ec",
+      "9173741d5f566e2989719dd4998f776b492ef842b66cd77f2fde55e9f5580039",
+      "2588c388a91426bc00f7dd28d89b229d86e4fe61d54487ad6ad96e71a73d152c",
+      "f374967cd64ff2cde65e7b928d80a6354a763d5fad3ebd4edd135ccef5e61942"
+    ],
+    "viewer_chat/turbo_us_modules.py": [
+      "53528d15c7d96be3b0c41ebb0dc9772fa14ff933e2e71d4f1b156fbe1509dc72",
+      "1b02ff5b4409a9ac3ba30300dc9d9bac78a3a71d9485424adc388a68abe9ad3b"
+    ],
+    "viewer_chat/turbo_xr_modules.py": [
+      "1dbc6b6f5a39f7400f027381b3ff1ee9170cead3d87ab3c0aeae0761e72a10e1"
+    ]
+  }
+}

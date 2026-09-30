@@ -19,6 +19,32 @@ from pathlib import Path
 import pytest
 
 
+def test_local_education_transfer_buttons_route_to_selected_mode(monkeypatch, qapp_offscreen):
+    from PacsClient.pacs.workstation_ui.settings_ui import consultation_education_settings as ces
+    from modules.education import transfer_dialog
+    from unittest.mock import Mock
+    monkeypatch.setattr(ces.ConsultationEducationSettingsWidget, "_refresh", lambda self: None)
+    monkeypatch.setattr(ces, "_education_module_enabled", lambda: True)
+    opened = []
+    class Dialog:
+        def __init__(self, parent, *, mode):
+            opened.append(mode)
+            self.imported = Mock()
+        def exec(self):
+            return 0
+    monkeypatch.setattr(transfer_dialog, "EducationTransferDialog", Dialog)
+    widget = ces.ConsultationEducationSettingsWidget()
+    widget.btn_export_education.click()
+    widget.btn_import_education.click()
+    assert opened == ["export", "import"]
+    monkeypatch.setattr(ces, "_education_module_enabled", lambda: False)
+    monkeypatch.setattr(ces.QMessageBox, "information", Mock())
+    widget.btn_import_education.click()
+    assert opened == ["export", "import"]
+    ces.QMessageBox.information.assert_called_once()
+    widget.deleteLater()
+
+
 @pytest.fixture
 def qapp_offscreen():
     """A live offscreen QApplication for the tests that build the widget."""

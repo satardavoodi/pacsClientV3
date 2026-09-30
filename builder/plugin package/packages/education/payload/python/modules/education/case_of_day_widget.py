@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QEvent, QSize, QTimer, Signal
+from PySide6.QtGui import QFont, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QToolButton,
     QComboBox,
     QDialog,
     QFrame,
@@ -1162,9 +1164,10 @@ class CaseOfDayCard(QFrame):
 
     clicked = Signal(dict)
 
-    def __init__(self, entry: CaseOfDayEntry, parent=None):
+    def __init__(self, entry: CaseOfDayEntry, parent=None, *, view_mode="large"):
         super().__init__(parent)
         self.entry = entry
+        self.view_mode = view_mode
         t = get_theme_manager().current_theme()
         self.setObjectName("CaseOfDayCard")
         self.setCursor(Qt.PointingHandCursor)
@@ -1182,7 +1185,13 @@ class CaseOfDayCard(QFrame):
             }}
             QLabel {{ color: {t['text_secondary']}; background: transparent; border: none; }}
         """)
-        self._build()
+        if view_mode == "large":
+            self._build()
+        else:
+            self._build_compact()
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setToolTip("\n".join(filter(None, [entry.diagnosis, entry.study_description,
+                                              entry.anatomical_classification])))
 
     def _build(self):
         t = get_theme_manager().current_theme()
@@ -1334,6 +1343,54 @@ class CaseOfDayCard(QFrame):
 
         outer.addWidget(footer)
 
+    def _build_compact(self):
+        t = get_theme_manager().current_theme()
+        is_list = self.view_mode == "list"
+        if is_list:
+            self.setFixedHeight(96)
+        else:
+            self.setFixedSize(240, 170)
+        if is_list:
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(5)
+        heading = QHBoxLayout()
+        badge = QLabel(self.entry.modality or "Case")
+        badge.setStyleSheet(f"color: {self._mod_color}; font-size: 11pt; font-weight: 700;")
+        heading.addWidget(badge)
+        diagnosis = QLabel(self.entry.diagnosis or "(no diagnosis)")
+        diagnosis.setWordWrap(True)
+        diagnosis.setStyleSheet(f"color: {t['text_primary']}; font-size: 11pt; font-weight: 600;")
+        if is_list:
+            heading.addWidget(diagnosis, 1)
+        else:
+            heading.addStretch(1)
+        heading.addWidget(QLabel(self.entry.body_part or ""))
+        layout.addLayout(heading)
+        if not is_list:
+            layout.addWidget(diagnosis, 1)
+        patient = " · ".join(filter(None, [self.entry.patient_name.replace("^", " "), self.entry.patient_id]))
+        reference = QLabel(patient)
+        reference.setToolTip(patient)
+        layout.addWidget(reference)
+        footer = QHBoxLayout()
+        metadata = " · ".join(filter(None, [self.entry.study_date, self.entry.saved_by]))
+        label = QLabel(metadata)
+        label.setToolTip(metadata)
+        footer.addWidget(label, 1)
+        footer.addWidget(QLabel("Open ›"))
+        layout.addLayout(footer)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit({"case_pk": self.entry.case_pk})
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def mousePressEvent(self, event):
         self.clicked.emit({"case_pk": self.entry.case_pk})
         super().mousePressEvent(event)
@@ -1352,6 +1409,12 @@ class CaseOfDayPage(QWidget):
         self._current_modality: str = ""
         self._current_body_part: str = ""
         self._search_text: str = ""
+        self._view_mode = "large"
+        self._cards = []
+        self._cases = []
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self._reflow_cards)
         self._build_ui()
         self.refresh()
 
@@ -1364,10 +1427,11 @@ class CaseOfDayPage(QWidget):
         while self.layout() is not None and self.layout().count():
             item = self.layout().takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
 
         t = self._theme
-        root = QHBoxLayout(self)
+        root = self.layout() or QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
@@ -1415,6 +1479,7 @@ class CaseOfDayPage(QWidget):
                 font-size: 12pt;
             }}
         """)
+        self.search.setText(self._search_text)
         self.search.textChanged.connect(self._on_search)
         left_layout.addWidget(self.search)
 
@@ -1455,12 +1520,33 @@ class CaseOfDayPage(QWidget):
         )
         header_row.addWidget(self.results)
         header_row.addStretch(1)
-        header_hint = QLabel("Click any case to open it in the viewer")
-        header_hint.setStyleSheet(
-            f"color: {t.get('text_muted', t['text_secondary'])}; "
-            f"font-size: 9.5pt; font-style: italic;"
-        )
-        header_row.addWidget(header_hint)
+        mode_bar = QWidget()
+        mode_layout = QHBoxLayout(mode_bar)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(4)
+        self.view_mode_group = QButtonGroup(mode_bar)
+        self.view_mode_group.setExclusive(True)
+        self.view_mode_buttons = {}
+        for mode, label in (("large", "Large cards"), ("small", "Small cards"), ("list", "List")):
+            button = QToolButton(mode_bar)
+            button.setAccessibleName(label)
+            button.setToolTip(label)
+            button.setCheckable(True)
+            button.setChecked(mode == self._view_mode)
+            button.setFixedSize(38, 34)
+            button.setIconSize(QSize(24, 24))
+            button.setIcon(self._view_mode_icon(mode, t['text_primary']))
+            button.setStyleSheet(f"""
+                QToolButton {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 4px; }}
+                QToolButton:hover {{ border: 1px solid {t['accent_hover']}; }}
+                QToolButton:checked {{ background: {t['accent']}; border: 2px solid {t['text_primary']}; }}
+                QToolButton:focus {{ border: 2px solid {t['accent_hover']}; }}
+            """)
+            button.clicked.connect(lambda checked=False, selected=mode: self._on_view_mode_changed(selected))
+            self.view_mode_group.addButton(button)
+            self.view_mode_buttons[mode] = button
+            mode_layout.addWidget(button)
+        header_row.addWidget(mode_bar)
         center_layout.addLayout(header_row)
 
         # Slim accent separator under the count.
@@ -1471,6 +1557,7 @@ class CaseOfDayPage(QWidget):
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.viewport().installEventFilter(self)
         self.scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
         self.grid_container = QWidget()
         self.grid = QGridLayout(self.grid_container)
@@ -1508,9 +1595,12 @@ class CaseOfDayPage(QWidget):
         self._render_cases(cases)
 
     def _render_cases(self, cases: List[CaseOfDayEntry]):
+        self._cases = list(cases)
+        self._cards = []
         while self.grid.count():
             item = self.grid.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
 
         self.results.setText(f"{len(cases)} case{'s' if len(cases) != 1 else ''}")
@@ -1556,11 +1646,58 @@ class CaseOfDayPage(QWidget):
             self.grid.addWidget(empty_box, 0, 0, 1, 3, alignment=Qt.AlignCenter)
             return
 
-        cols = 3
-        for idx, entry in enumerate(cases):
-            card = CaseOfDayCard(entry)
+        for entry in cases:
+            card = CaseOfDayCard(entry, view_mode=self._view_mode)
             card.clicked.connect(self._open_case)
-            self.grid.addWidget(card, idx // cols, idx % cols)
+            self._cards.append(card)
+        self._reflow_cards()
+
+    @staticmethod
+    def _view_mode_icon(mode, color):
+        pixmap = QPixmap(48, 48)
+        pixmap.setDevicePixelRatio(2)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor(color), 1.6))
+        if mode == "large":
+            painter.drawRoundedRect(3, 3, 18, 18, 2, 2)
+            painter.drawLine(6, 15, 18, 15)
+            painter.drawLine(6, 18, 14, 18)
+        elif mode == "small":
+            for x in (3, 14):
+                for y in (3, 14):
+                    painter.drawRoundedRect(x, y, 7, 7, 1, 1)
+        else:
+            for y in (5, 12, 19):
+                painter.drawRect(3, y - 1, 2, 2)
+                painter.drawLine(9, y, 21, y)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _on_view_mode_changed(self, mode):
+        if mode == self._view_mode:
+            return
+        self._view_mode = mode
+        self._render_cases(self._cases)
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroll.viewport() and event.type() == QEvent.Resize:
+            self._reflow_timer.start(0)
+        return super().eventFilter(watched, event)
+
+    def _reflow_cards(self):
+        if not self._cards:
+            return
+        width = max(1, self.scroll.viewport().width() - 8)
+        card_width = 320 if self._view_mode == "large" else 240
+        columns = 1 if self._view_mode == "list" else max(1, (width + 18) // (card_width + 18))
+        for card in self._cards:
+            self.grid.removeWidget(card)
+        for index, card in enumerate(self._cards):
+            if self._view_mode == "list":
+                card.setFixedWidth(width)
+            self.grid.addWidget(card, index // columns, index % columns)
 
     def _on_search(self, text: str):
         self._search_text = str(text or "")

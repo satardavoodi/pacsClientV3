@@ -1,5 +1,316 @@
 # UI Stall Evidence and Guarded Fixes — 2026-09-02
 
+## 2026-09-30 first-open patient scope omitted a document study (OPT-58/60)
+
+The current source run admitted one study at 12:06:12.831. Its socket thumbnail
+request returned seven entries in about 67 ms, and bounded presentation applied
+seven cards / one study in 239.73 ms (maximum apply 19.12 ms). At 12:08:47 the
+deferred Home reconciliation discovered another study and backfilled one document
+series. Grouped presentation then applied eight cards / two studies in 415.22 ms
+(maximum apply 23.39 ms). The missing study was discovered about 154.7 seconds after
+open. These are pre-fix observations, not post-fix performance claims. The catalog
+and media distinction matters: one original card also lacked media, but the omitted
+document study was not part of the initial catalog at all.
+
+A bounded, read-only socket probe confirmed the cause. The MR-filtered patient row
+reported one study and one UID; the same exact patient query without modality/date
+filters reported two UIDs and MR + DOC. Search counts/modalities are query-scoped,
+not proof of patient completeness. The open resolver trusted those hints, skipped
+enumeration, and relied on a later Home reconciliation to repair membership.
+
+Correction: extend the existing study-discovery boundary, not thumbnail rendering.
+Server open performs one unfiltered exact-patient query in `asyncio.to_thread` before
+tab admission. Home reconciliation reuses its already patient-scoped row with the
+same pure `patient_row_study_uids` extractor and discovery method, without a duplicate
+query. Scalar/nested UID forms are normalized, the selected study stays first, and
+foreign rows are rejected (including the old Home `rows[0]` fallback). The existing
+per-modality compatibility adapter remains only for insufficient global rows; known
+count mismatches are logged rather than asserted complete. Local mode remains
+network-free. Socket failure preserves previously resolved studies and warns;
+cancellation propagates. No new cache, timer, retry producer, module or feature flag.
+
+The initial six guards produced four failures: three reproduced missing study
+membership and one exercised the new verified-scope interface. The final guard file
+covers 14 cases, including same-modality repeats, no list metadata, foreign ownership,
+Local isolation, nested/scalar UIDs, legacy incomplete rows, network failure and
+cancellation. The initial adjacent selection passed 149 tests. Final expanded
+verification passed 219 tests (151 UI/service and 68 candidate-packaging/profile
+checks), exit 0, with six existing SWIG deprecation warnings. The selection used
+direct pytest with `-p no:debugging --reruns 0`; changed-file diff checks and the
+495-pair mirror verifier also passed. Tests isolate network and database access.
+
+Latency tradeoff: first Server open now waits for one worker request. The independent
+probe measured 145 ms for its warm unfiltered read, but about 8 seconds for its cold
+filtered read; neither is a same-workload post-fix GUI KPI. Do not claim zero added
+latency or unconditional completeness when a server fails or omits identities.
+The new PHI-free `PATIENT_STUDY_DISCOVERY` marker separates discovery from card paint.
+Existing download, study slots, counters, series ordering, decode and VTK remain owned
+by their existing pipelines.
+
+Live gate remains open: the source process predates this change; the existing local
+control client ping failed with `QLocalSocket: Invalid name`. Do not restart, automate
+login, clear caches or launch an installed executable to manufacture acceptance.
+A human-authorized fresh source run must double-click the filtered MR row once and
+verify both study headers, all eight catalog cards including the document, stable
+group order, exact drag/click identities and discovery/paint timings. Repeat with
+Local offline, same-modality repeat studies and close/reopen. No produced-artifact
+acceptance or full Unify completion is claimed.
+
+Next-build handoff: shared core files are `_hp_patient_open.py`, `_hp_series.py`,
+`patient_study_set.py` and a scope-comment correction in `_hp_search.py`; the guard is
+`test_open_patient_study_scope.py`. There are no matching plugin payload copies for
+these core paths and the read-only global verifier reports 495 matching pairs.
+Applicable: Standard Client, ARM Client and Eagle Eye Server, both PyInstaller and
+Nuitka, using their ordinary shared workstation UI. No models or edition features
+are added. Fresh artifact first-open/offline checks remain mandatory; no full build
+or version change was performed. Bind the dirty-source receipt to the next immutable
+candidate before release. Base HEAD: `050cb0b3`; SHA256 at verification:
+
+| File | SHA256 |
+|---|---|
+| `_hp_patient_open.py` | `DE0B05DAD560DF34D1F1F9C3AF455C10592C50E95E8FFFA796FB8B6278C5F640` |
+| `_hp_series.py` | `195784FCE4BCC707AF82938E238EF603AA3ABCE12788A4EF7CD0C49777AD2F44` |
+| `patient_study_set.py` | `1FD9C769DA7B6F73256A5CCBB192E78F1CF68E4C701656546FA42A1DED3A8AB7` |
+| `_hp_search.py` | `E2730EB2B0280136303809BE9ED0F64CAD09527AE95BA29B9C4DC5F70A89C9F9` |
+| `test_open_patient_study_scope.py` | `0520F68F0A5ADB456E13E205A02DB5F56C16E4222EB859155CFE99FA7AD73712` |
+
+Rollback, if fresh testing requires it: reverse only this discovery/extractor/caller
+slice, preserving unrelated dirty changes. It restores the known incomplete
+first-open behavior; it is not a correctness fallback. No stored-data migration.
+
+## 2026-09-29 Home Local repair convergence and mixed-series sort (OPT-60)
+
+The restarted source run proved that pixel inventory and catalog projection were not
+the remaining failure. For each affected Local study the log recorded an indexed
+pixel-bearing series followed by `ThumbnailCacheMiss` and a one-row metadata display,
+but no shared repair marker. Home's worker returned an empty media path by design. A
+multi-study open then delivered 28 series and rendered the Patient-Tab rows, while the
+parallel grouped Home finalizer raised `TypeError: '<' not supported between instances
+of 'str' and 'int'` in its numeric-or-text sort helper. This exception aborted Home's
+final publication and was independent of DICOM decode.
+
+Home Local now enters the existing shared repair only on a missing canonical/hinted
+PNG and only inside its existing worker. The repair uses bounded striped single-flight
+locking and a canonical-file recheck, preventing Home and Patient Tab from decoding or
+writing the same key concurrently. The grouped sort returns tagged keys so numeric
+series remain numeric-first and textual values have a deterministic case-insensitive
+order. Two exact guards failed before correction; the concurrency guard asserts one
+preview for two callers. Focused correction tests: 23 passed. Expanded affected and
+adjacent Home/Local/sidebar/search tests: 198 passed. The observed application process
+loaded before this follow-up, so fresh source GUI and KPI acceptance remain pending.
+
+## 2026-09-29 imported MR/MG/US thumbnail placeholders (OPT-60)
+
+The observed Import copied all source objects and raised no ERROR/CRITICAL event in
+the scoped session.  Patient-tab catalog delivery also completed: every pixel-bearing
+series received a card and the separate non-pixel-only series was intentionally
+excluded.  Only two series had PNG media; the remaining image cards retained the
+shared placeholder.  A header audit found the exact differentiator: each affected
+folder contained one metadata-only Raw Data Storage object beside ordinary MR images,
+while the two successful folders contained images only.
+
+`load_series_preview` enumerated all DICOM objects and sent them to the Advanced
+geometry contract.  The metadata-only object has no IPP/IOP, yielding
+`ADVANCED_PREVIEW_DEFERRED reason=unresolved_geometry`.  Re-running the same affected
+folder read-only failed with all objects and succeeded with the pixel-bearing subset.
+This is not missing Import data, cache invalidation, VTK rendering or server behavior.
+
+Follow-up evidence from a separate multi-study Import proved a second trigger.  All 9
+studies, 28 series and 65 pixel-bearing files were registered without a scoped
+ERROR/CRITICAL event.  Twenty-two series had PNGs; the six missing rows were exactly
+three multi-object MG and three multi-object US series.  They had no metadata-only
+objects and no IPP/IOP, but every representative file decoded successfully.  The Home
+right panel's one-series count was correct for the selected study; its blank card image
+was not.  Therefore a Raw-Data-only fallback was too narrow.
+
+The shared worker-only repair boundary now reuses `try_dicom_file_pixel_facts`.  It
+preserves metadata-only files, rejects indeterminate classification and mismatched
+identity, and selects one middle pixel-bearing single-frame object only after the
+ordinary geometry-aware preview rejects the exact canonical folder.  The fallback now
+covers both mixed pixel/metadata series and conventional nonspatial MG/US; mixed
+single/multi-frame inputs and multi-object DX presentation remain fail-closed.  The Import caller marks
+its already-failed preview so repair does not repeat the same geometry scan.  The
+Enhanced multi-frame adapter likewise steps past verified non-pixel companions.  The
+change does not alter patient/study/series naming, card count/order, decoder ownership,
+viewer geometry, VTK, download coordination, cache keys or GUI-thread workload.
+
+Fail-before/pass-after evidence is recorded in
+`test_local_multiframe_thumbnail_repair.py`.  Thirteen direct guards pass, including
+two parameterized fail-before MG/US cases that assert one decode per series.  The
+focused/adjacent selection passes 186 unique tests.  A read-only affected MR fallback
+returned its expected image, and all six missing MG/US previews succeeded in about
+598 ms total (about 27-166 ms each); this is diagnostic worker evidence, not a
+Patient-Tab paint KPI.  Mirror parity
+is 495/495. The release-candidate packaging selection produced 45 passes and one
+unrelated existing signature-drift failure in `build_local_candidate.run_builds`;
+therefore no complete build-input pass is claimed. Fresh source GUI remains mandatory:
+re-import or reopen a retained mixed/nonspatial
+series, verify placeholders are progressively replaced without jumping, verify every
+pixel series exactly once, verify Raw Data is not counted as an image, then restart and
+confirm identical card identities/count/order.  The current receipt makes no installed
+artifact or end-to-end latency claim.
+
+## Advanced Search modality serialization (2026-09-28, OPT-24 search boundary)
+
+Second observed boundary, 22:02:20-21: restarted source sent scalar MR and received
+100 patients. Refinement read only singular body-part keys while both server and
+table consume `body_parts` arrays. Missing scalar fields bypassed the requested
+filter. The predicate now checks nonblank array entries, falls back to legacy
+scalar metadata, and excludes unknown/nonmatching body parts when requested.
+Four fail-before guards; 33 combined checks pass, exit 0. Other clinical filters
+retain existing missing-data semantics. Matching is patient-level, not a claim
+that every associated study is of the selected body part. Fresh source GUI and
+artifact acceptance remain pending; no runtime hot reload or restart performed.
+
+Current local session at 21:34:33 records a month-range Advanced Search with
+`modality: ['MR']`, followed by `Search returned None`, before body-part refinement.
+The socket server's `_parse_modalities_param` consumes a string (`strip`/`split`),
+not a list. The client mapper now serializes selected codes as `MR` or `MR,CT`.
+No server deployment, filtering semantics, viewer work or clinical data changed.
+Three synthetic guards failed before; four pass after, with 24 combined search,
+routing and reentrancy checks passing (exit 0). Mirrors: 486 matched. Source
+control ping and 92-action discovery succeeded; that process predates the edit.
+Fresh source GUI and exact installed artifact acceptance remain open for each
+applicable Client/Server backend. Body-part matching remains textual; `Neuro`
+is not an implemented anatomical category. The existing 100-row fetch limit
+also remains; this slice does not certify exhaustive month-range results.
+Rollback is the single modality-mapper hunk, with its contract tests.
+
+## 2026-09-28/29 first-open Patient-Tab thumbnail convergence (OPT-58 / OPT-60)
+
+The reported 3.6.9 client case was reproducible from retained, PHI-sensitive logs
+without copying identifiers into this report. On first open, the widget received one
+study and six series, logged a cache miss, and deferred thumbnail networking 18 times.
+The final event was `patient_tab_thumb_retry_exhausted`; there was no Patient-Tab
+socket-start, render-entry or reserved-card event. The Home right panel later fetched
+the same six thumbnails and warmed the shared disk cache. On reopen, the Patient Tab
+reported a six-item cache hit and rendered all cards. This proves bounded-deferral
+non-convergence, not missing catalog metadata, DICOM decode failure or a crash.
+
+The manual-only viewer policy exposed a dependency cycle: selecting the first series
+requires a card, while the supposedly noncritical card request waited for the first
+series to be visible. The retry scheduler also read a legacy PatientWidget flag, while
+actual placement updates ViewerController. Conversely, Home's loading callback may
+represent an intentionally empty shell, so its early `first_series_visible` marker was
+not reliable rendered-image evidence.
+
+Correction is deliberately narrow. Cache hits remain unchanged. Cold or partial
+catalog bootstrap enters the existing socket fetch once in `asyncio.to_thread`, then
+writes/renders through the established unified path; the obsolete defer/retry timer is
+removed. `PatientWidget.has_first_series_displayed()` exposes ViewerController state to
+the Home query, with the legacy widget flag only as construction fallback.
+
+Adversarial completeness review then reproduced a separate partial-cache loss. A single
+cached PNG caused an immediate file-only return although the authoritative catalog had
+three series. Grouped preparation independently discarded rows with no PNG. The unified
+contract now joins optional media onto the complete catalog, UID-first and number-only
+when unique. Partial cache reaches the same socket worker and emits one final generation;
+unavailable media keeps a placeholder card. Collision media uses the established
+`folder_key`, and an empty decoded byte string is never written as a false PNG cache hit.
+Complete-cache reuse is explicitly presentation-only and does not start the count writer
+again; fresh authoritative entries retain the established persistence path. No socket
+request, filesystem read, decode or VTK construction moves onto Qt; no new cache,
+producer, download transition or viewer behavior exists.
+
+Fail-before evidence: the convergence test observed zero socket calls after the 18th
+retry, the visibility-authority query was absent, and Home treated empty-shell
+completion as visible pixels. Three additional guards proved partial single-study loss,
+grouped row filtering and absent Server fallback. A seventh failing assertion proved
+that complete-cache reuse redundantly launched count persistence. Pass-after: all eight
+new guards pass; the affected/adjacent selection passes 187 tests with six
+existing SWIG deprecation warnings. No plugin mirror is associated with these core
+files. Fresh source GUI acceptance remains mandatory: test genuinely cold and deliberately
+partial caches, open once, confirm catalog count equals card count without close/reopen,
+include duplicate-number/multi-study/document rows, select/drag cards, then reopen and
+confirm identical identities/count/order with no new error, stall or duplicate socket
+loop. No such source run is claimed by this receipt.
+
+### September 29 refinement: essential bootstrap must not wait for first paint
+
+A later source session supplied the missing timing distinction. From the open request
+to thumbnail-card delivery was approximately 9.23 seconds. Eighteen deliberate defer
+decisions consumed approximately 8.84 seconds; after release, the existing socket fetch
+took about 95 ms (server wait/transfer total about 76 ms) and all eight cards rendered
+in about 288 ms. One approximately 372 ms construction stall was secondary. The server,
+card renderer and DICOM decoder were therefore not the dominant cause of this delay.
+
+The same session exposed a connected signal race. Empty-layout settlement emitted
+`loading_complete`, Home logged `first_series_visible` at about 420 ms, but the
+ViewerController correctly remained not-visible until the user later selected a series.
+The early event happened before the noncritical tasks were queued, so those tasks still
+deferred while the log misleadingly claimed visible pixels.
+
+The refined correction removes the Patient-Tab catalog retry/timer family. Cold or
+partial cache enters the existing `asyncio.to_thread` socket worker immediately because
+the catalog is required to choose the first image; genuinely noncritical Home work keeps
+its throttle. Home now queries actual viewer visibility before setting the loaded flag,
+logging `first_series_visible`, or replaying deferred work. Shell-only settlement gets
+the distinct `viewer_shell_settled_without_series` marker. Two exact guards failed before
+this refinement and pass afterward. The six-test convergence file and the 187-test
+affected/adjacent selection pass with exit code zero; the 141-series synthetic sidebar
+run remained bounded with about 12.1 ms maximum apply time. Core files have no plugin
+mirror. The running source process predates this edit, so fresh source GUI acceptance
+remains mandatory and no installed-build claim is made.
+
+## 2026-09-27 Download Manager blank queue investigation (OPT-60)
+
+Follow-up: the user reported that restarting restored the queue, then explicitly
+requested prevention of reproducible reliability defects. This strengthens the
+transient-state hypothesis but does not identify the exact original gate.
+The Refresh handler now schedules the existing coalesced table refresh, in
+addition to updating counters. The viewer-owned stale-interaction correction is
+recorded in the VTK owner report; no downloader, state-store or queue mutation
+was added. Both corrections are authorized maintenance, not U0-U5 advancement.
+
+Verification: three guards failed before the runtime edits (FAST/Advanced
+missing-end recovery and Refresh dispatch). Final focused suite: 45 passed,
+exit 0; an additional obsolete main-window drag-gate module is explicitly skipped.
+Coverage includes real Qt application/thread ownership, held mouse retention,
+fresh keepalives, release grace, background-thread nonmutation and the actual
+deferred queue callback resuming. All 473 plugin mirror pairs match after syncing
+only the two changed runtime files. No installer was built; Client/Server artifact
+acceptance remains open. The current process predates this correction, and local
+test-control ping still has no endpoint. Fresh source GUI gate: open Download
+Manager during/after a viewer interaction, verify rows/counts and Refresh without
+restarting downloads. Rollback: revert only the Refresh call and the viewer
+predicate's stale recovery block, then synchronize those mirrors.
+
+The initial investigation below is historical; its no-runtime-change statement
+describes that diagnostic turn, not this subsequent authorized correction.
+
+Diagnosis only, as requested. Native source-window inspection confirmed an empty
+queue table while the summary reported 12 total, 9 active and 1 downloading.
+The source main process started September 26 at 17:55. Its current-session
+download diagnostics contain 32 paired refresh queued/flush events through
+September 27 10:07:58, but no DM_REBUILD events or UIObserver errors in the
+available file. The latest terminal capture is empty; retained application logs
+do not cover the entire session. These are evidence of a presentation-path gap,
+not evidence that downloads were lost or that process age caused the defect.
+
+Confirmed code findings:
+
+- `_dm_details._refresh_table_order` postpones even a visible queue when
+  `is_protected_drag_active()` is true. Its deferred callback repeats until that
+  state clears. The FAST/Advanced explicit latches have no deadline expiry while
+  active; a missed end notification can starve queue rendering indefinitely.
+- An isolated synthetic probe set the Advanced latch, advanced its clock by
+  24 hours, and still observed true; the real queue mixin deferred a visible
+  table without attempting an update. This proves the failure mechanism, not
+  the live latch value. Available live FAST begin/end records are paired; no
+  retained evidence identifies an unmatched Advanced begin in this session.
+- `_dm_controls._on_refresh` only calls `_update_status_label`; the visible
+  Refresh button does not request a table rebuild and cannot repair this gap.
+
+Exact live attribution remains open: protected-interaction gating, stale widget
+visibility/ownership, and an exception before full-rebuild instrumentation need
+runtime discrimination. The documented local control-client ping reports no
+endpoint. Do not claim the synthetic latch reproducer proves the live root cause.
+No runtime files, patient data, queue state, flags or processes were changed.
+Next source diagnostic gate should expose only gate booleans and aggregate row/
+state counts, then compare the visible widget to its observer owner. Viewer latch
+lifecycle changes, if indicated, belong to the VTK owner; avoid bypassing active
+drag protection or changing download workers to compensate for missing rows.
+
 ## 2026-09-26 patient-tab representative thumbnail unification (OPT-58 / OPT-60)
 
 The patient title-bar image was not owned by the unified catalog/sidebar route.
@@ -3655,3 +3966,64 @@ aligned growth policy and timing/tooltip additions with their mirror while retai
 the prior gcd shrink correction and other worktree changes. A normal restart loads
 source changes; this is distinct from changing the saved mode in an already-updated
 app, which only requires a new study download.
+
+
+## 2026-09-30: OPT-24 advanced-search pagination
+
+Reported: a three-month MR/Knee query appeared limited to the latest month.
+Redacted local log inspection confirmed correct 90-day request dates but exactly
+100 returned rows at offset zero. Advanced search never requested another page;
+body-part refinement operated only on that first page. Synthetic fail-before:
+expected offsets [0, 100, 200], observed [0].
+
+HomeSearchService now requests sequential pages of 100 on its existing executor,
+retains all date/modality parameters, filters/sorts each page on the worker and
+inserts ten rows per GUI batch with an event-loop yield. Unmatched payloads are
+released per page; identity keys deduplicate results. Generation checks retire
+late responses before mutation, including final loading-state cleanup. An opt-in
+strict socket-search mode distinguishes failed requests from an empty final page;
+legacy callers retain their previous return contract.
+
+Protective bounds: 5,000 displayed matches or 100,000 scanned records. Hitting
+either bound, a repeated page, cancellation or failure is visibly incomplete;
+users must narrow filters. This is not an unlimited or snapshot-consistent server
+query. Concurrent server changes during offset pagination can still shift rows.
+Cancellation stops further requests/rendering; an in-flight blocking socket request
+finishes under the existing socket timeout and its late result is discarded.
+
+Verification: 46 focused tests passed (six existing SWIG warnings), including
+older-page matches, unchanged filters, yielding cancellation, supersession,
+repeated pages, result bounds, transport failure, preview lifecycle and routing.
+No server configuration or live clinical data changed. Fresh source GUI acceptance
+and large real-data responsiveness remain pending the local control connection.
+No installer/build/release was produced. Source files are shared Client/Server
+inputs; the mirror dry-run reports no mapped drift for these source paths.
+Backup: C:/Users/Dr.Alizadeh/AppData/Local/AI-PACS/task-backups/advanced-search-paging-20260930.
+
+
+### 2026-09-30 follow-up: advanced search input occlusion and repeated table work
+
+User reported a dark, unresponsive tab during the paged query. Home.show_loading
+ignores its cancellable/dim arguments and installs a full-tab QWidget overlay
+without input transparency. Advanced search now uses its existing inline progress
+and Cancel search button, without acquiring or hiding the shared tab overlay.
+The current live screen was inspected read-only; it was a patient viewer, not an
+ongoing search. This is not a reproduced native hang or live acceptance.
+
+A second concrete issue: each ten-row insertion called whole-table count/sort
+because the table's streaming predicate only knew the Local progressive cursor.
+Advanced search now registers generation-owned streaming until retirement. The
+existing incremental styling and deferred final count/sort paths are reused.
+Worker-side page metadata prefetch warms imported-date and visited-patient caches,
+including nested/latest study references, before rendering Qt rows. The lifecycle
+only retires its own generation, including cancellation/supersession.
+
+Two failing-before guards demonstrated overlay acquisition and unrecognized
+external streaming. Final related selection: 54 passed, 6 SWIG warnings. Additional
+worker-thread and stream-retirement guards pass. Adjacent legacy Local progressive
+suite: four failures (old initial-batch/source expectations), each independently
+reproduced against the bounded pre-change backup with no worktree replacement.
+No performance/zero-lag guarantee: a fresh live three-month query and measured
+UI heartbeat remain pending. No clinical workflow interrupted or app restarted.
+Both files are shared workstation build inputs; no mapped payload drift found.
+No build or installed-artifact acceptance performed.

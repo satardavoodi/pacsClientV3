@@ -440,6 +440,13 @@ class _MprLayoutMixin:
         # bails instead of building into a finalizing widget (the callback also
         # swallows the deleted-object RuntimeError as a second layer).
         self._deferred_3d_pending = False
+        curve = getattr(self, "_curve_reconstruction", None)
+        if curve is not None:
+            try:
+                curve.cleanup()
+            except Exception:
+                logger.warning("[MPR-LIFECYCLE] curve teardown failed", exc_info=True)
+
 
         # 2026-08-19: record RSS on the way in and out. Without this, "did the
         # cache free?" needed a four-log reconstruction (the MPR timings are in

@@ -303,6 +303,17 @@ class _PWAdvancedMixin:
         self.btn_advanced_mpr.clicked.connect(self._on_advanced_mpr_clicked)
         models_container_layout.addWidget(self.btn_advanced_mpr)
 
+        self.btn_vascular_analysis = _module_button("Vascular Analysis")
+        self.btn_vascular_analysis.setObjectName("advancedVascularAnalysis")
+        self.btn_vascular_analysis.clicked.connect(
+            lambda checked=False: self._on_advanced_mpr_clicked(workflow="vascular"))
+        models_container_layout.addWidget(self.btn_vascular_analysis)
+        self.btn_virtual_bronchoscopy = _module_button("Virtual Bronchoscopy")
+        self.btn_virtual_bronchoscopy.setObjectName("advancedVirtualBronchoscopy")
+        self.btn_virtual_bronchoscopy.clicked.connect(
+            lambda checked=False: self._on_advanced_mpr_clicked(workflow="bronchoscopy"))
+        models_container_layout.addWidget(self.btn_virtual_bronchoscopy)
+
         # Stitching
         self.btn_stitching = _module_button("Stitching")
         self.btn_stitching.clicked.connect(self._on_stitching_clicked)
@@ -573,7 +584,7 @@ class _PWAdvancedMixin:
               f"disk_scan={'yes' if base_path and os.path.isdir(str(base_path)) else 'no'})")
         return result
 
-    def _on_advanced_mpr_clicked(self) -> None:
+    def _on_advanced_mpr_clicked(self, checked=False, *, workflow=None) -> None:
         """
         Handle Advanced MPR button click.
         Shows loading overlay immediately, then defers the actual launch so
@@ -675,9 +686,10 @@ class _PWAdvancedMixin:
         # ── Defer the real launch 500 ms so the overlay is fully visible ─
         QTimer.singleShot(500, lambda: self._launch_advanced_mpr_async(
             dicom_dir=dicom_directory,
-            series_uid=selected_series.get('series_uid'),
-            window_width=selected_series.get('window_width'),
-            window_level=selected_series.get('window_level'),
+            series_uid=(selected_series or {}).get('series_uid'),
+            window_width=(selected_series or {}).get('window_width'),
+            window_level=(selected_series or {}).get('window_level'),
+            workflow=workflow,
         ))
 
     def _show_advanced_mpr_loading_ui(self) -> None:
@@ -788,6 +800,7 @@ class _PWAdvancedMixin:
         series_uid: str | None = None,
         window_width: float | None = None,
         window_level: float | None = None,
+        workflow: str | None = None,
     ) -> None:
         """Start the 3-D Slicer worker thread.  Called from a QTimer so the
         loading overlay is guaranteed to be painted first."""
@@ -810,7 +823,7 @@ class _PWAdvancedMixin:
                     pass
                 sig.connect(slot)
 
-            launcher.launch_with_dicom(
+            initiated = launcher.launch_with_dicom(
                 dicom_dir=dicom_dir,
                 layout='mpr',
                 patient_id=getattr(self, 'patient_id', None),
@@ -822,7 +835,11 @@ class _PWAdvancedMixin:
                 viewport_y=self.mapToGlobal(QPoint(0, 0)).y(),
                 viewport_width=self.width(),
                 viewport_height=self.height(),
+                workflow=workflow,
             )
+            if not initiated:
+                self._hide_advanced_mpr_loading_ui()
+                self.button_safeguard.end_operation(success=False, operation_name="Advanced MPR Launch")
         except Exception as e:
             print(f"[PatientWidget] Error launching Advanced MPR: {e}")
             import traceback

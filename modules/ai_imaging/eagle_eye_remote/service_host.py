@@ -30,6 +30,8 @@ def service_config(path):
     paths.extend(pacs[k] for k in ('database', 'ca_file', 'credential_file') if pacs.get(k))
     if config.get('slicer_executable'):
         paths.append(config['slicer_executable'])
+    if config.get('echomind'):
+        paths.append(config['echomind'].get('config_dir'))
     paths.extend(pacs.get('allowed_roots', []))
     paths.extend(m.get('server_root') for m in pacs.get('path_mappings', []))
     if any(not isinstance(p, str) or not Path(p).is_absolute() for p in paths):
@@ -41,7 +43,8 @@ def child_command(config_path):
     path = Path(config_path)
     if not path.is_absolute():
         raise ValueError('The service configuration must use an absolute path.')
-    if getattr(sys, 'frozen', False):
+    from aipacs_runtime import is_frozen
+    if is_frozen():
         return [sys.executable, '--eagle-eye-service-child', str(path)]
     return [sys.executable, '-m', 'modules.ai_imaging.eagle_eye_remote.service_host', str(path)]
 

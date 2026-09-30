@@ -253,7 +253,7 @@ def test_pdf_report_snapshot_and_escape(tmp_path, qapp):
     assert not data['clinical_report_signed']
     assert '&lt;script&gt;' in (folder/'report.html').read_text()
     reader = PdfReader(folder/'report.pdf')
-    assert len(reader.pages) == 3  # Measurements, annotated evidence, methods.
+    assert len(reader.pages) == 4  # Measurements, evidence, methods, scientific references.
     assert 'DRAFT' in reader.pages[0].extract_text()
 
 
@@ -264,7 +264,7 @@ def test_multi_curve_report_is_paginated_and_failed_report_not_published(tmp_pat
     v = view(); v['curves'] = [deepcopy(v['curves'][0]) for _ in range(5)]
     v['rotations'] = [rotation_record(level, 1, 'right') for level in ('T5', 'T6', 'T7', 'T8', 'T9')]
     folder = Path(generate_report([v], '1.2.3', root=tmp_path)['artifact_directory'])
-    assert len(PdfReader(folder/'report.pdf').pages) == 7
+    assert len(PdfReader(folder/'report.pdf').pages) == 8
     before = set(tmp_path.rglob('report.pdf'))
     def fail(*args, **kwargs): raise RuntimeError('Synthetic report failure')
     monkeypatch.setattr(organized_report, 'write_paged_pdf', fail)

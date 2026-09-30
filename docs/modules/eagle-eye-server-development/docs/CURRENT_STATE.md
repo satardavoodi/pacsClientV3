@@ -1,5 +1,20 @@
 # Current state and inventory
 
+## 2026-09-30: Current Developer service with hosted EchoMind
+
+The active SCM source is `revisions/20260930-echomind/source`, Python 3.13.5,
+using `config/server-20260930-echomind.json`, LocalService and existing paired TLS
+port 8002. PACS/CRM are unchanged. All 15 real synthetic EchoMind calls passed;
+94 target guards passed. Fresh GUI ping/action discovery works; full workflow
+acceptance remains open. App-local software Slicer startup/hidden warm-up passed
+on a separate current-native copy, not a System32 replacement. See
+[current source, receipts and remaining gates](ECHOMIND_SERVER_2026-09-30.md).
+Older port/source inventories below are historical, not active routing guidance.
+
+## 2026-09-27: MS multi-sequence source candidate
+
+Cross-plane 2D FLAIR support and optional matching 3D pre/post-T1 subtraction review are implemented. Local private inference and PDF verification passed; fresh native GUI and versioned Razi activation remain pending. No automated enhancement classification is supplied. See [method and evidence](MS_MULTISEQUENCE_2026-09-27.md).
+
 ## 2026-09-26: Smooth-band follow-up (source candidate)
 
 MS-only native 2D paired-band separation is implemented with raw/retained/amber review masks and PDF provenance. Related automated gate: 157 passed; 472 mirrors match. Thresholds remain exploratory, not clinically qualified. The fresh source test bridge responds, but new native GUI acceptance and Razi activation are pending. Earlier unfiltered 2D acceptance does not close these gates. See [method and evidence](LESIONS_2D_2026-09-26.md#reversible-smooth-band-review-follow-up).
@@ -64,3 +79,15 @@ The VM has32GB RAM; about8.3GB was free at the earlier pilot sampling. Refresh c
 before workloads. Heavy Brain execution is not authorized by that capacity evidence.
 Windows firewall profiles were observed disabled during preflight; do not rely on
 rule scoping as active protection. No LAN HTTP listener was opened for this pilot.
+
+2026-09-27 picker follow-up: local acquisition selector fixes the inaccessible second 2D FLAIR choice; 2 fail-before guards and 64 pass-after tests. Native GUI pending. See MS_MULTISEQUENCE_2026-09-27.md.
+
+2026-09-27 characterization follow-up: source now adds same-T1 anatomical locations and an exploratory tissue-calibrated focal-increase screen, preserving explicit boundary/coverage uncertainty. 145 automated passes; private PDF inspected. Native GUI, Razi activation and clinical validation remain pending. See MS_MULTISEQUENCE_2026-09-27.md.
+
+- 2026-09-27: Three-color FLAIR component agreement and separate exploratory pre-contrast T1 evidence added; see MS_MULTISEQUENCE_2026-09-27.md. Automated suite 147 passed; refreshed-source GUI and Razi activation pending.
+
+- 2026-09-27: Patient PDF references use scientific citations; T1 hypointensity interpretation distinguishes persistent injury-associated signal from single-scan findings. See MS_MULTISEQUENCE_2026-09-27.md.
+
+- 2026-09-27: Shared brain PDF readability updated (sentence breaks, 135% leading, paragraph spacing); 25 focused tests passed and 25-page lesion artifact visually checked.
+
+- 2026-09-27: Shared PDF readability verified for volumetry, lower-limb Alignment and Total Spine; legacy brain path unified and Total Spine methods/references reorganized. 53 focused guards pass; synthetic artifacts inspected.

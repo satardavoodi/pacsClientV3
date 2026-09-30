@@ -27,6 +27,21 @@ def test_lighting_is_bounded_and_reversible():
     assert prop.GetDisableGradientOpacity() == 1
 
 
+def test_new_view_uses_detailed_without_user_opt_in():
+    mapper, prop = vtk.vtkGPUVolumeRayCastMapper(), vtk.vtkVolumeProperty()
+    prop.ShadeOn()
+    image = vtk.vtkImageData()
+    image.SetSpacing(.7, .7, 1)
+    host = SimpleNamespace(viewers={'3d': {'mapper': mapper, 'property': prop}},
+                           image_data=image, _request_render=lambda view: None)
+    _MprVrtMixin._set_vrt_quality(host)
+    assert mapper.GetVolumetricScatteringBlending() == .5
+    _MprVrtMixin._set_vrt_quality(host, interacting=True)
+    assert mapper.GetVolumetricScatteringBlending() == 0
+    _MprVrtMixin._set_vrt_quality(host, interacting=False)
+    assert mapper.GetVolumetricScatteringBlending() == .5
+
+
 def test_threshold_is_absolute_and_preserves_nodes_and_geometry():
     prop = vtk.vtkVolumeProperty()
     opacity = vtk.vtkPiecewiseFunction()

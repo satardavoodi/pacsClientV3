@@ -170,7 +170,7 @@ def test_advanced_param_sets_fan_out_and_cap():
     })
     assert len(sets) == 2
     assert {s['patient_id'] for s in sets} == {'1', '2'}
-    assert all(s['date_from'] == '20260501' and s['modality'] == ['CT'] for s in sets)
+    assert all(s['date_from'] == '20260501' and s['modality'] == 'CT' for s in sets)
 
     no_ids = HomeSearchService._advanced_query_to_param_sets({'patient_ids': []})
     assert len(no_ids) == 1 and 'patient_id' not in no_ids[0]
@@ -195,9 +195,10 @@ def test_advanced_client_filters_conservative():
     assert passes(row, {'physician': 'alizadeh'})
     assert not passes(row, {'physician': 'someone else'})
 
-    # Missing fields must KEEP the row (server stays authoritative)
+    # A requested body part requires evidence; other missing fields stay permissive.
     bare = {'patient_id': '2'}
-    assert passes(bare, {'body_part': 'chest', 'age_min': 10, 'physician': 'x'})
+    assert not passes(bare, {'body_part': 'chest', 'age_min': 10, 'physician': 'x'})
+    assert passes(bare, {'age_min': 10, 'physician': 'x'})
 
 
 def test_dicom_age_parsing():

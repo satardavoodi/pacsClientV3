@@ -131,17 +131,5 @@ def report_html(result):
 
 def write_pdf(html, path):
     """Run in the report worker while the workstation QApplication exists."""
-    from .organized_report import PAGE, write_paged_pdf
-    if PAGE in html:
-        return write_paged_pdf(html, path)
-    from PySide6.QtGui import QTextDocument, QPdfWriter, QPageSize, QFont
-    from PySide6.QtCore import QSizeF
-    writer = QPdfWriter(str(path))
-    writer.setPageSize(QPageSize(QPageSize.A4))
-    writer.setResolution(96)
-    writer.setTitle("Eagle Eye Brain - review required")
-    document = QTextDocument()
-    document.setDefaultFont(QFont("Arial", 9))
-    document.setPageSize(QSizeF(writer.pageLayout().paintRectPixels(writer.resolution()).size()))
-    document.setHtml(html)
-    document.print_(writer)
+    from .organized_report import write_paged_pdf
+    return write_paged_pdf(html, path)

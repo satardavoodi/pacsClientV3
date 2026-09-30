@@ -167,14 +167,19 @@ class _HPPatientOpenMixin:
         try:
             study_uid = str(study_uid or '')
             active_widget = getattr(self, '_double_click_loading_widget', None)
+            widget = self._find_widget_by_study_uid(study_uid)
             if (
-                getattr(self, '_double_click_first_series_loaded', False)
+                widget is None
                 and active_widget is not None
                 and str(getattr(active_widget, 'study_uid', '')) == study_uid
             ):
-                return True
-            widget = self._find_widget_by_study_uid(study_uid)
-            return bool(getattr(widget, '_first_series_displayed', False)) if widget else False
+                widget = active_widget
+            if widget is None:
+                return False
+            visibility_probe = getattr(widget, 'has_first_series_displayed', None)
+            if callable(visibility_probe):
+                return bool(visibility_probe())
+            return bool(getattr(widget, '_first_series_displayed', False))
         except Exception:
             return False
 
@@ -361,20 +366,11 @@ class _HPPatientOpenMixin:
         return 0
 
     async def _resolve_patient_study_uids_async(self, patient_id, fallback_study_uid):
-        """Async resolve = the sync table/DB/fallback resolution PLUS a server
-        enumeration of studies the patient-list hid.
+        """Resolve the complete patient scope before admitting a server tab.
 
-        The server's ``GetPatientList`` returns only ONE study UID per patient (the
-        latest) even when the patient has several studies — it discriminates studies
-        by modality. So a *same-patient* study of a different modality (e.g. an MRI
-        when the latest study is an X-ray) is otherwise never surfaced and the patient
-        appears to have only one study. Used by the double-click open path so all of
-        a patient's studies are opened/downloaded (the single-click reconcile feeds
-        its already-fetched server row into ``_enumerate_studies_for_row`` directly).
-
-        Zero extra server query for the common single-study / single-modality patient:
-        the decision uses the compact per-patient meta stashed at list-load time by
-        ``_add_socket_patient_to_table`` (``_server_patient_meta_by_pid``).
+        Search-row counts/modalities are scoped to the search filters and cannot
+        prove that another study (including DOC or a repeated modality) is absent.
+        Local mode retains its offline-only authority.
         """
         resolved = self._resolve_patient_study_uids(patient_id, fallback_study_uid)
         if local_is_source_of_truth(getattr(self, 'source_of_patient_load', None)):
@@ -387,11 +383,10 @@ class _HPPatientOpenMixin:
         try:
             pid = str(patient_id or '').strip()
             meta = (getattr(self, '_server_patient_meta_by_pid', None) or {}).get(pid)
-            if meta:
-                extra = await self._enumerate_studies_for_row(pid, meta, already_have=resolved)
-                for u in extra:
-                    if u and u not in resolved:
-                        resolved.append(u)
+            extra = await self._enumerate_studies_for_row(pid, meta, already_have=resolved)
+            for u in extra:
+                if u and u not in resolved:
+                    resolved.append(u)
         except Exception as e:
             try:
                 _logger.warning("[multi-study] modality enumeration failed for %s: %s", patient_id, e)
@@ -570,53 +565,53 @@ class _HPPatientOpenMixin:
         except Exception:
             return False
 
-    async def _enumerate_studies_for_row(self, patient_id, base_row, already_have=None):
-        """Discover same-patient studies that a ``GetPatientList`` row omitted.
+    async def _enumerate_studies_for_row(self, patient_id, base_row, already_have=None,
+                                        *, patient_scope_verified=False):
+        """Discover additional identities through the shared socket row contract.
 
-        ``GetPatientList`` returns only ONE study UID per patient (the latest) — it
-        discriminates studies by modality. So when a patient spans MORE THAN ONE
-        modality, the non-latest modality's study is missing from the row. Given the
-        patient's row, query the patient list once PER modality and return the
-        ADDITIONAL study UIDs found. Every UID is verified to belong to ``patient_id``
-        (the server filters by it), so cross-patient isolation is preserved.
-
-        No queries (returns ``[]``) when the patient has a single modality, or when we
-        already hold at least as many studies as the server reports for them. The
-        multi-modality count IS the discriminator: 2+ modalities ⇒ 2+ studies, and
-        only the latest came back, so the rest must be fetched per modality.
+        Open needs one unfiltered, exact-patient read. Reconcile already owns that
+        read and marks its row verified to avoid a second request. The legacy
+        per-modality adapter is needed only if that global row reports more studies
+        than it explicitly lists. Every request remains on a worker.
         """
         import asyncio as _aio
+        from PacsClient.utils.patient_study_set import patient_row_study_uids
+
         pid = str(patient_id or '').strip()
         extra = []
-        if not pid or not base_row:
+        if not pid:
             return extra
-        modalities = self._row_modalities(base_row)
-        if len(modalities) <= 1:
-            return extra  # single modality ⇒ nothing cross-modality to discover
-        # Skip the per-modality queries if we already hold every study the server
-        # knows about for this patient (avoids redundant queries on re-open).
-        total = self._row_total_studies(base_row)
         have = [str(u or '').strip() for u in (already_have or []) if str(u or '').strip()]
         known = list(have)
-        for u in list((base_row or {}).get('study_uids') or []) + [(base_row or {}).get('latest_study_uid')]:
-            u = str(u or '').strip()
-            if u and u not in known:
-                known.append(u)
-        if total > 0 and len(known) >= total:
-            return extra
-        try:
+        def _row_for(params):
             from modules.network.socket_patient_service import get_socket_patient_service
             svc = get_socket_patient_service()
-        except Exception:
-            return extra
-
-        def _row_for(params):
             rows = svc.search_patients_sync(params) or []
             for r in rows:
-                if str((r or {}).get('patient_id') or '').strip() == pid:
+                if isinstance(r, dict) and str(r.get('patient_id') or '').strip() == pid:
                     return r
             return None
 
+        if not patient_scope_verified:
+            import time
+            started = time.perf_counter()
+            base_row = await _aio.to_thread(_row_for, {
+                'patient_id': pid, 'limit': 100, 'offset': 0,
+                'include_study_count': True, 'include_latest_study': True})
+            _logger.info(
+                '[PATIENT_STUDY_DISCOVERY] source=patient_query matched=%s elapsed_ms=%.2f',
+                bool(base_row), (time.perf_counter() - started) * 1000)
+        if not isinstance(base_row, dict) or str(base_row.get('patient_id') or '').strip() != pid:
+            return extra
+
+        for uid in patient_row_study_uids(base_row):
+            if uid not in known:
+                known.append(uid)
+                extra.append(uid)
+        total = self._row_total_studies(base_row)
+        if total > 0 and len(known) >= total:
+            return extra
+        modalities = self._row_modalities(base_row)
         for mod in modalities:
             try:
                 mrow = await _aio.to_thread(_row_for, {
@@ -624,8 +619,7 @@ class _HPPatientOpenMixin:
                     'include_study_count': True, 'include_latest_study': True})
                 if not mrow:
                     continue
-                for u in list(mrow.get('study_uids') or []) + [mrow.get('latest_study_uid')]:
-                    u = str(u or '').strip()
+                for u in patient_row_study_uids(mrow):
                     if u and u not in known and u not in extra:
                         extra.append(u)
                         try:
@@ -635,6 +629,11 @@ class _HPPatientOpenMixin:
                             pass
             except Exception:
                 continue
+        resolved_count = len(set(known + extra))
+        if total > resolved_count:
+            _logger.warning(
+                '[PATIENT_STUDY_DISCOVERY] result=incomplete expected=%d resolved=%d',
+                total, resolved_count)
         return extra
 
     def _defer_patient_studies_refresh(self, patient_info: dict) -> None:
@@ -1672,12 +1671,27 @@ class _HPPatientOpenMixin:
         self._maybe_hide_double_click_loading()
 
     def _on_first_series_loaded(self):
-        self._double_click_first_series_loaded = True
         try:
             active_widget = getattr(self, '_double_click_loading_widget', None)
             active_study_uid = getattr(active_widget, 'study_uid', None) if active_widget else None
+            if not active_study_uid or not self._is_first_series_visible_for_study(
+                active_study_uid
+            ):
+                if active_study_uid:
+                    self._log_open_trace(
+                        active_study_uid,
+                        'viewer_shell_settled_without_series',
+                    )
+                self._maybe_hide_double_click_loading()
+                return
+
+            self._double_click_first_series_loaded = True
             if active_study_uid:
-                pending_right_panel, pending_series_info, pending_attachments = self._pending_deferred_counts(active_study_uid)
+                (
+                    pending_right_panel,
+                    pending_series_info,
+                    pending_attachments,
+                ) = self._pending_deferred_counts(active_study_uid)
                 self._log_open_trace(
                     active_study_uid,
                     'first_series_visible',

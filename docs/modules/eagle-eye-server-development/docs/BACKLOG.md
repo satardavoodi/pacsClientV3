@@ -1,5 +1,19 @@
 # Execution backlog
 
+## 2026-09-30: Current acceptance priorities
+
+Use [the current checkpoint](ECHOMIND_SERVER_2026-09-30.md), not old 8042/8043
+deployment paths. EchoMind code and actual paired synthetic API gate pass.
+Complete fresh source GUI report/assist/template rendering, all model inference,
+client edits/export and recovery. Native software startup/warm-up passes;
+rendered study acceptance is separate. Preserve the owner's deferred Breast
+classification limitation. Build Server installers only after Developer gates;
+do not infer readiness from capability names or payload hashes.
+
+## MS multi-sequence acceptance (2026-09-27)
+
+Complete native source GUI selection/run/export acceptance and a scoped versioned Razi service/API/artifact pass. Review sensitivity of cross-plane thresholds, slice gaps, smooth-band handling and residual T1 intensity bias. Enhancement remains unclassified; qualify any new classifier separately. See [method and evidence](MS_MULTISEQUENCE_2026-09-27.md).
+
 ## Smooth-band follow-up acceptance (2026-09-26)
 
 Source implementation and 157 automated tests complete. Complete fresh native GUI run/export, clinician review of retained and separated candidates, scoped versioned Razi candidate/API acceptance, and separate installer/clinical qualification. Preserve small lesions and explicitly evaluate false negatives; one exploratory case cannot set universal normal-signal thresholds. See [2D owner record](LESIONS_2D_2026-09-26.md#reversible-smooth-band-review-follow-up).
@@ -45,3 +59,5 @@ real-account/UI acceptance, pilot consolidation, D4/D5 and actual model tests.
 Build owner continues shared CRT/cache parity independently. Do not make native
 packaging edits in parallel with that workstream or copy another task's unfinished
 assets. Do not promote to8002 merely because the API or Slicer startup responds.
+
+2026-09-27 characterization follow-up: source now adds same-T1 anatomical locations and an exploratory tissue-calibrated focal-increase screen, preserving explicit boundary/coverage uncertainty. 145 automated passes; private PDF inspected. Native GUI, Razi activation and clinical validation remain pending. See MS_MULTISEQUENCE_2026-09-27.md.

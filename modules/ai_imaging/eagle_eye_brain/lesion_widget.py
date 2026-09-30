@@ -67,8 +67,19 @@ class BrainLesionWidget(BrainVolumetryWidget):
         self._input_labels = [(label, label.text()) for label in self.findChildren(QLabel)
                               if label.text() in ('3D T1-weighted', '3D FLAIR (required)')]
         self.acquisition_mode.currentIndexChanged.connect(self._acquisition_changed)
+        self._selected_flair_secondary = None
+        self._selected_t1_post = None
+        self._contrast_roles_confirmed = False
+        self.extra_summary = QLabel('Optional MS inputs are available in Select MRI series.')
+        self.extra_summary.setWordWrap(True)
+        self.layout().insertWidget(4, self.extra_summary)
 
     def _acquisition_changed(self):
+        self._selected_flair_secondary = None
+        self._selected_t1_post = None
+        self._contrast_roles_confirmed = False
+        if hasattr(self, 'extra_summary'):
+            self.extra_summary.setText('Acquisition changed. Reselect optional MS inputs if needed.')
         two_d = self.acquisition_mode.currentData() == '2d'
         if two_d:
             self.ms_comparison.setChecked(False)
@@ -91,6 +102,9 @@ class BrainLesionWidget(BrainVolumetryWidget):
     def _apply_controlled_series(self, rows):
         inputs = getattr(self, '_control_inputs', None)
         if inputs is not None:
+            self._selected_flair_secondary = None
+            self._selected_t1_post = None
+            self._contrast_roles_confirmed = False
             mode = inputs.get('acquisition_mode', '3d')
             index = self.acquisition_mode.findData(mode)
             if index < 0:
@@ -194,11 +208,31 @@ class BrainLesionWidget(BrainVolumetryWidget):
         dialog.setWindowTitle('Select T1 and 2D FLAIR' if two_d else 'Select T1 and 3D FLAIR')
         dialog.resize(720, 280)
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel('Select the two inputs from this examination.'))
+        layout.addWidget(QLabel('Select the MRI series for each section below.'))
+        layout.addWidget(QLabel('FLAIR acquisition'))
+        picker_mode = QComboBox()
+        picker_mode.setObjectName('lesionPickerAcquisitionMode')
+        picker_mode.addItem('3D FLAIR | single volume', '3d')
+        picker_mode.addItem('2D FLAIR | axial and optional second plane', '2d')
+        picker_mode.setCurrentIndex(picker_mode.findData(self.acquisition_mode.currentData()))
+        layout.addWidget(picker_mode)
         combos = []
-        for title, name in [('T1-weighted' if two_d else '3D T1-weighted', 'lesionT1Series'),
-                            ('2D FLAIR' if two_d else '3D FLAIR', 'lesionFlairSeries')]:
-            layout.addWidget(QLabel(title))
+        input_labels = []
+        headings = {}
+        for title, name in [('T1 before contrast / anatomical reference', 'lesionT1Series'),
+                            ('Primary 2D FLAIR' if two_d else '3D FLAIR', 'lesionFlairSeries'),
+                            ('Optional second FLAIR plane (2D MS only)', 'lesionSecondaryFlairSeries'),
+                            ('Optional 3D T1 after contrast (MS review)', 'lesionPostT1Series')]:
+            index = len(combos)
+            if index in (0, 1, 3):
+                heading = QLabel()
+                heading.setObjectName({0: 'lesionT1Heading', 1: 'lesionFlairHeading', 3: 'lesionContrastHeading'}[index])
+                heading.setStyleSheet('font-size: 19px; font-weight: bold; color: #60a5fa; margin-top: 10px;')
+                headings[index] = heading
+                layout.addWidget(heading)
+            input_label = QLabel(title)
+            input_labels.append(input_label)
+            layout.addWidget(input_label)
             combo = QComboBox()
             combo.setObjectName(name)
             combo.addItem('Select a series', None)
@@ -207,6 +241,25 @@ class BrainLesionWidget(BrainVolumetryWidget):
                     combo.addItem(f"Series {row['number']} | {row['description']} | {row['image_count']} images", row)
             layout.addWidget(combo)
             combos.append(combo)
+        combos[2].setEnabled(two_d)
+        suggestion = QLabel('VIBE order may suggest a pair; verify contrast roles before accepting.')
+        suggestion.setWordWrap(True)
+        layout.addWidget(suggestion)
+        def suggest_post():
+            first = combos[0].currentData()
+            if not first or combos[3].currentData(): return
+            description = first.get('description','').strip().lower()
+            matches = [r for r in rows if r['available'] and r.get('description','').strip().lower() == description]
+            if 'vibe' not in description or len(matches) != 2: return
+            from .study_workflow import series_number_key
+            matches.sort(key=series_number_key)
+            if matches[0]['series_uid'] != first['series_uid']: return
+            for index in range(1,combos[3].count()):
+                if combos[3].itemData(index)['series_uid'] == matches[1]['series_uid']:
+                    combos[3].setCurrentIndex(index)
+                    suggestion.setText('Post-contrast T1 suggested from matching VIBE description and series order. Verify or change it.')
+                    break
+        combos[0].currentIndexChanged.connect(suggest_post)
         preferred_uid = getattr(self, 'preferred_series_uid', '')
         for row in rows:
             if row['series_uid'] != preferred_uid or not row['available']:
@@ -218,17 +271,35 @@ class BrainLesionWidget(BrainVolumetryWidget):
                     if combo.itemData(index)['series_uid'] == preferred_uid:
                         combo.setCurrentIndex(index)
                         break
-        verified = QCheckBox('Both series cover the full brain; the FLAIR is not a conventional T2 SPACE sequence.')
+        verified = QCheckBox('I verified brain coverage, FLAIR roles and, if supplied, the T1 before/after contrast order.')
         layout.addWidget(verified)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText('Use selected images')
         def update():
-            first, second = [c.currentData() for c in combos]
+            first, second, extra, post = [c.currentData() for c in combos]
+            selected = [r['series_uid'] for r in (first,second,extra,post) if r]
             buttons.button(QDialogButtonBox.Ok).setEnabled(bool(first and second and verified.isChecked()
-                                                                and first['series_uid'] != second['series_uid']))
+                                                                and len(selected) == len(set(selected))))
         for combo in combos:
             combo.currentIndexChanged.connect(update)
         verified.toggled.connect(update)
+        def change_picker_mode():
+            is_2d = picker_mode.currentData() == '2d'
+            headings[0].setText('T1 | Anatomical reference' if is_2d else '3D | T1 anatomical reference')
+            headings[1].setText('2D | FLAIR' if is_2d else '3D | FLAIR')
+            headings[3].setText('3D | Contrast review (optional)')
+            dialog.setWindowTitle('Select T1 and 2D FLAIR' if is_2d else 'Select T1 and 3D FLAIR')
+            input_labels[1].setText('Primary 2D FLAIR' if is_2d else '3D FLAIR')
+            input_labels[2].setText('Second FLAIR plane (optional)')
+            input_labels[2].setVisible(is_2d)
+            combos[2].setVisible(is_2d)
+            combos[2].setEnabled(is_2d)
+            if not is_2d:
+                combos[2].setCurrentIndex(0)
+            verified.setChecked(False)
+            update()
+        picker_mode.currentIndexChanged.connect(change_picker_mode)
+        change_picker_mode()
         update()
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -236,7 +307,14 @@ class BrainLesionWidget(BrainVolumetryWidget):
         if dialog.exec() != QDialog.Accepted:
             self.status.setText('Selection cancelled. No analysis started.')
             return
-        self._selected_series, self._selected_flair = [dict(c.currentData()) for c in combos]
+        self.acquisition_mode.setCurrentIndex(self.acquisition_mode.findData(picker_mode.currentData()))
+        self._selected_series, self._selected_flair = [dict(c.currentData()) for c in combos[:2]]
+        self._selected_flair_secondary = dict(combos[2].currentData()) if combos[2].currentData() else None
+        self._selected_t1_post = dict(combos[3].currentData()) if combos[3].currentData() else None
+        self._contrast_roles_confirmed = bool(self._selected_t1_post and verified.isChecked())
+        self.extra_summary.setText(' | '.join(f'{title}: series {r["number"]}' for title,r in
+            [('Second FLAIR',self._selected_flair_secondary),('Post-contrast T1',self._selected_t1_post)] if r)
+            or 'No additional MS inputs selected.')
         self.t1.setText(self._selected_series['path'])
         self.flair.setText(self._selected_flair['path'])
         self.confirm.setChecked(True)
@@ -270,6 +348,14 @@ class BrainLesionWidget(BrainVolumetryWidget):
             self.status.setText('Select the previous and current MRI series for MS comparison.')
             return
         first, second = dict(self._selected_series), dict(self._selected_flair)
+        extras = {}
+        for role, row in [('flair_secondary',self._selected_flair_secondary),('t1_post',self._selected_t1_post)]:
+            if row:
+                extras[role + '_source'] = row['path']; extras[role + '_uid'] = row['series_uid']
+        if extras and (indication != 'ms' or comparison):
+            self.status.setText('Additional same-examination inputs require MS context without longitudinal comparison.')
+            return
+        if extras: extras['contrast_roles_confirmed'] = self._contrast_roles_confirmed
         study_uid, demographics = self.study_uid, self._demographics()
         if first['path'] != self.t1.text() or second['path'] != self.flair.text():
             self.status.setText('Select both series again from this examination.')
@@ -299,7 +385,7 @@ class BrainLesionWidget(BrainVolumetryWidget):
                                root=Path(AI_DIR) / 'eagle_eye', cancel=cancel,
                                progress=messages.put, demographics=demographics,
                                primary_disease=indication, clinical_note=note, fazekas_overall=fazekas,
-                               acquisition_mode=acquisition_mode)
+                               acquisition_mode=acquisition_mode, **extras)
         self.status.setText('Preparing lesion analysis')
         self._future = self._executor.submit(execute)
         self._begin_progress()
@@ -335,3 +421,10 @@ class BrainLesionWidget(BrainVolumetryWidget):
                                     f'{metrics["candidate_count"]} connected stack candidates.</p>'
                                     '<p>Slice gaps can merge or split candidates. Counts are not confirmed lesion counts. '
                                     'Open the report and review the native mask.</p>')
+            if self._result.get('multisequence'):
+                m = self._result['multisequence']
+                self.report.setText('<h2>Cross-plane MS review ready</h2>'
+                    f'<p>{m["supported_primary_count"]} supported primary candidates | '
+                    f'{m["primary_only_count"]} primary-only | {m["secondary_only_count"]} secondary-only on primary grid.</p>'
+                    '<p>Review registration, both native masks and the PDF. Agreement is not a diagnosis. '
+                    'Any T1 subtraction is a review aid, not an enhancement classification.</p>')

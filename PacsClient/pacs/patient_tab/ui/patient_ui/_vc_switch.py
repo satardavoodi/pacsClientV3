@@ -277,6 +277,14 @@ class _VCSwitchMixin:
             except Exception:
                 pass
 
+            # SR has no pixel volume. Route before image cache/load/VTK work.
+            from .structured_report_view import route_report
+            _was_report = bool(getattr(vtk_widget, '_structured_report_active', False))
+            if route_report(self, vtk_widget, series_number):
+                return
+            if _was_report:
+                force_reload = True
+
             # ── Render-drop detector (OPT-20 diagnostic; LOG-ONLY, default-on) ─────────
             # Under heavy GUI-thread contention (many previous-exam studies downloading)
             # a rapidly-switched series' FAST render-apply can be DROPPED: the metadata
@@ -2043,6 +2051,8 @@ class _VCSwitchMixin:
         return token
 
     def _is_request_current(self, vtk_widget, expected_token):
+        if getattr(vtk_widget, '_structured_report_active', False):
+            return False
         if expected_token is None:
             return True
         viewer_id = self._get_viewer_id(vtk_widget)

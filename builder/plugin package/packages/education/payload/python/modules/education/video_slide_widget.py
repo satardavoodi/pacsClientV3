@@ -37,6 +37,15 @@ class VideoSlideWidget(QWidget):
         """)
         layout.addWidget(self.video_widget, stretch=1)
         
+        self.error_label = QLabel()
+        self.error_label.setObjectName("videoPlaybackError")
+        self.error_label.setTextFormat(Qt.PlainText)
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet("color: #e53e3e; padding: 20px;")
+        layout.addWidget(self.error_label, stretch=1)
+        self.error_label.hide()
+
         # Media player setup
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -157,6 +166,8 @@ class VideoSlideWidget(QWidget):
             self.show_error(f"Video file not found: {self.video_path}")
             return
         
+        self.error_label.hide()
+        self.video_widget.show()
         url = QUrl.fromLocalFile(self.video_path)
         self.player.setSource(url)
         
@@ -180,6 +191,8 @@ class VideoSlideWidget(QWidget):
         if not _P(video_path).exists():
             self.show_error(f"Video file not found: {video_path}")
             return
+        self.error_label.hide()
+        self.video_widget.show()
         try:
             self.player.setSource(QUrl.fromLocalFile(video_path))
             self.audio_output.setVolume(self.volume_slider.value() / 100.0)
@@ -187,8 +200,8 @@ class VideoSlideWidget(QWidget):
             if autoplay:
                 self.player.play()
                 self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
-        except Exception:
-            pass
+        except Exception as exc:
+            self.show_error(f"Playback error: {exc}")
 
     def pause_only(self):
         """Pause WITHOUT any teardown. The Education viewer calls this when the
@@ -257,23 +270,13 @@ class VideoSlideWidget(QWidget):
         self.show_error(f"Playback error: {error_string}")
     
     def show_error(self, message):
-        """Show error message."""
-        error_label = QLabel(message)
-        error_label.setAlignment(Qt.AlignCenter)
-        error_label.setStyleSheet("""
-            QLabel {
-                color: #e53e3e;
-                font-size: 12pt;
-                font-weight: bold;
-                background-color: #2d3748;
-                padding: 20px;
-                border-radius: 5px;
-            }
-        """)
-        # Replace video widget with error label
-        self.layout().replaceWidget(self.video_widget, error_label)
-        self.video_widget.deleteLater()
-    
+        """Keep the persistent video sink available for the next resource."""
+        self.pause_only()
+        self.video_widget.hide()
+        self.error_label.setText(message)
+        self.error_label.show()
+        self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+
     @staticmethod
     def format_time(ms):
         """Format milliseconds to MM:SS."""

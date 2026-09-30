@@ -1,7 +1,6 @@
 """Explicit server/worker commands, before the interactive workstation starts."""
 import json
 from pathlib import Path
-import sys
 
 
 COMMANDS = ('--eagle-eye-server', '--eagle-eye-worker',
@@ -13,8 +12,8 @@ def dispatch(argv):
         return False
     if len(argv) != 3:
         raise ValueError('Supply exactly one server configuration or owned job directory.')
-    if getattr(sys, 'frozen', False):
-        from aipacs_runtime import load_installation_profile
+    from aipacs_runtime import is_frozen, load_installation_profile
+    if is_frozen():
         if load_installation_profile().get('distribution_edition') != 'eagle-eye':
             raise ValueError('Model hosting requires the Eagle Eye server edition.')
     if argv[1] == '--eagle-eye-windows-service':

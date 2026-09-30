@@ -9,7 +9,7 @@ MAX_REVIEW_REQUEST = 24 * 1024**2
 PARAMETERS = {
     'breast': {'threshold'}, 'bone-age': {'sex'},
     'brain': {'profile', 'reference_id', 'correction'},
-    'brain-lesions': {'primary_disease', 'clinical_note', 'fazekas_overall', 'correction', 'acquisition_mode'},
+    'brain-lesions': {'primary_disease', 'clinical_note', 'fazekas_overall', 'correction', 'acquisition_mode', 'contrast_roles_confirmed'},
     'lumbar': set(), 'alignment': {'correction'},
     'total-spine': {'projection', 'region', 'model', 'level', 'correction'},
 }
@@ -30,7 +30,7 @@ def validate(request):
         raise ValueError('Invalid request identity.')
     uid(request['study_uid'])
     series = request['series']
-    if not isinstance(series, dict) or len(series) > 4 or set(series) - {'primary', 'secondary', 't1', 'flair'}:
+    if not isinstance(series, dict) or len(series) > 4 or set(series) - {'primary', 'secondary', 't1', 'flair', 'flair_secondary', 't1_post'}:
         raise ValueError('Unsupported input roles.')
     for item in series.values():
         if not isinstance(item, dict) or set(item) - {'series_uid', 'sop_uid', 'expected_count'}:
@@ -41,7 +41,7 @@ def validate(request):
         if type(item.get('expected_count')) is not int or not 1 <= item['expected_count'] <= 10000:
             raise ValueError('A counted source series is required.')
     module = request['module']
-    allowed_roles = {'brain': {'t1', 'flair'}, 'brain-lesions': {'t1', 'flair'},
+    allowed_roles = {'brain': {'t1', 'flair'}, 'brain-lesions': {'t1', 'flair', 'flair_secondary', 't1_post'},
                      'total-spine': {'primary', 'secondary'} if isinstance(request['parameters'], dict) and 'correction' in request['parameters'] else {'primary'}}.get(module, {'primary'})
     if set(series) - allowed_roles:
         raise ValueError('The selected roles do not belong to this analysis.')
@@ -97,6 +97,15 @@ def validate(request):
         if not isinstance(region, list) or len(region) != 4 or not all(type(v) in (int, float) and math.isfinite(v) for v in region):
             raise ValueError('Select a finite spine region.')
     if module == 'brain-lesions':
+        if set(series) & {'flair_secondary', 't1_post'}:
+            if params.get('primary_disease') != 'ms':
+                raise ValueError('Multi-sequence review requires MS context.')
+            if 'flair_secondary' in series and params.get('acquisition_mode') != '2d':
+                raise ValueError('Cross-plane review requires native 2D FLAIR.')
+            if 't1_post' in series and params.get('contrast_roles_confirmed') is not True:
+                raise ValueError('Confirm pre/post contrast roles.')
+        if 'contrast_roles_confirmed' in params and type(params['contrast_roles_confirmed']) is not bool:
+            raise ValueError('Contrast role confirmation must be boolean.')
         if params.get('acquisition_mode', '3d') not in ('2d', '3d'):
             raise ValueError('Unsupported lesion acquisition mode.')
         if params.get('primary_disease', 'other') not in ('other', 'ms', 'svd'):

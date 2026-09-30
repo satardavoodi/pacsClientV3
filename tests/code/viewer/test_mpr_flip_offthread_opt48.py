@@ -192,7 +192,8 @@ def test_toolbar_offthread_helper_uses_the_same_implementation():
     src = TOOLBAR_SRC.read_text(encoding="utf-8", errors="replace")
     helper = src[src.index("def _prepare_mpr_flip_offthread"): src.index("def handle_buttons_checked")]
     # must call the viewer's canonical flip — never a private re-implementation
-    assert "_SMV.build_lr_flipped_volume(vtk_image_data)" in helper
+    assert "source = vtk_image_data" in helper
+    assert "_SMV.build_lr_flipped_volume(source)" in helper
     # no re-implementation: the caller must never CONSTRUCT its own flip filter
     # (a mention in the explanatory docstring is fine).
     assert "vtkImageFlip()" not in helper, "the caller must NOT re-implement the flip"
@@ -222,9 +223,15 @@ def test_toolbar_passes_preflipped_to_the_viewer():
     assert "pre_flipped_image_data=_pre_flipped," in src
 
 
-def test_other_mpr_call_sites_keep_the_inline_flip():
-    """Dental/CurveMPR hosts must be untouched (default None → inline flip)."""
+def test_only_standard_and_non_dental_curve_use_precomputed_flip():
+    """Curve now shares preparation; Dental keeps its existing inline path."""
+    import ast
     src = TOOLBAR_SRC.read_text(encoding="utf-8", errors="replace")
-    assert src.count("pre_flipped_image_data=") == 1, (
-        "only the main toggle_zeta_mpr open should pass a pre-computed flip"
-    )
+    tree = ast.parse(src)
+    callers = set()
+    for method in ast.walk(tree):
+        if isinstance(method, ast.FunctionDef):
+            if any(isinstance(n, ast.Call) and any(k.arg == 'pre_flipped_image_data' for k in n.keywords)
+                   for n in ast.walk(method)):
+                callers.add(method.name)
+    assert callers == {'toggle_zeta_mpr', 'toggle_new_curve_mpr'}

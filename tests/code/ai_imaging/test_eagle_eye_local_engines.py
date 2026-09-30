@@ -144,6 +144,61 @@ def test_missing_or_changed_bundle_is_rejected(tmp_path):
         service.validate_bundle(tmp_path, 'bone-age')
 
 
+def test_standalone_engine_bundle_uses_only_its_packaged_interpreter(tmp_path):
+    paths = ['runner.py', 'runtime/python.exe', 'source/worker.py', 'weights/final_model.pth']
+    hashes = {}
+    for name in paths:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'fixture')
+        hashes[name] = service.digest(path)
+    manifest = dict(format_version=2, engine='bone-age', deployment='standalone-python',
+                    revision='synthetic', sha256=hashes)
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+    assert service.validate_bundle(tmp_path, 'bone-age') == manifest
+    command = service.runtime_command(tmp_path, tmp_path / 'job', manifest)
+    assert command == [str(tmp_path / 'runtime/python.exe'), '-I', '-B',
+                       str(tmp_path / 'runner.py'), str(tmp_path), str(tmp_path / 'job')]
+    (tmp_path / 'runtime/python.exe').write_bytes(b'corrupt')
+    with pytest.raises(ValueError, match='missing or changed'):
+        service.validate_bundle(tmp_path, 'bone-age')
+
+
+def test_frozen_server_rejects_development_venv_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(service.sys, 'frozen', True, raising=False)
+    paths = ['runner.py', 'runtime/Scripts/python.exe', 'source/worker.py',
+             'weights/final_model.pth']
+    hashes = {}
+    for name in paths:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'fixture')
+        hashes[name] = service.digest(path)
+    (tmp_path / 'manifest.json').write_text(json.dumps(dict(
+        format_version=1, engine='bone-age', deployment='development-venv',
+        revision='synthetic', sha256=hashes)), encoding='utf-8')
+    with pytest.raises(ValueError, match='standalone'):
+        service.validate_bundle(tmp_path, 'bone-age')
+
+
+def test_nuitka_server_also_rejects_development_venv_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(service.sys, '__nuitka__', True, raising=False)
+    path = tmp_path / 'runtime/Scripts/python.exe'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'fixture')
+    for name in ('runner.py', 'source/worker.py', 'weights/final_model.pth'):
+        item = tmp_path / name
+        item.parent.mkdir(parents=True, exist_ok=True)
+        item.write_bytes(b'fixture')
+    files = [item for item in tmp_path.rglob('*') if item.is_file()]
+    (tmp_path / 'manifest.json').write_text(json.dumps(dict(
+        format_version=1, engine='bone-age', deployment='development-venv',
+        revision='synthetic', sha256={item.relative_to(tmp_path).as_posix(): service.digest(item)
+                                      for item in files})), encoding='utf-8')
+    with pytest.raises(ValueError, match='standalone'):
+        service.validate_bundle(tmp_path, 'bone-age')
+
+
 def test_cancel_before_bundle_read(tmp_path):
     (tmp_path / 'manifest.json').write_text(json.dumps(dict(format_version=1, engine='bone-age', sha256={
         p: '0' for p in ('runner.py', 'runtime/Scripts/python.exe', 'source/worker.py', 'weights/final_model.pth')})))

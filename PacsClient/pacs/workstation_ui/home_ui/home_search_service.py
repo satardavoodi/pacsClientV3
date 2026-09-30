@@ -1127,9 +1127,8 @@ class HomeSearchService:
             age_min / age_max:       — int or None (client-side refinement)
 
         Server-side: patient_id, dates, modality (what GetPatientList accepts).
-        Client-side: body part / age / physician refine rows WHEN the row
-        carries that data; rows without the field are kept (the server stays
-        authoritative — refinement must never silently hide everything).
+        Client-side: body part requires a positive metadata match. Age and
+        physician retain their legacy refinement behavior for missing metadata.
         """
         home = self._home
         loop = asyncio.get_running_loop()
@@ -1172,9 +1171,8 @@ class HomeSearchService:
                 socket_port = get_socket_server_settings()['port']
             update_socket_server_settings(host=server['host'], port=int(socket_port))
 
-            home.show_loading("Advanced Search",
-                              f"Searching {server.get('name', server['host'])} with advanced filters...",
-                              cancellable=True)
+            # The search button already exposes Cancel. A tab-wide overlay
+            # intercepts input for the entire multi-page request.
             home.search_progress.setVisible(True)
             home.search_progress.setRange(0, 0)
 
@@ -1194,62 +1192,132 @@ class HomeSearchService:
                 self._mark_connectivity(True)
 
             param_sets = self._advanced_query_to_param_sets(query)
-            merged: dict = {}
+            seen = set()
+            visited = set()
+            total = scanned = 0
+            cleared = False
+            partial_reason = ""
             for params in param_sets:
-                if self._cancelled:
-                    raise asyncio.CancelledError()
-                batch = await loop.run_in_executor(
-                    self._thread_pool(),
-                    lambda p=params: socket_service.search_patients_sync(p),
-                )
-                for row in batch or []:
-                    key = (
-                        str(row.get('patient_id') or ''),
-                        str(row.get('study_uid') or row.get('latest_study_uid') or ''),
+                offset = 0
+                while True:
+                    if self._cancelled or home._search_generation != _my_search_gen:
+                        raise asyncio.CancelledError()
+                    page_params = dict(params, offset=offset)
+                    batch = await loop.run_in_executor(
+                        self._thread_pool(),
+                        lambda p=page_params: socket_service.search_patients_sync(p, raise_on_error=True),
                     )
-                    merged.setdefault(key, row)
-
-            rows = [r for r in merged.values()
-                    if self._row_passes_advanced_client_filters(r, query)]
-            rows = await loop.run_in_executor(
-                self._thread_pool(), self._sort_studies_by_date_time_ascending, rows,
-            )
-            if self._cancelled:
-                raise asyncio.CancelledError()
-
-            total = len(rows)
-            home.search_progress.setRange(0, max(1, total))
-            self._clear_search_results(_my_search_gen)
-            if rows:
-                home.patient_table_widget.begin_bulk_insert()
-                try:
-                    for i, patient in enumerate(rows, start=1):
+                    if self._cancelled or home._search_generation != _my_search_gen:
+                        raise asyncio.CancelledError()
+                    if not cleared:
+                        self._clear_search_results(_my_search_gen)
+                        cleared = True
+                        home.patient_table_widget._external_search_generation = _my_search_gen
+                    fresh = []
+                    for row in batch or []:
+                        key = (str(row.get('patient_id') or ''),
+                               str(row.get('study_uid') or row.get('latest_study_uid') or ''))
+                        if key not in seen:
+                            seen.add(key)
+                            fresh.append(row)
+                    scanned += len(batch or [])
+                    rows = await loop.run_in_executor(
+                        self._thread_pool(),
+                        lambda entries=fresh: self._sort_studies_by_date_time_ascending([
+                            row for row in entries if self._row_passes_advanced_client_filters(row, query)]),
+                    )
+                    prefetch = await loop.run_in_executor(
+                        self._thread_pool(), self._prefetch_advanced_page, rows)
+                    if self._cancelled or home._search_generation != _my_search_gen:
+                        raise asyncio.CancelledError()
+                    home.patient_table_widget.prime_imported_on_cache(
+                        prefetch.get('uids'), prefetch.get('imported_at'))
+                    visited.update(prefetch.get('known_patient_ids') or set())
+                    home.patient_table_widget.prime_visited_patient_ids(visited)
+                    # Short GUI batches release painting/input between inserts.
+                    for start in range(0, len(rows), 10):
                         if self._cancelled or home._search_generation != _my_search_gen:
                             raise asyncio.CancelledError()
-                        home._add_socket_patient_to_table(patient)
-                        if (i % 10 == 0) or (i == total):
-                            home.search_progress.setValue(i)
-                            await asyncio.sleep(0)
-                finally:
-                    home.patient_table_widget.end_bulk_insert()
-                home._update_connection_indicator_by_status(
-                    'online', f'Advanced search - Found {total} result(s)')
-                try:
-                    home._sync_completed_reporting_physicians_after_search()
-                except Exception:
-                    pass
-            else:
-                home._update_connection_indicator_by_status(
-                    'busy', 'Advanced search - No results')
+                        home.patient_table_widget.begin_bulk_insert()
+                        try:
+                            for patient in rows[start:start + 10]:
+                                if total >= self._ADVANCED_RESULT_LIMIT:
+                                    break
+                                home._add_socket_patient_to_table(patient)
+                                total += 1
+                        finally:
+                            home.patient_table_widget.end_bulk_insert()
+                        await asyncio.sleep(0.01)
+                    if home._search_generation != _my_search_gen or self._cancelled:
+                        raise asyncio.CancelledError()
+                    home._update_connection_indicator_by_status(
+                        'busy', f'Advanced search - {total} matches; {scanned} records checked')
+                    if total >= self._ADVANCED_RESULT_LIMIT:
+                        partial_reason = "Display limit reached; narrow the filters."
+                        break
+                    if scanned >= self._ADVANCED_SCAN_LIMIT:
+                        partial_reason = "Search safety limit reached; narrow the date range."
+                        break
+                    if batch and not fresh:
+                        partial_reason = "The server repeated a page; remaining results could not be verified."
+                        break
+                    if not batch or len(batch) < int(params['limit']):
+                        break
+                    offset += len(batch)
+                    await asyncio.sleep(0.01)
+                if partial_reason:
+                    break
+            home._update_connection_indicator_by_status(
+                'busy' if partial_reason else 'online',
+                f'Advanced search - {total} result(s)' +
+                (f' (INCOMPLETE). {partial_reason}' if partial_reason else ' - Complete'))
+            if partial_reason:
+                QMessageBox.warning(home, "Incomplete Search", partial_reason +
+                                    f" Showing {total} matching results; this is not the complete result set.")
+            if total:
+                home._sync_completed_reporting_physicians_after_search()
 
         except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            QMessageBox.critical(home, "Error", f"Advanced search failed: {str(e)}")
+            if home._search_generation == _my_search_gen:
+                home._update_connection_indicator_by_status('busy', 'Advanced search cancelled - results may be incomplete')
+        except Exception:
+            if home._search_generation == _my_search_gen:
+                home._update_connection_indicator_by_status('busy', 'Advanced search failed - results are incomplete')
+                QMessageBox.critical(home, "Incomplete Search", "The search could not finish. Results may be incomplete; please retry.")
         finally:
-            home.search_progress.setVisible(False)
-            home.hide_loading()
-            home.patient_search_widget.set_searching_state(False)
+            table = home.patient_table_widget
+            if getattr(table, '_external_search_generation', None) == _my_search_gen:
+                table._external_search_generation = None
+                if home._search_generation == _my_search_gen:
+                    table._arm_stream_settle_sort()
+            if home._search_generation == _my_search_gen:
+                home.search_progress.setVisible(False)
+                home.patient_search_widget.set_searching_state(False)
+
+    @classmethod
+    def _prefetch_advanced_page(cls, rows):
+        """Warm local display metadata on the worker before Qt builds cells."""
+        references = []
+        for row in rows:
+            uids = set()
+            for key in ('study_uid', 'latest_study_uid'):
+                if row.get(key):
+                    uids.add(str(row[key]))
+            listed = row.get('study_uids') or []
+            if isinstance(listed, str):
+                listed = [listed]
+            uids.update(str(uid) for uid in listed if uid)
+            for study in row.get('studies') or row.get('study_list') or []:
+                if isinstance(study, dict):
+                    uid = study.get('study_uid') or study.get('StudyInstanceUID') or study.get('studyInstanceUid')
+                    if uid:
+                        uids.add(str(uid))
+            for uid in uids or {''}:
+                references.append(dict(study_uid=uid, patient_id=row.get('patient_id')))
+        return cls._collect_list_prefetch(references)
+
+    _ADVANCED_RESULT_LIMIT = 5000
+    _ADVANCED_SCAN_LIMIT = 100000
 
     @staticmethod
     def _advanced_query_to_param_sets(query: dict) -> list:
@@ -1269,7 +1337,8 @@ class HomeSearchService:
         if query.get('date_to'):
             base['date_to'] = query['date_to']
         if query.get('modalities'):
-            base['modality'] = list(query['modalities'])
+            # GetPatientList accepts a scalar code or comma-separated codes.
+            base['modality'] = ','.join(query['modalities'])
 
         ids = [str(p).strip() for p in (query.get('patient_ids') or []) if str(p).strip()]
         ids = ids[:20]  # bounded fan-out
@@ -1286,9 +1355,8 @@ class HomeSearchService:
     def _row_passes_advanced_client_filters(row: dict, query: dict) -> bool:
         """Client-side refinement for fields the server cannot filter.
 
-        Conservative contract: a filter only EXCLUDES a row when the row
-        actually carries the field and it does not match. Missing data keeps
-        the row (never silently hide results the server returned).
+        Body part requires a match against server array or legacy scalar fields.
+        Age/physician retain the conservative legacy missing-data behavior.
         """
         if not isinstance(row, dict):
             return True
@@ -1302,9 +1370,14 @@ class HomeSearchService:
 
         body_part = str(query.get('body_part') or '').strip().lower()
         if body_part:
-            value = _first_text('body_part', 'BodyPart', 'body_part_examined',
-                                'BodyPartExamined').strip().lower()
-            if value and body_part not in value:
+            values = row.get('body_parts')
+            values = values if isinstance(values, (list, tuple)) else [values]
+            values = [str(value).strip().lower() for value in values
+                      if isinstance(value, str) and value.strip()]
+            if not values:
+                values = [_first_text('body_part', 'BodyPart', 'body_part_examined',
+                                      'BodyPartExamined').strip().lower()]
+            if not any(body_part in value for value in values):
                 return False
 
         physician = str(query.get('physician') or '').strip().lower()

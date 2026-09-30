@@ -100,4 +100,25 @@ ENCRYPTED_CENTERS = (
             },
         ),
     },
+    {
+        'center_code': 'RAZI_SERVER',
+        'center_display': 'Razi EchoMind Server (Test)',
+        'credentials': (
+            {
+                'lookup_digest': '0c9d23d34d974a74aaac4b749e21455b',
+                'kdf_salt_b64': 'h9l39o49tgbZmAFOZ9r8fg==',
+                'nonce_b64': 'N2iBpmT36bDivOvT',
+                'ciphertext_b64': 'vVrqiNayH2pCHbtNy035hOXEVZNlHaBijRGEK3oUdGyFhw9BnwsOM+r5UVAAE6BBbt1tx3RFOA2jWdCfMFOXazVs9Q==',
+            },
+            {
+                'lookup_digest': '49b53c6818b068dd72ef616b579ab101',
+                'kdf_salt_b64': 'HepVshQ5QGFPcosqxNMv7g==',
+                'nonce_b64': 'rkMdFg6H+Iotgz3n',
+                'ciphertext_b64': '5EVYJC2QbHk2E4TljvQ1e1kk0zYe/NhgDDYsmLCe7A7/xqiuYvdzVKUvytf/W66fQc0S0WroyHPgHioDXP1NCqC3RA==',
+            },
+        ),
+    },
 )
+
+# Independent encrypted server-login aliases; no plaintext credentials.
+REMOTE_LOGIN_ENVELOPES = ({'lookup_digest': '0c9d23d34d974a74aaac4b749e21455b', 'kdf_salt_b64': 'gDmbZrMp1t3jfANsON03rQ==', 'nonce_b64': 'rjxXgCzpnzrYLaAZ', 'ciphertext_b64': 'eGDZDRCECjCvmHcNejkvSh89Q/K+7fPmsOTTIsZ1ivutLBxcnV0v46/TRUsdp3t1A4AaX8MNTIe6yEg4v3xBOH/YfDOwy1fQzZ83lIH9Rf23inhNIBmUINWsnq5lkd8Gl5hT8XEVmgQySf61M1k='}, {'lookup_digest': '49b53c6818b068dd72ef616b579ab101', 'kdf_salt_b64': 'h5Va7qGsWcI9VqYAYbL2Ww==', 'nonce_b64': 'JIcqpi8nauUU/AfB', 'ciphertext_b64': '7TlCkCqnZNNfRmwp/L6+JHIKTzLQYXRdxb9WlbPILr/L42oLuYYvsA4aajudD0FB2A0M/mJQEKmaw6rMWf5VIFgXoQMSx6JmSvVOcqUGyGnxOEqXL96zk+gUdLCKdjNo0DyL7cPYAUrk16z7a1Q='})

@@ -14,6 +14,11 @@ import uuid
 ENGINES = ('breast', 'bone-age')
 
 
+def _frozen():
+    from aipacs_runtime import is_frozen
+    return is_frozen()
+
+
 def digest(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -23,12 +28,12 @@ def bundle_root(engine):
     if engine not in ENGINES:
         raise ValueError('Unknown Eagle Eye engine.')
     from modules.ai_imaging.eagle_eye.assets import installed_feature_roots
-    if getattr(sys, 'frozen', False):
+    if _frozen():
         from aipacs_runtime import load_installation_profile
         if load_installation_profile().get('distribution_edition') != 'eagle-eye':
             return None
     roots = installed_feature_roots(engine.replace('-', '_'))
-    if not getattr(sys, 'frozen', False):
+    if not _frozen():
         roots.insert(0, Path(__file__).resolve().parents[3] / 'generated-files/eagle-eye' / engine)
     return next((p for p in roots if (p / 'manifest.json').is_file()), None)
 
@@ -40,6 +45,8 @@ def available(engine):
     try:
         manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
         qualified = json.loads((root / 'qualification.json').read_text(encoding='utf-8'))
+        if _frozen() and manifest.get('deployment') != 'standalone-python':
+            return False
         return (qualified.get('revision') == manifest['revision']
                 and qualified.get('synthetic_smoke') == 'passed')
     except (OSError, ValueError, KeyError):
@@ -49,9 +56,19 @@ def available(engine):
 def validate_bundle(root, engine, cancelled=lambda: False):
     root = Path(root).resolve()
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
-    if manifest.get('engine') != engine or manifest.get('format_version') != 1:
+    format_version = manifest.get('format_version')
+    deployment = manifest.get('deployment')
+    if manifest.get('engine') != engine or format_version not in (1, 2):
         raise ValueError('Incorrect engine package.')
-    required = {'runner.py', 'runtime/Scripts/python.exe', 'source/worker.py'}
+    if format_version == 2 and deployment != 'standalone-python':
+        raise ValueError('The engine requires a standalone Python runtime.')
+    if _frozen() and deployment != 'standalone-python':
+        raise ValueError('An installed Eagle Eye engine requires a standalone Python runtime.')
+    if format_version == 2 and (root / 'runtime/pyvenv.cfg').exists():
+        raise ValueError('The standalone engine cannot depend on a virtual environment.')
+    interpreter = ('runtime/python.exe' if format_version == 2
+                   else 'runtime/Scripts/python.exe')
+    required = {'runner.py', interpreter, 'source/worker.py'}
     required.add('weights/final_model.pth' if engine == 'bone-age' else 'weights/best_fcos_csv_delivery.pth')
     if not required.issubset(manifest['sha256']):
         raise ValueError('Incomplete engine package.')
@@ -62,6 +79,15 @@ def validate_bundle(root, engine, cancelled=lambda: False):
         if not path.is_relative_to(root) or not path.is_file() or digest(path) != expected:
             raise ValueError('The engine package is missing or changed. Prepare it again.')
     return manifest
+
+
+def runtime_command(root, job, manifest):
+    root, job = Path(root).resolve(), Path(job).resolve()
+    interpreter = ('runtime/python.exe' if manifest.get('format_version', 1) == 2
+                   else 'runtime/Scripts/python.exe')
+    isolated = ['-I'] if manifest.get('format_version', 1) == 2 else ['-s']
+    return [str(root / interpreter), *isolated, '-B', str(root / 'runner.py'),
+            str(root), str(job)]
 
 
 def validate_sources(files, study_uid, engine, sex=None):
@@ -140,8 +166,7 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
         if cancelled():
             raise RuntimeError('Analysis cancelled.')
         diagnostic = (job / 'engine-output.log').open('w+b')
-        process = subprocess.Popen([str(root / 'runtime/Scripts/python.exe'), '-s', '-B',
-                                    str(root / 'runner.py'), str(root), str(job)],
+        process = subprocess.Popen(runtime_command(root, job, manifest),
                                    cwd=job, env=env, stdin=subprocess.DEVNULL,
                                    stdout=diagnostic, stderr=diagnostic,
                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

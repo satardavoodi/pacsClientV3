@@ -986,9 +986,9 @@ class _MprViewsMixin:
         best_preset = self._get_best_3d_preset()
         self.current_3d_preset = best_preset
         self._apply_volume_preset(volume_property, best_preset)
-        from ._mpr_vrt import configure_vrt_quality
+        from ._mpr_vrt import configure_vrt_quality, DEFAULT_VRT_QUALITY
         configure_vrt_quality(volume_mapper, volume_property, self.image_data.GetSpacing(),
-                              getattr(self, '_vrt_quality', 'Balanced'), heavy=_heavy)
+                              getattr(self, '_vrt_quality', DEFAULT_VRT_QUALITY), heavy=_heavy)
 
         volume = vtk.vtkVolume()
         volume.SetMapper(volume_mapper)

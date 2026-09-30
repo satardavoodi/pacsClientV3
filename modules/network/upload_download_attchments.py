@@ -2,6 +2,9 @@ import os
 import json
 import base64
 import logging
+import hashlib
+import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from .socket_config import get_socket_config
@@ -11,7 +14,7 @@ import socket
 from PacsClient.utils.config import ATTACHMENT_PATH
 from typing import List, Union, Iterable, Optional
 from PacsClient.utils import list_files_in_folder, append_attachments_uploaded
-from .attachment_pending_sync import mark_pending, mark_synced, record_attempt
+from .attachment_pending_sync import mark_pending, mark_synced, record_attempt, get_upload_id
 from .attachment_pending_sync import attachment_dedup_enabled, find_local_duplicate
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,7 @@ class SocketClient:
         self.host = config.get_socket_host()
         self.port = config.get_socket_port()
         self.socket = None
+        self._upload_idempotency = None
         import threading as _threading
         self._request_lock = _threading.RLock()
 
@@ -54,10 +58,22 @@ class SocketClient:
         self.socket = socket.create_connection(
             (self.host, self.port), timeout=_SOCKET_OP_TIMEOUT_S)
         self.socket.settimeout(_SOCKET_OP_TIMEOUT_S)
+        self._upload_idempotency = None
 
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self._request_lock:
+            try:
+                if self.socket is None:
+                    self.connect()
+                return self._send_request(endpoint, params)
+            except Exception:
+                self.disconnect()
+                raise
+
+    def _send_request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         # Create request with token
-        request = {"endpoint": endpoint, "params": params}
+        request_id = uuid.uuid4().hex
+        request = {"endpoint": endpoint, "params": params, "request_id": request_id}
         token_manager = get_socket_token_manager()
         request = token_manager.add_token_to_request(request)
 
@@ -79,6 +95,8 @@ class SocketClient:
                 if not length_buf:
                     raise RuntimeError("No response length")
                 resp_len = int.from_bytes(length_buf, "big")
+                if not 0 < resp_len <= 200 * 1024 * 1024:
+                    raise ConnectionError('Invalid attachment response length')
                 data = self._recvall(resp_len)
                 if not data:
                     raise RuntimeError("No response data")
@@ -90,7 +108,9 @@ class SocketClient:
                     # Skip broadcast messages and read next message
                     continue
 
-                # This is the actual response
+                if (response.get('request_id') not in (None, request_id)
+                        or response.get('endpoint') not in (None, endpoint)):
+                    raise ConnectionError('Attachment response correlation mismatch')
                 return response
 
         # If we got here, all messages were broadcasts - return the last one as fallback
@@ -106,9 +126,18 @@ class SocketClient:
                 raise ConnectionError("attachment socket closed during recv")
             chunk = sock.recv(min(8192, n - len(buf)))
             if not chunk:
-                break
+                raise ConnectionError('Truncated attachment response')
             buf += chunk
         return buf
+
+    def supports_idempotent_upload(self):
+        """Negotiate before mutation; legacy servers get no automatic replay."""
+        if self._upload_idempotency is None:
+            response = self.send_request('GetAttachmentUploadCapabilities', {})
+            self._upload_idempotency = (
+                response.get('status') == 'success'
+                and response.get('data', {}).get('idempotency_version') == 1)
+        return self._upload_idempotency
 
     def disconnect(self):
         # Deliberately does NOT take _request_lock: disconnect must be able to
@@ -224,6 +253,10 @@ def upload_attachments_for_study(
     # ✅ فیلتر کردن فایل‌های آپلود‌شده (با مقایسه absolute path نرمال‌شده)
     files_to_upload = []
     for file in files:
+        # Local retry bookkeeping is not a clinical attachment.
+        name = Path(file).name
+        if name == '.pending_sync.json' or name.startswith('.psync_tmp_'):
+            continue
         try:
             file_normalized = str(Path(file).resolve())
             if file_normalized not in uploaded_paths_normalized:
@@ -328,16 +361,25 @@ def upload_attachments_for_study(
                     params["uploaded_by"] = uploaded_by
 
                 file_name = Path(p).name
-                mark_pending(study_uid, file_name)
-                last_exc: Optional[Exception] = None
-                resp: Optional[Dict[str, Any]] = None
-                for _attempt in range(_UPLOAD_REQUEST_MAX_ATTEMPTS):
-                    record_attempt(study_uid, file_name)
-                    try:
-                        resp = client.send_request("UploadAttachment", params)
-                        break
-                    except Exception as req_exc:
-                        last_exc = req_exc
+                params['upload_id'] = get_upload_id(
+                    study_uid, file_name, hashlib.sha256(raw).hexdigest())
+                with getattr(client, '_request_lock', nullcontext()):
+                    capable = getattr(client, 'supports_idempotent_upload', lambda: False)()
+                    last_exc: Optional[Exception] = None
+                    resp: Optional[Dict[str, Any]] = None
+                    attempts = _UPLOAD_REQUEST_MAX_ATTEMPTS if capable else 1
+                    for _attempt in range(attempts):
+                        record_attempt(study_uid, file_name)
+                        try:
+                            resp = client.send_request("UploadAttachment", params)
+                            break
+                        except Exception as req_exc:
+                            last_exc = req_exc
+                            client.disconnect()
+                            if _attempt + 1 < attempts:
+                                client.connect()
+                                if not client.supports_idempotent_upload():
+                                    raise RuntimeError('Server no longer supports safe attachment retry')
 
                 if resp is None:
                     raise RuntimeError(str(last_exc) if last_exc else "UploadAttachment request failed")

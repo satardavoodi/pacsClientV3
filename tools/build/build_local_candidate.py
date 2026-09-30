@@ -73,6 +73,22 @@ def resolve_total_spine_source(root: Path = REPO) -> Path:
     )
 
 
+def resolve_engine_source(engine: str, version: str, root: Path = REPO) -> Path:
+    if engine not in ('breast', 'bone-age'):
+        raise ValueError('Unknown Eagle Eye engine.')
+    name = 'AIPACS_EAGLE_EYE_' + engine.upper().replace('-', '_') + '_SOURCE'
+    configured = os.environ.get(name, '').strip()
+    return (Path(configured) if configured else
+            root / 'generated-files/eagle-eye' / f'{engine}-portable-{version}').resolve()
+
+
+def preflight_engine_payloads(version: str, *, for_distribution: bool) -> None:
+    from builder.eagle_eye_engine_payload import validate_payload
+    for engine in ('breast', 'bone-age'):
+        validate_payload(resolve_engine_source(engine, version), engine,
+                         for_distribution=for_distribution)
+
+
 def preflight_lesion_payload(*, for_distribution: bool) -> None:
     from builder.eagle_eye_lesion_payload import validate_payload
     validate_payload(resolve_lesion_source(), for_distribution=for_distribution)
@@ -160,6 +176,7 @@ def create_snapshot(
     version: str,
     release_sync: dict | None = None,
     build_target: str = "client",
+    selected_backends: tuple[str, ...] = ("python", "nuitka"),
 ) -> dict:
     source, destination = source.resolve(), destination.absolute()
     if destination.exists() or destination.is_relative_to(source) or source.is_relative_to(destination):
@@ -202,6 +219,7 @@ def create_snapshot(
     git(destination, "add", "--all")
     git(destination, "commit", "-m", f"Local source snapshot for {version} installer verification")
     identity = {"version": version, "build_target": build_target,
+                "build_backends": list(selected_backends),
                 "source_head": git(source, "rev-parse", "HEAD"),
                 "source_branch": git(source, "branch", "--show-current"),
                 "candidate_commit": git(destination, "rev-parse", "HEAD"),
@@ -300,14 +318,11 @@ def _completed_backend_outputs_exist(status: dict, backend: str) -> bool:
 
 _BACKEND_INSTALLER_METADATA = {
     "python": (
-        "distributions-client.json",
         "distributions.json",
         "INSTALL_NOTES_FA.txt",
-        "INSTALL_NOTES-client.txt",
         "INSTALL_NOTES.txt",
         "installer_release_metadata.json",
         "SHA256_FA.txt",
-        "SHA256-client.txt",
         "SHA256.txt",
     ),
     "nuitka": (
@@ -318,6 +333,11 @@ _BACKEND_INSTALLER_METADATA = {
         "SHA256_FA.txt",
         "SHA256.txt",
     ),
+}
+
+_ROLE_INSTALLER_METADATA = {
+    "client": ("distributions-client.json", "INSTALL_NOTES-client.txt", "SHA256-client.txt"),
+    "server": ("distributions-server.json", "INSTALL_NOTES-server.txt", "SHA256-server.txt"),
 }
 
 
@@ -338,8 +358,15 @@ def archive_existing_local_qa_outputs(status: dict, backend: str) -> list[dict[s
     if any(path.parent != output_dir for path in expected):
         raise ValueError("Recorded installer outputs do not share one canonical folder")
     candidates = [path for path in expected if path.is_file()]
+    target = status.get("build_target", "client")
+    roles = ("client", "server") if target == "all" else (target,)
+    if any(role not in _ROLE_INSTALLER_METADATA for role in roles):
+        raise ValueError("Recorded installer role is unknown")
+    metadata_names = list(_BACKEND_INSTALLER_METADATA[backend])
+    for role in roles:
+        metadata_names.extend(_ROLE_INSTALLER_METADATA[role])
     candidates.extend(
-        path for name in _BACKEND_INSTALLER_METADATA[backend]
+        path for name in metadata_names
         if (path := output_dir / name).is_file()
     )
     if not candidates:
@@ -361,12 +388,89 @@ def archive_existing_local_qa_outputs(status: dict, backend: str) -> list[dict[s
     return moved
 
 
+def recover_compiled_local_qa_backend(status: dict, backend: str) -> bool:
+    """Restore only a completed QA backend's exact versioned installers.
+
+    An interrupted later role must not force recompilation when its cleanup
+    removed an earlier role's canonical outputs. The candidate's own completed
+    Inno compiler directory and log are the only accepted recovery sources.
+    """
+    record = status.get("backends", {}).get(backend, {})
+    if (status.get("lane") != "local-install-qa" or
+            record.get("status") != "completed" or record.get("exit_code") != 0):
+        return False
+    expected = [Path(path).resolve() for path in
+                status.get("expected_release_installers", {}).get(backend, [])]
+    target = status.get("build_target")
+    if len(expected) != {"client": 2, "server": 1, "all": 3}.get(target):
+        return False
+    output = expected[0].parent
+    if any(path.parent != output for path in expected):
+        raise ValueError("Completed backend outputs must share one installer folder")
+    stage_root = Path(status["packaging_stage_root"]).resolve()
+    log = Path(record["log"])
+    if not stage_root.is_dir() or not log.is_file():
+        return False
+    compiler_log = log.read_text(encoding="utf-8", errors="replace")
+    candidates = [folder.resolve() for folder in stage_root.glob("r-*/compiled")
+                  if folder.is_dir()]
+    candidates = [folder for folder in candidates
+                  if folder.is_relative_to(stage_root) and
+                  all((folder / path.name).is_file() and
+                      str(folder / path.name) in compiler_log for path in expected)]
+    if len(candidates) != 1:
+        return False
+    compiled = candidates[0]
+    rows = []
+    editions = {"eagle-eye": "eagle-eye", "standard": "standard",
+                "arm64-emulated": "arm"}
+    for destination in expected:
+        source = compiled / destination.name
+        source_hash = file_hash(source)
+        if destination.is_file():
+            if file_hash(destination) != source_hash:
+                raise ValueError("Existing installer differs from the completed candidate")
+        else:
+            output.mkdir(parents=True, exist_ok=True)
+            temporary = output / f".{destination.name}.recovering"
+            if temporary.exists():
+                raise FileExistsError("An unfinished installer recovery already exists")
+            shutil.copy2(source, temporary)
+            if file_hash(temporary) != source_hash:
+                temporary.unlink(missing_ok=True)
+                raise ValueError("Compiled installer changed during recovery")
+            temporary.replace(destination)
+        edition = next((name for prefix, name in editions.items()
+                        if destination.name == f"ai-pacs {prefix} v{status['version']}.exe"), None)
+        if edition is None:
+            raise ValueError("Unexpected installer filename in completed candidate")
+        rows.append({"edition": edition, "stage": str(compiled.parent / edition),
+                     "status": "compiled", "bytes": destination.stat().st_size,
+                     "sha256": source_hash, "installer": str(destination)})
+    from builder.distribution_profiles import DEFAULT_COMPACT_MAX_BYTES, _write_release_metadata
+    inventory = {"version": status["version"], "backend": backend,
+                 "build_target": target,
+                 "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                 "status": "compiled", "published": False,
+                 "compact_size_budget_bytes": DEFAULT_COMPACT_MAX_BYTES,
+                 "outputs": rows}
+    _write_release_metadata(output, inventory)
+    record["recovered_from_compiled_stage"] = str(compiled)
+    return True
+
+
 def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source: Path | None = None,
                final_repo: Path = REPO, brain_source: Path | None = None,
                local_install_qa: bool = False, resume: bool = False,
-               target: str = "client") -> int:
+               target: str = "client",
+               selected_backends: tuple[str, ...] = ("python", "nuitka")) -> int:
     if target not in {"client", "server", "all"}:
         raise ValueError("Build target must be client or server")
+    if (not selected_backends or len(set(selected_backends)) != len(selected_backends)
+            or any(name not in {"python", "nuitka"} for name in selected_backends)):
+        raise ValueError("Select one or both recognized build backends")
+    if len(selected_backends) == 1 and not local_install_qa:
+        raise ValueError("Single-backend builds are limited to local install QA")
     if target == "server" and not local_install_qa:
         raise ValueError(
             "Eagle Eye Server is not qualified for release: portable Breast/Bone bundles, "
@@ -388,6 +492,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         raise ValueError("Candidate Git synchronization version does not match the build")
     if identity.get("build_target") and identity["build_target"] != target:
         raise ValueError("Candidate snapshot build target does not match the requested role")
+    if (identity.get("build_backends") is not None
+            and identity["build_backends"] != list(selected_backends)):
+        raise ValueError("Candidate snapshot backend selection does not match the requested build")
     installer_dirs = canonical_installer_dirs(final_repo, version)
     status_path = workspace / "build_status.json"
     if status_path.exists() and not resume:
@@ -398,8 +505,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         status = json.loads(status_path.read_text(encoding="utf-8"))
         expected_lane = "local-install-qa" if local_install_qa else "release-candidate"
         if (status.get("version") != version or status.get("lane") != expected_lane
-                or status.get("build_target", "all") != target):
-            raise ValueError("Resume workspace version, lane or build target does not match")
+                or status.get("build_target", "all") != target
+                or status.get("selected_backends", ["python", "nuitka"]) != list(selected_backends)):
+            raise ValueError("Resume workspace version, lane, role or backend selection does not match")
         for backend, record in status.get("backends", {}).items():
             if record.get("status") == "running" and _pid_is_alive(record.get("pid")):
                 raise ValueError(f"Cannot resume while the recorded {backend} build process is still active")
@@ -409,17 +517,26 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     else:
         status = {"version": version, "status": "running", "pid": os.getpid(),
                   "build_target": target,
+                  "selected_backends": list(selected_backends),
                   "lane": "local-install-qa" if local_install_qa else "release-candidate",
                   "published": False, "distribution_approved": not local_install_qa,
                   "production_accepted": False,
                   "asset_root": str(assets.resolve()),
                   "brain_source": str(brain_source.resolve()) if brain_source else None,
                   "reuse_python_source": str(reuse_python_source.resolve()) if reuse_python_source else None,
-                  "expected_release_installers": expected_release_installers(final_repo, version, target),
-                  "backends": {name: {"status": "queued"} for name in ("python", "nuitka")}}
+                  "expected_release_installers": {
+                      name: paths for name, paths in
+                      expected_release_installers(final_repo, version, target).items()
+                      if name in selected_backends
+                  },
+                  "backends": {name: {"status": "queued"} for name in selected_backends}}
     if resume and reuse_python_source is None:
         reuse_python_source = _recorded_python_reuse_source(status)
-    status["expected_release_installers"] = expected_release_installers(final_repo, version, target)
+    status["expected_release_installers"] = {
+        name: paths for name, paths in
+        expected_release_installers(final_repo, version, target).items()
+        if name in selected_backends
+    }
 
     def save_status():
         temporary = status_path.with_suffix(".tmp")
@@ -431,6 +548,7 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     env["AIPACS_NUITKA_INSTALLER_OUTPUT_DIR"] = str(installer_dirs["nuitka"])
     env["AIPACS_PY_EXPECTED_INSTALLER_OUTPUT_DIR"] = str(installer_dirs["python"])
     env["AIPACS_NUITKA_EXPECTED_INSTALLER_OUTPUT_DIR"] = str(installer_dirs["nuitka"])
+    env["AIPACS_LUMEN_VMTK_BUNDLE_SOURCE"] = str((assets / "lumen_vmtk").resolve())
     # Candidate compilation never uploads application updates. Publication is a
     # separate, explicitly authorized operation after signing and install QA.
     env["AIPACS_UPDATE_REMOTE_PUBLISH"] = "0"
@@ -439,11 +557,16 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
     env['AIPACS_EAGLE_EYE_LESION_SOURCE'] = str(resolve_lesion_source(final_repo))
     env["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"] = str(resolve_alignment_source(final_repo))
     env["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"] = str(resolve_total_spine_source(final_repo))
+    for engine in ('breast', 'bone-age'):
+        name = 'AIPACS_EAGLE_EYE_' + engine.upper().replace('-', '_') + '_SOURCE'
+        env[name] = str(resolve_engine_source(engine, version, final_repo))
     status["eagle_eye_external_sources"] = {
         "brain": env.get("AIPACS_EAGLE_EYE_BRAIN_SOURCE"),
         "brain_lesions": env["AIPACS_EAGLE_EYE_LESION_SOURCE"],
         "alignment": env["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"],
         "total_spine": env["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"],
+        "breast": env["AIPACS_EAGLE_EYE_BREAST_SOURCE"],
+        "bone_age": env["AIPACS_EAGLE_EYE_BONE_AGE_SOURCE"],
     }
     workspace_anchor = Path(workspace.resolve().anchor)
     packaging_stage_root = (workspace_anchor / "ap-stage" if workspace_anchor
@@ -461,9 +584,10 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         "nuitka": [sys.executable, "-u", "builder nuitka/build_nuitka_release.py", "--release",
                    "--compiler", "msvc", "--edition", target, "--asset-root", str(assets)],
     }
+    commands = {name: commands[name] for name in selected_backends}
     if local_install_qa:
-        commands["python"].insert(3, "--internal-build")
-        commands["nuitka"].insert(3, "--internal-build")
+        for command in commands.values():
+            command.insert(3, "--internal-build")
     if reuse_python_source is not None:
         commands["python"] = [sys.executable, "-u", "tools/build/repackage_candidate.py",
                               "--previous-source", str(reuse_python_source.resolve()), "--version", version,
@@ -479,6 +603,11 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
         return 1
     for name, command in commands.items():
         previous_record = dict(status.get("backends", {}).get(name, {}) or {})
+        if (resume and previous_record.get("status") == "completed" and
+                not _completed_backend_outputs_exist(status, name) and
+                recover_compiled_local_qa_backend(status, name)):
+            print(f"Recovered completed {name} installer outputs from this immutable candidate.", flush=True)
+            save_status()
         if (
             previous_record.get("status") == "completed"
             and previous_record.get("exit_code") == 0
@@ -550,7 +679,7 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
             save_status()
             return 1
     status["status"] = "completed" if all(r["exit_code"] == 0 for r in status["backends"].values()) else "failed"
-    if status["status"] == "completed":
+    if status["status"] == "completed" and len(selected_backends) == 2:
         status["status"] = "verifying_coherence"
         save_status()
         py_stage = ((reuse_python_source / "builder/output/stage") if reuse_python_source else
@@ -564,6 +693,9 @@ def run_builds(workspace: Path, assets: Path, version: str, reuse_python_source:
             status["coherence_error"] = type(exc).__name__
         status["coherence_exit_code"] = rc
         status["status"] = "failed" if rc else "completed"
+    elif status["status"] == "completed":
+        status["coherence_status"] = "not_applicable_single_backend"
+        status["coherence_exit_code"] = None
     save_status()
     return 0 if status["status"] == "completed" else 1
 
@@ -604,6 +736,7 @@ def run_internal_build(
         QT_QPA_PLATFORM="offscreen",
         AIPACS_UPDATE_REMOTE_PUBLISH="0",
     )
+    env["AIPACS_LUMEN_VMTK_BUNDLE_SOURCE"] = str((assets / "lumen_vmtk").resolve())
     for name in list(env):
         if name.startswith("AIPACS_SKIP_") or name.startswith("AIPACS_ALLOW_"):
             env.pop(name)
@@ -612,6 +745,9 @@ def run_internal_build(
         env['AIPACS_EAGLE_EYE_LESION_SOURCE'] = str(resolve_lesion_source(REPO))
         env["AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE"] = str(resolve_alignment_source(REPO))
         env["AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE"] = str(resolve_total_spine_source(REPO))
+        for engine in ('breast', 'bone-age'):
+            name = 'AIPACS_EAGLE_EYE_' + engine.upper().replace('-', '_') + '_SOURCE'
+            env[name] = str(resolve_engine_source(engine, version))
 
     commands = {
         "python": [
@@ -709,12 +845,12 @@ def main():
         "--local-install-qa",
         action="store_true",
         help=(
-            "Build the selected role in both backends into the two canonical repository folders "
+            "Build the selected role into its canonical repository installer folder(s) "
             "for local QA without asserting Git publication or redistribution approval"
         ),
     )
-    parser.add_argument("--backend", choices=("python", "nuitka"), default="python",
-                        help="Internal lane only; default: python")
+    parser.add_argument("--backend", choices=("python", "nuitka"),
+                        help="Explicit one-backend internal diagnostic or local install-QA selection")
     parser.add_argument("--edition", choices=("standard", "eagle-eye", "arm"), default="standard",
                         help="Internal lane only; default: standard")
     parser.add_argument("--brain-source", type=Path,
@@ -723,7 +859,8 @@ def main():
     args = parser.parse_args()
     if args.resume_workspace:
         if any((args.workspace, args.prepare_only, args.run_prepared, args.internal,
-                args.local_install_qa, args.git_sync_receipt, args.reuse_python_source)):
+                args.local_install_qa, args.git_sync_receipt, args.reuse_python_source,
+                args.backend)):
             parser.error("--resume-workspace cannot be combined with a new-build or lane option")
         if args.target:
             parser.error("Resume uses the build target recorded in its workspace")
@@ -743,6 +880,7 @@ def main():
         target = status.get("build_target", "all")
         if target not in {"client", "server", "all"}:
             parser.error("Resume workspace has an invalid build target")
+        selected_backends = tuple(status.get("selected_backends", ("python", "nuitka")))
         recorded_assets = Path(status.get("asset_root") or DEFAULT_ASSET_ROOT).resolve()
         assets = (args.asset_root or recorded_assets).resolve()
         if assets != recorded_assets:
@@ -759,6 +897,7 @@ def main():
             preflight_lesion_payload(for_distribution=not local_install_qa)
             preflight_alignment_payload(for_distribution=not local_install_qa)
             preflight_total_spine_payload(for_distribution=not local_install_qa)
+            preflight_engine_payloads(version, for_distribution=not local_install_qa)
         recorded_reuse = _recorded_python_reuse_source(status)
         return run_builds(
             workspace,
@@ -770,6 +909,7 @@ def main():
             local_install_qa=local_install_qa,
             resume=True,
             target=target,
+            selected_backends=selected_backends,
         )
     version = args.version or current_version(REPO)
     workspace = (
@@ -780,22 +920,34 @@ def main():
     if args.prepare_only and args.run_prepared:
         parser.error("Choose prepare-only or run-prepared")
     target = args.target or "client"
+    selected_backends = ((args.backend or "python",) if args.internal else
+                         ((args.backend,) if args.backend and args.local_install_qa
+                          else ("python", "nuitka")))
     if args.run_prepared:
         prepared = workspace / "source/build_source_manifest.json"
         if not prepared.is_file():
             parser.error("Prepared workspace has no source manifest")
-        recorded_target = json.loads(prepared.read_text(encoding="utf-8")).get("build_target", "all")
+        prepared_identity = json.loads(prepared.read_text(encoding="utf-8"))
+        recorded_target = prepared_identity.get("build_target", "all")
         if args.target and args.target != recorded_target:
             parser.error("Prepared workspace build target cannot be changed")
         target = recorded_target
+        recorded_backends = tuple(prepared_identity.get("build_backends", ("python", "nuitka")))
+        if args.backend and selected_backends != recorded_backends:
+            parser.error("Prepared workspace backend selection cannot be changed")
+        selected_backends = recorded_backends
     if args.internal and args.target:
-        parser.error("--target selects a two-backend build; use --edition for a diagnostic")
+        parser.error("--target selects a role build; use --edition for a diagnostic")
     if args.internal and args.local_install_qa:
         parser.error("Choose --internal or --local-install-qa")
     if args.internal and args.git_sync_receipt:
         parser.error("Internal snapshots do not use a release synchronization receipt")
     if args.local_install_qa and args.git_sync_receipt:
         parser.error("Local install-QA builds do not use a release synchronization receipt")
+    if args.backend and not (args.internal or args.local_install_qa):
+        parser.error("--backend is only valid for internal or local install-QA builds")
+    if len(selected_backends) == 1 and not args.local_install_qa and not args.internal:
+        parser.error("Single-backend builds are limited to local install QA")
     if not args.internal and not args.local_install_qa and not args.git_sync_receipt:
         parser.error("Canonical release builds require --git-sync-receipt")
     if not args.internal and target == "server" and not args.local_install_qa:
@@ -814,6 +966,7 @@ def main():
         preflight_lesion_payload(for_distribution=not (args.internal or args.local_install_qa))
         preflight_alignment_payload(for_distribution=not (args.internal or args.local_install_qa))
         preflight_total_spine_payload(for_distribution=not (args.internal or args.local_install_qa))
+        preflight_engine_payloads(version, for_distribution=not (args.internal or args.local_install_qa))
     if not args.run_prepared:
         from builder.slicer_runtime_payload import verify_cache_matches_developer_runtime
 
@@ -821,7 +974,7 @@ def main():
         if workspace.exists():
             raise ValueError("Build workspace already exists; use a fresh directory")
         create_snapshot(REPO, workspace / "source", version, release_sync=release_sync,
-                        build_target=target)
+                        build_target=target, selected_backends=selected_backends)
         print(f"Prepared isolated candidate: {workspace}")
     if args.prepare_only:
         return 0
@@ -830,7 +983,7 @@ def main():
             workspace,
             assets,
             version,
-            backend=args.backend,
+            backend=args.backend or "python",
             edition=args.edition,
             brain_source=brain_source,
         )
@@ -843,6 +996,7 @@ def main():
         brain_source,
         local_install_qa=args.local_install_qa,
         target=target,
+        selected_backends=selected_backends,
     )
 
 

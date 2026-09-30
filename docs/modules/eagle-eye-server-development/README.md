@@ -1,5 +1,11 @@
 # Eagle Eye Server development workspace
 
+**Current September 30 checkpoint:**
+[Hosted EchoMind and versioned Developer service](docs/ECHOMIND_SERVER_2026-09-30.md).
+The active listener is paired TLS 8002, not the historical pilots described below.
+Actual EchoMind API and hidden native startup gates pass; full GUI/model acceptance
+and installer production remain separate.
+
 Updated: 2026-09-23. Deployment root: `D:\Eagle Eye Server` on Razi Reception.
 
 This workspace develops the server edition of AI-PACS Eagle Eye. Standard clients

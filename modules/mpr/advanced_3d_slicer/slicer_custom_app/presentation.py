@@ -1,5 +1,6 @@
 """Local presentation adapter; no patient access, scene changes or window promotion."""
 import qt
+import os
 import re
 import importlib.util
 from pathlib import Path
@@ -10,14 +11,17 @@ _numeric_spec = importlib.util.spec_from_file_location(
 _numeric_style = importlib.util.module_from_spec(_numeric_spec)
 _numeric_spec.loader.exec_module(_numeric_style)
 
-WINDOW_TITLE = 'AI-PACS Advanced Viewer v3.6.8'
+WINDOW_TITLE = os.environ.get('AIPACS_VIEWER_TITLE', 'AI-PACS Advanced Viewer')
 
 # This viewer is entered with a selected series. Specialized pipelines remain
 # owned by Eagle Eye; retain their modules for programmatic use, not discovery.
 VIEWER_MODULES = ('NewMPR2MPR', 'Data', 'Volumes', 'Markups', 'Models',
-                  'VolumeRendering', 'SegmentEditor', 'Segmentations')
+                  'VolumeRendering', 'SegmentEditor', 'Segmentations',
+                  'AIPacsVascular', 'AIPacsBronchoscopy')
 
 PANEL_LABELS = {
+    'AIPacsVascular': ('Vascular Analysis', 'Segment, trace and measure a vessel'),
+    'AIPacsBronchoscopy': ('Virtual Bronchoscopy', 'Review airways and navigate a selected branch'),
     'NewMPR2MPR': ('Home / MPR', 'Multiplanar image review'),
     'Data': ('Scene Data', 'Images and objects in this session'),
     'Volumes': ('Image Display', 'Window, level and image appearance'),

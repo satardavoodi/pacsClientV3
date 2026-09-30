@@ -755,11 +755,9 @@ class _HPSeriesMixin:
 
                 server_row = None
                 for row in rows:
-                    if str((row or {}).get('patient_id') or '').strip() == pid:
+                    if isinstance(row, dict) and str(row.get('patient_id') or '').strip() == pid:
                         server_row = row
                         break
-                if server_row is None and rows:
-                    server_row = rows[0]
 
                 server_uids = []
                 if server_row:
@@ -769,46 +767,17 @@ class _HPSeriesMixin:
                         except Exception:
                             pass
 
-                    raw_uids = server_row.get('study_uids') or []
-                    if isinstance(raw_uids, str):
-                        raw_uids = [raw_uids]
-                    elif not isinstance(raw_uids, list):
-                        raw_uids = []
+                    from PacsClient.utils.patient_study_set import patient_row_study_uids
+                    server_uids = patient_row_study_uids(server_row)
 
-                    studies = server_row.get('studies') or server_row.get('study_list') or []
-                    for study in studies if isinstance(studies, list) else []:
-                        if not isinstance(study, dict):
-                            continue
-                        suid = str(
-                            study.get('study_uid')
-                            or study.get('StudyInstanceUID')
-                            or study.get('studyInstanceUid')
-                            or ''
-                        ).strip()
-                        if suid and suid not in server_uids:
-                            server_uids.append(suid)
-
-                    for uid in raw_uids:
-                        uid_str = str(uid or '').strip()
-                        if uid_str and uid_str not in server_uids:
-                            server_uids.append(uid_str)
-
-                    latest_uid = str(server_row.get('latest_study_uid') or '').strip()
-                    if latest_uid and latest_uid not in server_uids:
-                        server_uids.append(latest_uid)
-
-                    # Multi-modality completeness: GetPatientList returns only the
-                    # LATEST study UID per patient, so a same-patient study of another
-                    # modality (e.g. an MRI when the latest is an X-ray) is omitted.
-                    # Enumerate per-modality and union the missing UIDs in. Reuses the
-                    # server_row we already fetched (no extra default query); no-op for
-                    # single-study / single-modality patients. The enumerated UIDs all
-                    # belong to `pid` (server filters by patient_id) and still pass the
-                    # cross-patient guard in the missing-download loop below.
+                    # Reuse this unfiltered, exact-patient row at the shared discovery
+                    # boundary. Only incomplete legacy responses need per-modality
+                    # adaptation; complete rows need no additional network request.
                     if hasattr(self, '_enumerate_studies_for_row'):
                         try:
                             extra_uids = await self._enumerate_studies_for_row(
-                                pid, server_row, already_have=list(local_uids) + list(server_uids))
+                                pid, server_row, already_have=list(local_uids) + list(server_uids),
+                                patient_scope_verified=True)
                             for _eu in (extra_uids or []):
                                 _eu = str(_eu or '').strip()
                                 if _eu and _eu not in server_uids:

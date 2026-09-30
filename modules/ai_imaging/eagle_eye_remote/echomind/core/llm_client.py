@@ -1,0 +1,571 @@
+"""
+Provider-aware EchoMind LLM gateway.
+
+This module keeps the legacy ``gapgpt_chat`` public API for compatibility,
+but it now routes requests through either:
+
+1. The existing company GapGPT path (default)
+2. A user-configured OpenAI path
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import requests
+
+from modules.ai_imaging.eagle_eye_remote.echomind.core import echomind_http
+from modules.ai_imaging.eagle_eye_remote.echomind.core.ai_chat_config import GAPGPT_API_URL, GAPGPT_DEFAULT_MODEL, GAPGPT_TIMEOUT
+from modules.ai_imaging.eagle_eye_remote.echomind.core.settings_store import get_echomind_api_key, get_llm_backend, get_openai_settings, get_proxy_settings
+
+log = logging.getLogger(__name__)
+
+_API_URL = GAPGPT_API_URL
+_DEFAULT_MODEL = GAPGPT_DEFAULT_MODEL
+_DEFAULT_TIMEOUT = GAPGPT_TIMEOUT
+
+
+def _get_requests_proxies() -> "dict[str, str] | None":
+    """The proxies dict for an EchoMind call.
+
+    DELEGATES to ``echomind_http.requests_proxies`` — this used to be one of TWO
+    identical private copies (the other in ``viewer_chat/openai_reporter.py``)
+    while half the module passed no ``proxies=`` at all. Kept as a name so
+    existing call sites/tests keep working; do not re-implement it here.
+    """
+    return echomind_http.requests_proxies()
+
+
+def _ensure_socks_proxy_support(proxies: "dict[str, str] | None") -> None:
+    """Fail with an actionable message when SOCKS5 is on but PySocks is absent."""
+    try:
+        echomind_http.ensure_socks_support(proxies)
+    except Exception as exc:
+        raise LLMAPIError(str(exc)) from exc
+
+
+class LLMError(Exception):
+    """Base class for all EchoMind LLM gateway errors."""
+
+
+class LLMNoKeyError(LLMError):
+    """No usable backend key is configured for the selected EchoMind provider."""
+
+
+class LLMAuthError(LLMError):
+    """The selected provider rejected the request with an authentication error."""
+
+
+class LLMAPIError(LLMError):
+    """The selected provider returned a non-success response or malformed data."""
+
+
+@dataclass(frozen=True)
+class BackendSession:
+    provider: str
+    display_name: str
+    api_key: str
+    api_url: str
+    organization: str = ""
+    project: str = ""
+
+
+def _active_backend() -> str:
+    return "openai" if get_llm_backend() == "openai" else "company"
+
+
+def is_active_backend_configured() -> bool:
+    """Can the ACTIVE backend actually be used right now?
+
+    2026-08-09: the company branch used to be `bool(stored_string)`, which was wrong in
+    both directions — True for junk the user typed and never validated, False for a key
+    validated in memory but not yet written to settings. It now asks the entitlement
+    authority, so the UI cannot offer a company backend the licence does not cover.
+
+    The OpenAI branch is deliberately untouched: the user's own key needs no AI-PACS
+    authorisation, only EchoMind being installed.
+    """
+    backend = _active_backend()
+    if backend == "openai":
+        cfg = get_openai_settings()
+        return all(str(cfg.get(key) or "").strip() for key in ("api_key", "base_url"))
+    from modules.ai_imaging.eagle_eye_remote.echomind.core.entitlement import company_entitled
+    return company_entitled()
+
+
+def get_active_backend_display_name() -> str:
+    if _active_backend() == "openai":
+        return "OpenAI"
+    try:
+        from modules.ai_imaging.eagle_eye_remote.echomind.core.api_manager import Manage
+
+        return Manage.instance().get_detected_center_display() or "EchoMind"
+    except Exception:
+        return "EchoMind"
+
+
+def _resolve_company_backend() -> BackendSession:
+    try:
+        from modules.ai_imaging.eagle_eye_remote.echomind.core.api_manager import APIKeyManager, Manage
+
+        manager = APIKeyManager.instance()
+        if not manager.is_validated():
+            saved_key = (get_echomind_api_key() or "").strip()
+            if not saved_key:
+                raise LLMNoKeyError(
+                    "No EchoMind credential is configured. Open Settings -> EchoMind and authenticate."
+                )
+            ok, _center, error = manager.validate_key(saved_key)
+            if not ok:
+                raise LLMAuthError(error or "The saved EchoMind credential is invalid.")
+            try:
+                Manage.instance().detect_center(saved_key)
+            except Exception:
+                pass
+
+        center, key = Manage.instance().get_center_and_gapgpt_key()
+        if not key or not key.strip():
+            raise LLMNoKeyError(
+                "No GapGPT key resolved. Open Settings -> EchoMind and authenticate."
+            )
+        return BackendSession(
+            provider="company",
+            display_name=center or "EchoMind",
+            api_key=key.strip(),
+            api_url=_API_URL,
+        )
+    except LLMError:
+        raise
+    except Exception as exc:
+        raise LLMNoKeyError(
+            f"Could not resolve the EchoMind company backend: {exc}"
+        ) from exc
+
+
+def _resolve_openai_backend(api_key_override: str | None = None) -> BackendSession:
+    cfg = get_openai_settings()
+    api_key = str(api_key_override or cfg.get("api_key") or "").strip()
+    if not api_key:
+        raise LLMNoKeyError(
+            "No OpenAI API key is configured. Open Settings -> EchoMind -> OpenAI."
+        )
+
+    base_url = str(cfg.get("base_url") or "").strip()
+    if not base_url:
+        raise LLMError("Enter your provider Base URL in EchoMind OpenAI settings.")
+
+    return BackendSession(
+        provider="openai",
+        display_name="OpenAI",
+        api_key=api_key,
+        api_url=base_url.rstrip("/") + "/chat/completions",
+        organization=str(cfg.get("organization") or "").strip(),
+        project=str(cfg.get("project") or "").strip(),
+    )
+
+
+def _resolve_active_backend(api_key_override: str | None = None) -> BackendSession:
+    if _active_backend() == "openai":
+        return _resolve_openai_backend(api_key_override=api_key_override)
+    return _resolve_company_backend()
+
+
+def _openai_headers(session: BackendSession) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {session.api_key}",
+        "Content-Type": "application/json",
+    }
+    if session.organization:
+        headers["OpenAI-Organization"] = session.organization
+    if session.project:
+        headers["OpenAI-Project"] = session.project
+    return headers
+
+
+def _coerce_openai_content(content: Any) -> Any:
+    """Convert message content to OpenAI-compatible format.
+
+    Handling:
+      - type="text"      -> kept as-is
+      - type="image"     -> converted to type="image_url" (legacy format)
+      - type="image_url" -> kept as-is (already valid)
+      - any other type   -> passed through unchanged
+    """
+    if not isinstance(content, list):
+        return content
+
+    out: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = str(part.get("type") or "").strip().lower()
+        if kind == "text":
+            out.append({"type": "text", "text": str(part.get("text") or "")})
+            continue
+        if kind == "image":
+            raw = str(part.get("image") or "").strip()
+            if not raw:
+                continue
+            if raw.startswith("data:"):
+                data_url = raw
+            else:
+                data_url = f"data:image/jpeg;base64,{raw}"
+            out.append({"type": "image_url", "image_url": {"url": data_url}})
+            continue
+        out.append(part)
+    return out or content
+
+
+def _coerce_messages_for_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    coerced: list[dict[str, Any]] = []
+    for message in messages:
+        coerced.append(
+            {
+                "role": str(message.get("role") or "user"),
+                "content": _coerce_openai_content(message.get("content")),
+            }
+        )
+    return coerced
+
+
+def _messages_need_content_coercion(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if str(part.get("type") or "").strip().lower() == "image":
+                return True
+    return False
+
+
+# Sentence-ending punctuation (English + Persian/Arabic, incl. full-width forms).
+_SENTENCE_ENDINGS = ".!?。؟！？"
+
+
+def _trim_incomplete_sentence(text: str) -> str:
+    """Trim a *truncated* reply back to its last complete sentence.
+
+    This is only meaningful for responses already known to be cut off
+    (e.g. the API reported ``finish_reason == "length"``). If the text has
+    no sentence-ending punctuation at all, the original text is returned
+    unchanged — a valid, punctuation-free reply must never be blanked out.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if text[-1] in _SENTENCE_ENDINGS:
+        return text
+    last_idx = max((text.rfind(ch) for ch in _SENTENCE_ENDINGS), default=-1)
+    if last_idx == -1:
+        # No sentence boundary found — keep the full text rather than discard it.
+        return text
+    return text[: last_idx + 1].strip()
+
+
+def _extract_content_from_body(body: dict[str, Any]) -> str:
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMAPIError("Malformed response: missing choices.")
+
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content")
+
+    # Only trim when the API itself reports the reply was cut off by the
+    # token limit; complete replies are returned verbatim.
+    truncated = str(first.get("finish_reason") or "").strip().lower() == "length"
+
+    def _finalize(value: str) -> str:
+        value = value.strip()
+        return _trim_incomplete_sentence(value) if truncated else value
+
+    if isinstance(content, str):
+        return _finalize(content)
+
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").lower() == "text":
+                text_parts.append(str(item.get("text") or ""))
+        if text_parts:
+            return _finalize("\n".join(x for x in text_parts if x))
+
+    text_value = first.get("text")
+    if isinstance(text_value, str):
+        return _finalize(text_value)
+
+    raise LLMAPIError("Malformed response: no assistant content found.")
+
+
+def _log_usage_company(model: str, prompt_tokens: int, completion_tokens: int, user_msg: str) -> None:
+    try:
+        from modules.ai_imaging.eagle_eye_remote.echomind.core.api_manager import Manage
+
+        Manage.instance().update_usage(
+            model.strip() or _DEFAULT_MODEL,
+            int(prompt_tokens or 0),
+            int(completion_tokens or 0),
+        )
+    except Exception:
+        pass
+
+
+def _log_usage_openai(**kwargs):
+    pass
+
+
+def _log_usage(
+    session: BackendSession,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    user_msg: str,
+) -> None:
+    if session.provider == "openai":
+        _log_usage_openai(
+            api_key=session.api_key,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    else:
+        _log_usage_company(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            user_msg=user_msg,
+        )
+
+
+def chat_completion(
+    messages: list[dict[str, Any]],
+    *,
+    model: str = _DEFAULT_MODEL,
+    max_tokens: int | None = None,
+    temperature: float = 0.0,
+    timeout: int = _DEFAULT_TIMEOUT,
+    api_key_override: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    session = _resolve_active_backend(api_key_override=api_key_override)
+    resolved_model = str(model or _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+
+    payload: dict[str, Any] = {
+        "model": resolved_model,
+        "messages": messages,
+    }
+    if temperature is not None:
+        payload["temperature"] = float(temperature)
+    if max_tokens is not None:
+        payload["max_tokens"] = int(max_tokens)
+
+    headers = {
+        "Authorization": f"Bearer {session.api_key}",
+        "Content-Type": "application/json",
+    }
+
+    if session.provider == "openai" or _messages_need_content_coercion(messages):
+        payload["messages"] = _coerce_messages_for_openai(messages)
+
+    if session.provider == "openai":
+        headers = _openai_headers(session)
+        if "max_tokens" in payload:
+            payload["max_completion_tokens"] = payload.pop("max_tokens")
+        # Reasoning families do not universally accept custom temperature.
+        if resolved_model.startswith(("gpt-5", "o1", "o3", "o4")):
+            payload.pop("temperature", None)
+        if reasoning_effort:
+            payload["reasoning_effort"] = str(reasoning_effort).strip()
+
+    # Transport policy (proxy + connect/read split) comes from the ONE authority.
+    # This used to pass a SCALAR timeout, which requests applies to the CONNECT
+    # phase too — so an unreachable host took the full 60 s to report itself
+    # instead of 10 s. `echomind_http` upgrades it to (connect, read).
+    _ensure_socks_proxy_support(_get_requests_proxies())
+    try:
+        resp = echomind_http.post(
+            session.api_url, json=payload, headers=headers, read_timeout=timeout
+        )
+    except requests.exceptions.RequestException as exc:
+        raise LLMAPIError(
+            f"Network error contacting {session.display_name}: {exc}"
+        ) from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMAuthError(
+            f"{session.display_name} rejected the request. Check the configured API key."
+        )
+
+    if resp.status_code != 200:
+        snippet = (resp.text or "")[:300].replace("\n", " ")
+        raise LLMAPIError(
+            f"{session.display_name} HTTP {resp.status_code}: {snippet}"
+        )
+
+    try:
+        body: dict[str, Any] = resp.json()
+    except Exception as exc:
+        raise LLMAPIError(f"Malformed response body: {exc}") from exc
+
+    content = _extract_content_from_body(body)
+    usage = body.get("usage") or {}
+
+    user_msg = next(
+        (str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "user"),
+        "",
+    )
+    _log_usage(
+        session=session,
+        model=resolved_model,
+        prompt_tokens=int(usage.get("prompt_tokens", 0)),
+        completion_tokens=int(usage.get("completion_tokens", 0)),
+        user_msg=user_msg[:500],
+    )
+
+    log.debug(
+        "chat_completion ok | provider=%s model=%s prompt_tokens=%s completion_tokens=%s",
+        session.provider,
+        resolved_model,
+        usage.get("prompt_tokens"),
+        usage.get("completion_tokens"),
+    )
+    return {
+        "content": content,
+        "usage": {
+            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+            "completion_tokens": int(usage.get("completion_tokens", 0)),
+            "total_tokens": int(usage.get("total_tokens", 0))
+            or (int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))),
+            "model": resolved_model,
+            "center": session.display_name,
+            "provider": session.provider,
+        },
+        "provider": session.provider,
+        "display_name": session.display_name,
+        "raw": body,
+    }
+
+
+def gapgpt_chat(
+    messages: list[dict[str, Any]],
+    *,
+    model: str = _DEFAULT_MODEL,
+    max_tokens: int | None = None,
+    temperature: float = 0.0,
+    timeout: int = _DEFAULT_TIMEOUT,
+    reasoning_effort: str | None = None,
+) -> str:
+    return str(
+        chat_completion(
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+            reasoning_effort=reasoning_effort,
+        ).get("content")
+        or ""
+    ).strip()
+
+
+def test_openai_connection(
+    *,
+    api_key: str,
+    base_url: str = "",
+    organization: str = "",
+    project: str = "",
+    timeout: int = 15,
+) -> dict[str, Any]:
+    resolved_api_key = str(api_key or "").strip()
+    if not resolved_api_key:
+        raise LLMNoKeyError("No OpenAI API key is configured.")
+
+    resolved_base_url = str(base_url or "").strip().rstrip("/")
+    if not resolved_base_url:
+        raise LLMError("Enter your provider Base URL in EchoMind OpenAI settings.")
+    proxies = _get_requests_proxies()
+    _ensure_socks_proxy_support(proxies)
+
+    headers = {
+        "Authorization": f"Bearer {resolved_api_key}",
+        "Content-Type": "application/json",
+    }
+    if str(organization or "").strip():
+        headers["OpenAI-Organization"] = str(organization).strip()
+    if str(project or "").strip():
+        headers["OpenAI-Project"] = str(project).strip()
+
+    try:
+        resp = echomind_http.get(
+            f"{resolved_base_url}/models",
+            headers=headers,
+            timeout=int(timeout or 15),
+            proxies=proxies,
+        )
+    except requests.exceptions.RequestException as exc:
+        raise LLMAPIError(f"Connection test failed: {exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMAuthError("Authentication failed. Check the configured key and project settings.")
+    if resp.status_code >= 400:
+        snippet = (resp.text or "")[:240].replace("\n", " ")
+        raise LLMAPIError(f"Connection test failed with HTTP {resp.status_code}: {snippet}")
+
+    return {
+        "ok": True,
+        "provider": "openai",
+        "display_name": "OpenAI",
+    }
+
+
+def test_active_backend_connection(timeout: int = 15) -> dict[str, Any]:
+    session = _resolve_active_backend()
+    if session.provider == "openai":
+        return test_openai_connection(
+            api_key=session.api_key,
+            base_url=session.api_url.rsplit("/", 2)[0],
+            organization=session.organization,
+            project=session.project,
+            timeout=timeout,
+        )
+    else:
+        url = _API_URL
+        headers = {"Authorization": f"Bearer {session.api_key}", "Content-Type": "application/json"}
+
+    proxies = _get_requests_proxies()
+    _ensure_socks_proxy_support(proxies)
+
+    try:
+        resp = echomind_http.post(
+            url,
+            headers=headers,
+            json={
+                "model": _DEFAULT_MODEL,
+                "messages": [{"role": "user", "content": "Ping"}],
+                "max_tokens": 8,
+                "temperature": 0.0,
+            },
+            timeout=timeout,
+            proxies=proxies,
+        )
+    except requests.exceptions.RequestException as exc:
+        raise LLMAPIError(f"Connection test failed: {exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMAuthError("Authentication failed. Check the configured key and project settings.")
+    if resp.status_code >= 400:
+        snippet = (resp.text or "")[:240].replace("\n", " ")
+        raise LLMAPIError(f"Connection test failed with HTTP {resp.status_code}: {snippet}")
+
+    return {
+        "ok": True,
+        "provider": session.provider,
+        "display_name": session.display_name,
+    }

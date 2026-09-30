@@ -20,6 +20,8 @@ outputs; Server selects Eagle Eye separately. See
 for cached inputs, commands, size gates, no-publish behavior, and release blockers.
 For the separate frozen Eagle Eye service dependency and installed acceptance
 gap, read [Server service packaging parity](EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md).
+That record also tracks fresh-cache build-wheel refresh and guarded installed
+listener/lifecycle prerequisites; none is an alternate installer entry point.
 
 ## 1. PyInstaller Build Chain
 

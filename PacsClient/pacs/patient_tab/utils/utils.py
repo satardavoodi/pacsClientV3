@@ -1324,6 +1324,7 @@ _THUMB_SAVE_ASYNC = os.getenv("AIPACS_THUMB_SAVE_ASYNC", "1") != "0"
 _thumb_write_executor = None
 _thumb_write_lock = _threading.Lock()
 _thumb_logger = _logging.getLogger(__name__)
+_local_thumbnail_repair_locks = tuple(_threading.Lock() for _ in range(64))
 
 
 def canonical_thumbnail_path(study_uid, file_name):
@@ -1568,6 +1569,8 @@ def _local_multiframe_thumbnail_preview(series_path, study_uid, series_uid):
     the exact persisted folder and validate identity before decoding its pixels.
     GDCM owns pixel decoding/rescale; no viewer-private cache is involved.
     """
+    from PacsClient.utils.dicom_displayability import try_dicom_file_pixel_facts
+
     for path in sorted(Path(series_path).glob('*')):
         if not path.is_file() or path.suffix.lower() != '.dcm':
             continue
@@ -1575,7 +1578,13 @@ def _local_multiframe_thumbnail_preview(series_path, study_uid, series_uid):
         if (str(header.get('StudyInstanceUID', '')) != str(study_uid)
                 or str(header.get('SeriesInstanceUID', '')) != str(series_uid)):
             raise ValueError('Local thumbnail source identity mismatch')
-        if int(header.get('NumberOfFrames', 1) or 1) <= 1:
+        pixel_facts = try_dicom_file_pixel_facts(path)
+        if pixel_facts is None:
+            return None
+        has_pixels, frame_count = pixel_facts
+        if not has_pixels:
+            continue
+        if int(frame_count or 1) <= 1:
             from .advanced_presentation import DX_PRESENTATION, load_presentation_sequence
             if str(header.get('SOPClassUID', '')) == DX_PRESENTATION:
                 # Reuse the existing stateless presentation decoder for this
@@ -1623,12 +1632,86 @@ def _local_multiframe_thumbnail_preview(series_path, study_uid, series_uid):
     return None
 
 
+def _local_single_frame_thumbnail_after_geometry_failure(
+        series_path, study_uid, series_uid):
+    """Decode one representative image after spatial preview rejection.
+
+    Conventional MG/US series and series containing a Raw Data companion may
+    be valid image collections without volume geometry.  The normal
+    geometry-aware preview remains authoritative and calls this worker-only
+    adapter only after that preview has failed.  Metadata-only objects remain
+    on disk but are excluded from the image candidates.  Mixed single/multi-
+    frame inputs remain fail-closed for their dedicated adapters.
+    """
+    paths = [
+        path for path in sorted(Path(series_path).glob('*'))
+        if path.is_file() and path.suffix.lower() == '.dcm'
+    ]
+    if not paths:
+        return None
+
+    from PacsClient.utils.dicom_displayability import try_dicom_file_pixel_facts
+
+    # Header-only classification is I/O-bound.  Keep it off the GUI thread and
+    # bounded like the existing inventory scanner so large imported MR series
+    # do not become a new sequential cold-open bottleneck.
+    workers = min(8, len(paths), max(1, os.cpu_count() or 1))
+    with _ThreadPoolExecutor(max_workers=workers) as pool:
+        facts = list(pool.map(try_dicom_file_pixel_facts, paths))
+    if any(item is None for item in facts):
+        return None
+
+    if any(has_pixels and int(frames or 1) != 1
+           for has_pixels, frames in facts):
+        return None
+    image_paths = [
+        path for path, (has_pixels, frames) in zip(paths, facts)
+        if has_pixels and int(frames or 1) == 1
+    ]
+    if not image_paths:
+        return None
+
+    # A middle object is a better representative thumbnail than a localizer
+    # edge while remaining independent of spatial volume construction.
+    path = image_paths[len(image_paths) // 2]
+    header = _safe_dcmread(path, stop_before_pixels=True)
+    if (str(header.get('StudyInstanceUID', '')) != str(study_uid)
+            or str(header.get('SeriesInstanceUID', '')) != str(series_uid)):
+        raise ValueError('Local thumbnail source identity mismatch')
+
+    from .advanced_presentation import DX_PRESENTATION
+    if str(header.get('SOPClassUID', '')) == DX_PRESENTATION and len(image_paths) != 1:
+        return None
+
+    image = sitk.ReadImage(str(path))
+
+    def first_number(value):
+        if isinstance(value, (list, tuple, pydicom.multival.MultiValue)):
+            value = value[0] if value else None
+        return float(value) if value is not None else None
+
+    metadata = {'series': {}, 'instances': [{
+        'window_width': first_number(header.get('WindowWidth')),
+        'window_center': first_number(header.get('WindowCenter')),
+    }]}
+    _logging.getLogger(__name__).info(
+        "[LOCAL_THUMBNAIL_NONSPATIAL_FALLBACK] modality=%s "
+        "pixel_objects=%d metadata_only=%d",
+        str(header.get('Modality', '') or ''),
+        len(image_paths),
+        sum(1 for has_pixels, _frames in facts if not has_pixels),
+    )
+    return convert_itk2vtk(image), metadata, None, 1
+
+
 def repair_local_series_thumbnail(
     study_uid: str,
     study_info: dict,
     series: dict,
     folder_key: str,
     series_path: str,
+    *,
+    spatial_preview_failed: bool = False,
 ) -> str:
     """Rebuild one missing PNG from its exact persisted local series folder.
 
@@ -1658,32 +1741,52 @@ def repair_local_series_thumbnail(
         if not patient_pk or not study_pk or not series_pk:
             return ''
 
-        preview = _local_multiframe_thumbnail_preview(
-            persisted_path, study_uid, series_uid)
-        if preview is None:
-            preview = load_series_preview(
-                study_path=str(persisted_path.parent),
-                series_number=folder_key,
-                patient_pk=patient_pk,
-                study_pk=study_pk,
-            )
-        if not preview:
-            return ''
+        repair_key = (str(study_uid or ''), str(folder_key or ''))
+        repair_lock = _local_thumbnail_repair_locks[
+            hash(repair_key) % len(_local_thumbnail_repair_locks)
+        ]
+        with repair_lock:
+            canonical = Path(canonical_thumbnail_path(study_uid, folder_key))
+            if canonical.is_file():
+                try:
+                    if str(get_series_thumbnail_path(series_pk) or '') != str(canonical):
+                        update_series_thumbnail_path(series_pk, str(canonical))
+                except Exception:
+                    # The canonical file is authoritative for rendering. A
+                    # transient index/read failure must not hide an existing PNG.
+                    _logging.getLogger(__name__).debug(
+                        "Local thumbnail hint refresh failed", exc_info=True)
+                return str(canonical)
 
-        vtk_image_data, metadata, _patient_info, _total_files = preview
-        metadata.setdefault('series', {})
-        metadata['series']['series_pk'] = series_pk
-        metadata['series']['series_number'] = folder_key
-        repaired = save_image_as_png(
-            vtk_image_data=vtk_image_data,
-            metadata=metadata,
-            metadata_fixed={
-                'study_uid': study_uid,
-                'patient_pk': patient_pk,
-                'study_pk': study_pk,
-            },
-            file=str(persisted_path.parent),
-        )
+            preview = _local_multiframe_thumbnail_preview(
+                persisted_path, study_uid, series_uid)
+            if preview is None and not spatial_preview_failed:
+                preview = load_series_preview(
+                    study_path=str(persisted_path.parent),
+                    series_number=folder_key,
+                    patient_pk=patient_pk,
+                    study_pk=study_pk,
+                )
+            if preview is None:
+                preview = _local_single_frame_thumbnail_after_geometry_failure(
+                    persisted_path, study_uid, series_uid)
+            if not preview:
+                return ''
+
+            vtk_image_data, metadata, _patient_info, _total_files = preview
+            metadata.setdefault('series', {})
+            metadata['series']['series_pk'] = series_pk
+            metadata['series']['series_number'] = folder_key
+            repaired = save_image_as_png(
+                vtk_image_data=vtk_image_data,
+                metadata=metadata,
+                metadata_fixed={
+                    'study_uid': study_uid,
+                    'patient_pk': patient_pk,
+                    'study_pk': study_pk,
+                },
+                file=str(persisted_path.parent),
+            )
         clear_study_cache(study_uid)
         repaired_path = Path(str(repaired or ''))
         return str(repaired_path) if repaired_path.is_file() else ''

@@ -60,9 +60,21 @@ def lesions(t1, flair, study, t1_uid, flair_uid, output, *, cancel=None, progres
             or second['series_uid'] != flair_uid):
         raise ValueError('Selected source identities changed.')
     client = Client()
+    refs = {'t1': first, 'flair': second}
+    for role in ('flair_secondary', 't1_post'):
+        path, expected = params.pop(role + '_source', None), params.pop(role + '_uid', None)
+        if path:
+            extra_study, ref = reference(path)
+            if extra_study != study or ref['series_uid'] != expected:
+                raise ValueError('Additional source identities changed.')
+            refs[role] = ref
+    if 't1_post' not in refs:
+        params.pop('contrast_roles_confirmed', None)
+    if len(refs) > 2 and not client.json('/v1/capabilities').get('lesion_multisequence_review', False):
+        raise ValueError('This Eagle Eye Server needs the multi-sequence MS update. No analysis was submitted.')
     if params.get('acquisition_mode') == '2d' and '2d' not in client.json('/v1/capabilities').get('lesion_acquisition_modes', []):
         raise ValueError('This Eagle Eye Server needs the 2D lesion update. No analysis was submitted.')
-    return client.analyze('brain-lesions', study, {'t1': first, 'flair': second}, params,
+    return client.analyze('brain-lesions', study, refs, params,
                             output, cancel=cancel, progress=progress)
 
 

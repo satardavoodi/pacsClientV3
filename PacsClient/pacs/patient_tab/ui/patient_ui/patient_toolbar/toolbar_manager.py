@@ -1333,6 +1333,8 @@ class ToolbarManager:
     
     def _show_orthogonal_mpr_viewer(self):
         """Show the new Orthogonal MPR Viewer with three synchronized views"""
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
         from PySide6.QtCore import Qt
         import logging
@@ -1739,6 +1741,8 @@ class ToolbarManager:
         enable AIPACS_CURVED_MPR_GEOMETRY_CONTRACT with this path (it would double-flip).
         See docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md.
         """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         try:
             from PySide6.QtWidgets import QGridLayout, QMessageBox
             from modules.mpr.zeta_mpr import StandardMPRViewer
@@ -2237,6 +2241,8 @@ class ToolbarManager:
         self.handle_buttons_checked()
 
     def toggle_reset_selected_widget(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         print('reset!!')
         last_series_show=None
         """this method run for once. we don't need to hold active """
@@ -2340,6 +2346,8 @@ class ToolbarManager:
 
     def toggle_ruler(self, selected_widget):
         """Toggle ruler tool on/off for the selected viewer"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         import logging
         import sys
         logger = logging.getLogger(__name__)
@@ -2476,6 +2484,8 @@ class ToolbarManager:
 
     def toggle_eraser(self, selected_widget):
         # MPR mode
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if not mpr_widget:
@@ -2516,6 +2526,8 @@ class ToolbarManager:
 
     def toggle_angle(self, selected_widget):
         """Toggle angle tool on/off for the selected viewer"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         # Check if we're in MPR mode
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
@@ -2561,6 +2573,8 @@ class ToolbarManager:
 
     def toggle_two_line_angle(self, selected_widget):
         """Toggle two-line angle tool on/off for the selected viewer"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         print(f"🔧 toggle_two_line_angle called")
         print(f"  selected_widget: {selected_widget}")
         print(f"  is_vtk_widget: {self.is_vtk_widget(selected_widget)}")
@@ -2601,6 +2615,8 @@ class ToolbarManager:
 
     def toggle_arrow(self, selected_widget):
         """Toggle arrow tool on/off for the selected viewer"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         # Check if we're in MPR mode
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
@@ -2661,6 +2677,8 @@ class ToolbarManager:
         # `check_and_deactivate_tools()`, which CLOSED MPR and dropped the user
         # back to the 2D image. That is the reported "annotation tools exit
         # MPR". Same shape as toggle_ruler / toggle_angle.
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
@@ -2699,6 +2717,8 @@ class ToolbarManager:
 
     def toggle_zoom_to_fit(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
@@ -2735,6 +2755,8 @@ class ToolbarManager:
             self.check_and_deactivate_tools()
 
     def toggle_zoom(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
@@ -2764,6 +2786,8 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_window_level(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
@@ -2793,6 +2817,8 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_pan(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
@@ -2822,6 +2848,8 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_stacked(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
@@ -2852,6 +2880,8 @@ class ToolbarManager:
 
     def toggle_rotation_left(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if not mpr_widget:
@@ -2883,6 +2913,8 @@ class ToolbarManager:
 
     def toggle_rotation_right(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if not mpr_widget:
@@ -2914,6 +2946,8 @@ class ToolbarManager:
 
     def toggle_flip_horizontal(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if not mpr_widget:
@@ -2945,6 +2979,8 @@ class ToolbarManager:
 
     def toggle_flip_vertical(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if not mpr_widget:
@@ -2976,6 +3012,8 @@ class ToolbarManager:
 
     def toggle_capture(self, selected_widget):
         """this method run for once. we don't need to hold active """
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.tool_selected == self.tool_access.CAPTURE:
             self.tool_selected = None
 
@@ -2995,6 +3033,8 @@ class ToolbarManager:
             self.check_and_deactivate_tools()
 
     def toggle_sync_point(self, checked=None):
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         enabled = bool(checked) if checked is not None else not getattr(self, '_sync_point_enabled', False)
 
         self._debug_target(
@@ -3131,6 +3171,8 @@ class ToolbarManager:
 
     def _toggle_lock_sync(self):
         """Toggle Lock Sync mode on patient_widget."""
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         pw = self.patient_widget
         current = getattr(pw, '_lock_sync_enabled', False)
         new_state = not current
@@ -3290,6 +3332,8 @@ class ToolbarManager:
             logger.error(f"toggle_voice_recording failed: {exc}")
 
     def toggle_microphone(self, selected_widget, mic_btn):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if self.tool_selected == self.tool_access.MICROPHONE:
             # Stop recording
             self.tool_selected = None
@@ -3763,6 +3807,8 @@ class ToolbarManager:
         """Apply a WW/WL preset to the active viewport (FAST / Advanced / MPR).
         Extracted from the WL dropdown so the F1–F3 shortcuts run identical
         code (the 'same backend action as the preset UI')."""
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         try:
             selected_widget = self.patient_widget.selected_widget
             if selected_widget is None:
@@ -3805,6 +3851,8 @@ class ToolbarManager:
     def _apply_default_wl_preset(self):
         """Restore the DICOM-default WW/WL on the active viewport. Extracted so
         the F4 shortcut runs identical code to the 'Default Preset' button."""
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         try:
             selected_widget = self.patient_widget.selected_widget
             if selected_widget is None:
@@ -4011,6 +4059,7 @@ class ToolbarManager:
             
             # Curve MPR button (New)
             new_curve_mpr_btn = create_dropdown_tool('Curve MPR', 'fa5s.bezier-curve', '#8b5cf6')
+            new_curve_mpr_btn.setChecked(self._active_new_curve_mpr()[1] is not None)
             new_curve_mpr_btn.clicked.connect(partial(self._on_new_curve_mpr_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(new_curve_mpr_btn)
             
@@ -4236,6 +4285,8 @@ class ToolbarManager:
             traceback.print_exc()
 
     def toggle_roi(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if selected_widget is None:
             print("⚠️ toggle_roi: selected_widget is None, ignoring")
             return
@@ -4259,6 +4310,8 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_circle_roi(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if selected_widget is None:
             print("⚠️ toggle_circle_roi: selected_widget is None, ignoring")
             return
@@ -4292,6 +4345,8 @@ class ToolbarManager:
             self.handle_buttons_checked()
 
     def toggle_ai_chat(self, selected_widget):
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         if selected_widget is None:
             print("No widget selected.") #Debugging statement
             return  # Exit if no widget is selected
@@ -4303,6 +4358,8 @@ class ToolbarManager:
 
     def toggle_mip(self, selected_widget):
         """Apply Maximum Intensity Projection - Simple Pure NumPy approach"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         import logging
         import vtkmodules.all as vtk
         from PySide6.QtWidgets import QMessageBox, QInputDialog, QProgressDialog
@@ -4516,6 +4573,8 @@ class ToolbarManager:
 
     def toggle_minip(self, selected_widget):
         """Apply Minimum Intensity Projection to 2D series - Scrollable"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         import logging
         import vtkmodules.all as vtk
         from PySide6.QtWidgets import QMessageBox, QInputDialog, QProgressDialog
@@ -4710,6 +4769,8 @@ class ToolbarManager:
 
     def toggle_thick_slab(self, selected_widget):
         """Apply Thick Slab (Average) to 2D series"""
+        if getattr(selected_widget, "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         import logging
         import vtkmodules.all as vtk
         from PySide6.QtWidgets import QMessageBox, QInputDialog, QProgressDialog
@@ -5238,6 +5299,8 @@ class ToolbarManager:
         When ON: Replaces the current viewport with Zeta MPR viewer, button turns green.
         When OFF: Restores the original viewport, button returns to normal state.
         """
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         import logging
         import sys
         from PySide6.QtWidgets import QMessageBox
@@ -5859,10 +5922,29 @@ class ToolbarManager:
             if _guard_on:
                 self._mpr_open_in_progress = False
 
+    def _active_new_curve_mpr(self):
+        """Resolve the same live session for menu state and toggle-off."""
+        selected = getattr(self.patient_widget, "selected_widget", None)
+        candidates = [selected]
+        candidates.extend(getattr(node, "vtk_widget", None)
+                          for node in self.patient_widget.lst_nodes_viewer)
+        for host in candidates:
+            if host is None:
+                continue
+            viewer = getattr(host, "_curve_mpr_widget", None)
+            if viewer is None and getattr(host, "_curve_reconstruction", None) is not None:
+                viewer = host
+                host = getattr(viewer, "_original_widget", None)
+            if viewer is not None and not getattr(viewer, "_mpr_closed", False):
+                return host, viewer
+        return None, None
+
     def toggle_new_curve_mpr(self):
         """
         Toggle Curve MPR viewer ON/OFF for the selected viewport.
         """
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         import logging
         import sys
         from PySide6.QtWidgets import QMessageBox
@@ -5871,31 +5953,14 @@ class ToolbarManager:
         logger.info("="*100)
         logger.info("🔨 [MPR] toggle_new_curve_mpr called")
         
-        # Check if MPR is already active - if so, close it
-        active_original_widget = None
-        active_mpr_widget = None
-
-        try:
-            for idx, node in enumerate(self.patient_widget.lst_nodes_viewer):
-                widget = getattr(node, 'vtk_widget', None)
-                if widget is None:
-                    continue
-                if hasattr(widget, '_curve_mpr_widget') and widget._curve_mpr_widget:
-                    active_original_widget = widget
-                    active_mpr_widget = widget._curve_mpr_widget
-                    break
-        except Exception as e:
-            logger.error(f"   ⚠️ [MPR] Error checking active MPR: {e}")
-
+        active_original_widget, active_mpr_widget = self._active_new_curve_mpr()
         selected_widget = self.patient_widget.selected_widget
-        
-        if active_mpr_widget is None and hasattr(selected_widget, '_original_widget'):
-            active_original_widget = selected_widget._original_widget
-            active_mpr_widget = selected_widget
 
         if active_mpr_widget is not None:
             logger.info("🔄 [MPR CLOSE] Closing Curve MPR (toggle OFF)")
             self._restore_selected_viewer(active_original_widget or selected_widget)
+            if active_original_widget is not None:
+                self.patient_widget.selected_widget = active_original_widget
             self.tool_selected = None
             self.handle_buttons_checked()
             return
@@ -6015,44 +6080,41 @@ class ToolbarManager:
             if window_width is None or window_center is None:
                 window_width, window_center = self._dicom_default_window_level(series_data)
 
+            # Use the same anatomical-camera metadata as the Standard MPR route.
+            # Resolving DICOM slice direction and copying voxels belong on the worker.
+            curve_meta = series_data.get('metadata', {})
+            curve_dir = curve_meta.get('series', {}).get('series_path')
+            if not curve_dir:
+                curve_instances = curve_meta.get('instances', [])
+                if curve_instances and curve_instances[0].get('instance_path'):
+                    curve_dir = os.path.dirname(curve_instances[0]['instance_path'])
+            pre_flipped = self._prepare_mpr_flip_offthread(
+                vtk_image_data, canonicalize_source=True, dicom_directory=curve_dir)
             zeta_widget = StandardMPRViewer(
                 vtk_image_data=vtk_image_data,
                 parent=parent_widget,
                 window_width=window_width,
-                window_center=window_center
+                window_center=window_center,
+                layout_views=["axial", "sagittal", "coronal"],
+                pre_flipped_image_data=pre_flipped,
             )
             
             # Now inject Curve MPR into the 3D view pane (bottom right)
-            curve_widget = CurveMPRWidget(vtk_image_data, main_viewer=zeta_widget, parent=zeta_widget)
+            curve_widget = CurveMPRWidget(zeta_widget.image_data, main_viewer=zeta_widget, parent=zeta_widget)
+            zeta_widget._curve_reconstruction = curve_widget
             
             # Replace the 3D view with our Curve MPR widget
             # StandardMPRViewer has a grid layout in _views_layout.
             layout = getattr(zeta_widget, '_views_layout', None)
             if layout:
-                # Remove the Coronal widget (1, 1)
-                item = layout.itemAtPosition(1, 1)
-                if item and item.widget():
-                    item.widget().hide()
-                    layout.removeWidget(item.widget())
-                
-                # Remove the Sagittal widget (1, 0)
-                item = layout.itemAtPosition(1, 0)
-                if item and item.widget():
-                    item.widget().hide()
-                    layout.removeWidget(item.widget())
-                    
-                # Remove the 3D widget (0, 1)
-                item = layout.itemAtPosition(0, 1)
-                if item and item.widget():
-                    item.widget().hide()
-                    layout.removeWidget(item.widget())
-                
+                curve_widget.install_source_views()
+
                 # Add Curve MPR viewers to the grid layout
                 # Pane 1: Axial (0, 0) - already there
                 # Pane 2: Curved (0, 1)
-                layout.addWidget(curve_widget.vtkWidget_curved, 0, 1)
+                layout.addWidget(curve_widget.pane_curved, 0, 1)
                 # Pane 3: Ortho (1, 0)
-                layout.addWidget(curve_widget.vtkWidget_ortho, 1, 0)
+                layout.addWidget(curve_widget.pane_ortho, 1, 0)
                 # Pane 4: MIP (1, 1)
                 if hasattr(curve_widget, 'vtkWidget_mip'):
                     layout.addWidget(curve_widget.vtkWidget_mip, 1, 1)
@@ -6067,19 +6129,11 @@ class ToolbarManager:
                 main_layout = zeta_widget.layout()
                 if main_layout:
                     main_layout.insertLayout(0, controls_layout)
+                    main_layout.insertWidget(1, curve_widget.volume_controls)
                     
                 # Hide the CurveMPRWidget itself since we extracted its children
                 curve_widget.hide()
                 
-            # Set up the interactor style on the axial view
-            if hasattr(zeta_widget, 'viewers') and 'axial' in zeta_widget.viewers:
-                interactor_style = CurveMPRInteractorStyle(zeta_widget, curve_widget)
-                existing_style = zeta_widget.viewers['axial']['widget'].GetInteractorStyle()
-                if existing_style:
-                    interactor_style.attach(existing_style)
-                # Keep a reference to prevent garbage collection
-                curve_widget._interactor_helper = interactor_style
-            
             # Atomic swap (see toggle_zeta_mpr): hide + insert in one
             # repaint-suppressed step so no frame shows the cell empty.
             _swap_host = parent_widget if _defer_host_hide else None
@@ -6950,6 +7004,10 @@ class ToolbarManager:
         elif getattr(selected_widget, '_curved_mpr_widget', None) is not None:
             mpr_widget = selected_widget._curved_mpr_widget
 
+        # Non-dental Curve MPR uses its own cross-link.
+        elif getattr(selected_widget, '_curve_mpr_widget', None) is not None:
+            mpr_widget = selected_widget._curve_mpr_widget
+
         # Case 3: selected_widget itself is the MPR widget (toolbar_integration pattern)
         elif getattr(selected_widget, '_original_widget', None) is not None:
             mpr_widget = selected_widget
@@ -7001,6 +7059,8 @@ class ToolbarManager:
                 delattr(original_widget, '_zeta_mpr_widget')
             if hasattr(original_widget, '_curved_mpr_widget'):
                 delattr(original_widget, '_curved_mpr_widget')
+            if hasattr(original_widget, '_curve_mpr_widget'):
+                delattr(original_widget, '_curve_mpr_widget')
             if hasattr(original_widget, '_new_mpr_zeta_widget'):
                 delattr(original_widget, '_new_mpr_zeta_widget')
             if hasattr(mpr_widget, '_original_widget'):
@@ -7333,7 +7393,7 @@ class ToolbarManager:
 
 
     def _prepare_mpr_flip_offthread(self, vtk_image_data, label="Preparing MPR volume…",
-                                    existing_dlg=None):
+                                    existing_dlg=None, *, canonicalize_source=False, dicom_directory=None):
         """OPT-48 Phase 2: compute the MPR left-right (X) flip OFF the GUI thread.
 
         ``existing_dlg`` (2026-08-23): a progress dialog the CALLER already has on
@@ -7361,9 +7421,14 @@ class ToolbarManager:
         Returns the flipped volume, or ``None`` → the viewer flips inline (legacy).
         Env: AIPACS_MPR_FLIP_OFFTHREAD=0 (off), AIPACS_MPR_FLIP_OFFTHREAD_SLICES=N
         (min slices to bother, default 200 — small volumes flip in milliseconds).
+
+        Curve-only canonicalize_source also performs Standard's existing anatomical
+        metadata preparation before the flip. It always uses the worker, including
+        small volumes, because resolving slice direction may require DICOM I/O.
+        The normal Standard caller and its flag/threshold behavior are unchanged.
         """
         import os as _os
-        if _os.environ.get("AIPACS_MPR_FLIP_OFFTHREAD", "1") == "0":
+        if not canonicalize_source and _os.environ.get("AIPACS_MPR_FLIP_OFFTHREAD", "1") == "0":
             return None
         try:
             n_slices = int(vtk_image_data.GetDimensions()[2])
@@ -7373,7 +7438,7 @@ class ToolbarManager:
             min_slices = int(_os.environ.get("AIPACS_MPR_FLIP_OFFTHREAD_SLICES", "200"))
         except Exception:
             min_slices = 200
-        if n_slices < min_slices:
+        if not canonicalize_source and n_slices < min_slices:
             return None
 
         try:
@@ -7386,7 +7451,12 @@ class ToolbarManager:
             class _FlipWorker(QThread):
                 def run(_self):
                     try:
-                        box["data"] = _SMV.build_lr_flipped_volume(vtk_image_data)
+                        source = vtk_image_data
+                        if canonicalize_source:
+                            from modules.mpr.zeta_mpr._mpr_canonicalize import canonicalize_enabled, canonicalize_volume
+                            if canonicalize_enabled():
+                                source = canonicalize_volume(source, dicom_directory)
+                        box["data"] = _SMV.build_lr_flipped_volume(source)
                     except Exception as _e:  # noqa: BLE001 — caller falls back to inline
                         box["error"] = _e
 
@@ -9045,6 +9115,8 @@ class ToolbarManager:
             return False
 
     def _on_ai_analysis_clicked(self):
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         from modules.ai_imaging.eagle_eye_workspace import open_eagle_eye_workspace
 
         open_eagle_eye_workspace(self.patient_widget)
@@ -9068,9 +9140,9 @@ class ToolbarManager:
             dropdown.close()
 
     def _on_new_curve_mpr_dropdown_clicked(self, _checked=False, *, dropdown=None):
-        self.toggle_new_curve_mpr()
         if dropdown is not None:
             dropdown.close()
+        self.toggle_new_curve_mpr()
 
     def _on_mip_dropdown_clicked(self, _checked=False, *, dropdown=None):
         self.toggle_mip(self.patient_widget.selected_widget)
@@ -9557,6 +9629,8 @@ class ToolbarManager:
 
     def _capture_active_layout(self):
         """Capture only the currently active layout (original behavior)"""
+        if getattr(getattr(self.patient_widget, "selected_widget", None), "_structured_report_active", False):
+            return  # A document must not operate on its retained image backend.
         selected_widget = self.patient_widget.selected_widget
 
         if selected_widget is None:

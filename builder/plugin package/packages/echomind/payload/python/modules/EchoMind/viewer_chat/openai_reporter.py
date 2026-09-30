@@ -2780,6 +2780,10 @@ def reporter(
     output validation stay shared, because those are the contract with the parser and
     they are not what Turbo is diverging on.
     """
+    from modules.EchoMind import remote_backend
+    if remote_backend.selected():
+        return remote_backend.reporter(user_msg, modality, normal_template,
+            system_prompt_override=system_prompt_override)
     user_msg = _to_str(user_msg)
     modality = _to_str(modality)
     normal_template = _to_str(normal_template)

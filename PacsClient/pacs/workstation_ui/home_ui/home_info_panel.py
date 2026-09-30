@@ -36,9 +36,9 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.6.8",
-    "build_date": "2026-09-26",
-    "release_date": "2026-09-26",
+    "version": "3.7.0",
+    "build_date": "2026-09-28",
+    "release_date": "2026-09-28",
     "status": "Beta",          # Stable | Beta | Internal Testing
     "changes": [
         "Home, patient, study, series, and thumbnail state now use stricter shared identity rules",

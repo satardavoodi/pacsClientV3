@@ -295,6 +295,7 @@ def init_database():
                 level TEXT DEFAULT 'Intermediate',
                 is_my_course INTEGER DEFAULT 1,
                 is_downloaded INTEGER DEFAULT 0,
+                is_editable INTEGER NOT NULL DEFAULT 1,
                 resource_type TEXT DEFAULT 'Course',
                 content_origin TEXT DEFAULT 'local',
                 validation_status TEXT DEFAULT 'ok',
@@ -370,6 +371,8 @@ def init_database():
                 cur.execute("ALTER TABLE courses ADD COLUMN level TEXT DEFAULT 'Intermediate'")
             if 'is_my_course' not in columns:
                 cur.execute("ALTER TABLE courses ADD COLUMN is_my_course INTEGER DEFAULT 1")
+            if 'is_editable' not in columns:
+                cur.execute("ALTER TABLE courses ADD COLUMN is_editable INTEGER NOT NULL DEFAULT 1")
             if 'is_downloaded' not in columns:
                 cur.execute("ALTER TABLE courses ADD COLUMN is_downloaded INTEGER DEFAULT 0")
             if 'resource_type' not in columns:
@@ -451,6 +454,9 @@ def init_database():
                 FOREIGN KEY(course_fk) REFERENCES courses(course_pk) ON DELETE CASCADE
             )
         """)
+
+        if "thumbnail_path" not in {row[1] for row in cur.execute("PRAGMA table_info(slides)")}:
+            cur.execute("ALTER TABLE slides ADD COLUMN thumbnail_path TEXT")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS slide_content (

@@ -36,6 +36,7 @@ def test_historical_slicer_downloader_cannot_replace_canonical_runtime(monkeypat
 
 def test_client_asset_preparation_omits_offline_server_model(monkeypatch, tmp_path):
     from builder import build_release, offline_lumbar_payload, slicer_runtime_payload
+    from builder import lumen_vmtk_payload
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -57,6 +58,11 @@ def test_client_asset_preparation_omits_offline_server_model(monkeypatch, tmp_pa
     monkeypatch.setattr("aipacs_runtime.advanced_mpr_runtime_root", lambda: tmp_path)
     monkeypatch.setattr(slicer_runtime_payload, "verify_native_build_provenance", lambda *_: None)
     monkeypatch.setattr(offline_lumbar_payload, "stage_offline_lumbar", forbid_server_model)
+    def fake_lumen(destination):
+        target = destination / "lumen_vmtk"
+        target.mkdir()
+        (target / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(lumen_vmtk_payload, "stage_lumen_vmtk", fake_lumen)
     monkeypatch.setattr(build_release, "find_iscc", lambda: compiler)
     monkeypatch.setattr(assets.urllib.request, "urlopen", lambda *_args, **_kwargs: io.BytesIO(b"python"))
     monkeypatch.setattr(assets.subprocess, "check_output", lambda *_args, **_kwargs: "example==1\n")
@@ -65,6 +71,7 @@ def test_client_asset_preparation_omits_offline_server_model(monkeypatch, tmp_pa
     assert assets.main() == 0
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["model_weights_included"] is False
+    assert (root / "lumen_vmtk/manifest.json").is_file()
     assert not (root / "offline_lumbar").exists()
     assert not (root / "model-environment.lock").exists()
     assert assets.verify(root, profile="client")

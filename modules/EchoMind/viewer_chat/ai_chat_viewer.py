@@ -142,6 +142,7 @@ class AIChatViewer(QWidget):
             "[ECHO-TEARDOWN] AIChatViewer.closeEvent fired"
         )
         try:
+            self._close_consult_page()
             self._teardown_page(getattr(self, "_page", None))
         except Exception:
             pass
@@ -149,6 +150,8 @@ class AIChatViewer(QWidget):
 
     def _open_mode_page(self, mode_name: str):
         from modules.EchoMind.settings_store import get_llm_backend
+
+        self._close_consult_page()
 
         if getattr(self, "_page", None) is not None:
             idx = self.stack.indexOf(self._page)
@@ -169,6 +172,7 @@ class AIChatViewer(QWidget):
 
         self.stack.addWidget(self._page)
         self.stack.setCurrentWidget(self._page)
+        self._page.medicalConsultRequested.connect(self._open_medical_consult)
 
         def go_back():
             self.stack.setCurrentWidget(self.picker)
@@ -176,6 +180,37 @@ class AIChatViewer(QWidget):
             self._page.backRequested.connect(go_back)
         except Exception:
             pass
+
+    def _close_consult_page(self):
+        page = getattr(self, '_consult_page', None)
+        if page is not None:
+            self._consult_page = None
+            self._teardown_page(page)
+            self.stack.removeWidget(page)
+            page.deleteLater()
+
+    def _open_medical_consult(self, text):
+        from modules.EchoMind import remote_backend
+        if not remote_backend.selected():
+            self._page.controller.bubble('AI ChatBot', 'Medical Consult requires an EchoMind central-server account in Settings.')
+            return
+        existing = getattr(self, '_consult_page', None)
+        if existing is not None and getattr(existing, '_busy_count', 0):
+            self._page.controller.bubble('AI ChatBot', 'Please wait for the current medical consultation to finish.')
+            return
+        self._close_consult_page()
+        source_page = self._page
+        page = OneChatPage(study_uid=self.study_uid, page_mode='Assist')
+        self._consult_page = page
+        self.stack.addWidget(page)
+        page._new_chat()
+        page.btn_back.setText('Back to Report')
+        page.backRequested.connect(lambda: self.stack.setCurrentWidget(source_page))
+        self.stack.setCurrentWidget(page)
+        page.composer.set_tab_text('transcribe', text)
+        page.composer.switch_tab('transcribe')
+        page.composer.box.setPlainText(text)
+        page._send_with_mode(text, 'Web Search')
 
     def showEvent(self, e):
         super().showEvent(e)

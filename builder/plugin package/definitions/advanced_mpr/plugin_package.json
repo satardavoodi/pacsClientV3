@@ -20,6 +20,8 @@
   "healthcheck_path": "AIPacsAdvancedViewer.exe",
   "integration_points": [
     "patient.advanced_mpr_launcher",
+    "patient.vascular_analysis",
+    "patient.virtual_bronchoscopy",
     "external.runtime"
   ],
   "install_channels": [

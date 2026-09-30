@@ -308,6 +308,9 @@ def _organization_id(record):
 
 def _organizer_completion(payload):
     """Use the saved EchoMind/GapGPT account without model/provider fallback."""
+    from . import remote_backend
+    if remote_backend.selected():
+        return remote_backend.organize_template_blocks(payload)
     from .viewer_chat.api_manager import Manage
     from .viewer_chat.openai_reporter import reporter
     Manage.instance().ensure_detected()
@@ -326,6 +329,9 @@ def prepare_template_languages(text, *, complete=None):
     source = str(text).strip()
     if not source or len(source) > 80_000:
         raise TemplateError('The template is empty or too large to translate.')
+    from . import remote_backend
+    if complete is None and remote_backend.selected():
+        return remote_backend.prepare_template_languages(source)
     lines = source.splitlines()
     unlocked = [{'id': f'T{i:04d}', 'text': line} for i, line in enumerate(lines)
                 if line.strip() and not line.startswith(('=====', 'Code name:'))]

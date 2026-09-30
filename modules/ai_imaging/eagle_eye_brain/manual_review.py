@@ -93,6 +93,8 @@ def _recalculate_review(session, *, cancel=None, progress=None):
                                      'corrected_mask_sha256': sha256(out / 'corrected.nii.gz')},
                   pdf_available=False)
     image = sitk.ReadImage(str(directory / 'image.nii.gz'))
+    for key in ('multisequence', 'enhancement_review', 'sampled_topography', 't1_support'):
+        if result.get(key): result['source_' + key] = result.pop(key)
     if result.get('acquisition_mode') == '2d':
         from .lesions_2d import measure_slices, spatial_status
         if result.get('band_filter'):

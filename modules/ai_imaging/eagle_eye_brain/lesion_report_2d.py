@@ -32,6 +32,13 @@ def sections(result, identity, age_text, correction):
     elif result.get('source_band_filter'):
         band_note = ('<p>The mask was manually revised after automated band separation. '
                      'Current measurements follow the edited mask; the automatic filter was not reapplied.</p>')
+    if result.get('multisequence'):
+        measurements[0:0] = [['Primary-only burden kept for review (cm3)',
+            f'{result["multisequence"]["primary_only_metrics"]["total_volume_cm3"]:.3f}']]
+        for row in measurements:
+            if row[0].startswith(('Retained candidate burden','Sampled-slab candidate burden')):
+                row[0] = 'Cross-plane supported primary burden (cm3)'
+        band_note += '<p>Main measurements retain only cross-plane supported primary components. One-plane findings are preserved separately; see the cross-plane section.</p>'
     first = ('<h1>2D FLAIR | White-matter candidates</h1><h2>Patient and examination</h2>'
              f'<p>{escape(identity)}<br>Age: {age_text} years | Sex: {escape(result["sex"])}</p>'
              + correction + context_html(result) + '<h2>Measured burden</h2>'
@@ -39,6 +46,12 @@ def sections(result, identity, age_text, correction):
              + '<p><b>Research output; review and clinical sign-off required.</b> '
                'T1 provides examination context. The segmentation model uses FLAIR only. '
                'A zero result does not exclude disease.</p>')
+    location_data = result.get('sampled_topography')
+    location_table = (_table(['Location', 'Count / assessment'],
+        [[r['region'], str(r['count']) + ' contact/location candidates' if r['available'] else 'Unavailable: anatomical label absent']
+         for r in location_data['regions']], [45,55]) if location_data else
+        _table(['Location', 'Assessment'], [[name, 'Requires native-image review'] for name in
+        ('Periventricular', 'Juxtacortical / cortical', 'Corpus callosum', 'Supratentorial', 'Infratentorial')], [40,60]))
     second = ('<h1>Method and interpretation</h1>'
               '<p>MindGlide 1.3.0, CPU; joint 20-label prediction. Label 18 supplies the binary candidate mask. '
               'The model resamples internally; this does not create acquired through-plane resolution. '
@@ -50,11 +63,10 @@ def sections(result, identity, age_text, correction):
               'In-plane counts use 8-connectivity; stack counts use 26-connectivity with no size removal. '
               'One lesion may span several slice components, while neighbouring lesions can merge.</p>'
               '<h2>Anatomical distribution and MS criteria</h2>'
-              + _table(['Location', 'Assessment'], [[name, 'Requires native-image review'] for name in
-                         ('Periventricular', 'Juxtacortical / cortical', 'Corpus callosum',
-                          'Supratentorial', 'Infratentorial')], [40, 60])
-              + '<p>The 2D backend has not qualified automated regional assignment or McDonald criteria. '
-                'These entries are unavailable, not zero or negative. Thick slices and gaps limit boundary contact assessment. '
+              + location_table
+              + '<p>When available, registered T1 anatomy supplies descriptive locations and in-plane contact candidates. '
+                'Missing labels are unavailable, not negative. No contact is inferred across slice gaps. '
+                'Automated McDonald criteria remain unqualified for this 2D acquisition. '
                 'No MS diagnosis, automated Fazekas grade, age percentile or Z/T score is inferred. '
                 'For SVD/other contexts, transfer from this MS-trained model is unvalidated.</p>')
     third = ('<h1>Scientific basis and review</h1><p>Goebl et al. (2025). Enabling new insights from old scans '

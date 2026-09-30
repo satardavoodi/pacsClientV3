@@ -1,5 +1,41 @@
 # VTK domains: geometry and performance review
 
+## Razi Slicer software startup (2026-09-30, OPT-56)
+
+The current native viewer failed before READY on Razi's Basic Display Adapter:
+WGL pixel format/OpenGL 3.2 unavailable. Retaining Qt software choices and adding
+OSMesa to child PATH alone did not solve it. A separate copy of the prepared
+native payload, with the project's existing opengl32sw.dll installed app-locally
+as bin/Release/opengl32.dll, reached READY. Queued status confirmed a hidden
+warm-up window. No System32/global driver or canonical native assets changed.
+This is startup evidence, not rendered-volume/model/installer acceptance. See
+the September 30 Eagle Eye server checkpoint for scope, receipts and GUI gate.
+
+## 2026-09-27 orphan interaction protection recovery (OPT-60)
+
+User-authorized follow-up to the shared Download Manager blank-queue investigation:
+both FAST and Advanced explicit interaction latches could remain true indefinitely
+if an owner failed to deliver its end notification. An isolated 24-hour clock
+advance reproduced the resulting visible-queue starvation. The exact cause of the
+earlier live incident remains unproven; restarting restored its queue.
+
+`modules/viewer/fast/ui_throttle.py::is_protected_drag_active` now recovers each
+stale latch independently, only from the Qt GUI thread with a QApplication and
+no mouse button down, more than 10 seconds beyond the later of its begin time or
+last protection deadline. Fresh keepalives and indefinitely held mouse drags
+retain protection. No clock based on process uptime, worker timer, viewer cache,
+decoding, or geometry change is involved. Recovery reuses the corresponding end
+API and emits one PHI-free warning per recovery. Zero-duration grace expires
+immediately. Non-GUI queries never mutate a latch. Long real interaction/queue
+acceptance remains a source GUI gate; synthetic clock tests are not a soak pass.
+
+`test_stale_interaction_recovery.py` supplies fail-before missing-end guards,
+held-button/keepalive/tail/thread controls and queue callback recovery. Together
+with existing Advanced protection, DM drag-skip/progress/state and builder guards,
+45 tests pass. The obsolete main-window gate test is skipped by its own module.
+Both changed mirrors were synced; 473 pairs match. Shared Refresh-button correction
+and remaining source/Client/Server artifact gates belong to the UI-stall receipt.
+
 ## 2026-09-25 DX blank-card investigation
 
 The user supplied a Local Home screenshot with four single-image DX placeholder
@@ -2483,3 +2519,838 @@ Fresh human restart/login and bone/CTA/lung, enlarged, rotate/stop, threshold/re
 and large-volume GUI checks remain pending. Synthetic rendering proves execution,
 not visual quality or production performance. Rollback removes this VRT property,
 menu and mapper integration, preserving the previous MPR OptimizationOff fix.
+
+### 2026-09-27: Detailed default and clarified airway scope
+
+Owner requests Detailed as the UI and rendering default. A shared constant now
+drives initial creation, preset/interaction quality and menu selection. Resource
+bounds for heavy volumes and temporary interactive simplification remain. New
+behavioral default guard failed before; 31 focused guards pass after, including
+synthetic rendering, previous scroll and large-volume guards. Mirror verification:
+473 pairs match, no mirror for these mixins. Live ping succeeds; fresh-source GUI
+acceptance not performed. No existing installer or frozen snapshot was modified.
+
+Owner clarifies that general airway-tree extraction is wanted in Standard MPR;
+individual branch tracking, curved MPR and fly-through remain advanced workflows.
+The current CT-Lung-Airways transfer function cannot distinguish external air,
+airway lumen and lung parenchyma. Existing AirwaySegmenter uses a fixed-index
+seed scan with an unconditional center fallback and is not connected to the VRT
+preset. It is not evidence of a reliable automatic extraction pipeline.
+
+Primary references checked:
+https://github.com/Slicer/SlicerAirwaySegmentation
+https://github.com/acil-bwh/ChestImagingPlatform/blob/develop/CommandLineTools/SegmentLungAirways/SegmentLungAirways.cxx
+The Slicer module uses a tracheal seed and adaptive threshold via a modified ITK
+connected-threshold algorithm; CIP extends whole/left/right/trachea extraction.
+This establishes that general extraction does not require branch-by-branch paths.
+Integration needs a validated seed strategy, leakage controls, worker ownership,
+same-grid output mask, preset-switch/close cancellation and actual CT validation.
+No airway extraction change is shipped in this default-quality correction.
+
+
+### 2026-09-27: OPT-48 non-dental Curve MPR freeze correction
+
+Scope: hamburger menu > Curve MPR; Dental Curve MPR is unchanged. The owner
+reported a freeze during the current workflow. No attributable live stack was
+captured; deterministic tests establish the synchronous reconstruction defect.
+Each point previously invoked a 500x500 curved probe and ten 500x500 MIP probes
+on the GUI thread, with Python frame searches/interpolation repeated per pixel.
+The route also constructed the full MPR layout before replacing its panes, leaving
+an unnecessary deferred VRT callback, and passed the unflipped source to CPR while
+point picking used Standard MPR's displayed flipped image.
+
+Repair: worker-owned reconstruction with one active request and the latest pending
+path only; cancellation between processing stages/slabs, revision checks on clear,
+close and completion, no GUI access from workers. NumPy broadcasts interpolate
+frames per column and retain legacy float32 coordinates, interpolation, scalar
+values, image spacing/origin and frame conventions. The existing axial-only layout
+avoids unused VRT/sagittal/coronal construction. The existing off-thread volume-flip
+helper is reused; CPR consumes the displayed image without changing Standard MPR
+geometry. Standard MPR cleanup cancels CPR before finalizing its render windows.
+Consecutive duplicate clicks cannot create a zero-length reconstruction.
+
+Evidence: `tests/code/mpr/test_curve_mpr_responsiveness.py` initially produced two
+failures (GUI-thread sampling and synchronous stale presentation), two parity
+passes, exit 1. After correction: 74 selected MPR/builder tests passed, two existing
+stage-dependent artifact tests deliberately deselected. Final lifecycle/error/
+QObject-deletion hardening: 38 focused tests passed, exit 0. These are offscreen
+code checks, not live GUI acceptance. A synthetic 160x80, three-slab MIP using the
+same volume and three-point path took 737.57 ms with HEAD's scalar loop and 7.03 ms
+with vectorized sampling; pixel arrays were exactly equal. No clinical speed claim.
+
+Live gate: documented control client ping and list_actions succeeded. The running
+source process predates the edits; no hot reload, restart, login or clinical input
+was automated. Fresh-source acceptance remains pending: open the actual dropdown,
+choose Curve MPR, place at least three points, verify axial overlay and all three
+reconstructions, add points rapidly, clear/rebuild, close during processing and
+reopen; then confirm ordinary MPR and Dental Curve MPR still work. Verify the path
+against asymmetric anatomy because this route now samples its displayed image.
+
+Build handoff: existing core packages, no new feature flag/dependency/catalog entry.
+PyInstaller collects modules/PacsClient; Nuitka explicitly includes zeta_mpr and
+CurveMPR. No affected plugin mirror exists; sync dry-run found no drift and verify
+reported 473 matching pairs. The shared source correction applies to Standard and
+ARM64-emulated Client and Eagle Eye Server desktop MPR, in both backends. The same
+code evidence applies to all six cells; per-profile candidate/staging and installer
+acceptance remain pending. No frozen artifact was built or changed; Server service
+qualification is outside this desktop fix. Rollback only these Curve MPR source,
+route and cleanup hunks plus their guard; preserve earlier VRT/jitter changes.
+
+Dirty-source SHA-256 handoff (not a clean candidate receipt):
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py`: `00eaddc4594c0b3dc68677de2b9e7f8e46a7af48fb1ab4aaea626d05db525100`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_core.py`: `736f1d59ba33552179af48da24f6da0e3b05cd90891242b1352fb8924708cc7f`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_ui.py`: `e9254ef0116496648c00afc9c4f4492bb50eb7d59b0820c031109c56d3957c71`
+- `modules/mpr/zeta_mpr/mpr_viewer/_mpr_layout.py`: `5cc2bbf3d8e68b138ccb4ee1f99fba5f2435bee32ff548887c1f18707df179bf`
+
+
+### 2026-09-27 follow-up: Curve MPR selectable VRT and reliable toggle
+
+The owner requested both original-volume VRT and straightened-volume VRT, plus
+checked menu state and closing on a second click. Research reference:
+https://github.com/PerkLab/SlicerSandbox/blob/master/CurvedPlanarReformat/CurvedPlanarReformat.py
+Slicer CPR produces a derived straightened volume; volume rendering is distinct
+from the 2D CPR/MIP and from segmentation. This implementation uses the existing
+local transport frames and VTK probes, not an external Slicer runtime or model.
+
+The fourth pane now selects Original VRT (default), Straightened VRT, or its
+previous Curved MIP. Built-in vessel/coronary/bone/soft-tissue/MRA properties and
+existing Detailed quality tuning are reused as immutable preset inputs. Trackball
+interaction simplifies rendering temporarily. Presets do not isolate vessels.
+Straightening uses the existing worker/revision/cancellation contract, deriving a
+local volume around the drawn path. Width is adjustable from 5 to 100 mm. Sampling
+uses source spacing with bounded resolution (at most 512x128x128 float voxels),
+processes planes sequentially and fills outside-volume samples with background.
+The output is a derived arc-length/N/B coordinate grid in mm, not original patient
+coordinates; no patient geometry, source scalars, standard MPR or Dental code is
+changed. No acquisition-specific exception or automatic vessel extraction added.
+
+Toggle root cause: `_restore_selected_viewer` omitted `_curve_mpr_widget`, so
+cleanup/removal/reference release never ran for this route. Popup state now queries
+the same live session as toggle-off; restoration removes its cross-link and restores
+the selected source viewport. The patient-tab/layout lifecycle registry also lacked
+that cross-link and now discovers it. Curve cleanup stops its render timer, cancels
+work, releases VRT GPU/input references and prevents late rendering. Empty 2D actors
+are hidden, including after Clear, to avoid invalid-input VTK renders.
+
+Verification: actual restoration failed before (cleanup not called), and lifecycle
+lookup failed before (empty discovery). New sampling API guards initially failed as
+unimplemented. `test_curve_mpr_vrt.py` now has nine passing guards, including menu
+state/selection, synthetic straight/bent centerline sampling and physical spacing,
+outside background, cancellation and isolated real GPU renders of both volume modes
+with Qt controls. The GPU test also switches MIP/presets, clears and releases while
+work is pending. Adjacent selection: 80 passed, 3 pre-existing quarantined Dental
+source-text expectations xfailed. Final cleanup/bent sampling/builder boundary:
+59 passed, two existing stage-specific artifact tests excluded; final toggle selection
+follow-up: nine dedicated passes. All reported passes have process exit 0.
+
+Native QVTK under Qt's offscreen platform could not create a Windows pixel format;
+that probe failed and is not GUI evidence. The isolated rendering test instead uses
+real standalone offscreen VTK windows with the actual controls/controller. Live
+control ping and 92-action discovery succeeded, but the source process predates
+these edits. Fresh native GUI acceptance remains required: reopen menu while active,
+verify checked state, select both VRT modes, rotate/change presets, draw/revise/clear
+a path, close on second click, reopen and close the patient tab. Test non-axial paths
+and small peripheral vessels clinically; synthetic equality is not qualification.
+
+Build inputs: no new module/dependency/feature flag or payload registration. Existing
+PyInstaller modules/PacsClient collection and Nuitka zeta_mpr inclusion cover these
+files for Standard Client, ARM64-emulated Client and Eagle Eye Server desktop MPR in
+both backends. Mirror dry-run: no drift; verifier: 473 matching pairs. The shared
+builder source guards pass; six profile-specific candidate/artifact acceptance cells
+remain pending. No build/installed executable was modified. Rollback only the VRT,
+toggle and lifecycle follow-up hunks, retaining the previous asynchronous CPR fix.
+
+Updated dirty-source SHA-256 receipt (supersedes earlier hashes for these files):
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py`: `a02c991a980db998fea391d3e45268ee3005e03bdf190fd5e8a5f94f6eff25e7`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_core.py`: `a8659b64080f5e8cbf49d852da47708e5a68fddbd8ce086d8efcea7099b5d2a1`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_ui.py`: `7e45d6079c85772ae3345effd452b7da9e2bd777ab07bfd5674003d1b405c9d1`
+- `modules/mpr/zeta_mpr/mpr_viewer/_mpr_lifecycle.py`: `715244c6d1265af1fd7003daa11f00ead4c874774bab4442517796f027788e7c`
+
+
+### 2026-09-27: Curve MPR paired longitudinal views and path-local field of view
+
+Owner-supplied visual feedback identified mismatched reconstruction roles, no image
+rotation, no Airway preset and whole-chest VRT for a short path. In explicit follow-up
+the owner selected TWO LONGITUDINAL CPR views at 90 degrees, not ordinary anatomical
+sagittal/coronal slices. No supplied clinical image or identifier was copied into
+repository artifacts. This supersedes the earlier single-midpoint cross-section
+presentation and whole-volume Original VRT default.
+
+The former second pane sampled only the middle cross-section and the first frame
+was seeded against a hard-coded Z axis. The worker now probes the entire spline in
+two transported longitudinal planes, at 0/90 degrees. Both share all centerline
+positions. Initial transverse orientation comes from the selected source pane's
+camera normal; Standard MPR's canonical geometry remains the owner. The same three
+Standard source panes are reused in a stack selected by Axial/Sagittal/Coronal;
+changing plane clears the previous path. Slice picking is restricted to the active
+image actor, ignoring background misses. No anatomy-name or acquisition exceptions.
+Source double-click expansion is intercepted within CPR to prevent the old Standard
+grid handler from reparenting a stacked source; ordinary MPR retains its behavior.
+
+Both outputs are explicitly named CPR 0/90 degrees, not mislabeled anatomical planes.
+Each has independent camera-only rotation, retained across reconstruction. Source
+window/level is copied when displaying the new images. The previous midpoint slice
+API remains available but is no longer the second CPR pane. Existing numerical
+core calls retain their legacy frame default unless a source normal is supplied.
+
+Default Path VRT now uses a worker-produced crop around the WHOLE spline with
+half the selected path width as margin, respecting physical-to-index mapping and
+native direction/spacing. It is not a centerline tube mask or tissue segmentation.
+No path means no full-chest VRT. Crop sampling is bounded to 256 per axis; straightened
+VRT retains its earlier bounded sampling. Width also controls both longitudinal
+views and MIP. Pending/stale crops are cleared on path/width changes and clear/close.
+Airway now exposes the existing CT-Lung-Airways property in the local VRT preset
+selector; it is a visualization preset, not automatic airway-tree extraction.
+The original airway segmentation work remains separate and unfinished.
+
+Evidence: initial path-crop guard failed before implementation. Final affected MPR
+selection: 84 passed, exit 0, covering prior jitter/lifecycle/quality guards. Added
+anisotropic rotated-direction crop and real VTK image-slice picking on all three
+planes passed in the subsequent boundary selection. That command had 25 passes and
+ONE unrelated failure: global plugin mirror parity drift in five concurrently edited
+Advanced Slicer launcher/presentation/background-runtime files; two stage-specific
+artifact tests were excluded. Do not report that command as green or synchronize
+another workstream's payloads. Earlier sync dry-run and 473-pair verification passed
+before this external drift appeared. No affected CurveMPR payload mirror exists.
+Tests also render local and straightened volumes with the real GPU mapper, verify
+rotation preserves pixels/view-up, source selection clears/detaches correctly, and
+verify full-path correspondence and perpendicularity for all drawing-plane normals.
+
+Live control ping and 92-action discovery succeeded. User screenshot confirms the
+prior source workflow was exercised, not the new code. Fresh native source GUI still
+requires all three drawing planes, 0/90 CPR correspondence, image rotation, Airway,
+path width/FOV, rapid edit/clear, close/reopen and patient-tab teardown. The native
+Qt offscreen limitation from the preceding follow-up still applies. No app restart,
+login, installed executable or build was initiated.
+
+Next-build scope remains Standard/ARM64-emulated Client and Eagle Eye Server desktop
+MPR, PyInstaller and Nuitka. No new runtime module/flag/dependency/config. Existing
+core package inclusion applies; global build-input parity currently blocked as above,
+all six produced-artifact acceptance cells remain pending. Rollback only this
+source-plane/paired-view/local-crop presentation slice, preserving earlier async and
+toggle fixes. Dirty-source hashes (not a clean release receipt):
+- `PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py`: `e1c1c402ebaed51d6a93aa8a8cf6bca9b6bd002d484ee1d739f14abd96db561d`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_core.py`: `232c8dc9554cd11b8db401ffce9478009c6d167078b511b047ec84ead7904add`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_ui.py`: `3ee9decb95194fa34d1c5f4efe4658184d0262a111b06ce91dd899da8045c919`
+- `modules/mpr/zeta_mpr/CurveMPR/curve_mpr_interactor.py`: `6a3c508136f7466716273b64005895ace296fa1e27cc21f26b29d8fbf98486cd`
+
+## 2026-09-27 - Advanced Analysis lumen workspaces
+
+Vascular Analysis and Virtual Bronchoscopy now share an isolated VMTK geometry worker inside the custom Slicer domain, with separate scene references and custom panels. Implementation, build ABI, synthetic evidence, limitations and pending live acceptance are recorded in [the feature receipt](../modules/ADVANCED_ANALYSIS_LUMEN_WORKSPACES.md). This does not change Fast Viewer, Curve MPR or shared pipeline ownership.
+
+
+## 2026-09-27 - Curve MPR circular tube and angular scrolling (OPT-48)
+
+The user clarified that VRT must show a circular physical neighborhood centered on
+all segments of the drawn path, and scrolling the paired CPR panes must rotate the
+sampling planes around that path. The earlier box crop and screen-only image roll
+did not meet that requirement. This supersedes the box-only support described above.
+
+Changed only CurveMPR core/UI and their guards in this follow-up. Path VRT retains
+the native crop geometry but applies a uint8 0/255 GPU binary mask for distance to
+the spline polyline <= half the requested Tube diameter. Outside scalars are copied
+to a transparent sentinel; original source scalars are never modified. Straightened
+VRT uses the same circular transverse support. This is a geometric path ROI, not
+anatomical airway segmentation. No Standard MPR geometry or Dental code was changed.
+
+Worker sampling rotates transported transverse axes by theta and theta+90 degrees.
+Wheel events over either CPR pane change theta by five degrees with 360-degree wrap;
+the angle spin control provides explicit selection. Image roll remains separate.
+Angle-only jobs reuse the volume/mask and do not rerender unchanged VRT. Existing
+revision cancellation/latest-request coalescing and close guards remain in force.
+Initial CPR and straightened VRT cameras place path start at top; original-space VRT
+aligns the endpoint chord vertically. This is path-order orientation, not a claim
+that every tortuous path or anatomic superior direction becomes straight/vertical.
+
+Native distance calculation runs in the reconstruction worker with no new library.
+An independent bent/oblique/anisotropic analytic-distance guard caught 262 missing
+voxels in the initial implementation. VTK 9.6 ComputeModelBounds actually scales its
+MaximumDistance by the longest model side, despite setter documentation mentioning
+an input diagonal. Correcting the distance budget made that guard pass. A synthetic
+128-cube, four-point bent path with 40 mm diameter produced 128x92x123 support in
+0.261 seconds in one local sample; this is not a patient performance guarantee or a
+before/after speedup claim.
+
+Evidence: the initial tube guards failed (2 failed, 1 passed, exit 1) before mask
+implementation. Final direct pytest selection: 84 passed, 2 artifact-stage tests
+deselected, exit 0; six existing SWIG deprecation warnings. Selection includes
+curve_mpr_tube_orbit, path_views, responsiveness, vrt, vrt_quality_controls,
+mpr_geometry_regression, distribution_profiles and release_parity_guards (excluding
+against_current_stage). Real GPU/Qt control subprocess verifies actual wheel input,
+volume/mask identity reuse, initial orientation, separate image roll, mode changes,
+rendered foreground and cleanup. This isolated synthetic render is not native app
+acceptance. Mirror verification now passes 484 pairs; earlier unrelated drift has
+been resolved externally. No mirror synchronization was performed in this slice.
+
+Research: Slicer curved-planar resampling rotates transverse sample axes; VTK GPU
+binary masks provide explicit support independent of appearance presets:
+- https://github.com/PerkLab/SlicerSandbox/blob/master/CurvedPlanarReformat/CurvedPlanarReformat.py
+- https://discourse.slicer.org/t/how-to-implement-cpr-curved-planar-reconstruction-from-centerline/9456
+- https://vtk.org/doc/nightly/html/classvtkGPUVolumeRayCastMapper.html
+- https://raw.githubusercontent.com/Kitware/VTK/v9.6.0/Filters/Hybrid/vtkImplicitModeller.cxx
+
+Live gate: documented control client ping and list_actions succeed. The running
+source process predates these changes; no restart/login/hot reload was attempted.
+Fresh human-launched source acceptance remains pending: draw on all three source
+planes, inspect radial support while changing diameter, wheel both CPR panes through
+360 degrees, verify paired correspondence and top-to-bottom path order, Airway
+appearance, rapid edits, mode changes and close/reopen. User clinical confirmation
+and all six produced-artifact cells remain pending. Existing core package mappings
+cover Standard/ARM64-emulated Client and Eagle Eye Server desktop on PyInstaller
+and Nuitka; profile/parity guards pass. No full build, flag, dependency or module
+registration change. Rollback only this tube/orbit/camera slice while preserving the
+preceding async reconstruction and toggle fixes.
+
+Dirty source SHA256 at verification:
+- curve_mpr_core.py: a72e220781ef0cbe9585031af49724a081513fa720dd7a0bd2b8f8f61afa39bf
+- curve_mpr_ui.py: 9bf0f705b81b8ba6de32a20f90c6e01ac2b6b2ee7cad6987da47de98d80f0743
+
+
+## 2026-09-27 - Curve follow-up: source orientation, continuous orbit and VRT controls
+
+The user confirms the new CPR reconstructions are good, but reports mirrored source
+axial, orbit updating after scrolling stops, and missing VRT appearance gestures.
+They explicitly confirm Standard MPR axial is correct. Preserve Standard geometry
+and the accepted circular-tube/paired-CPR calculations.
+
+A concrete route mismatch was found: Standard opening calls canonicalize_volume
+before its input flip, attaching ZetaAnatA for anatomical cameras, while Curve
+opening omitted that preparation. Curve now requests the identical existing
+canonicalize_enabled/canonicalize_volume step inside the flip worker, with the same
+series directory/first-instance directory fallback. It runs even for small volumes
+because slice-direction resolution can read DICOM. The Standard caller's defaults,
+flip implementation and camera rules are unchanged. Synthetic worker verification
+proves identical scalars and ZetaAnatA versus Standard preparation, off-GUI execution,
+and unchanged source scalars/metadata. This demonstrates route parity, not a proven
+historical regression trigger or confirmation on the user's case; live laterality
+verification remains mandatory. No compensating camera flip was introduced.
+
+Orbit starvation was reproduced: every wheel step cancelled the running job and
+invalidated its revision, so sustained input discarded completed results. Angle-only
+input now keeps the active same-path frame valid and coalesces just the next angle;
+path/diameter/mode changes and close still invalidate/cancel. Both panes present the
+same completed job angle before starting the next job. Titles identify the rendered
+angle, not an unrendered request. Hidden Curved MIP is no longer computed in VRT
+modes. On the same synthetic 128-cube/four-point path, angle-only worker processing
+with hidden MIP took 462.2 ms cold and 463.6/482.3/446.4 ms warm; without hidden MIP,
+90.8 ms cold and 88.3/87.7/86.7 ms warm. These are worker timings, not native input to
+paint latency or a clinical real-time guarantee.
+
+Curve VRT previously used generic vtkInteractorStyleTrackballCamera. It now reuses
+Standard's VRTInteractorStyle and exact opacity/lighting adjustment functions through
+an isolated property/renderer adapter. Qt events explicitly reach Python style
+methods: left rotation, right appearance drag or preset click, middle zoom, left+
+right pan, wheel zoom. Parallel wheel zoom updates camera scale. The same Detailed
+quality policy refines after release. No Standard VRT implementation was modified.
+
+Guard evidence: orbit cancellation and missing canonical-preparation request each
+failed before their fixes. The GPU harness also failed on the old generic style;
+it now sends real Qt right/middle/left drag events and checks changed appearance,
+unchanged camera during appearance drag, zoom scale, rotation, rendered output and
+cleanup. Continuous-orbit guard additionally proves a pair is visible while the next
+angle job remains blocked. Final affected/adjacent/build-input suite: 128 passed,
+2 artifact-stage tests deselected, exit 0; after strengthening the orbit guard,
+14 responsiveness tests passed. Six SWIG warnings remain. Existing flip structural
+guards were updated for the explicit Curve worker route, retaining all voxel-identity
+and single-flip checks. Mirror verifier: 484 matching pairs, exit 0. No mirror writes.
+
+Control client ping/list_actions succeed (92 actions). The process predates this
+follow-up; fresh source GUI gate is pending. The human must launch/login once outside
+clinical reading under the existing control runbook. Required acceptance: compare
+axial laterality with Standard and original viewer; continuous wheel motion visibly
+updates both CPRs; test VRT left/right/middle gestures, combined-button pan and preset
+click; then clear, mode switch and close/reopen. No restart, installed executable,
+release or login automation was attempted. All six Standard/ARM64-emulated Client/
+Eagle Eye Server desktop x PyInstaller/Nuitka artifact cells remain pending. Existing
+core source inclusion and profile/parity guards apply; no new module/config/dependency.
+Rollback only this route-preparation/orbit-scheduling/interaction slice, retaining
+prior accepted tube and CPR sampling work. Geometry laterality must be rechecked.
+
+Dirty source SHA256:
+- curve_mpr_ui.py: 91a3a3c80d59070e8700e94fd8265a6f355bbc3ae832c5461cca7bc721d6bba6
+- toolbar_manager.py: 5ce507074e0cb8089635896ff8d24b24686d3b4b6dd19d9f6592592dd53a91f8
+
+
+## 2026-09-27 - Curve VRT crop/mask texture alignment
+
+The user confirms source axial orientation and CPR scrolling now work. Two supplied
+photos show a persistent split/partial Curve VRT. Images were reviewed in conversation
+only, not copied to tests, repository artifacts or external services.
+
+A deterministic GPU reproducer isolated the defect from path sampling and presets:
+vtkExtractVOI keeps nonzero source extent offsets. The local volume and binary mask
+had matching physical bounds/scalars, yet vtkGPUVolumeRayCastMapper mask sampling
+removed visible tube support on this VTK/OpenGL runtime. A synthetic constant tube
+rendered 11,260 foreground pixels without its mask and zero with its mask. Rebasing
+both local grids to zero extent while preserving physical voxel positions restored
+the complete silhouette. CPU mask-distance tests alone had missed this renderer
+boundary. The screenshots are consistent with this failure; patient-case confirmation
+of the correction remains pending.
+
+Minimal runtime change: generate_path_volume rebases only its private extracted
+vtkImageData before generating the mask. The new origin is the old extent-start
+voxel transformed to physical coordinates; spacing, direction, scalar order and
+physical bounds are retained. Original source data and axial/CPR geometry, orbit
+scheduling, presets and mouse controls are untouched. Straightened volumes already
+use zero-based extents. No extra copy/resample/filter or new dependency was added.
+
+Fail-before: test_gpu_mask_does_not_cut_off_nonzero_extent_crop failed with
+[11260, 0], process exit 1. Pass-after: real GPU silhouettes from three camera axes
+retain at least 98 percent of the equivalent unmasked transparent-fill support.
+An additional oblique/anisotropic/nonzero-source-extent/decimated-crop guard verifies
+sampled values at their original physical positions and immutable source data.
+Final direct pytest selection: 61 passed, 2 artifact-stage deselected, exit 0; six
+SWIG deprecation warnings. Suites: tube_orbit, path_views, vrt, responsiveness,
+mpr_geometry_regression and release_parity_guards excluding against_current_stage.
+Plugin mirror verifier: 484 pairs match, exit 0. No affected packaged mirror or
+mirror writes. git diff --check passes for the changed runtime file.
+
+Source control ping/list_actions succeed (92 actions); current running process
+predates the correction. Fresh native source GUI acceptance remains pending: repeat
+this path and diameter, rotate VRT through all sides, compare support around the
+centerline, vary diameter and switch original/straightened modes, then close/reopen.
+The accepted axial and scrolling behavior must remain correct. Human launches/logs
+into one source instance; no restart/login/build/deployment was attempted. Existing
+Standard/ARM64-emulated Client/Eagle Eye Server desktop x PyInstaller/Nuitka source
+inclusion remains applicable; all six produced-artifact acceptance cells are pending.
+Rollback only the local crop-rebase block; it reintroduces the demonstrated GPU mask
+cutoff. Prior user-confirmed source orientation and scrolling fixes must be retained.
+
+Dirty curve_mpr_core.py SHA256:
+5c208d81877280ea601f07ed7accdda9f1c9cf35b5f26e7dda3a33935b85f9eb
+
+## 2026-09-27 - Lumen endpoint placement / Compute does nothing
+
+Live read-only accessibility inspection of the source Slicer window confirmed
+that the panel reports "Place exactly two endpoints, or select a reviewed manual
+curve" while the user sees placed points. The error was below the visible route
+controls. Native Slicer `vtkSlicerMarkupsLogic::StartPlaceMode` unconditionally
+sets the active placement class to FiducialNode after the panel had selected its
+owned LineNode. Thus the panel's own button could route clicks to general
+fiducials, leaving the required route endpoints undefined. This is a product bug,
+not evidence of user error or a VMTK computation failure.
+
+The callback now clears active painting, explicitly selects the owned line class
+and ID, and enters placement through the interaction node without StartPlaceMode.
+A nearby counter uses defined points (excluding previews); validation requires
+two defined endpoints, and computation status/errors are shown beside Compute.
+Existing fiducials and segmentation are not deleted by this fix.
+
+Regression: `tests/code/mpr/test_lumen_placement.py` failed before the change with
+FiducialNode instead of LineNode (exit 1). Placement, defined-point counter,
+geometry and native-payload guards: 20 passed, exit 0. Native headers confirm
+selection setters and point-defined/undefined events. No hot reload, application
+restart, patient data extraction, or new GUI instance was used. Current-session
+failure is live-observed; corrected mouse placement and computation remain pending
+a human fresh source session after saving the current scene.
+
+Applies to both vascular and bronchoscopy in advanced_mpr across Standard and
+ARM64-emulated Client / Eagle Eye Server desktop, both packaging backends. Scoped
+advanced_mpr mirror synchronization and global mirror verification accompany this
+receipt; no native binary/config change or installer build. All six artifact
+acceptance cells remain pending. Next acceptance: place two points using the panel,
+observe 2/2, Compute, then navigate / Play; also remove a point and verify 1/2.
+Rollback only this placement/status slice after accounting for shared work.
+
+Workspace SHA256: `04afb290035a3bf23368900938a3cc278c48d7e36adc07895575e7ec6755c6be`.
+
+## Native editor and interior lighting follow-up (2026-09-27)
+
+The owner's latest UI instruction supersedes the custom seed selector/guide
+revision above: step 2 now contains the native Segment Editor, with its
+segmentation and source-volume selectors hidden through supported widget APIs.
+Add, Remove, Show 3D, the segment list and native effects remain available.
+Preset creation and stable target-role tags are retained; only duplicate controls
+and custom seed guide/paint/grow controls were removed. Source image remains step 1.
+
+Fly-through previously inherited external-view lighting without a dedicated
+interior light. A synthetic dim-scene renderer reproduced dark inner walls before
+the fix (brightness guard failed, exit 1). The first-person renderer now owns a
+camera headlight and enables two-sided lighting; previous lights, switches and
+renderer lighting flags are restored on overview/exit/cancel/cleanup. The reviewed
+surface has explicit ambient/diffuse/specular coefficients and both-face visibility.
+A renderer change restores the old light scope before attaching to the new view.
+Geometry and segmentation algorithms are unchanged.
+
+Guard: `tests/code/mpr/test_lumen_placement.py::test_flythrough_lights_interior_despite_dim_external_scene_lights`.
+It renders from inside a synthetic closed surface and verifies brightness and
+restoration, with no patient data. It passed in the actual Slicer VTK 9.5.2 Python
+runtime as well as the workstation test selection. Live appearance on the user's
+case and fresh panel layout remain pending; no current scene was hot-reloaded.
+The existing next-build handoff includes the new `aipacs_lumen/lighting.py` through
+its complete-package requirement. No Slicer C++ rebuild is required.
+
+## 2026-09-27 - Current title and requested foreground activation
+
+The late startup title setter overwrote the Python presentation's current title
+with the native 3.6.7 baseline title. Qt could therefore display the old window
+title alongside the newer application display name. A regression using requested
+version 3.6.9 failed before correction (actual title 3.6.7). Both cold and resident
+launchers now pass AIPACS_VIEWER_TITLE from aipacs_runtime.current_app_version();
+startup and presentation use that same value and replace, rather than append, the
+title. The existing C++ baseline is reused; no version-specific core rebuild.
+
+Foreground correction: on explicit viewer show/load commands, the parent grants
+AllowSetForegroundWindow to the exact PID from the resident descriptor. The child
+uses showNormal/raise/activate plus SetForegroundWindow with pointer-safe types,
+targeting an active visible modal when present. After DICOM loading the worker
+requests one final show through a fresh grant. Cold user startup also promotes at
+completion. Background analysis/warmup does not acquire focus by this path. No
+always-on-top toggle, global foreground grant, focus loop or AttachThreadInput.
+Windows may still reject foreground activation; native desktop acceptance remains
+pending, and no current clinical session was restarted or hot-reloaded.
+
+Verification: current-title, modal-promotion, presentation and runtime-source
+selection: 31 passed; resident suite: 17 passed separately. These code checks do
+not prove native OS focus. New guard is tests/code/mpr/test_slicer_current_title.py.
+Required live acceptance: a fresh cold launch and warm viewer promotion from the
+Virtual Bronchoscopy button, after load, with a single current-version title;
+also preserve modal dialogs and confirm background analysis stays hidden.
+Include window_activation.py, launcher/resident changes, startup and presentation
+companions in advanced_mpr in both packaging backends and all applicable desktop
+profiles. Produced artifacts remain pending under the existing next-build handoff.
+
+## 2026-09-27 - Recurrent dark/purple bronchoscopic interior
+
+The owner reports that the prior headlight change remains insufficient in the real
+first-person view. Do not treat the earlier synthetic sphere pass as acceptance
+of the clinical scene. Review found that restoreResult bypassed all material
+initialization; saved routes could retain old dark/selected/scalar-colored model
+properties. The native model display manager also maintains a separate backface
+material with an HSV offset. The exact dominant cause in the reported live case
+is not yet established.
+
+A restored-scene callback guard failed before this correction because no ambient
+material was applied. configure_lumen_display now applies an explicit warm surface
+color, neutral backface HSV offset, scalar coloring off, selected state off,
+opaque double-sided display, ambient 0.55 and retained diffuse/specular shading.
+Both publish and restore apply it. A compact Wall brightness control (20-80%)
+allows adjusting the ambient component without changing segmentation or geometry.
+The camera light is attached to the renderer owning the actual active MRML camera,
+not merely the first renderer in the render-window collection.
+
+Source selection: 22 related guards passed. Native Slicer Python/VTK checked the
+real MRML material setters, restored-scene callback and interior renderer test.
+The source callback failure was reproduced before the change; actual user-case
+brightness/depth cues and narrow-panel UI remain pending fresh-source inspection.
+Brightness is a rendering property, not optical tissue color or evidence of lesion
+detection. The user's scene was not hot-reloaded, altered or restarted by this task.
+
+## 2026-09-27 - Nonmodal Advanced Analysis exit notification
+
+The owner explicitly requested removal of the "Viewer Closed" warning after
+closing Advanced Analysis. The launcher displayed this speculative modal for
+every nonzero exit code. The exit handler now resets running state, emits the
+original exit code, and logs nonzero exits at warning level without a dialog or
+GUI-thread log-directory scan. Explicit launch failures still use the existing
+error dialog. This does not classify exit code 1 as clean shutdown or claim to
+repair its underlying cause; diagnostic status is preserved.
+
+Guard: tests/code/mpr/test_slicer_exit_notification.py. Before: two failures for
+nonzero-code modal display, two passes (clean exit and launch error). After: all
+four guards and the 17 resident tests pass (21 total, exit 0). Live user-initiated
+close in a fresh source process remains pending; no active viewer was closed by
+the agent. Include the launcher and advanced_mpr mirror in all applicable next
+build profiles; no C++ rebuild or additional native asset is required.
+
+## 2026-09-27 - OPT-56 close/reopen launcher race and diagnostic gap
+
+The owner reports closing a wrong-series viewer, immediately reopening, receiving
+an already-running notice, then generic RuntimeError launch failures. Bounded,
+redacted log inspection confirms blocked launch before exit-code 1, followed by
+two failed launch signals. It does NOT establish the cause of the later native
+RuntimeError. The runtime previously stripped the failing operation stage.
+
+The launcher now retains one exact pending request for a bounded 3.1-second Qt
+timer grace period. It starts only after both running state and the previous
+QThread have completed, avoiding replacement/destruction of a finishing worker.
+An actually open or still-closing session is preserved and produces a clear
+notice at expiry; no scene clear, process kill, replay or forced shutdown occurs.
+Runtime failures now identify fixed, non-PHI operation stages; existing-scene
+rejection explicitly instructs the user to close that session. Exception values
+and patient paths are never included in these diagnostics.
+
+Guard: tests/code/mpr/test_slicer_reopen.py. Before: two reopen guards fail;
+the 20-cycle synthetic runtime restart guard already passes (so the service's
+normal dead-process restart was not changed). A separate privacy/stage guard
+fails before the diagnostic correction. After: 25 reopen/exit/resident tests pass,
+exit 0. Test-control ping/actions are reachable, but the current source process
+predates the correction. No live application was restarted or patient scene
+changed. Fresh-source actual close/reopen, cancellation of Save/Close and exact
+series identity remain pending. The later reported RuntimeError remains open
+until the stage-specific evidence is captured; these source tests are not proof
+that the full reported sequence is resolved.
+
+Next-build coverage: shared advanced_mpr Python payload in Standard Client,
+ARM64-emulated Client and Eagle Eye Server, PyInstaller and Nuitka. Include both
+slicer_launcher.py and AIPacsBackgroundRuntime.py with scoped mirror sync. No
+C++ rebuild; artifact acceptance remains pending the canonical authorized build.
+
+### Follow-up: native close during queued load / shutdown event pumping
+
+The next user screenshot narrows the failure to `activate analysis workspace`.
+The native session log records module deselection (close) before DICOM import.
+Native source confirms qSlicerCoreApplication::onAboutToQuit unloads modules and
+then calls processEvents. The private Runtime's timer previously remained free
+to consume a queued load from that shutdown event pump. Thus a load can reach
+workspace activation after native module teardown. The previous three-second
+host reopen grace did not protect this native lifetime boundary.
+
+ViewerCloseGuard now defers the native main-window Close event until the current
+command completes and its authenticated terminal reply is sent. Runtime sets
+stopping before calling native close, so nested shutdown event processing cannot
+start another command. Native Save/Exit and cancellation remain intact; cancelling
+close resumes the same scene. A five-second completed-reply grace handles a lost
+requester without keeping the window uncloseable. New submissions during close
+receive a typed viewer_closing rejection. The launcher skips re-showing a window
+whose load reply already carries close intent, and waits nonmodally for a typed
+late-close rejection. No process-name termination or scene clearing was added.
+
+Guard: tests/code/mpr/test_slicer_close_during_load.py. The close-before-reply and
+cancel-exit tests failed before the fix. The final selection has 41 passes,
+exit 0, including shutdown-event-pump, late close, disconnected requester,
+existing reopen/resident/exit, promotion and builder source parity coverage.
+An isolated offscreen native Slicer probe using production ViewerCloseGuard and
+Runtime passed activation for vascular and bronchoscopy after a deferred Close,
+plus shutdown reentry suppression. This is native synthetic evidence, not a
+rendered clinical GUI acceptance. Native probes also emit an existing stock Mask
+Volume effect `decimalsOption` enum warning; no claim that all native warnings
+are resolved. The user's running source process was not restarted or edited in
+memory. Test-control ping/actions remain reachable; exact fresh-source user-case
+acceptance remains pending. Include all three runtime/launcher/service Python
+files and their advanced_mpr mirrors in the next build; no C++ rebuild required.
+
+Final close-lifecycle check: a late host show request also restarted an already
+closed viewer. A behavioral guard failed before; show now reports ViewerClosing
+without creating another process, while a new load_dicom can start normally.
+Close intent is refreshed on reply delivery. Final related suite: 42 passed,
+exit 0; 486 mirror pairs match. Fresh-source user-case acceptance remains pending.
+
+### Corrected diagnosis: implicit Qt quit in the actual resident launch
+
+The user reported the same activation error again. The earlier attribution to a
+user Close event was incomplete and is superseded by this reproducer: launch via
+LocalRuntime's real command line and authenticated socket, with no extra Python
+script/code and no Close input. A tiny synthetic CT series fails with exactly
+`RuntimeError during activate analysis workspace`; PHI-free frame capture locates
+the raise at routing.activate's missing-module check. Native tracing shows modules
+registered at startup and then unloaded before the load completes. Adding a
+Python startup probe had changed timing and masked this failure in earlier tests.
+
+Disabling QApplication's quitOnLastWindowClosed before the resident WindowGuard
+is installed makes the otherwise identical socket/DICOM reproducer pass. The
+runtime intentionally starts with suppressed/hidden windows and must own exit
+explicitly. After a user close is accepted, Runtime.poll now calls app.exit(0);
+Cancel Exit leaves the scene and runtime running. This preserves user close while
+preventing Qt's implicit window lifecycle from prematurely unloading workspaces.
+No C++ rebuild or live-process patching was needed. Safe diagnostics retain only
+exception type, fixed stage and source function/line pairs, never exception values.
+
+Reproducer is now durable: tools/slicer/probe_resident_lumen.py, an opt-in standalone
+host probe with offscreen native runtimes and synthetic DICOM. It uses the exact
+resident launch/socket path; no --python-script/--python-code is added. Probe-owned
+process cleanup is not a live user-close acceptance test. Extend the next-build
+gate with this probe plus real user close/reopen and Cancel Exit. The previous
+native widget-only successes must not be cited as proof of this runtime path.
+
+
+Final implicit-quit verification: 43 affected/adjacent/builder tests passed (exit 0).
+The durable native socket probe passed three independent cycles for each workflow
+(six synthetic DICOM loads and shows, exit 0). Probe cleanup waits for only its
+owned CTK child processes to release log handles. 486 source/payload pairs match.
+Source test-control ping is reachable, but the user's exact fresh-source GUI
+scenario remains pending. This is the first reproduced fail-before/pass-after
+evidence for the reported resident activation error itself.
+
+
+Live-gate observation: ping succeeded, but the subsequent list_actions connection
+was unavailable (local test socket absent). No relaunch or recovery was attempted;
+no fresh source GUI pass is claimed.
+
+### Compute-route investigation after successful startup (2026-09-27)
+
+The user now confirms launch without hanging. This confirms the reported startup
+scenario, not the full close/reopen or Cancel Exit acceptance matrix. The next
+reported failure is separate: the UI progresses from Computing to `Centerline did
+not reach both endpoints`, with two defined route endpoints. This message comes
+from backend.extract_path after VMTK returns a line whose ends fail the physical
+distance check against the surface seeds; it is not a launch or worker-start error.
+
+The existing native isolated-worker probe passes (72 points, length 52.794 mm,
+median synthetic cross-section area 72.001 mm2, exit 0). An additional local
+synthetic bifurcation probe passes trunk-to-branch, internal trunk-to-branch and
+branch-to-branch routes (87, 61 and 87 samples). Removing one complete transverse
+voxel layer reproduces the exact reported endpoint error and VMTK's Target not
+reached warning. This supports checking applied segmentation connectivity first;
+it does not prove the user's segment is disconnected. Endpoint count alone does
+not establish that endpoints lie in the same connected lumen. No patient data
+was used in these probes or copied into this record.
+
+The user's Grow from seeds Apply state, physical endpoint placement and actual
+segment connectivity remain unverified. Do not loosen the endpoint or containment
+checks or invent a bridge across missing anatomy based on this evidence. No runtime
+code was changed for this investigation. Source test-control ping and list_actions
+both succeed again; they do not expose the external Slicer segmentation. Full
+user-case computation and rendered fly-through acceptance remain pending.
+
+User follow-up (2026-09-27): after the Apply/connectivity/endpoint checks were
+described, the user explicitly confirmed successful completion when asked whether
+Compute route succeeded or the same error remained. Record the reported
+computation failure as resolved in the user's workflow, without a runtime code
+change. The exact corrective step was not identified; this does not establish a
+specific segmentation defect or independently validate fly-through illumination,
+anatomical accuracy, repeated close/reopen, or packaged artifacts.
+
+
+## 2026-09-28 - Build preflight MPR test-process Qt ordering abort
+
+Build coordination reported reopen followed by close-during-load aborting pytest.
+Reproduced in a captured child process: reopen passed, then the QWidget test caused
+Windows exit 3221226505 / 0xC0000409. This is test-harness evidence, not an application
+crash. The first test created QCoreApplication; QApplication.instance() in the next
+test returned that existing core-only object, so constructing QMainWindow aborted.
+The same creator pattern existed in test_slicer_resident.py.
+
+Minimal test-only correction: reopen and resident tests initialize QApplication
+instead, preserving QObject/event-loop support and enabling subsequent widgets.
+No launcher, viewer, resident runtime, live app or package payload was modified by
+this fix. New test_qt_application_order.py executes the relevant three tests in a
+fresh subprocess in both orders, protecting the parent pytest process from an abort.
+Fail-before: 1 failed/1 passed, with child 0xC0000409 in forward order. Pass-after:
+31 passed, exit 0, across complete reopen/resident/close-during-load suites and both
+subprocess-order guards (direct pytest, --reruns 0, QT_QPA_PLATFORM=offscreen).
+
+Build handoff: this specific test-order blocker is fixed and verified on current
+shared source. No installer was started and no clinical GUI claim is implied.
+Latest Curve VRT source acceptance remains separately pending. Runtime/build-input/
+artifact changes are N/A for this test-only slice. Rollback restores the core-only
+test application constructors and reintroduces the demonstrated order dependence.
+
+## 2026-09-28 - Installed Advanced Analysis import boundary (OPT-56)
+
+The end-user Standard Client 3.6.9 reports `ModuleNotFoundError during validate
+request` for custom Slicer image loading. The Slicer resident accepted the
+authenticated request; failure occurred before native window promotion or DICOM
+import. The end-user confirmed `AIPacsBackgroundRuntime.py`, both workspace
+modules, and `aipacs_lumen/routing.py` exist in the per-user installed runtime.
+Hashes of the resident module, lumen package initializer, and routing module
+match the exact Standard candidate input. Independent Standard MPR and Stitching
+remain functional. No patient identifier, image, or clinical log content is
+retained here.
+
+An isolated filename-loaded resident reproduced `No module named 'aipacs_lumen'`:
+Slicer scripted-module discovery did not guarantee a Python sibling-package
+import path. The frozen launcher also did not supply a controlled Python path.
+The child now receives only its resolved `slicer_modules` directory as
+`PYTHONPATH`; the background module registers that same sibling directory for
+direct-file loading. No installed payload was edited and the native Slicer C++
+baseline is unchanged. Two guards failed before and passed after; 44 affected
+MPR tests and 82 adjacent builder tests passed with exit code 0. All 486 plugin
+mirror pairs matched. The current source GUI and new installed artifact have
+not yet passed this workflow.
+
+Build handoff: this shared `advanced_mpr` Python correction applies to Standard
+and ARM64-emulated Client and Eagle Eye Server, for both PyInstaller and Nuitka.
+The user requested a Standard-only candidate first; the other five cells stay
+pending until its installed Slicer image-load acceptance. Use the canonical
+role-selected coordinator and the verified September 28 VMTK/native cache;
+do not rebuild the native Slicer baseline or publish old 3.6.9 files as repaired.
+Artifact acceptance must open an exact selected synthetic series through Advanced
+MPR, Vascular Analysis, and Virtual Bronchoscopy and separately confirm that
+independent Standard MPR and Stitching still work. Rollback is the preserved
+prior candidate; do not overwrite an installed workstation in place for a
+source-level test.
+
+Standard-first diagnostic build (2026-09-28): the immutable internal candidate
+`C:\b\aipacs-internal-3.6.9-20260928-183047` completed Standard PyInstaller
+packaging with exit code 0. Its versioned installer is 628,947,705 bytes,
+declares file/product version 3.6.9, and matches the candidate distribution
+manifest SHA-256. The staged `resident_service.py`,
+`AIPacsBackgroundRuntime.py`, and `aipacs_lumen/routing.py` match the repaired
+source byte-for-byte by SHA-256. Post-stage and binary-architecture gates passed;
+the latter records the known x86 auxiliary `flac-win32.exe` warning. This
+single-edition internal output is non-promotable and is not a completed Client
+build or an installed GUI pass. No other edition/backend was rebuilt in this
+step. The remaining build matrix stays pending until Standard installation and
+Slicer workflow acceptance are evidenced.
+
+The existing source test-control endpoint responded to `ping` and `list_actions`,
+but its Eagle Eye Server process was started on September 27 before this change.
+It cannot serve as a live acceptance run for the repaired module. No process was
+restarted, no installed executable was launched, and no clinical data was read.
+
+
+## Structured Report viewport routing (2026-09-29)
+
+Device Enhanced SR objects contain a ContentSequence, not PixelData. The image-only
+series switch could not display them. A local redacted structural investigation
+found 14 Enhanced SR acquisition reports; the new reader successfully projected
+all 14 without exporting source values or patient identifiers.
+
+The shared selection boundary now dispatches catalogued SR to a viewport-owned
+opaque plain-text panel before image loading. The file worker verifies SOP Class,
+StudyInstanceUID and SeriesInstanceUID against the canonical SeriesRef, reads no
+live database, and never decodes pixels. Supported text projections are Basic Text,
+Enhanced, Comprehensive and Comprehensive 3D SR. Labels, TEXT/CODE/NUM values and
+units, date/time/person-name values and completion/verification flags are retained.
+Spatial, waveform and image references are explicitly marked as not rendered;
+this is not a full graphical SR/TID implementation. Multiple documents have a
+selector. Incomplete or absent local data produces a visible error; download the
+series before opening it. There is no new retrieval protocol.
+
+Cancellation and panel generations discard superseded results; image request tokens
+are invalidated and image completion is rejected while a report is active. File,
+byte, depth, node and text limits bound work. Results are plain text, never HTML.
+Cine is stopped and the viewport slider disabled until returning to images.
+Imaging toolbar entry points reject SR mode so retained images cannot become the
+source of a capture, reconstruction or AI action. A subsequent image selection
+removes the panel and forces the normal image load route. Local SR cards survive
+zero-pixel filtering, while pixel counts remain zero and document_count is separate.
+Other non-image objects retain their existing handling.
+
+Implementation: PacsClient/utils/structured_report.py; patient_ui/
+structured_report_view.py; _vc_switch.py; the narrow SR branches in
+patient_widget_core/_pw_thumbnails.py and patient_toolbar/toolbar_manager.py.
+Unrelated in-progress changes in the latter two files were preserved.
+
+Evidence: the initial five new reader tests failed because no SR reader existed;
+the Local SR card guard separately failed with zero selectable entries before its
+fix. Final focused runtime suite: 103 passed, exit 0 (six existing SWIG warnings),
+including real queued worker delivery, stale completion, report navigation,
+identity rejection, cancellation, tool isolation and adjacent image/MPR/local-card
+guards. Synthetic fixtures only; clinical database was not used by tests.
+
+Source GUI acceptance remains pending: documented control-client ping reports no
+local test listener. Human acknowledgement of the source launch request is not
+proof of a fresh process. Required: real mouse drag in Fast and Advanced, switch
+among documents, image -> SR -> image in one cell, another active image/MPR cell,
+rapid replacement, resize/layout/close, and no patient/series identity mismatch.
+No live or installed-artifact pass is claimed.
+
+Build input: these are core PacsClient modules included by PyInstaller's
+collect_submodules and Nuitka's include-package PacsClient, with no optional-plugin
+mirror or feature flag. Mirror dry-run found zero drift; verifier matched 493
+pairs. Applies to Client and Server distributions that include the workstation UI.
+A broader builder run had 122 passes and one failing existing-stage parity check:
+missing eagle_eye_client.json and four stale sanitized config templates. That
+failure concerns builder/output/stage configuration, not an SR module import; it
+remains open and no generated stage was edited or new build launched. The next
+immutable candidate must include these sources and verify the scenario separately
+on each applicable edition/backend. Rollback is limited to the SR additions;
+never revert the unrelated shared-file changes.
+
+
+### SR thumbnail follow-up (2026-09-29)
+
+The shared Home/patient card factory now replaces the generic Series placeholder
+with a locally painted document icon, `SR · Report Data` and `Drag to read`.
+Flat and nested SR metadata are accepted. Counts use documents, preserve zero
+pixel counts, and later cached image delivery cannot replace the SR tile. Normal
+image pixels and drag keys are unchanged. No filesystem reads, thumbnail writes,
+external graphics dependencies or plugin mirrors were added. Synthetic preview
+was visually inspected with the bundled Roboto fonts loaded into offscreen Qt.
+Live GUI/native drag acceptance and produced-artifact verification remain pending.
+
+Thumbnail follow-up verification: 35 focused/adjacent tests passed, exit 0;
+495 plugin mirror pairs matched. Core PacsClient collection covers both freezer
+paths; no full build was started.

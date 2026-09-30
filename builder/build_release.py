@@ -308,7 +308,11 @@ def clean_outputs(
     # Package/update outputs are regenerated each run. Installer artifacts are
     # optionally preserved so distribution does not lose the last good setup EXE.
     targets = [PACKAGE_OUTPUT_DIR, UPDATES_OUTPUT_DIR]
-    if not preserve_installer:
+    # The isolated candidate writes installers into the checkout's canonical
+    # folder, outside this snapshot's OUTPUT_DIR. A clean Server build must
+    # never recursively delete Client installers (or vice versa) there.
+    # The coordinator archives only the selected role's same-version outputs.
+    if not preserve_installer and INSTALLER_OUTPUT_DIR.resolve().is_relative_to(OUTPUT_DIR.resolve()):
         targets.append(INSTALLER_OUTPUT_DIR)
     if not preserve_stage:
         targets.append(STAGE_DIR)
@@ -821,6 +825,8 @@ def build_module_packages(
             slicer_startup_sha256 = stage_current_startup(package_dir, PROJECT_ROOT)
             from builder.eagle_eye_client_payload import stage_client
             stage_client(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
+            from builder.lumen_vmtk_payload import stage_lumen_vmtk
+            stage_lumen_vmtk(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME)
 
         if module_id == "advanced_mpr" and has_payload and include_eagle_eye_assets:
             from builder.offline_lumbar_payload import stage_offline_lumbar
@@ -839,6 +845,10 @@ def build_module_packages(
             from builder.eagle_eye_total_spine_payload import stage_eagle_eye_total_spine
             stage_eagle_eye_total_spine(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME,
                                        for_distribution=for_distribution)
+            from builder.eagle_eye_engine_payload import stage_engine
+            for engine in ('breast', 'bone-age'):
+                stage_engine(package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME, engine,
+                             for_distribution=for_distribution)
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,
@@ -1634,8 +1644,10 @@ def main() -> int:
         if args.edition != "legacy":
             from tools.build.prepare_distribution_assets import DEFAULT_ROOT, verify
             asset_root = (args.asset_root or DEFAULT_ROOT).resolve()
-            verify(asset_root, profile="client" if args.edition in {"client", "standard", "arm"} else "all")
+            verify(asset_root, profile="client" if args.edition in {"client", "standard", "arm"} else "all",
+                   require_lumen=True)
             os.environ["AIPACS_ADVANCED_MPR_RUNTIME_SOURCE"] = str(asset_root / "slicer-runtime")
+            os.environ["AIPACS_LUMEN_VMTK_BUNDLE_SOURCE"] = str(asset_root / "lumen_vmtk")
             os.environ["AIPACS_OFFLINE_LUMBAR_BUNDLE_SOURCE"] = str(asset_root / "offline_lumbar")
             os.environ["AIPACS_ISCC_EXE"] = str(asset_root / "inno-setup/ISCC.exe")
 

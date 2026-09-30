@@ -96,9 +96,9 @@ class ThumbnailImageSourceService:
                 logger.debug("[THUMB-SRC] ThumbnailLoadedFromDisk series=%s path=%s", series_number, file_path_thumbnail)
             except Exception:
                 pass
-        if disk.isNull() and self._local_placeholder_allowed(parent_widget):
+        if disk.isNull():
             # Neither the in-memory/disk store nor the explicit file yielded a
-            # thumbnail — the caller falls back to a placeholder. Log at DEBUG so
+            # thumbnail. Keep the catalog card with a placeholder. Log at DEBUG so
             # a genuinely-missing thumbnail is traceable without spamming during
             # normal first-load (many series have no thumbnail yet).
             try:
@@ -110,11 +110,6 @@ class ThumbnailImageSourceService:
                 pass
             disk = self._placeholder_pixmap(str(series_number))
         return disk
-
-    @staticmethod
-    def _local_placeholder_allowed(parent_widget) -> bool:
-        caller = str(getattr(parent_widget, '_deferred_caller', '') or '').strip().lower()
-        return caller in {'import', 'local'}
 
     @staticmethod
     def _placeholder_pixmap(series_number: str) -> QPixmap:

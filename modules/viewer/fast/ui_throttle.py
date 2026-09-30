@@ -241,12 +241,33 @@ def is_protected_drag_active() -> bool:
     # window has not yet expired.
     # v2.3.8 R15: also considers the Advanced (VTK) latch so R3/R4/R5
     # automatically extend to Advanced wheel/stack interactions.
+    now = _now_ms()
+    # A deleted/hidden interaction owner may never deliver its end callback.
+    # Recover only on the GUI thread after ten seconds beyond the last declared
+    # protection deadline AND with no mouse button down. Long held drags and
+    # fresh wheel/drag keepalives remain protected. Never use process uptime.
+    stale_fast = (_PROTECTED_DRAG_ACTIVE and
+                  now - max(_PROTECTED_DRAG_BEGIN_MS, _PROTECTED_DRAG_UNTIL_MS) > 10000.0)
+    stale_advanced = (_ADVANCED_PROTECTED_ACTIVE and
+                      now - max(_ADVANCED_PROTECTED_BEGIN_MS, _ADVANCED_PROTECTED_UNTIL_MS) > 10000.0)
+    if stale_fast or stale_advanced:
+        from PySide6.QtCore import QThread, Qt
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if (isinstance(app, QApplication) and QThread.currentThread() == app.thread()
+                and QApplication.mouseButtons() == Qt.MouseButton.NoButton):
+            if stale_fast:
+                record_protected_drag(False)
+            if stale_advanced:
+                record_advanced_protected_interaction(False, source='idle_recovery')
+            _logger.warning('[PROTECTED_INTERACTION_RECOVERED] fast=%s advanced=%s',
+                            stale_fast, stale_advanced)
+            now = _now_ms()
     if _PROTECTED_DRAG_ACTIVE or _ADVANCED_PROTECTED_ACTIVE:
         return True
-    now = _now_ms()
-    if now <= float(_PROTECTED_DRAG_UNTIL_MS):
+    if now < float(_PROTECTED_DRAG_UNTIL_MS):
         return True
-    if now <= float(_ADVANCED_PROTECTED_UNTIL_MS):
+    if now < float(_ADVANCED_PROTECTED_UNTIL_MS):
         return True
     return False
 

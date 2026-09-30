@@ -641,6 +641,9 @@ def get_slicer_env(
         dict of environment variables to set
     """
     env = os.environ.copy()
+    from aipacs_runtime import current_app_version
+    version = current_app_version()
+    env["AIPACS_VIEWER_TITLE"] = "AI-PACS Advanced Viewer" + (f" v{version}" if version else "")
     from modules.ai_imaging.eagle_eye_remote.settings import slicer_environment
     env.update(slicer_environment())
 
@@ -722,6 +725,7 @@ def launch_slicer(
     viewport_width: Optional[int] = None,
     viewport_height: Optional[int] = None,
     return_process_handle: bool = False,
+    workflow: Optional[str] = None,
 ) -> int | tuple[subprocess.Popen, Path]:
     """
     Launch 3D Slicer with our startup script and configuration.
@@ -814,6 +818,12 @@ def launch_slicer(
         viewport_height=viewport_height,
     )
     
+    from modules.mpr.advanced_3d_slicer.workflows import validate_workflow
+    selected_workflow = validate_workflow(workflow)
+    env.pop("NEWMPR2_WORKFLOW", None)
+    if selected_workflow:
+        env["NEWMPR2_WORKFLOW"] = selected_workflow
+
     # If software rendering is requested, set environment variables
     if software_rendering:
         print("[NewMPR2Slicer] Using software rendering (Mesa) - GPU rendering disabled")

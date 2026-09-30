@@ -43,6 +43,67 @@ resolve the pywin32 frozen-input gap or qualify either installer backend.
 
 ## Required next dependency/cache change
 
+### Fresh-cache dependency refresh (2026-09-28)
+
+The canonical asset preparation tool now permits `--reuse-non-slicer-assets`
+with `--download-wheels` into a new empty root. It preserves hash-verified donor
+model inputs, snapshots current Slicer/VMTK, and refreshes only the current build
+interpreter's lock and hashed wheels, with offline dependency graph validation.
+Completed donor caches are never modified by this route. See root `BUILD.md` for
+the command; this is input preparation, not a new installer entry point.
+
+The missing-dependency diagnosis was confirmed locally. Genuine
+`pywin32-311-cp313-cp313-win_amd64.whl` (SHA-256
+`718a38f7e5b058e76aee1c56ddd06908116d35147e133427e59a3983f703a20d`)
+was installed only in `.venv_build`; `pip check` and the six required native
+imports passed. This supersedes the earlier environment observation above, not
+the frozen/SCM acceptance gates. The selected old cache remains insufficient.
+The new cache also must record actual decoder environment drift rather than
+copying the old build lock as though it still described this interpreter.
+
+The separately named September 28 cache
+`generated-files/distribution-assets-native-vc143-vmtk-service-20260928/`
+now passes independent full SHA-256 verification of 34,469 inventoried files,
+the VMTK bundle check, the real pywin32 service-dependency preflight, and
+byte-for-byte parity with the Developer Run native Slicer runtime. The verifier
+and build-environment `pip check` exited 0. Select this cache explicitly; the
+older default cache remains insufficient. This closes only the input/cache gap,
+not frozen service installation, model portability, clean-host qualification,
+or distribution approval.
+
+`test_reused_asset_dependency_refresh.py` failed before the CLI correction.
+It now covers donor immutability, current build pins, preserved model locks,
+failed wheel validation without a completed manifest, and completed-root
+overwrite refusal. The focused asset/lumen/service-preflight selection passed
+16 tests, exit 0. No frozen service acceptance is asserted by these tests.
+
+### Installed listener boundary (2026-09-28)
+
+The code owner corrected installed desktop admission: a frozen Server desktop
+requires the Eagle Eye installation profile and literal `service_managed: true`
+before it can write its desktop-client configuration. It attaches to the owned
+service instead of constructing another desktop listener. Bootstrap, service
+administration and child dispatch now use the shared `is_frozen()` detector,
+covering Nuitka as well as PyInstaller. Standard Client rejects SCM dispatch.
+Fifteen behavioral cases failed before the corrections; the owner's 17-case guard
+and adjacent selection passed 40 tests. The build workstream independently
+reran these with cache/lumen/navigation guards: 60 passed, exit 0, three existing
+SWIG deprecation warnings. This is source-test evidence, not frozen Session 0 QA.
+
+The actual upgrade boundary is `PrepareToInstall`, which runs the previous
+uninstaller before new files/profile are installed. Adding only a postinstall
+SCM call would destroy the prior executable before rollback is possible. No such
+shortcut was added. Retained-core upgrade/config enrollment and clean-host
+acceptance remain incomplete. Operator credentials, TLS and token ownership must
+not be guessed or generated as placeholders to bypass this contract.
+
+The owner also added bounded exact-command/LocalService-owned SCM stop, start and
+remove primitives. Removal waits for STOPPED, never kills unrelated processes,
+and preserves configuration; SCM RUNNING is not application readiness. Fourteen
+missing-API guards failed before, and 18 synthetic lifecycle cases pass after.
+These primitives are not yet wired into an installer upgrade transaction. No
+production SCM operation was executed.
+
 1. Keep the existing VC143 native Slicer runtime and completed cache immutable.
    Prepare a **separately named**, complete dependency cache for the Server
    lane with the genuine `pywin32==311` Windows x64 CPython 3.13 wheel and

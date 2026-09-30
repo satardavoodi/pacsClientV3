@@ -1316,6 +1316,8 @@ class ThumbnailManager(QObject):
         widget = self.series_widgets.get(str(series_key))
         if widget is None:
             return
+        if getattr(widget, '_is_sr_document', False):
+            text = text.replace(' images', ' documents')
 
         try:
             _ = widget.isVisible()
@@ -1374,6 +1376,8 @@ class ThumbnailManager(QObject):
             image_button = getattr(widget, "image_button", None)
             if image_button is None:
                 return
+            if getattr(widget, '_is_sr_document', False):
+                return  # A late image-cache result must not replace the document tile.
 
             pixmap = QPixmap.fromImage(image)
             if pixmap.isNull():
@@ -1755,6 +1759,11 @@ class ThumbnailManager(QObject):
             # Main container widget - SQUARE dimensions
             widget = QWidget()
             widget.setObjectName("seriesThumbnailCard")
+            from .sr_thumbnail import report_metadata, report_pixmap
+            sr_info = report_metadata(series_info)
+            widget._is_sr_document = sr_info is not None
+            if widget._is_sr_document:
+                pixmap = report_pixmap()
             # Apply the root-only style before constructing children, graphics
             # effects, and the strip event filter. A late unscoped ``QWidget``
             # stylesheet recursively repolishes the completed native subtree;
@@ -1854,6 +1863,8 @@ class ThumbnailManager(QObject):
             scaled_pixmap = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             # ✅ Use real series_number for drag-and-drop
             image_button = DraggableButton(scaled_pixmap, thumbnail_index=thumbnail_index, series_number=series_number)
+            if widget._is_sr_document:
+                image_button.setToolTip('SR · Report Data\nDrag into a viewport to read the structured report.')
             image_button.setFixedSize(160, 120)
             image_button.setIconSize(QSize(160, 120))
             image_button.setCheckable(True)
@@ -1904,7 +1915,11 @@ class ThumbnailManager(QObject):
                 image_count = series_info.get(
                     'display_image_count', series_info.get('image_count', 0)
                 )
-                if image_count is not None and image_count > 0:
+                if widget._is_sr_document:
+                    document_count = sr_info.get('document_count') or sr_info.get('image_count') or 0
+                    widget.count_label.setText(
+                        f'{document_count} documents' if document_count else 'SR document')
+                elif image_count is not None and image_count > 0:
                     try:
                         widget.count_label.setText(f"{image_count} images")
                     except Exception:

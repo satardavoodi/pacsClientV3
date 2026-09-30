@@ -73,7 +73,16 @@ def publish(job, request, records, result):
         if not path.is_file():
             continue
         relative = path.relative_to(directory).as_posix()
+        if 'anatomy-context' in path.relative_to(directory).parts:
+            continue  # Internal anatomy provenance, not a second patient report.
         if not (path in review_paths or path.name in MASKS | TABLES
+                or request['module'] == 'brain-lesions' and (result.get('multisequence') or result.get('enhancement_review') or result.get('sampled_topography'))
+                and path.name in ('labels-cross-plane.nii.gz', 'labels-primary.nii.gz', 'labels-disagreement.nii.gz', 'secondary-flair.nii.gz',
+                                  'secondary-labels.nii.gz', 'secondary-aligned.nii.gz', 'secondary-aligned-labels.nii.gz',
+                                  't1-pre-review.nii.gz', 't1-post-registered.nii.gz', 't1-subtraction.nii.gz',
+                                  'subtraction-flair.nii.gz', 'pre-flair.nii.gz', 'post-flair.nii.gz',
+                                  'secondary-registration.tfm', 'post-registration.tfm', 'flair-to-pre.tfm',
+                                  'ms-anatomy-in-flair.nii.gz', 'ms-anatomy-resampling.tfm', 'primary-ids-in-t1.nii.gz')
                 or result.get('acquisition_mode') == '2d' and path.name in ('labels-raw.nii.gz', 'labels-band-review.nii.gz')
                 or request['module'] == 'total-spine' and path.name in ('coronal-annotated.png', 'lateral-annotated.png')
                 or path.suffix in ('.pdf', '.html', '.png')

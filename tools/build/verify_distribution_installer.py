@@ -18,11 +18,21 @@ def main():
     with tempfile.TemporaryDirectory(prefix="aipacs-synthetic-installer-") as temporary:
         stage = Path(temporary)
         for name in ("core/AIPacs.exe", "plugin_packages/advanced_mpr/payload/AIPacsAdvancedViewer.exe",
-                     "plugin_packages/advanced_mpr/payload/offline_lumbar/python/python.exe"):
+                     "plugin_packages/advanced_mpr/payload/offline_lumbar/python/python.exe",
+                     "plugin_packages/advanced_mpr/payload/eagle_eye/brain/model/python/python.exe",
+                     "plugin_packages/advanced_mpr/payload/eagle_eye/breast/runtime/python.exe",
+                     "plugin_packages/advanced_mpr/payload/eagle_eye/bone-age/runtime/python.exe"):
             file = stage / name
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(b"synthetic fixture - never executable")
         (stage / "plugin_packages/advanced_mpr/payload/offline_lumbar/manifest.json").write_text("{}")
+        brain = stage / "plugin_packages/advanced_mpr/payload/eagle_eye/brain"
+        (brain / "model/manifest.json").write_text('{"synthetic_fixture":true}')
+        (brain / "distribution-approval.json").write_text('{"synthetic_fixture":true}')
+        for engine in ('breast', 'bone-age'):
+            root = stage / 'plugin_packages/advanced_mpr/payload/eagle_eye' / engine
+            (root / 'manifest.json').write_text('{"synthetic_fixture":true}')
+            (root / 'distribution-approval.json').write_text('{"synthetic_fixture":true}')
         (stage / "plugin_packages/module_package_feed.json").write_text('{"packages":[]}')
         for edition, include_offline, script in (
             ("standard", 0, INSTALLER_SCRIPT),
@@ -37,12 +47,37 @@ def main():
             if result.returncode:
                 raise RuntimeError(edition + " compile-only check failed:\n" + result.stdout + result.stderr)
             results.append({"edition": edition, "compile_only_passed": True})
+        (brain / "distribution-approval.json").unlink()
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 or "Eagle Eye release requires distribution evidence" not in result.stdout + result.stderr:
+            raise RuntimeError("Eagle Eye did not reject missing distribution evidence")
+        (brain / "distribution-approval.json").write_text('{"synthetic_fixture":true}')
+        (brain / "model/manifest.json").unlink()
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 or "complete portable Brain runtime payload" not in result.stdout + result.stderr:
+            raise RuntimeError("Eagle Eye did not reject missing Brain runtime")
+        (brain / "model/manifest.json").write_text('{"synthetic_fixture":true}')
+        breast = stage / 'plugin_packages/advanced_mpr/payload/eagle_eye/breast'
+        (breast / 'runtime/python.exe').unlink()
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 or 'standalone Breast and Bone Age' not in result.stdout + result.stderr:
+            raise RuntimeError('Eagle Eye did not reject a missing Breast interpreter')
+        (breast / 'runtime/python.exe').write_bytes(b'synthetic fixture - never executable')
+        bone = stage / 'plugin_packages/advanced_mpr/payload/eagle_eye/bone-age'
+        (bone / 'runtime/python.exe').unlink()
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 or 'standalone Breast and Bone Age' not in result.stdout + result.stderr:
+            raise RuntimeError('Eagle Eye did not reject a missing Bone Age interpreter')
+        (bone / 'runtime/python.exe').write_bytes(b'synthetic fixture - never executable')
         (stage / "plugin_packages/advanced_mpr/payload/offline_lumbar/manifest.json").unlink()
         result = subprocess.run(command, capture_output=True, text=True, timeout=60)
         if result.returncode == 0 or "Eagle Eye requires" not in result.stdout + result.stderr:
             raise RuntimeError("Eagle Eye did not fail closed for a missing model manifest")
     print(json.dumps({"synthetic_only": True, "installer_output_enabled": False,
-                      "outputs": results, "missing_model_rejected": True}))
+                      "outputs": results, "missing_model_rejected": True,
+                      "missing_brain_rejected": True,
+                      "missing_breast_bone_rejected": True,
+                      "missing_distribution_evidence_rejected": True}))
 
 
 if __name__ == "__main__":

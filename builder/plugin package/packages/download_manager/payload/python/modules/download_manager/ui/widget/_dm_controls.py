@@ -226,11 +226,12 @@ class _DMControlsMixin:
             raise
 
     def _on_refresh(self):
-        """Refresh download status from database"""
+        """Refresh the queue presentation from existing in-memory state."""
         logger.info("� [BUTTON CLICK] Refresh button clicked")
         try:
             logger.info("🔄 Refreshing download status...")
             self._update_status_label()
+            self.refresh_table_order()
             logger.info("🟢 [BUTTON SUCCESS] Refresh operation completed successfully")
         except Exception as e:
             logger.error(f"🔴 [BUTTON FAILURE] Refresh operation failed: {e}")

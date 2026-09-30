@@ -495,6 +495,68 @@ def test_grouped_collision_images_use_study_and_storage_key_not_display_offset(m
         asyncio.set_event_loop(None)
 
 
+def test_grouped_catalog_keeps_series_whose_thumbnail_media_is_missing(monkeypatch):
+    from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import ThumbnailImageSourceService
+    app = QApplication.instance() or QApplication([])
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    owner = make_owner(2)
+    owner._studies_series = {'synthetic-a': [], 'synthetic-b': []}
+    owner._server_series_info = {
+        '1': dict(series_number='1', series_uid='synthetic-1', study_uid='synthetic-a',
+                  folder_key='1', image_count=2),
+        '1000002': dict(series_number='1000002', _orig_series_number='2',
+                        series_uid='synthetic-2', study_uid='synthetic-b',
+                        folder_key='2', image_count=2),
+    }
+    owner._multistudy_viewer_groups = [
+        ('synthetic-a', 0, [('1', owner._server_series_info['1'])]),
+        ('synthetic-b', 1, [('1000002', owner._server_series_info['1000002'])]),
+    ]
+    owner._start_sidebar_build.__func__.__globals__['check_and_get_thumbnails'] = (
+        lambda root, su: [Path('1.png')] if su == 'synthetic-a' else []
+    )
+
+    def prepare(_study_uid, _folder_key, path):
+        if path:
+            image = QImage(8, 8, QImage.Format_RGB32)
+            image.fill(Qt.white)
+            return image
+        return QImage()
+
+    monkeypatch.setattr(ThumbnailImageSourceService, 'prepare_image', prepare)
+
+    async def run():
+        assert owner._render_multistudy_grouped()
+        await owner._sidebar_build_task
+        assert owner.added == ['1', '1000002']
+        assert owner.thumb_count_label.text() == '2 series'
+
+    try:
+        with loop:
+            loop.run_until_complete(run())
+    finally:
+        owner.thumbnail_manager.dispose()
+        owner.close()
+        owner.deleteLater()
+        asyncio.set_event_loop(None)
+
+
+def test_server_missing_media_uses_the_shared_placeholder(monkeypatch):
+    from PacsClient.pacs.patient_tab.utils import thumbnail_image_source_service as source
+
+    monkeypatch.setattr(
+        source.ThumbnailStore,
+        'instance',
+        lambda: SimpleNamespace(get_bytes=lambda *_args: None),
+    )
+    parent = SimpleNamespace(study_uid='synthetic-study', _deferred_caller='server')
+
+    pixmap = source.ThumbnailImageSourceService().load_pixmap(parent, '7', '')
+
+    assert not pixmap.isNull()
+
+
 def test_server_entries_supersede_pending_cached_build_without_second_gui_writer(monkeypatch):
     from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import ThumbnailImageSourceService
     app = QApplication.instance() or QApplication([])
@@ -668,6 +730,7 @@ def test_late_study_growth_queues_one_followup_prefetch(monkeypatch):
     monkeypatch.setattr(socket_module, 'PatientListSocketClient', FakeClient)
     monkeypatch.setattr(thumbnail_utils, 'save_thumbnail_with_bytes', lambda *args: None)
     owner._render_multistudy_grouped_slot = lambda: None
+    owner._render_multistudy_grouped = lambda: True
 
     try:
         owner._schedule_multistudy_thumbnail_prefetch()

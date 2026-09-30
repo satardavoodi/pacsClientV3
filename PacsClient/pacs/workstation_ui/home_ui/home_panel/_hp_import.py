@@ -186,6 +186,7 @@ class _HPImportMixin:
                 repaired = repair_local_series_thumbnail(
                     study_uid, study_info, series, storage_key,
                     str(study_path / storage_key),
+                    spatial_preview_failed=True,
                 )
                 generated_count += bool(repaired)
                 continue

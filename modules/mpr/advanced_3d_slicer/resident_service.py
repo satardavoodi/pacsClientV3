@@ -20,6 +20,10 @@ class OperationRejected(RuntimeError):
     """A definitive rejection must not destroy the user's current viewer scene."""
 
 
+class ViewerClosing(OperationRejected):
+    """The user requested native close; wait for it instead of re-showing."""
+
+
 def resident_enabled():
     return os.environ.get("AIPACS_SLICER_RESIDENT", "1").lower() not in {"0", "false", "off"}
 
@@ -60,6 +64,14 @@ class LocalRuntime:
         self.root = root
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("PYTHON", "NEWMPR2_", "QT_"))}
+        # Keep Qt6 plugin/library paths out of Qt5 Slicer, but retain the host's
+        # selected software renderer on servers without an OpenGL-capable GPU.
+        if os.environ.get('QT_OPENGL') == 'software':
+            env.update(QT_OPENGL='software', QT_OPENGL_DLL='opengl32sw',
+                       QT_QUICK_BACKEND='software')
+        # Slicer discovers scripted modules by filename, but their sibling
+        # Python packages also need an import path before module construction.
+        env["PYTHONPATH"] = str(module_path.resolve())
         bundle = exe.parent / "offline_lumbar"
         if not bundle.exists():
             for ancestor in Path(__file__).resolve().parents:
@@ -70,6 +82,9 @@ class LocalRuntime:
                    AIPACS_RESIDENT_ROLE=self.role, AIPACS_OFFLINE_LUMBAR_ROOT=str(bundle),
                    AIPACS_RESIDENT_PARENT=str(os.getpid()),
                    AIPACS_RESIDENT_STARTUP=str(startup_script))
+        from aipacs_runtime import current_app_version
+        version = current_app_version()
+        env["AIPACS_VIEWER_TITLE"] = "AI-PACS Advanced Viewer" + (f" v{version}" if version else "")
         from modules.ai_imaging.eagle_eye_remote.settings import slicer_environment
         env.update(slicer_environment())
         command = [str(exe), "--no-splash", "--launcher-no-splash", "--disable-settings",
@@ -129,10 +144,15 @@ class LocalRuntime:
                     raise ValueError("Runtime response is too large")
         result = json.loads(response.split(b"\n", 1)[0])
         if not result.get("ok"):
+            if result.get("code") == "viewer_closing":
+                raise ViewerClosing("Advanced Analysis is closing")
             raise OperationRejected(result.get("error", "Runtime rejected request"))
         return result
 
     def command(self, operation, parameters, stop, timeout):
+        if self.role == "viewer" and operation in {"show", "load_dicom"}:
+            from .window_activation import allow_viewer_foreground
+            allow_viewer_foreground((self.connection or {}).get("pid"))
         request_id = uuid.uuid4().hex
         self.exchange({"operation": "submit", "id": request_id,
                        "command": operation, "parameters": parameters})
@@ -235,6 +255,9 @@ class ResidentService:
 
     def request(self, operation, parameters=None, *, timeout=120):
         def execute():
+            if (self.role == "viewer" and operation == "show" and self._runtime is not None
+                    and not self._runtime.alive()):
+                raise ViewerClosing("Advanced Analysis closed before window promotion")
             runtime = self._ensure_ready()
             try:
                 return runtime.command(operation, parameters or {}, self._stop, timeout)

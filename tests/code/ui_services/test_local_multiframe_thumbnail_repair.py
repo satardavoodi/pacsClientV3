@@ -1,4 +1,7 @@
 """Synthetic local-import thumbnails must not require a spatial viewer volume."""
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -6,7 +9,14 @@ import pytest
 from PIL import Image
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.sequence import Sequence
-from pydicom.uid import ExplicitVRLittleEndian, EnhancedMRImageStorage, generate_uid
+from pydicom.uid import (
+    ExplicitVRLittleEndian,
+    EnhancedMRImageStorage,
+    DigitalMammographyXRayImageStorageForPresentation,
+    MRImageStorage,
+    UltrasoundImageStorage,
+    generate_uid,
+)
 
 
 @pytest.fixture
@@ -65,6 +75,97 @@ def make_enhanced(folder, *, study_uid=None, series_uid=None):
     return ds
 
 
+def make_single_frame_mr(folder, *, study_uid=None, series_uid=None):
+    """Create a conventional image object suitable for a one-file thumbnail."""
+    folder.mkdir(parents=True, exist_ok=True)
+    meta = FileMetaDataset()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    meta.MediaStorageSOPClassUID = MRImageStorage
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    path = folder / 'image.dcm'
+    ds = FileDataset(str(path), {}, file_meta=meta, preamble=b'\0' * 128)
+    ds.is_little_endian = True
+    ds.is_implicit_VR = False
+    ds.SOPClassUID = MRImageStorage
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.StudyInstanceUID = study_uid or generate_uid()
+    ds.SeriesInstanceUID = series_uid or generate_uid()
+    ds.Modality = 'MR'
+    ds.InstanceNumber = 1
+    ds.Rows = ds.Columns = 8
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = 'MONOCHROME2'
+    ds.BitsAllocated = ds.BitsStored = 16
+    ds.HighBit = 15
+    ds.PixelRepresentation = 0
+    ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+    ds.ImagePositionPatient = [0, 0, 0]
+    ds.PixelSpacing = [1, 1]
+    ds.SliceThickness = 1
+    ds.WindowWidth = 64
+    ds.WindowCenter = 32
+    ds.PixelData = np.arange(64, dtype='<u2').reshape(8, 8).tobytes()
+    ds.save_as(path, write_like_original=False)
+    return ds
+
+
+def make_same_series_raw_data(folder, image):
+    """Create a metadata-only object that must remain stored but never decoded."""
+    from pydicom.uid import RawDataStorage
+
+    meta = FileMetaDataset()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    meta.MediaStorageSOPClassUID = RawDataStorage
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    path = folder / '00000_raw.dcm'
+    ds = FileDataset(str(path), {}, file_meta=meta, preamble=b'\0' * 128)
+    ds.is_little_endian = True
+    ds.is_implicit_VR = False
+    ds.SOPClassUID = RawDataStorage
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.StudyInstanceUID = image.StudyInstanceUID
+    ds.SeriesInstanceUID = image.SeriesInstanceUID
+    ds.Modality = image.Modality
+    ds.InstanceNumber = 0
+    ds.save_as(path, write_like_original=False)
+    return path
+
+
+def make_nonspatial_single_frame_series(folder, *, modality, sop_class, count=4):
+    """Create a conventional multi-object series without volume geometry."""
+    study_uid = generate_uid()
+    series_uid = generate_uid()
+    datasets = []
+    for index in range(count):
+        meta = FileMetaDataset()
+        meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        meta.MediaStorageSOPClassUID = sop_class
+        meta.MediaStorageSOPInstanceUID = generate_uid()
+        path = folder / f'image_{index + 1:03d}.dcm'
+        folder.mkdir(parents=True, exist_ok=True)
+        ds = FileDataset(str(path), {}, file_meta=meta, preamble=b'\0' * 128)
+        ds.is_little_endian = True
+        ds.is_implicit_VR = False
+        ds.SOPClassUID = sop_class
+        ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+        ds.StudyInstanceUID = study_uid
+        ds.SeriesInstanceUID = series_uid
+        ds.Modality = modality
+        ds.InstanceNumber = index + 1
+        ds.Rows = ds.Columns = 8
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = 'MONOCHROME2'
+        ds.BitsAllocated = ds.BitsStored = 16
+        ds.HighBit = 15
+        ds.PixelRepresentation = 0
+        ds.WindowWidth = 64
+        ds.WindowCenter = 32
+        ds.PixelData = (np.arange(64, dtype='<u2') + index).reshape(8, 8).tobytes()
+        ds.save_as(path, write_like_original=False)
+        datasets.append(ds)
+    return datasets
+
+
 def test_enhanced_mr_without_top_level_geometry_gets_local_png(tmp_path, repair_context):
     utils, published = repair_context
     folder = tmp_path / 'study' / '16_collision'
@@ -78,6 +179,52 @@ def test_enhanced_mr_without_top_level_geometry_gets_local_png(tmp_path, repair_
     assert pixels.shape == (8, 8)
     assert np.ptp(pixels) > 0
     assert published == [Path(path)]
+
+
+def test_enhanced_mr_thumbnail_skips_same_series_raw_data(tmp_path, repair_context):
+    utils, published = repair_context
+    folder = tmp_path / 'study' / '16_collision'
+    ds = make_enhanced(folder)
+    raw_path = make_same_series_raw_data(folder, ds)
+    path = utils.repair_local_series_thumbnail(
+        str(ds.StudyInstanceUID), {'patient_id': 'synthetic'},
+        {'series_uid': str(ds.SeriesInstanceUID)}, folder.name, str(folder))
+    assert path and raw_path.is_file()
+    pixels = np.asarray(Image.open(path))
+    assert pixels.shape == (8, 8) and np.ptp(pixels) > 0
+    assert published == [Path(path)]
+
+
+def test_same_missing_thumbnail_repair_is_single_flight(
+        tmp_path, repair_context, monkeypatch):
+    """Home and Patient Tab may request one cache miss concurrently."""
+    utils, published = repair_context
+    folder = tmp_path / 'study' / '16_collision'
+    ds = make_enhanced(folder)
+    real_preview = utils._local_multiframe_thumbnail_preview
+    count_lock = threading.Lock()
+    preview_calls = 0
+
+    def delayed_preview(*args, **kwargs):
+        nonlocal preview_calls
+        with count_lock:
+            preview_calls += 1
+        time.sleep(0.05)
+        return real_preview(*args, **kwargs)
+
+    monkeypatch.setattr(utils, '_local_multiframe_thumbnail_preview', delayed_preview)
+
+    def repair():
+        return utils.repair_local_series_thumbnail(
+            str(ds.StudyInstanceUID), {'patient_id': 'synthetic'},
+            {'series_uid': str(ds.SeriesInstanceUID)}, folder.name, str(folder))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        paths = list(pool.map(lambda _index: repair(), range(2)))
+
+    assert paths[0] == paths[1] and Path(paths[0]).is_file()
+    assert preview_calls == 1
+    assert published == [Path(paths[0])]
 
 
 def test_local_thumbnail_rejects_mismatched_series_identity(tmp_path, repair_context):
@@ -116,7 +263,8 @@ def test_import_preparation_repairs_multiframe_before_patient_open(tmp_path, rep
     assert len(published) == 1 and published[0].is_file()
 
 
-def test_ordinary_single_frame_retains_existing_preview_path(tmp_path, repair_context, monkeypatch):
+def test_ordinary_single_frame_falls_back_after_existing_preview_failure(
+        tmp_path, repair_context, monkeypatch):
     utils, published = repair_context
     folder = tmp_path / 'study' / '16'
     ds = make_enhanced(folder)
@@ -126,11 +274,72 @@ def test_ordinary_single_frame_retains_existing_preview_path(tmp_path, repair_co
     from PacsClient.pacs.patient_tab.utils import image_io
     called = []
     monkeypatch.setattr(image_io, 'load_series_preview', lambda **kw: called.append(kw))
-    assert utils.repair_local_series_thumbnail(
+    path = utils.repair_local_series_thumbnail(
         str(ds.StudyInstanceUID), {'patient_id': 'synthetic'},
-        {'series_uid': str(ds.SeriesInstanceUID)}, folder.name, str(folder)) == ''
+        {'series_uid': str(ds.SeriesInstanceUID)}, folder.name, str(folder))
+    assert path and Path(path).is_file()
     assert len(called) == 1 and called[0]['series_number'] == folder.name
-    assert published == []
+    assert published == [Path(path)]
+
+
+def test_single_frame_thumbnail_ignores_same_series_raw_data(
+        tmp_path, repair_context, monkeypatch):
+    """Metadata-only companions must not poison a pixel-bearing series thumbnail."""
+    utils, published = repair_context
+    folder = tmp_path / 'study' / '301'
+    ds = make_single_frame_mr(folder)
+    raw_path = make_same_series_raw_data(folder, ds)
+    from PacsClient.pacs.patient_tab.utils import image_io
+    monkeypatch.setattr(image_io, 'load_series_preview', lambda **_: None)
+
+    path = utils.repair_local_series_thumbnail(
+        str(ds.StudyInstanceUID), {'patient_id': 'synthetic'},
+        {'series_uid': str(ds.SeriesInstanceUID)}, folder.name, str(folder))
+
+    assert path, 'A metadata-only companion must not suppress the image thumbnail'
+    assert raw_path.is_file(), 'Thumbnail repair must never delete the companion object'
+    pixels = np.asarray(Image.open(path))
+    assert pixels.shape == (8, 8) and np.ptp(pixels) > 0
+    assert published == [Path(path)]
+
+
+@pytest.mark.parametrize(
+    ('modality', 'sop_class'),
+    [
+        ('MG', DigitalMammographyXRayImageStorageForPresentation),
+        ('US', UltrasoundImageStorage),
+    ],
+)
+def test_nonspatial_multifile_series_decodes_one_representative_thumbnail(
+        tmp_path, repair_context, monkeypatch, modality, sop_class):
+    """A non-volume image series still needs one bounded worker thumbnail."""
+    utils, published = repair_context
+    folder = tmp_path / 'study' / '1'
+    datasets = make_nonspatial_single_frame_series(
+        folder, modality=modality, sop_class=sop_class)
+    from PacsClient.pacs.patient_tab.utils import image_io
+    monkeypatch.setattr(
+        image_io, 'load_series_preview',
+        lambda **_: pytest.fail('Import repair must not repeat a failed spatial preview'))
+    real_read = utils.sitk.ReadImage
+    decoded = []
+
+    def tracked_read(path):
+        decoded.append(Path(path).name)
+        return real_read(path)
+
+    monkeypatch.setattr(utils.sitk, 'ReadImage', tracked_read)
+    first = datasets[0]
+    path = utils.repair_local_series_thumbnail(
+        str(first.StudyInstanceUID), {'patient_id': 'synthetic'},
+        {'series_uid': str(first.SeriesInstanceUID)}, folder.name, str(folder),
+        spatial_preview_failed=True)
+
+    assert path, 'Nonspatial pixel-bearing MG/US must produce a thumbnail'
+    assert len(decoded) == 1, 'Thumbnail repair must decode one representative object only'
+    pixels = np.asarray(Image.open(path))
+    assert pixels.shape == (8, 8) and np.ptp(pixels) > 0
+    assert published == [Path(path)]
 
 
 def make_dx(folder):

@@ -8,6 +8,7 @@ import logging
 from PySide6.QtCore import Qt, QPoint
 
 logger = logging.getLogger(__name__)
+DEFAULT_VRT_QUALITY = 'Detailed'
 
 
 def refine_vrt_property(prop, preset_name):
@@ -62,7 +63,7 @@ class _MprVrtMixin:
         if not info:
             return
         configure_vrt_quality(info['mapper'], info['property'], self.image_data.GetSpacing(),
-                              getattr(self, '_vrt_quality', 'Balanced'), interacting,
+                              getattr(self, '_vrt_quality', DEFAULT_VRT_QUALITY), interacting,
                               info.get('heavy', False))
         self._request_render('3d')
 
@@ -185,8 +186,8 @@ class _MprVrtMixin:
 
             from PySide6.QtWidgets import QComboBox, QSpinBox
             quality = QComboBox()
-            quality.addItems(['Balanced', 'Detailed'])
-            quality.setCurrentText(getattr(self, '_vrt_quality', 'Balanced'))
+            quality.addItems(['Detailed', 'Balanced'])
+            quality.setCurrentText(getattr(self, '_vrt_quality', DEFAULT_VRT_QUALITY))
             quality.setToolTip('Detailed adds local shadows at rest. Large volumes retain balanced lighting.')
             quality.currentTextChanged.connect(self._set_vrt_quality)
             root_layout.addWidget(QLabel('Render quality'))

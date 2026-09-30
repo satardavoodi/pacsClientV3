@@ -161,6 +161,24 @@ def _clean(value) -> str:
     return str(value or "").strip()
 
 
+def patient_row_study_uids(row: dict) -> list[str]:
+    """Normalize explicit study identities from one patient-owned socket row.
+
+    This extracts identities only; callers must verify the row's patient owner
+    and whether its query was patient-wide or filtered before claiming coverage.
+    """
+    raw = row.get('study_uids') or []
+    values = [raw] if isinstance(raw, str) else list(raw) if isinstance(raw, (list, tuple)) else []
+    studies = row.get('studies') or row.get('study_list') or []
+    if isinstance(studies, (list, tuple)):
+        for study in studies:
+            if isinstance(study, dict):
+                values.append(study.get('study_uid') or study.get('StudyInstanceUID')
+                              or study.get('studyInstanceUid'))
+    values.append(row.get('latest_study_uid'))
+    return list(dict.fromkeys(_clean(value) for value in values if _clean(value)))
+
+
 def merge_study_uids(
     sources: Iterable[Iterable[str]],
     selected_study_uid: str = "",

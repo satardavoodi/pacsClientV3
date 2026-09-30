@@ -31,6 +31,8 @@ def projection(monkeypatch, tmp_path):
     inventory_sources = {}
     calls = []
     backfills = []
+    repair_calls = []
+    repair_results = {}
 
     def query(study_uid):
         calls.append(study_uid)
@@ -42,6 +44,12 @@ def projection(monkeypatch, tmp_path):
     db_writer.mark_series_pixel_inventories = lambda records: backfills.append(list(records))
     utils = ModuleType("PacsClient.pacs.patient_tab.utils.utils")
     utils.canonical_thumbnail_path = lambda uid, key: tmp_path / uid / f"{key}.png"
+    def repair(study_uid, study_info, series, folder_key, series_path, **kwargs):
+        repair_calls.append((
+            study_uid, study_info, series, folder_key, series_path, kwargs,
+        ))
+        return repair_results.get(series.get("series_uid"), "")
+    utils.repair_local_series_thumbnail = repair
     pixels = ModuleType("PacsClient.utils.dicom_displayability")
 
     def inspect(path):
@@ -87,6 +95,7 @@ def projection(monkeypatch, tmp_path):
         run=lambda: namespace[method.name](object(), "study-a"),
         add=add, rows=rows, inventories=inventories, calls=calls, db=db,
         backfills=backfills, inventory_sources=inventory_sources,
+        repair_calls=repair_calls, repair_results=repair_results,
     )
 
 
@@ -149,6 +158,23 @@ def test_verified_inventory_emits_one_aggregate_fast_path_marker(projection, cap
         "series=2 files=27 frames=445"
     ]
     assert projection.backfills == []
+
+
+def test_missing_cached_png_uses_shared_local_repair(projection, tmp_path):
+    series = projection.add("uid-mg", "1", "1", 4, 4)
+    repaired = tmp_path / "repaired" / "1.png"
+    repaired.parent.mkdir(parents=True)
+    repaired.write_bytes(b"synthetic-png")
+    projection.repair_results["uid-mg"] = str(repaired)
+
+    row = projection.run()["thumbnails"][0]
+
+    assert row["file_path"] == row["thumbnail_path"] == str(repaired)
+    assert len(projection.repair_calls) == 1
+    call = projection.repair_calls[0]
+    assert call[0] == "study-a"
+    assert call[2]["series_uid"] == "uid-mg"
+    assert call[3:] == ("1", series["series_path"], {})
 
 
 def test_partial_projection_still_assigns_keys_to_completed_rows(projection):

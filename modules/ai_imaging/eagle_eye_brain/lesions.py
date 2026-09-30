@@ -71,7 +71,8 @@ def measure_mask(flair, mask):
 
 def run_lesions(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
                 cancel=None, progress=None, demographics=None, primary_disease='other', clinical_note='', fazekas_overall=None,
-                acquisition_mode='3d'):
+                acquisition_mode='3d', flair_secondary_source=None, flair_secondary_uid=None,
+                t1_post_source=None, t1_post_uid=None, contrast_roles_confirmed=False):
     if acquisition_mode not in ('3d', '2d'):
         raise BrainError('Select 2D or 3D acquisition mode.')
     from ..eagle_eye_remote.settings import remote_required
@@ -80,11 +81,22 @@ def run_lesions(t1_source, flair_source, *, study_uid, t1_uid, flair_uid, root,
         return lesions(t1_source, flair_source, study_uid, t1_uid, flair_uid, root,
                        cancel=cancel, progress=progress, primary_disease=primary_disease,
                        clinical_note=clinical_note, fazekas_overall=fazekas_overall,
+                       flair_secondary_source=flair_secondary_source, flair_secondary_uid=flair_secondary_uid,
+                       t1_post_source=t1_post_source, t1_post_uid=t1_post_uid,
+                       contrast_roles_confirmed=contrast_roles_confirmed,
                        **({'acquisition_mode': '2d'} if acquisition_mode == '2d' else {}))
     from .service import _ANALYSIS_LOCK
     if not _ANALYSIS_LOCK.acquire(blocking=False):
         raise BrainError('Another brain analysis is running. Wait for it to finish or cancel it first.')
     try:
+        if flair_secondary_source or t1_post_source:
+            from .lesion_multisequence import run
+            return run(t1_source, flair_source, study_uid=study_uid, t1_uid=t1_uid, flair_uid=flair_uid,
+                       root=root, cancel=cancel, progress=progress, demographics=demographics,
+                       primary_disease=primary_disease, clinical_note=clinical_note, fazekas_overall=fazekas_overall,
+                       acquisition_mode=acquisition_mode, flair_secondary_source=flair_secondary_source,
+                       flair_secondary_uid=flair_secondary_uid, t1_post_source=t1_post_source,
+                       t1_post_uid=t1_post_uid, contrast_roles_confirmed=contrast_roles_confirmed)
         if acquisition_mode == '2d':
             from .lesions_2d import run_2d
             return run_2d(t1_source, flair_source, study_uid=study_uid, t1_uid=t1_uid,

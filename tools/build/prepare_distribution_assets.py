@@ -49,7 +49,7 @@ def snapshot_runtime(source, destination):
             shutil.copy2(source_path, target)
 
 
-def verify(root, *, profile="all"):
+def verify(root, *, profile="all", require_lumen=False):
     if profile not in {"all", "client"}:
         raise ValueError("Unknown distribution asset verification profile")
     root = Path(root).resolve()
@@ -87,6 +87,13 @@ def verify(root, *, profile="all"):
             raise ValueError("Build asset hash mismatch: " + item["path"])
     if not required.issubset(seen):
         raise ValueError("Required runtime or build assets are absent from the inventory")
+    if require_lumen:
+        from builder.lumen_vmtk_payload import verify_bundle
+        if "lumen_vmtk/manifest.json" not in seen:
+            raise ValueError("Lumen VMTK is missing; prepare a fresh distribution asset cache")
+        lumen = verify_bundle(root / "lumen_vmtk")
+        if not {"lumen_vmtk/" + name for name in lumen["files"]}.issubset(seen):
+            raise ValueError("Lumen VMTK files are absent from the asset inventory")
     return manifest
 
 
@@ -118,7 +125,7 @@ def reuse_non_slicer_assets(donor, destination):
                 or ".." in relative.parts or ":" in name):
             raise ValueError("Unsafe or duplicate donor asset path")
         seen.add(name)
-        if name.startswith("slicer-runtime/"):
+        if name.startswith(("slicer-runtime/", "lumen_vmtk/")):
             continue
         source = (donor / relative).resolve()
         if not source.is_relative_to(donor) or not source.is_file():
@@ -140,7 +147,8 @@ def cache_wheels(python, requirements, destination, log, *, model=False):
     # Exact installed versions; no dependency resolution or environment modification.
     command = [sys.executable, "-m", "pip", "--isolated", "--python", str(python),
                "wheel", "--no-deps", "--no-build-isolation", "--progress-bar", "off",
-               "--wheel-dir", str(destination), "--index-url", "https://pypi.org/simple"]
+               "--wheel-dir", str(destination), "--find-links", str(destination),
+               "--index-url", "https://pypi.org/simple"]
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "PIP_"))}
     env["PIP_CACHE_DIR"] = str(REPO / "generated-files/offline-lumbar/downloads/pip")
     lines = requirements.read_text(encoding="utf-8").splitlines()
@@ -189,7 +197,7 @@ def main():
     parser.add_argument("--refresh-wheels", action="store_true",
                         help="Verify a completed cache, refresh its locked wheels, and rebuild the inventory")
     parser.add_argument("--reuse-non-slicer-assets", type=Path,
-                        help="Copy verified non-Slicer inputs from a complete old cache; snapshot current Slicer")
+                        help="Copy verified non-Slicer inputs into a fresh cache; --download-wheels refreshes only build locks/wheels")
     args = parser.parse_args()
     root = args.root.resolve()
     if args.check:
@@ -201,8 +209,8 @@ def main():
     from builder.build_release import find_iscc
     from builder.slicer_runtime_payload import verify_native_build_provenance
     refreshing = args.refresh_wheels
-    if args.reuse_non_slicer_assets and (args.profile != "all" or refreshing or args.download_wheels):
-        parser.error("Reuse requires --profile all and cannot refresh or download wheels")
+    if args.reuse_non_slicer_assets and (args.profile != "all" or refreshing):
+        parser.error("Reuse requires --profile all and cannot refresh a completed cache")
     if refreshing:
         verify(root, profile=args.profile)
         args.download_wheels = True
@@ -222,6 +230,8 @@ def main():
         slicer_runtime = advanced_mpr_runtime_root()
         verify_native_build_provenance(REPO, slicer_runtime)
         snapshot_runtime(slicer_runtime, root / "slicer-runtime")
+        from builder.lumen_vmtk_payload import stage_lumen_vmtk
+        stage_lumen_vmtk(root)
         if args.profile == "all" and donor_manifest is None:
             print("Validating and caching the complete offline model environment", flush=True)
             stage_offline_lumbar(root, REPO / "generated-files/offline-lumbar/bundle")
@@ -261,6 +271,17 @@ def main():
                              root / "model-wheels", root / "model-wheel-download.log", model=True)
             print("Caching all pinned workstation/build wheels (Python 3.13, x64)", flush=True)
             cache_wheels(build_python, build_lock, root / "build-wheels", root / "build-wheel-download.log")
+    elif args.download_wheels:
+        # The donor has already been hash-verified and copied into a fresh root.
+        # Model locks/wheels stay intact; only current build-interpreter pins are
+        # refreshed, reusing matching cached wheels with offline graph validation.
+        build_python = REPO / ".venv_build/Scripts/python.exe"
+        expression = ("import importlib.metadata as m; "
+                      "print('\\n'.join(sorted(d.metadata['Name']+'=='+d.version for d in m.distributions())))")
+        build_lock = root / "build-environment.lock"
+        build_lock.write_text(subprocess.check_output([str(build_python), "-c", expression], text=True), encoding="utf-8")
+        print("Refreshing pinned build wheels in the new cache; donor and model inputs unchanged", flush=True)
+        cache_wheels(build_python, build_lock, root / "build-wheels", root / "build-wheel-download.log")
     records = []
     for path in sorted(root.rglob("*")):
         if (path.is_file() and path != root / "manifest.json" and

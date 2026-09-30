@@ -1,5 +1,16 @@
 # Multi-Study Single-Tab Viewer — Implementation Record
 
+**2026-09-30 patient-scope discovery correction (OPT-58/60):** filtered Home list
+counts and modalities cannot prove complete patient membership. Server first-open
+now obtains an unfiltered exact-patient row on a worker before admitting the tab;
+Home reconciliation reuses its global row through the same discovery and pure UID
+normalization. Selected study remains first; existing group slots, series-local
+numbers, document placement and header/card counters remain unchanged. Local stays
+offline. Tests cover hidden DOC and same-modality repeat studies, exact ownership,
+legacy row forms and cancellation. This addresses late discovery, not VTK or media
+decode. Fresh-source first-open completeness and latency gates remain pending; see
+the dated receipt in `reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`.
+
 **2026-09-26 patient-tab header thumbnail correction:** the tab header now consumes
 the same successfully admitted card sequence as the grouped sidebar. It skips the
 exact history document using `_orig_series_number`, so an offset key neither hides an

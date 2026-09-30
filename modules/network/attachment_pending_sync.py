@@ -30,6 +30,7 @@ import os
 import re
 import threading
 import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -56,21 +57,27 @@ def _manifest_path(study_uid: str) -> Path:
     return ATTACHMENT_PATH / study_uid / _MANIFEST_FILENAME
 
 
-def _load_manifest(path: Path) -> dict:
+def _load_manifest(path: Path, *, strict: bool = False) -> dict:
     if not path.exists():
         return {"version": _MANIFEST_VERSION, "pending": {}}
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if not isinstance(data.get("pending"), dict):
+        if not isinstance(data, dict) or not isinstance(data.get("pending"), dict):
+            if strict:
+                raise ValueError('Invalid pending attachment manifest')
+            if not isinstance(data, dict):
+                data = {}
             data["pending"] = {}
         return data
     except Exception as e:
+        if strict:
+            raise
         logger.warning(f"[PENDING_SYNC] Could not read manifest {path}: {e} — resetting")
         return {"version": _MANIFEST_VERSION, "pending": {}}
 
 
-def _save_manifest(path: Path, data: dict) -> None:
+def _save_manifest(path: Path, data: dict) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write: write to tmp file then rename
     try:
@@ -78,7 +85,10 @@ def _save_manifest(path: Path, data: dict) -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, str(path))
+            return True
         except Exception:
             try:
                 os.unlink(tmp)
@@ -87,6 +97,35 @@ def _save_manifest(path: Path, data: dict) -> None:
             raise
     except Exception as e:
         logger.warning(f"[PENDING_SYNC] Could not save manifest {path}: {e}")
+        return False
+
+
+def get_upload_id(study_uid: str, filename: str, content_sha256: str) -> str:
+    """Persist retry identity before sending bytes, including across restarts.
+
+    Fail closed on corrupt manifests: replacing an unreadable identity could
+    turn an already committed but unacknowledged upload into a second object.
+    """
+    with _get_study_lock(study_uid):
+        path = _manifest_path(study_uid)
+        if path.exists():
+            with path.open(encoding='utf-8') as handle:
+                data = json.load(handle)
+            if not isinstance(data.get('pending'), dict):
+                raise ValueError('Invalid pending attachment manifest')
+        else:
+            data = {'version': _MANIFEST_VERSION, 'pending': {}}
+        entry = data['pending'].setdefault(filename, {
+            'saved_at': datetime.now().isoformat(), 'last_attempt': None, 'attempts': 0})
+        identities = data.setdefault('upload_identities', {})
+        identity = identities.get(filename, entry)
+        if identity.get('content_sha256') != content_sha256 or not identity.get('upload_id'):
+            identity = dict(upload_id=uuid.uuid4().hex, content_sha256=content_sha256)
+        identities[filename] = {k: identity[k] for k in ('upload_id', 'content_sha256')}
+        entry.update(identities[filename])
+        if not _save_manifest(path, data):
+            raise OSError('Could not persist attachment retry identity')
+        return entry['upload_id']
 
 
 # ─────────────────────────────────────────
@@ -104,6 +143,15 @@ def mark_pending(study_uid: str, filename: str) -> None:
     lock = _get_study_lock(study_uid)
     with lock:
         path = _manifest_path(study_uid)
+        if path.exists():
+            try:
+                with path.open(encoding='utf-8') as handle:
+                    existing = json.load(handle)
+                if not isinstance(existing.get('pending'), dict):
+                    return
+            except (ValueError, OSError):
+                # Preserve an unreadable retry identity for investigation.
+                return
         data = _load_manifest(path)
         if filename not in data["pending"]:
             data["pending"][filename] = {
@@ -125,7 +173,10 @@ def mark_synced(study_uid: str, filename: str) -> None:
     lock = _get_study_lock(study_uid)
     with lock:
         path = _manifest_path(study_uid)
-        data = _load_manifest(path)
+        try:
+            data = _load_manifest(path, strict=True)
+        except (ValueError, OSError):
+            return  # Never rewrite unreadable retry identities after an ACK.
         if filename in data["pending"]:
             del data["pending"][filename]
             _save_manifest(path, data)
@@ -142,12 +193,14 @@ def record_attempt(study_uid: str, filename: str) -> None:
     lock = _get_study_lock(study_uid)
     with lock:
         path = _manifest_path(study_uid)
-        data = _load_manifest(path)
+        data = _load_manifest(path, strict=True)
         entry = data["pending"].get(filename)
-        if entry is not None:
-            entry["attempts"] = entry.get("attempts", 0) + 1
-            entry["last_attempt"] = datetime.now().isoformat()
-            _save_manifest(path, data)
+        if entry is None:
+            raise ValueError('Pending attachment entry disappeared before attempt')
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        entry["last_attempt"] = datetime.now().isoformat()
+        if not _save_manifest(path, data):
+            raise OSError('Could not persist attachment attempt')
 
 
 def get_pending_files(study_uid: str) -> List[str]:
@@ -201,7 +254,10 @@ def clear_all_pending(study_uid: str) -> None:
     with lock:
         path = _manifest_path(study_uid)
         if path.exists():
-            data = _load_manifest(path)
+            try:
+                data = _load_manifest(path, strict=True)
+            except (ValueError, OSError):
+                return  # Keep corrupt retry identity for recovery, not reset.
             data["pending"] = {}
             _save_manifest(path, data)
 

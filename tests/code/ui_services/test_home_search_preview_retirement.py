@@ -38,6 +38,9 @@ def scene(monkeypatch):
     pt.get_patient_data_by_row = lambda index: row if index == 0 and table.rowCount() else {}
     pt.begin_bulk_insert = Mock()
     pt.end_bulk_insert = Mock()
+    pt.prime_imported_on_cache = Mock()
+    pt.prime_visited_patient_ids = Mock()
+    pt._arm_stream_settle_sort = Mock()
     home = SimpleNamespace(
         patient_table_widget=pt, right_panel_widget=panel,
         _active_thumb_patient_id="synthetic-p", _active_thumb_study_uid="synthetic-s",
@@ -63,6 +66,7 @@ def scene(monkeypatch):
     pt.click_timer.start(60000)
     home._thumbnail_request_timer.start(60000)
     service = HomeSearchService(home)
+    monkeypatch.setattr(service, "_prefetch_advanced_page", lambda rows: dict(uids=[], imported_at={}, known_patient_ids=set()))
     monkeypatch.setattr(service, "_maybe_switch_profile_and_restart", lambda *a: False)
     monkeypatch.setattr(service, "_connectivity_is_fresh", lambda: True)
     monkeypatch.setattr(service, "_mark_connectivity", lambda *a: None)
@@ -70,7 +74,7 @@ def scene(monkeypatch):
     monkeypatch.setattr(service, "_convert_search_data_to_socket_params", lambda *a: {})
     from PacsClient.pacs.workstation_ui.home_ui import home_search_service as search_module
     monkeypatch.setattr(search_module.QMessageBox, "critical", Mock(side_effect=AssertionError("Unexpected error dialog")))
-    socket = SimpleNamespace(search_patients_sync=lambda params: [], test_connection=lambda: True)
+    socket = SimpleNamespace(search_patients_sync=lambda params, **kwargs: [], test_connection=lambda: True)
     for name, members in (
         ("modules.network.socket_config", dict(update_socket_server_settings=lambda **kw: None,
                                                get_socket_server_settings=lambda: {"port": 1})),
@@ -135,7 +139,7 @@ def test_empty_query_preserves_surviving_pinned_selection(scene, advanced):
 @pytest.mark.parametrize("advanced", [False, True])
 @pytest.mark.parametrize("stop", ["cancel", "supersede"])
 def test_cancelled_or_superseded_empty_response_keeps_current_preview(scene, advanced, stop):
-    def finish(params):
+    def finish(params, **kwargs):
         if stop == "cancel":
             scene.home._cancel_search_requested = True
         else:

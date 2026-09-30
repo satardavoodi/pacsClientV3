@@ -4,7 +4,7 @@ Release date: 2026-09-26
 Release commit: resolved from the immutable annotated tag and Git synchronization receipt
 Release tag: `v3.6.8`
 Source branch: `beta-version`
-Source publication status: READY
+Source publication status: SYNCHRONIZED; four Client installers compiled and verified locally
 Production approval: NOT YET GIVEN
 
 ## Outcome and scope
@@ -34,7 +34,7 @@ installer outputs. Cardiac Flow normalization and DICOMDIR remain required.
 |---|---|---|
 | Build interpreter | .venv_build pip check | PASS, 2026-09-26 |
 | Plugin mirror parity | verify_plugin_mirrors.py, 472 matching pairs | PASS, 2026-09-26 |
-| Current tracked-tree secret scan | Canonical path-only scanner, no findings before staging new source | PASS; staged-tree audit still required |
+| Current tracked-tree secret scan | Canonical path-only scanner, no findings before or after staging; publication audit passed | PASS; historical incident remains open |
 | Version and focused packaging guards | Direct pytest, 171 passed; exit 0 | PASS |
 | Eagle Eye configuration isolation and role checks | Two fail-before sanitizer guards; 20 related tests passed after; exit 0 | PASS |
 | Changed-code diagnostic suite | 827 passed, 1 xfailed, 3 failed; the owned role expectation was corrected with 43 passing tests, two pre-existing spinner doubles remain | KNOWN BASELINE FAILURES; NOT GREEN |
@@ -42,8 +42,10 @@ installer outputs. Cardiac Flow normalization and DICOMDIR remain required.
 | Native Slicer/cache parity | verify_cache_matches_developer_runtime, exit 0 | PASS |
 | Git/identity/Settings/presentation checks | Additional 60 direct tests passed, exit 0 | PASS |
 | Standard MPR VRT receipt | Owner's completed 69-test record plus 5 direct local VRT guards, exit 0; fresh source GUI pending | CODE VERIFIED; NOT CLINICALLY ACCEPTED |
-| Git synchronization | Exact commit, tag and three-remote receipt | PENDING |
-| Installer matrix | Four Client files, resources, hashes and coherence | PENDING |
+| Git synchronization | Commit `050cb0b3f17acad274467ce3027797de081cf65d`, tag `v3.6.8`, receipt `generated-files/release-git/v3.6.8-050cb0b3f17a.json`; main and beta-version verified on all three remotes | PASS |
+| Isolated PyInstaller stage | Frozen MPR geometry, 28 sanitized config templates, eight optional packages, codec metadata, education parity and Lite Viewer self-test | PASS |
+| Installer matrix | Four Client files, independent lengths/SHA-256, both Windows version resources 3.6.8; PyInstaller, Nuitka and coherence exit 0 | PASS; local compiled artifacts, not uploaded |
+| Frozen payload parity | Both staged Slicer startup/UI/background guard payloads match snapshot; both Qt/ICU cores pass; Nuitka XML includes Flow, DICOMDIR and five codec metadata records | PASS; installed GUI still pending |
 | Clean install, upgrade, ARM64 and clinical GUI | Isolated host and human acceptance | NOT RUN |
 
 ## Deliberate exclusions

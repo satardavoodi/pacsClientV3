@@ -1,6 +1,198 @@
 # AI-PACS — Software Optimization, Stability & Reliability Master Plan
 
+## 2026-09-30: OPT-51 / OPT-56 Eagle Eye-hosted EchoMind
+
+Registered RAZI_SERVER aliases now use Eagle Eye's paired TLS listener, not the
+older PACS HTTP pilot. Server-owned headless prompts cover 14 text workflows,
+with request-local settings/templates, bounded admission and redacted failures.
+Turbo Correction retains modality-keyed region context. 252 affected local
+guards and 94 staged target guards passed; 495 mirrors match. All 15 actual
+synthetic Client-to-Razi EchoMind calls passed after the empty-queue versioned
+Developer service cutover on port 8002.
+
+OPT-56 startup reached READY with a hidden warm-up window after an app-local
+Mesa delta on a separate copy of the current prepared Slicer. No System32/global
+driver or canonical native payload was overwritten. Actual rendered GUI and
+full inference/review/export acceptance remain separate; Breast classification
+retains its explicitly deferred schema limitation. No installer or whole-server
+clinical qualification is claimed. See the EchoMind routing and Razi server
+acceptance documents dated 2026-09-30.
+
+## 2026-09-30: OPT-58 / OPT-60 first-open patient study-scope correction
+
+The observed first-open omission was upstream of thumbnail presentation: a filtered
+MR row exposed one study, while an unfiltered exact-patient read exposed MR + DOC.
+Home's deferred reconciliation repaired the catalog about 154.7 seconds after open
+(seven cards/one study became eight cards/two studies). The Server open resolver now
+verifies unfiltered patient scope in its existing worker discovery boundary. Home
+reuses its already-global row; both share pure UID extraction. Local remains offline;
+selected-study order, study-local numbering, group slots, card/media mapping,
+downloads and Fast/Advanced/VTK execution are unchanged. No new producer or cache.
+
+Fail-before membership guards reproduce hidden DOC, same-modality repeats and missing
+list metadata. The 14-case guard adds ownership, legacy replies, Local, cancellation
+and failure coverage; the final selection passed 219 tests (151 UI/service and 68
+candidate-packaging/profile checks), exit 0. Detailed results, dirty-file hashes,
+edition/backend handoff and rollback are in the September
+30 section of `docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`. Plugin parity:
+495 pairs match. Fresh-source first-open multi-study GUI/KPI and produced-artifact
+acceptance remain open. A worker query adds network wait before admission; do not
+claim measured post-fix speed, universal server completeness or full Unify closure.
+
+## 2026-09-29: OPT-60 imported-series thumbnail pixel/nonspatial authority
+
+A real imported MR dataset completed without copy errors and exposed a shared
+thumbnail-source defect: most pixel-bearing series also contained one preserved
+metadata-only Raw Data Storage object under the same SeriesInstanceUID.  Catalog and
+viewer pixel inventory correctly admitted the image series, but the PNG preparation
+path passed every DICOM object to the spatial geometry contract.  The Raw Data object
+has no IPP/IOP, so preview construction deferred and the Patient Tab kept a placeholder.
+Series without the companion object produced PNGs, proving that Import, disk storage,
+series identity and image decode were not the failing boundaries.
+
+A second imported multi-study dataset exposed the adjacent case without Raw Data.
+Import registered all 9 studies, 28 series and 65 pixel-bearing objects without an
+ERROR/CRITICAL event.  Twenty-two single-object series had PNGs, while six conventional
+multi-object MG/US series retained placeholders.  Every missing series decoded
+successfully, but none of its objects had IPP/IOP volume geometry.  Home correctly
+showed only the selected study in its right panel; the missing card media was the bug.
+
+The normal geometry-aware single-frame preview remains authoritative.  The existing
+worker-owned repair now classifies files through the shared partial-read pixel
+authority and uses a bounded header-only fallback after spatial preview rejection when
+the exact series folder contains a conclusively single-frame pixel collection.  This
+covers conventional nonspatial MG/US and mixed image/metadata folders.  Metadata
+objects remain on disk and out of frame/geometry projection; identity is revalidated
+before decoding one representative middle image.  Mixed single/multi-frame input and
+multi-object DX presentation remain fail-closed for their dedicated adapters.  Import
+tells repair when the spatial preview has already failed so the same full geometry
+attempt is not repeated.
+Enhanced multi-frame repair now also skips same-series metadata-only objects before
+selecting its pixel source.  No GUI-thread I/O, catalog membership, series numbering,
+download state, Fast/Advanced viewer decode, VTK geometry or cache format changed.
+
+The conventional-image-plus-Raw-Data guard failed before the correction and passes
+afterward; an Enhanced-MR-plus-Raw-Data guard protects the adjacent contract.  New
+multi-object nonspatial MG and US guards both failed before the follow-up and pass
+afterward while proving one pixel decode per series.  The focused and adjacent
+Import/Local/thumbnail/Fast selections pass 186 unique tests.  Read-only runs produced
+the earlier affected MR preview and all six missing MG/US previews; the MG/US set took
+about 598 ms total (about 27-166 ms each) without writing source or cache. Plugin
+mirror parity is 495/495. The release-candidate packaging selection has 45 passes and
+one unrelated current baseline failure in `build_local_candidate.run_builds`
+(`selected_backends` signature drift), so the full build-input gate is not claimed
+green. Fresh source Import, first-open card replacement, multi-study identity and
+restart acceptance remain open; no installed-artifact acceptance is claimed.
+
+Fresh source evidence then exposed two presentation seams that the decoder correction
+could not reach. Home Local resolved indexed pixel inventories but converted every
+missing PNG directly to a placeholder; it never invoked the shared worker-owned repair.
+On the same nine-study case, grouped Home rendering also raised a `TypeError` when a
+numeric SeriesNumber and a textual SeriesNumber were compared, aborting the final card
+publication. Home now calls the same repair only from its existing `asyncio.to_thread`
+projection, and the repair is single-flight per study/storage key so simultaneous Home
+and Patient-Tab misses cannot duplicate decode or race the canonical write. Mixed
+numeric/text series values use a tagged total-order key. No new producer, retry,
+timer, cache, GUI-thread I/O, viewer decoder or VTK path was added. The two exact guards
+failed before correction; a concurrent repair guard proves one decode. The expanded
+affected/adjacent selection passes 198 tests, and the focused correction set passes 23.
+The currently running source process predates this follow-up; a fresh restart and Local
+Home/Patient-Tab visual pass remain required.
+
+## 2026-09-28: OPT-24 Advanced Search request contract
+
+Follow-up: corrected array-aware body-part refinement after the restarted source
+returned 100 rows but singular-only checks let unrelated anatomy through. Four
+fail-before guards and 33 passing combined checks; fresh GUI pending. Patient-level
+matching and the existing fetch cap are retained, with no exhaustive-search claim.
+
+Corrected list-versus-string modality serialization at the existing Home search
+mapper. Current session shows failed response before body-part refinement;
+synthetic fail-before evidence and 24 passing focused checks are recorded in
+`docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`. No performance claim or
+pagination change. Fresh source GUI and installed acceptance remain pending.
+
+## 2026-09-28/29: OPT-58 / OPT-60 first-open thumbnail convergence
+
+Client evidence separated a first-open blank Patient-Tab sidebar from catalog loss.
+The authoritative series metadata reached the widget, but a cold shared thumbnail
+cache caused the noncritical-network gate to defer 18 times and terminate. Home later
+completed an independent cache-first request, so closing and reopening reused six
+cached cards and masked the defect. A second inconsistency made diagnosis noisier:
+Home could label an empty manual layout `first_series_visible`, while the PatientWidget
+read a separate flag that ViewerController never updated.
+
+The first correction preserved the throttle with a terminal release. Later source
+evidence superseded that compromise: one cold catalog was intentionally deferred for
+approximately 8.84 seconds although its existing socket worker took about 95 ms and
+the server timing was about 76 ms. Because the manual-only viewer needs cards to select
+the first series, the initial catalog is essential bootstrap work. It now bypasses the
+cosmetic throttle and immediately uses the same off-GUI socket worker; the retry timer
+family was removed rather than retained as another path. Actual rendered visibility is
+read from ViewerController through a PatientWidget query. Home no longer publishes
+`first_series_visible` or replays deferred work when `loading_complete` means only that
+an empty shell settled.
+
+The same review found a second completeness defect: cache presence was used as series
+membership. One cached PNG could short-circuit the socket and omit every catalog series
+without a PNG; grouped rows were explicitly filtered the same way. Catalog metadata now
+owns the complete single/multi-study card set, while cache/socket media is UID-first
+enrichment. Partial cache takes one final presentation path, missing media retains a
+placeholder row, duplicate numbers use canonical storage keys, and empty payloads are
+not persisted. Complete cache reuse also suppresses redundant count-persistence writes;
+fresh authoritative socket/local rows retain the established persistence behavior.
+There is no new timer family, fetcher, synchronous GUI I/O, download state, series
+order, decoder, Fast/Advanced or VTK change. The September 29 refinement added two
+exact fail-before guards; all six convergence guards and 187 affected/adjacent
+identity/sidebar/offline tests pass. The 141-series synthetic sidebar KPI remains
+bounded (`max_apply_ms` about 12.1 ms in this run). Compilation and targeted diff
+checks pass.
+Fresh source cold/partial-cache first-open and reopen GUI/KPI
+acceptance remains open; installed 3.6.9 logs diagnose the defect but do not validate
+the source correction.
+
+## 2026-09-27: OPT-28 / OPT-30 LAN attachment retry acknowledgement
+
+Source repair extends the existing connectivity and truthful-sync items. The server
+comparison found four byte-identical extra copies in eight examined sync sessions;
+whole-sync durations were 3.424–58.527 seconds, not pure LAN transfer measurements.
+The attachment client now persists content-bound upload IDs, negotiates server
+idempotency, correlates responses, rejects truncated frames and reconnects before
+retry. Legacy servers get one attempt. Retry manifests/temp files are not uploaded.
+The paired PACS source stores complete immutable files before conditional Mongo
+metadata/count/version updates and queues attachment/status broadcasts separately.
+No client UI success predicate or local-first preservation invariant was relaxed.
+
+Initial verification: 47 focused workstation tests passed, including 9 new
+retry/manifest guards (five failed before implementation). Code-owner follow-up
+found bulk pending clear could reset a corrupt identity manifest and attempt
+bookkeeping could allow sending after identity corruption/disappearance. New
+fail-before guards cover those cases; strict mutation reads preserve corrupt
+manifests, and missing/unwritable attempt records stop before sending. Final
+attachment suite has 51 passing tests; the combined attachment/queue-interaction
+selection has 76 passes (exit 0). Paired server tests cover lost ACK
+with actual client/server wire methods, concurrent writes and storage failures.
+473 payload pairs match; these two network modules have no mirrors. Code gate only:
+control ping/actions work, but the current source session predates the final edits.
+The separate server deployment receipt now records Razi 3.0.91; this is not client
+acceptance. Fresh-source GUI and exact new client artifact acceptance remain open.
+No clinical records were deleted or client release built by the code-owner task.
+Manifest locking remains in-process; changed attachment metadata can correctly
+conflict with a reused content identity. External deletion of the identity ledger
+cannot provide cross-restart replay guarantees. Candidate release/security gates
+remain with the build owner; these tests are not a repository security audit.
+
+
 ## 2026-09-26: OPT-47/48 Standard MPR VRT presentation
+
+September 27 follow-up: owner requests high quality without opt-in. Initial
+render, interaction/preset updates and UI now share DEFAULT_VRT_QUALITY=Detailed.
+31 focused tests pass; new default guard failed before. Existing resource bounds
+remain. Airway scope clarified: general airway-tree extraction/display belongs
+in Standard MPR; branch tracking, curved MPR and fly-through remain advanced.
+Current HU-only airway preset does not isolate airway lumen. SlicerAirwaySegmentation
+and CIP adaptive seeded extraction researched; extraction integration remains
+unimplemented and must not be claimed fixed by the quality-default change.
 
 Owner-approved VRT-only property refinement, CT threshold offset and Balanced/
 Detailed quality now implemented in existing mixins. Spacing-aware ray step,
@@ -19,6 +211,14 @@ The explicit 2D lesion worker retains required model/runtime hashing while avoid
 
 
 ## 2026-09-26: OPT-58 / OPT-60 canonical thumbnail order and row ownership
+
+September 27 OPT-60 reliability follow-up: user-authorized blank-download-queue
+prevention recovers orphan viewer-interaction protection after confirmed idle
+conditions and makes Refresh schedule queue rendering. Three fail-before guards;
+45 focused tests pass, 473 mirror pairs match. No downloader/state mutation or
+U0-U5 progression. The original live trigger remains unproven; fresh source GUI
+and Client/Server artifact gates remain open. UI-stall and VTK owner receipts
+document evidence, conservative recovery conditions and scoped rollback.
 
 **State: code-verified; fresh-source GUI and artifact acceptance pending.** A large
 Patient-Tab sidebar could receive two producer generations with different order. The
@@ -2296,6 +2496,41 @@ compensations* the lifecycle authority will absorb and let us delete.
 
 ## 9. Canonical optimization backlog (Deliverables 6 + 7)
 
+### OPT-61 - Education authoring and instructor presentation (2026-09-29)
+
+Slide cover follow-up: custom normalized slide thumbnails stored with course assets,
+portable transfer round trip and automatic fallback; readable document-type tiles.
+Four synthetic cover/migration guards pass; live source GUI remains pending.
+
+
+2026-09-29 presenter follow-up: right-aligned course author attribution, collapsible
+resource browser retaining selection/navigation, and persistent video sink recovery
+after errors. Synthetic Qt/decoder guards added in test_presenter_dock.py; live
+source acceptance remains pending because the local test-control bridge is unavailable.
+
+
+Owner: Education authoring/content orchestration, not viewer decoding/rendering.
+User scope: easy Build Course UX, durable edits and reliable lecturer presentation.
+Implemented: file-backed text and local PowerPoint-to-PDF previews;
+side-by-side metadata, responsive two-column items and title-row actions;
+resizable authoring panes and fully wrapped thumbnail titles;
+asynchronous slide/item previews and copy-only DICOM patient-name options;
+editable existing downloads with explicit export-only read-only copies;
+single-row item toolbar; exact Patient ID picker with background reads;
+folder-based DICOM authoring and local folder drop; compact Build Course title/stage row and save-status footer with
+window-size geometry guards; update-in-place course cards; pending-slide save/failure retention;
+unified editing; atomic item order; worker-based item asset copying and resource
+preflight; presenter window/navigation; generation-checked media selection; fail-closed
+DICOM content references. Code verification and remaining live gates are recorded in
+[the Education review](reports/EDUCATION_REVIEW_2026-09-29.md).
+State: code-verified; source GUI/real media and DICOM acceptance pending. No measured
+lecture-scale speedup or online-publishing claim. Portable local Education transfer
+is implemented with Education header and Settings Export/Import entry points,
+isolated destination/rollback/integrity tests; fresh GUI and
+physical second-computer acceptance remain pending. Item and cover copies
+run on workers; remaining bulk-import I/O belongs here rather than a parallel plan.
+Rollback: scoped pre-edit backup and source/payload hashes in the review.
+
 **OPT-56 Total Spine local-model follow-up (2026-09-18):** the new SAM correction
 workflow reuses Alignment's sealed portable runtime without changing that runtime
 or another viewer domain. `eagle_eye_total_spine/runtime_seal.py` holds a
@@ -2391,7 +2626,7 @@ States: VERIFIED-COMPLETE · COMPLETE-MONITOR · PARTIAL · READY-SAFE · IMPL-U
 
 | **OPT-28** | **Stale pooled socket handed out as healthy — the connectivity root cause.** `PatientListSocketClient.is_connected()` is a FLAG (`self.connected and self.socket is not None`), never validated. On a public-internet path (remote server / NAT / firewall) an idle pooled connection is closed by the peer; the flag still says "connected", so `SocketConnectionPool.get_connection()` hands out the corpse, `send_request` skips its reconnect branch, `sendall` succeeds into the dead socket and the read hits **EOF** → `Invalid response length header` → **`return None` with NO retry**. `return_connection()` then re-pooled it, so a single blip kept failing after the network recovered. Only the **UI-facing** client is affected — the DM client (`download_manager/network/socket_client.py`) already has `REQUEST_MAX_RETRIES`/`connect_with_retry` and rode out the same fault | Network (patient list / report status / previous exams) | **Field logs 2026-07-13 (laptop, server `81.16.117.196` over the internet):** EVERY socket error in the session is `Invalid response length header` — **zero timeouts** — across `GetPatientList` (×7), `UpdateReportStatus` (×2), `GetPatientReceptionHistory` (×3), plus one `[WinError 10053]`. Surfaced as `❌ Search returned None` / `Update failed - no response from server` | **SHIPPED default-on 2026-07-13** (`modules/network/socket_client.py`): (1) `is_socket_alive()` — real liveness probe (`select` → readable-with-0-bytes = EOF = dead; readable-with-bytes = stream desync = dead; not-readable = alive, the cheap common path); (2) `is_reusable(max_idle)` — healthy + not idle past `AIPACS_SOCKET_POOL_IDLE_S` (default 30 s, below any common NAT idle timeout) + alive; (3) pool `get_connection()` gates on `is_reusable`, `return_connection()` REFUSES to re-pool a client whose last request failed (`healthy=False`) or that is disconnected; (4) `send_request()` = pre-flight recycle + **one reconnect-and-resend when the failure happened BEFORE any response byte** (`_last_error_zero_byte`) — a half-open socket means the server never saw the request, so this is side-effect-safe even for `UpdateReportStatus`; a **mid-response** failure is never resent (the request may have been applied), and a live-connection timeout is never resent. Kill switch `AIPACS_SOCKET_RECONNECT_RETRY=0` = byte-identical legacy | **Very high** (kills the whole network-loss failure family + its non-recovery) | **Low** (additive; narrow retry classification; kill-switched; DM path untouched) | Low | **IMPL-VERIFIED offscreen** (16/16 new guard tests `tests/code/network/test_socket_pool_health.py`; full `tests/code/network` + `ui_services` + `system` + `download_manager` + `storage` = **1219 passed, 0 new failures vs the stashed baseline**) | **P0 — NEEDS live verify on the laptop (pull the network, search, restore, search again → recovers silently)** |
 | **OPT-29** | **Patient-table Shiboken native ACCESS VIOLATION during row construction and clear.** The July guard stopped cell-widget teardown/re-entrant producers, but the table still replaced the hidden `order` `SortableItem` twice per row and bulk-invalidated all remaining `QTableWidgetItem` wrappers from inside `setRowCount(0)`. Local search also called `QApplication.processEvents()` synchronously between clear and its normal coroutine yield | A / home UI | **Native-symbol confirmation 2026-08-28:** all four v3.6.3 Windows Application Error events (2026-08-24 10:53; 2026-08-28 11:05, 11:20, 22:18) fault in `shiboken6.abi3.dll`, exception `0xc0000005`, offset `0x26f20`; PE exports place that address at `Shiboken::BindingManager::releaseWrapper + 0x90`. Faulthandler stacks split exactly between `add_patient_data` at the duplicate `setItem` and `clear_table` at `setRowCount(0)`. The paired Windows System/Application logs contain no GPU reset, OOM, disk, or network precursor at the crash windows | **SHIPPED source fix 2026-08-28**, preserving the existing `AIPACS_SAFE_CLEAR_TABLE` rollback path: (1) create the hidden `order` item once; (2) transfer every row item out of Qt ownership with `takeItem` before `removeRow`/`setRowCount(0)`, retain strong Python references through the model mutation, then release them afterward; (3) apply the same rule to provisional-pin row removal and row-count shrink; (4) retain deferred cell-widget destruction; (5) remove Local Server's redundant nested `QApplication.processEvents()` call and use the existing `await asyncio.sleep(0)` yield | **Very high** (whole-app crash) | **Low-Med** (ownership/lifetime only; no clinical, network, database, or visible table behavior change; legacy kill switch retained) | Low | **ROOT CAUSE CONFIRMED + IMPL-VERIFIED offscreen**: four new guards failed on the pre-fix source; fixed suite **16/16 passed**, including a real Qt/Shiboken test proving taken subclassed items remain valid across `setRowCount(0)`; direct `py_compile` and diff checks green. Upgrade-only is not accepted because Shiboken 6.10.3 retains the same release path and has no matching release-note fix | **P0 — NEEDS live source-build soak on the affected PC: repeatedly open Local Server / local list, alternate searches, and exercise 45+ rows with active status/download updates; then ship only after zero new native faults** |
-| **OPT-30** | **"Sync Status" reports SUCCESS when the server never received it — clinical state divergence.** `PatientSyncService._sync_worker` emitted `sync_completed` unconditionally (`sync_failed` only on an exception); a failed attachment upload or a failed `update_report_status` merely appended to `result['errors']`. `toolbar_manager.on_sync_completed` never inspected `errors` / `status_updated`, so it set the study to **`physician_approved`**, painted the home row green ("synced") and **CLOSED the patient tab** — while the server had received nothing. The queued `statusError` from the report-status service then popped a modal on the home table AFTER the tab was gone (the symptom the user reported) | Reporting / sync | **Field logs 2026-07-13, twice:** `13:26:52 ERROR Update failed - no response from server` → `13:26:54 [VOICE-DELETE-GUARD] … non-user teardown` (the tab closing). Same pair at 11:58:30 → 11:58:35. Both are OPT-28's dead-socket EOF on `UpdateReportStatus` | **SHIPPED default-on 2026-07-13**: (1) pure `_sync_result_failed(result)` — success requires no recorded errors AND `status_updated` True AND `attachments_failed == 0`; `_sync_worker` routes anything else to **`sync_failed`** (keeps the tab open, offers Retry; local files were never at risk — the local-first/non-destructive-reconcile guards are untouched). Kill switch `AIPACS_SYNC_STRICT_RESULT=0`; (2) `on_sync_completed` RE-VALIDATES with the same pure predicate before it closes the tab / writes `physician_approved` (defence in depth — it is the site that asserts the server state); (3) `sync_in_progress()` (+ grace window for the queued cross-thread signals) suppresses the duplicate `statusError` popup while the sync owns that error | **Very high** (the workstation asserted a clinical state the server never had) | **Low** (additive predicate; kill-switched; no change to the successful path) | Low | **IMPL-VERIFIED offscreen** (14/14 new guard tests `tests/code/ui_services/test_sync_status_strict_result.py`; 0 regressions) | **P0 — NEEDS live verify (sync with the network down → tab stays open + Retry; sync with the network up → unchanged success + close)** |
+| **OPT-30** | **"Sync Status" reports SUCCESS when the server never received it — clinical state divergence.** `PatientSyncService._sync_worker` emitted `sync_completed` unconditionally (`sync_failed` only on an exception); a failed attachment upload or a failed `update_report_status` merely appended to `result['errors']`. `toolbar_manager.on_sync_completed` never inspected `errors` / `status_updated`, so it set the study to **`physician_approved`**, painted the home row green ("synced") and **CLOSED the patient tab** — while the server had received nothing. The queued `statusError` from the report-status service then popped a modal on the home table AFTER the tab was gone (the symptom the user reported) | Reporting / sync | **Field logs 2026-07-13, twice:** `13:26:52 ERROR Update failed - no response from server` → `13:26:54 [VOICE-DELETE-GUARD] … non-user teardown` (the tab closing). Same pair at 11:58:30 → 11:58:35. Both are OPT-28's dead-socket EOF on `UpdateReportStatus` | **SHIPPED default-on 2026-07-13**: (1) pure `_sync_result_failed(result)` — success requires no recorded errors AND `status_updated` True AND `attachments_failed == 0`; `_sync_worker` routes anything else to **`sync_failed`** (keeps the tab open, offers Retry; local files were never at risk — the local-first/non-destructive-reconcile guards are untouched). Kill switch `AIPACS_SYNC_STRICT_RESULT=0`; (2) `on_sync_completed` RE-VALIDATES with the same pure predicate before it closes the tab / writes `physician_approved` (defence in depth — it is the site that asserts the server state); (3) `sync_in_progress()` (+ grace window for the queued cross-thread signals) suppresses the duplicate `statusError` popup while the sync owns that error | **Very high** (the workstation asserted a clinical state the server never had) | **Low** (additive predicate; kill-switched; no change to the successful path) | Low | **IMPL-VERIFIED offscreen** (14/14 new guard tests `tests/code/ui_services/test_sync_status_strict_result.py`; 0 regressions) | **P0 — NEEDS live verify (sync with the network down → tab stays open + Retry; sync with the network up → unchanged success + close)**  **2026-09-27 source extension:** duplicate-safe attachment retry/ACK repair; 47 focused passes, fresh GUI/staged acceptance pending. |
 | **OPT-31** | **Modal dialogs on a network-failure path spin a NESTED Qt event loop on the GUI thread** — the app "freezes", and timers/coroutines keep firing behind the dialog (the search coroutine, the status-refresh chain, the pin-overlay timer), which is exactly the re-entrancy OPT-29 lives in. On a flaky link they arrive in bursts | A / home UI | Same 2026-07-13 session: repeated `Search returned None` → repeated `QMessageBox.critical` | **SHIPPED default-on 2026-07-13**: `_show_conn_failed` (`home_search_service.py`) and `_on_report_status_error` (`patient_table_widget.py`) now use a NON-modal `QMessageBox.show()` (no nested loop), at most one box per burst, with the persistent connection indicator carrying the state. Kill switches `AIPACS_MODAL_CONN_FAILED=1` / `AIPACS_MODAL_STATUS_ERROR=1` restore the modals | Med-High (perceived freeze + re-entrancy) | **Low** | Low | **IMPL-VERIFIED offscreen** (pinned by the OPT-29/30 guard tests) | **P1 — NEEDS live verify** |
 | **OPT-32** | Patient-list search ~0.5 s = **server-side date+modality SCAN**, confirmed by the built-in one-shot A/B probe (`with_study_count_ms=489 vs without=434, delta=55 → "SCAN is the cost (not enrichment) → needs a SERVER-side index; no client fix helps"`). Client waste on top: the pre-flight `test_connection()` is a FULL extra `GetPatientList` round-trip, and `[SEED_CONFIG]` re-scans 7-10× per search. The *perceived* multi-second slowness was OPT-28 (dead socket → empty result → re-probe → another round-trip) | Network / server | `[SEARCH-PERF] search_ms=489/504/538 rows=45`, `[SEARCH-ENRICH-PROBE]` verdict, 2026-07-13 | Not started. Same index fix already applied at the other centre (see OPT-24 history) | Med (perceived latency) | Low (server-side) | Low | **NOT STARTED** — server-side index is the only real fix; the client-side probe can be dropped once OPT-28 makes a stale socket self-heal | **P2** |
 
@@ -2690,6 +2925,20 @@ source build — the only lane that proves GUI/render/clinical behavior; human-a
 ---
 
 ## 15. Validation & regression history (living log)
+
+### 2026-09-29 - OPT-61 Education authoring/presentation
+
+Before: five authoring failures (duplicate draft, lost text, failure retention,
+finish save and imported metadata), two navigation/display failures, one atomic-order
+failure, one automatic-external-opening failure and three DICOM identity/fallback
+failures reproduced on synthetic inputs. A bounded backup probe showed item-copy
+execution on the GUI thread; the worker guard proves execution outside it after.
+This is a thread-ownership result, not a latency benchmark. Added preflight/window,
+cancel/retirement, resource navigation, fullscreen and saved-preview checks.
+Read the Education review for final suite totals, backup, mirrors and pending source
+GUI acceptance. No viewer decoder/filter/cache or clinical data migration was changed.
+
+2026-09-27 — OPT-28/OPT-30: paired LAN upload repair; persistent upload IDs, capability-gated retries on fresh sockets, exact response framing/correlation, and bookkeeping exclusion. Five fail-before guards; final focused selection 47 passed; mirror parity 473/473. Synthetic server lost-ACK readback/count checks pass. No post-change production KPI or fresh GUI acceptance yet.
 
 **2026-09-18, OPT-56 / Total Spine SAM:** verified immutable-runtime reuse,
 changed-file revalidation, cancellation and no cache after failed/changing seals
@@ -3944,3 +4193,120 @@ packaging-input checks pass 42; compilation and diff checks pass. Selection perf
 no scan, DICOM read, DB/network call, decode or VTK construction. Fresh-source GUI is
 still required for cold/cached, history, multi-study and rapid-tab-switch acceptance;
 installed PyInstaller/Nuitka artifacts remain pending under the normal build workflow.
+
+
+### OPT-48: non-dental Curve MPR reconstruction, September 27
+
+The Curve MPR menu route performed per-pixel Python frame interpolation and all
+VTK probes on Qt's thread, instantiated unused VRT panes, and sampled a different
+volume from its axial display. Corrected with vectorized worker sampling, latest
+request/cancellation ownership, displayed-volume input and the existing axial-only
+host/off-thread flip. Geometry conventions and Dental Curve MPR are unchanged.
+Two fail-before guards reproduced the defect; 74 selected checks pass and final
+lifecycle hardening passes 38 focused checks. Synthetic pixel parity is exact;
+473 plugin mirror pairs match. Fresh-source native menu/drawing/close acceptance
+and built-artifact coverage remain pending. Evidence, hashes and rollback live in
+`docs/reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md`, September 27
+non-dental Curve MPR section; this extends OPT-48, not a new workstream.
+
+
+### OPT-48 follow-up: Curve MPR VRT modes and menu lifecycle, September 27
+
+Owner-selected Original VRT and Straightened VRT now share the fourth pane with
+Curved MIP. Straightening is bounded, cancellable worker resampling around the
+existing curve; preset appearance is not vessel segmentation. The missing
+`_curve_mpr_widget` restore/lifecycle registration is corrected and the menu's
+checked state uses the live session. Nine dedicated guards pass; 59 final boundary
+checks pass, after 80 adjacent passes and three existing quarantines. Fresh native
+GUI and artifact validation remain open. Source hashes, research and evidence:
+VTK owner report, "Curve MPR selectable VRT and reliable toggle". No new OPT ID.
+
+
+### OPT-48: paired longitudinal CPR and path-local VRT, September 27
+
+Owner explicitly selected full-path CPR planes at 90 degrees. Source Axial/Sagittal/
+Coronal selection now reuses canonical panes; output camera rotations are independent.
+Path width bounds both CPR sampling and the default original-space VRT crop. Airway
+preset is available without claiming extraction. 84 affected tests passed; subsequent
+anisotropic-crop/real-picker/builder selection had 25 passes and one unrelated global
+Advanced Slicer mirror-drift failure. Native source and artifact gates remain open;
+see the existing VTK owner report for source hashes, crop limits, exclusions and
+rollback. The earlier whole-chest default and midpoint second pane are superseded.
+
+
+### OPT-48: circular path support and angular CPR scrolling, September 27
+
+CurveMPR now masks a circular tube around the spline in original and straightened
+VRT; Tube diameter replaces the ambiguous Path width label. Wheel/angle controls
+rotate the two worker-sampled longitudinal planes with a shared 90-degree offset.
+Angle-only updates reuse VRT and mask. Initial view puts path start at top.
+The initial tube guards failed before implementation; an independent oblique,
+anisotropic bent-path guard exposed and corrected VTK distance-budget semantics.
+Final 84 focused/adjacent/build-input tests pass, two stage-artifact tests excluded;
+484 mirror pairs pass. Synthetic tube calculation sample: 0.261 s for a 128-cube.
+No measured clinical speedup is claimed. Fresh source GUI and artifact gates remain
+pending. Root cause, hashes, research, rollback and acceptance: existing VTK domains
+owner report, circular tube and angular scrolling section. No new OPT ID.
+
+
+### OPT-48: continuous Curve orbit and input parity, September 27 follow-up
+
+Same-path angle requests no longer invalidate every in-flight result; the completed
+paired frame is presented before coalescing to the latest angle. Hidden MIP work is
+skipped in VRT mode (synthetic warm worker samples approximately 446-482 ms before,
+87-88 ms after; native paint latency unverified). Curve now requests Standard's
+existing anatomical preparation in its worker and reuses Standard VRT gestures and
+appearance functions. 128 focused/adjacent/profile passes; strengthened scheduling
+guard selection 14 passes; 484 mirrors match. Source GUI/clinical laterality and all
+six artifact gates remain open. Evidence/hashes/rollback: VTK owner report's source
+orientation, continuous orbit and VRT controls section. No new OPT item.
+
+
+### OPT-48: Curve VRT crop/mask texture alignment, September 27
+
+User confirmed corrected axial and scrolling; partial VRT remained. Real GPU test
+isolated nonzero extracted extents at the binary-mask renderer boundary (11,260
+foreground pixels without mask versus zero with mask). Rebasing only the private
+local crop and mask to zero-based indices, preserving each physical voxel position,
+restores three-axis support. 61 focused/adjacent/parity passes, two artifact-stage
+deselections; 484 mirrors match. Fresh native VRT acceptance remains pending.
+No CPR/Standard geometry or performance algorithm change. Evidence and rollback:
+existing VTK owner report, Curve VRT crop/mask texture alignment section.
+
+### OPT-56: Advanced Analysis close/reopen, September 27
+
+Bounded asynchronous reopen grace now waits for both process completion state and
+the previous launcher QThread. Three new fail-before guards cover reopen and
+PHI-free operation diagnostics; 25 related tests pass, including 20 synthetic
+sessions. The later user-reported RuntimeError cause and fresh-source GUI gate
+remain open. See the existing VTK domains owner report's close/reopen section.
+Rollback is limited to the new pending-launch timer and diagnostic stage additions;
+do not revert other in-progress Advanced Analysis work.
+
+
+OPT-56 close/reopen follow-up: native shutdown unloads modules then pumps Qt events;
+the resident timer could start a queued import during that pump. ViewerCloseGuard
+now serializes native close behind command completion/reply, suppresses shutdown
+reentry, and preserves Cancel Exit. 41 related tests pass plus both workspace
+activations in an isolated offscreen native probe. Exact user-case fresh-source
+and artifact acceptance remain pending; details in the same VTK owner report.
+
+
+OPT-56 corrected diagnosis: the exact resident socket/DICOM launch reproduced the
+activation RuntimeError without user Close. Qt implicit last-window quit unloaded
+modules during hidden startup; early disabling of implicit quit plus explicit exit
+after accepted close corrects that boundary. tools/slicer/probe_resident_lumen.py
+now preserves the real launch path without timing-changing Python startup scripts.
+See the VTK owner report; previous Close-only attribution was incomplete.
+
+### 2026-09-30 - OPT-24 advanced search follow-up
+
+Advanced search now visits subsequent 100-row pages, refines on workers and renders
+ten-row batches. Display/scan bounds are explicit incomplete results, not silent
+truncation. 46 focused tests pass; live responsiveness/artifact acceptance pending.
+Evidence: docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md, September 30 entry.
+
+OPT-24 / OPT-50 follow-up, 2026-09-30: advanced pagination no longer acquires
+the tab input overlay; generation-scoped streaming defers whole-table sorting,
+with worker metadata prefetch. 54 related checks pass; four legacy Local guards
+fail identically on pre-change backup. Fresh live responsiveness remains pending.

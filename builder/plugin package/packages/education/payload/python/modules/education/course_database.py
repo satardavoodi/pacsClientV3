@@ -1,6 +1,7 @@
 """Database operations for educational courses."""
 
 import json
+import re
 import shutil
 import sqlite3
 from pathlib import Path
@@ -14,6 +15,32 @@ BOOK_EXTENSIONS = {".pdf", ".epub", ".mobi", ".azw", ".txt", ".doc", ".docx"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"}
 MEDIA_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".aac", ".m4a"}
 PPT_EXTENSIONS = {".ppt", ".pptx"}
+
+
+def _filter_values(value):
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    return {str(item).strip().casefold() for item in values if item is not None and str(item).strip()}
+
+
+def modality_matches(stored, selected):
+    """Compare educational labels and DICOM codes without rewriting metadata."""
+    aliases = {'mri': 'mr', 'x-ray': 'xr', 'xray': 'xr', 'dx': 'xr',
+               'cr': 'xr', 'px': 'xr', 'mammography': 'mg', 'pet': 'pt',
+               'fluoroscopy': 'rf'}
+    def codes(value):
+        return {aliases.get(token.strip(), token.strip())
+                for text in _filter_values(value)
+                for token in re.split(r'[,;/\\|]+', text) if token.strip()}
+    wanted = codes(selected)
+    return not wanted or bool(codes(stored) & wanted)
+
+
+def course_matches_query(course, query):
+    query = str(query or '').strip().casefold()
+    fields = ('course_name', 'course_description', 'author_name', 'resource_type',
+              'content_origin', 'modality', 'body_regions', 'tags')
+    text = ' '.join(str(course.get(key) or '') for key in fields).casefold()
+    return not query or query in text
 
 
 def _normalize_resource_type(value: Optional[str]) -> str:
@@ -37,6 +64,17 @@ def _safe_json_loads(value, default):
         return json.loads(value)
     except Exception:
         return default
+
+
+def _require_editable(conn, *, course_pk=None, slide_pk=None, content_pk=None):
+    if content_pk is not None:
+        row = conn.execute("SELECT c.is_editable FROM courses c JOIN slides s ON s.course_fk=c.course_pk JOIN slide_content i ON i.slide_fk=s.slide_pk WHERE i.content_pk=?", (content_pk,)).fetchone()
+    elif slide_pk is not None:
+        row = conn.execute("SELECT c.is_editable FROM courses c JOIN slides s ON s.course_fk=c.course_pk WHERE s.slide_pk=?", (slide_pk,)).fetchone()
+    else:
+        row = conn.execute("SELECT is_editable FROM courses WHERE course_pk=?", (course_pk,)).fetchone()
+    if row is not None and not row[0]:
+        raise PermissionError("This course was exported with editing disabled.")
 
 
 def insert_course(name: str, description: str = "", author: str = "", 
@@ -103,6 +141,8 @@ def update_course(course_pk: int, name: str = None, description: str = None,
                   is_my_course: bool = None, is_downloaded: bool = None):
     """Update an existing course."""
     with get_db_connection() as conn:
+        if any(value is not None for value in (name, description, author, outline, thumbnail_path, tags, modality, body_regions, level, resource_type, content_origin)):
+            _require_editable(conn, course_pk=course_pk)
         cur = conn.cursor()
         
         # Build dynamic update query based on provided fields
@@ -230,39 +270,28 @@ def search_and_filter_courses(query: str = "", modality: List[str] = None,
                 continue
             
         # Query filter (case-insensitive search)
-        if query:
-            query_lower = query.lower()
-            search_text = (
-                f"{course.get('course_name', '')} "
-                f"{course.get('course_description', '')} "
-                f"{course.get('author_name', '')} "
-                f"{course.get('resource_type', '')} "
-                f"{course.get('content_origin', '')}"
-            ).lower()
-            course_tags = ' '.join(course.get('tags', [])).lower()
-            
-            if query_lower not in search_text and query_lower not in course_tags:
-                continue
+        if not course_matches_query(course, query):
+            continue
         
         # Modality filter
         if modality:
-            if course.get('modality') not in modality:
+            if not modality_matches(course.get('modality'), modality):
                 continue
         
         # Body regions filter
         if body_regions:
             course_regions = course.get('body_regions', [])
-            if not any(region in course_regions for region in body_regions):
+            if not (_filter_values(course_regions) & _filter_values(body_regions)):
                 continue
         
         # Level filter
-        if level and course.get('level') != level:
+        if level and _filter_values(course.get('level')) != _filter_values(level):
             continue
         
         # Tags filter
         if tags:
             course_tags = course.get('tags', [])
-            if not any(tag in course_tags for tag in tags):
+            if not (_filter_values(course_tags) & _filter_values(tags)):
                 continue
         
         filtered.append(course)
@@ -295,6 +324,7 @@ def insert_slide(course_fk: int, slide_order: int, title: str = "",
         slide_pk: Primary key of inserted slide
     """
     with get_db_connection() as conn:
+        _require_editable(conn, course_pk=course_fk)
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO slides (course_fk, slide_order, slide_title, slide_notes)
@@ -306,9 +336,10 @@ def insert_slide(course_fk: int, slide_order: int, title: str = "",
 
 
 def update_slide(slide_pk: int, slide_order: int = None, title: str = None,
-                 notes: str = None):
+                 notes: str = None, thumbnail_path: str = None):
     """Update an existing slide."""
     with get_db_connection() as conn:
+        _require_editable(conn, slide_pk=slide_pk)
         cur = conn.cursor()
 
         updates = []
@@ -323,6 +354,9 @@ def update_slide(slide_pk: int, slide_order: int = None, title: str = None,
         if notes is not None:
             updates.append("slide_notes = ?")
             params.append(notes)
+        if thumbnail_path is not None:
+            updates.append("thumbnail_path = ?")
+            params.append(thumbnail_path)
 
         if updates:
             params.append(slide_pk)
@@ -334,6 +368,7 @@ def update_slide(slide_pk: int, slide_order: int = None, title: str = None,
 def delete_slide(slide_pk: int):
     """Delete a slide and all associated content (cascade)."""
     with get_db_connection() as conn:
+        _require_editable(conn, slide_pk=slide_pk)
         cur = conn.cursor()
         cur.execute("DELETE FROM slides WHERE slide_pk = ?", (slide_pk,))
         conn.commit()  # pool rolls back uncommitted writes
@@ -378,6 +413,7 @@ def insert_slide_content(slide_fk: int, content_type: str, content_order: int,
         content_pk: Primary key of inserted content
     """
     with get_db_connection() as conn:
+        _require_editable(conn, slide_pk=slide_fk)
         cur = conn.cursor()
 
         content_data_json = json.dumps(content_data)
@@ -398,6 +434,7 @@ def update_slide_content(content_pk: int, content_type: str = None,
                         layout_position: Dict[str, Any] = None):
     """Update existing slide content."""
     with get_db_connection() as conn:
+        _require_editable(conn, content_pk=content_pk)
         cur = conn.cursor()
 
         updates = []
@@ -426,6 +463,7 @@ def update_slide_content(content_pk: int, content_type: str = None,
 def delete_slide_content(content_pk: int):
     """Delete slide content."""
     with get_db_connection() as conn:
+        _require_editable(conn, content_pk=content_pk)
         cur = conn.cursor()
         cur.execute("DELETE FROM slide_content WHERE content_pk = ?", (content_pk,))
         conn.commit()  # pool rolls back uncommitted writes
@@ -491,6 +529,7 @@ def reorder_slides(course_pk: int, slide_pks_in_order: List[int]):
         slide_pks_in_order: List of slide_pk values in desired order
     """
     with get_db_connection() as conn:
+        _require_editable(conn, course_pk=course_pk)
         cur = conn.cursor()
 
         for order, slide_pk in enumerate(slide_pks_in_order, start=1):
@@ -500,6 +539,21 @@ def reorder_slides(course_pk: int, slide_pks_in_order: List[int]):
                 WHERE slide_pk = ? AND course_fk = ?
             """, (order, slide_pk, course_pk))
         conn.commit()  # pool rolls back uncommitted writes
+
+
+def reorder_slide_content(slide_pk: int, content_pks_in_order: List[int]):
+    """Reorder one complete slide atomically; reject stale/foreign item lists."""
+    with get_db_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _require_editable(conn, slide_pk=slide_pk)
+        existing = {row[0] for row in conn.execute(
+            "SELECT content_pk FROM slide_content WHERE slide_fk = ?", (slide_pk,)
+        )}
+        if len(content_pks_in_order) != len(existing) or set(content_pks_in_order) != existing:
+            raise ValueError("Slide content changed; reload before reordering.")
+        conn.executemany("UPDATE slide_content SET content_order = ? WHERE content_pk = ? AND slide_fk = ?",
+                         [(order, pk, slide_pk) for order, pk in enumerate(content_pks_in_order, 1)])
+        conn.commit()
 
 
 def save_course_asset(file_path: str, course_pk: int) -> str:

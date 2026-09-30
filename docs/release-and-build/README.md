@@ -20,6 +20,10 @@ and release-candidate task. It is a navigation layer, not an alternate runbook.
    [definitive custom Slicer baseline](SLICER_NATIVE_BASELINE_2026-09-23.md).
    Client and Server must use that same native runtime; ordinary builds reuse
    it without recompilation.
+   For the next candidate, also complete the
+   [Advanced Analysis inclusion handoff](ADVANCED_ANALYSIS_NEXT_BUILD_2026-09-27.md):
+   new Python workspaces plus the separate VMTK native bundle in a fresh selected
+   asset cache. Existing completed installers are not evidence of this inclusion.
 6. Before an Eagle Eye Server installer, read the
    [separate service packaging gate](../../builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md).
    A source-service pilot does not qualify a frozen installer.
@@ -35,15 +39,29 @@ Standard and ARM64-emulated from PyInstaller and Nuitka. An explicit Eagle Eye
 Server request means the two-file Eagle Eye group, one per backend. The same two
 canonical output folders serve both groups, but each uses a distinct immutable
 candidate and records its `build_target`. A Server release remains blocked while
-portable Breast/Bone payloads and service/clean-host qualification are unfinished;
-Server local install QA is non-promotable and currently blocked until the
-service dependency preflight has a separately prepared build cache.
+installed Breast/Bone portability and service/clean-host qualification are
+unfinished. Standalone model build inputs and a pywin32-qualified dependency
+cache are now available for v3.6.9 local install QA; neither is production
+acceptance.
+
+An explicit one-backend Server install-QA request is the narrow exception in
+`BUILD.md`: the coordinator selects that backend, writes only its canonical
+installer and records that cross-backend coherence does not apply. It does not
+qualify or refresh the other backend.
+
+The September 28 request explicitly selects completion of official Server
+packaging, then both role groups. Follow the
+[service packaging evidence](../../builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md)
+and [current safety record](../releases/deploy-record-client-server-2026-09-28.md).
+Fresh-cache preparation, standalone model preparation and passing source guards
+do not clear installed-model, installer-transaction or frozen clean-host gates.
 
 | Need | Start here | Result |
 |---|---|---|
 | Test a source change | `BUILD.md` → Source validation | Tests and Developer Run evidence; no installer |
 | Create a Standard Client build | `RELEASE.md`, then `BUILD.md` → Canonical role-selected command | Standard and ARM from both backends: four files in the existing folders |
 | Create an Eagle Eye Server QA build | `BUILD.md` → Local role-selected install QA | Eagle Eye from both backends: two non-promotable files in the existing folders |
+| Create an explicitly one-backend Eagle Eye Server install-QA file | `BUILD.md` → Explicit one-backend Server install QA | Only the selected backend's canonical Eagle Eye file; the other backend is unchanged |
 | Recover an interrupted role build | `BUILD.md` → Same-candidate interruption recovery | The same immutable, recorded role; completed work is retained |
 | Check one installer/profile when explicitly requested | `BUILD.md` → Optional single-package diagnostic | One non-promotable backend/edition inside temporary compiler scratch space |
 | Publish a release source revision | `RELEASE.md` | One verified SHA/tag on all required remotes plus a receipt |

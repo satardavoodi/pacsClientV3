@@ -78,7 +78,13 @@ def test_scan_missing_folder_reports_error(tmp_path):
     assert result.errors
 
 
-def test_discover_media_root_prefers_cli_then_probes(tmp_path):
+def test_discover_media_root_prefers_cli_then_probes(tmp_path, monkeypatch):
+    # A missing CLI match probes environment/cwd; do not scan developer or
+    # provisioned build assets. No executable directory is supplied here.
+    monkeypatch.delenv('AIPACS_IMPORT_FOLDER', raising=False)
+    probe_cwd = tmp_path / 'probe-cwd'
+    probe_cwd.mkdir()
+    monkeypatch.chdir(probe_cwd)
     study_uid = generate_uid()
     series_uid = generate_uid()
 

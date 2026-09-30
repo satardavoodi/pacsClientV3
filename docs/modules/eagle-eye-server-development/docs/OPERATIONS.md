@@ -1,5 +1,13 @@
 # Operations, logs and diagnosis
 
+## Current route (2026-09-30)
+
+Use the exact `AIPacsEagleEye` SCM command and paired TLS 8002 ownership checks
+in [the current checkpoint](ECHOMIND_SERVER_2026-09-30.md). Its versioned baseline,
+candidate, private config and transition backup supersede the old task/port
+commands below. Never kill a listener by port/name alone. Loaded-model drain,
+reboot, full rollback and installer acceptance remain separate gates.
+
 The following read-only commands can run in PowerShell on Razi:
 
 ```powershell

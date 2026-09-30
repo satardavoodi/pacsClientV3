@@ -384,11 +384,19 @@ class SlicerLauncherWorker(QThread):
     def run(self):
         """Execute the Slicer launch in a separate thread."""
         try:
-            from .resident_service import get_service, resident_enabled
+            from .resident_service import get_service, resident_enabled, ViewerClosing
             if resident_enabled() and self._remote_payload:
                 # Join an in-flight warmup; never race it with another launch.
                 service = get_service()
-                service.request("load_dicom", self._remote_payload).result(timeout=245)
+                try:
+                    loaded = service.request("load_dicom", self._remote_payload).result(timeout=245)
+                    # Import may outlast the initial Qt activation; promote the ready
+                    # viewer through a fresh, process-specific foreground grant.
+                    if not loaded.get("close_requested"):
+                        service.request("show", {}).result(timeout=10)
+                except ViewerClosing:
+                    self.finished_signal.emit(service.wait_until_closed())
+                    return
                 self.started_signal.emit()
                 self.finished_signal.emit(service.wait_until_closed())
                 return
@@ -403,7 +411,7 @@ class SlicerLauncherWorker(QThread):
             # ── Try sending a remote command to an already-running instance ──
             # This is done here (worker thread) instead of the main thread so
             # the UI event loop is never blocked by the socket timeout.
-            if self._remote_payload:
+            if self._remote_payload and not self._remote_payload.get("workflow"):
                 try:
                     if send_remote_command(self._remote_payload):
                         print("[AIPACS_LAUNCH] Remote command accepted by running viewer (from worker)")
@@ -486,6 +494,7 @@ class SlicerLauncherWorker(QThread):
                 viewport_height=self.viewport_height,
                 wait=False,
                 return_process_handle=True,
+                workflow=(self._remote_payload or {}).get("workflow"),
             )
 
             if not isinstance(launch_result, tuple) or len(launch_result) != 2:
@@ -553,6 +562,8 @@ class SlicerLauncher(QObject):
         self.parent_widget = parent_widget
         self._worker: Optional[SlicerLauncherWorker] = None
         self._is_running = False
+        self._pending_launch = None
+        self._reopen_ticks = 0
     
     @property
     def is_running(self) -> bool:
@@ -571,7 +582,8 @@ class SlicerLauncher(QObject):
         viewport_x: Optional[int] = None,
         viewport_y: Optional[int] = None,
         viewport_width: Optional[int] = None,
-        viewport_height: Optional[int] = None
+        viewport_height: Optional[int] = None,
+        workflow: Optional[str] = None,
     ) -> bool:
         """
         Launch Slicer with the specified DICOM directory and parameters.
@@ -608,6 +620,10 @@ class SlicerLauncher(QObject):
         # Build remote payload – the worker thread will try sending this
         # to an already-running Slicer instance BEFORE falling back to a
         # fresh launch.  This keeps the main/UI thread completely free.
+        from .workflows import validate_workflow
+        workflow = validate_workflow(workflow)
+        if workflow and not series_uid:
+            raise ValueError("Select a series with an exact Series Instance UID before opening this workspace")
         remote_payload = {
             "command": "load_dicom",
             "dicom_dir": dicom_dir,
@@ -622,17 +638,19 @@ class SlicerLauncher(QObject):
             "viewport_width": viewport_width,
             "viewport_height": viewport_height
         }
+        if workflow:
+            remote_payload["workflow"] = workflow
 
-        if self._is_running:
-            print("[AIPACS_LAUNCH] BLOCKED - Already running, showing message")
-            logger.warning("[AIPACS_LAUNCH] ui_launch_blocked_already_running")
-            QMessageBox.information(
-                self.parent_widget,
-                "Ai-Pacs Viewer Running",
-                "Ai-Pacs NewMPR2 Viewer is already running.\n"
-                "Please close it before opening another instance."
-            )
-            return False
+        if self._is_running or (self._worker and self._worker.isRunning()):
+            # The window may be gone while native teardown and queued Qt signals
+            # are still finishing. Keep one exact request without replacing the
+            # live QThread or blocking the workstation's event loop.
+            if self._pending_launch is None:
+                self._pending_launch = {key: value for key, value in remote_payload.items()
+                                        if key != "command"}
+                self._reopen_ticks = 30
+                QTimer.singleShot(100, self._retry_pending_launch)
+            return True
         
         # CRITICAL: Set running flag IMMEDIATELY to prevent race conditions
         self._is_running = True
@@ -665,6 +683,26 @@ class SlicerLauncher(QObject):
         self._worker.start()
         print("[AIPACS_LAUNCH] Worker thread started")
         return True
+
+    def _retry_pending_launch(self):
+        if self._pending_launch is None:
+            return
+        busy = self._is_running or (self._worker and self._worker.isRunning())
+        if busy and self._reopen_ticks > 0:
+            self._reopen_ticks -= 1
+            QTimer.singleShot(100, self._retry_pending_launch)
+            return
+        parameters, self._pending_launch = self._pending_launch, None
+        if busy:
+            message = ("Advanced Analysis is still open or finishing shutdown. "
+                       "Complete any open Save/Close dialog, then try again.")
+            logger.info("[AIPACS_LAUNCH] reopen_wait_expired")
+            # End the pending loading indicator, without declaring the existing
+            # session closed or discarding its scene.
+            self.slicer_error.emit(message)
+            QMessageBox.information(self.parent_widget, "Advanced Analysis", message)
+            return
+        self.launch_with_dicom(**parameters)
     
     def launch_with_folder_dialog(
         self,
@@ -716,18 +754,9 @@ class SlicerLauncher(QObject):
         logger.info("[AIPACS_LAUNCH] signal_finished exit_code=%s", exit_code)
 
         if exit_code != 0:
-            latest_log = SlicerLauncherWorker._find_latest_log()
-            log_hint = (
-                f"\n\nLog file:\n{latest_log}"
-                if latest_log
-                else ""
-            )
-            QMessageBox.warning(
-                self.parent_widget,
-                "Ai-Pacs Viewer Closed",
-                f"Ai-Pacs NewMPR2 Viewer closed with exit code: {exit_code}\n"
-                f"This may indicate an error occurred.{log_hint}"
-            )
+            # Preserve the actual exit status without a speculative modal after
+            # the viewer has closed. Launch failures still use _on_error.
+            logger.warning("[AIPACS_LAUNCH] viewer_exit_nonzero exit_code=%s", exit_code)
     
     def _on_error(self, error_msg: str):
         """Handle errors during Slicer launch."""

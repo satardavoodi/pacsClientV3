@@ -41,7 +41,7 @@ def test_single_study_delivery_still_reaches_existing_renderer():
     calls = []
     owner = SimpleNamespace(_pending_thumbnails_entries=['synthetic'],
         _log_open_thumbnail_trace=lambda *a, **k: None,
-        _render_thumbnails_from_entries=lambda rows: calls.append(rows))
+        _render_thumbnails_from_entries=lambda rows, **_kwargs: calls.append(rows))
     method('_pw_thumbnails.py', '_render_thumbnails_from_entries_slot')(owner)
     assert calls == [['synthetic']]
 
@@ -55,7 +55,11 @@ def test_explicit_grouped_failure_preserves_primary_fallback_unless_closed(kind,
         _multistudy_thumbnail_fallback=True,
         _log_open_thumbnail_trace=lambda *a, **k: None)
     setattr(owner, '_pending_thumbnails_'+kind, ['synthetic'])
-    setattr(owner, '_render_thumbnails_from_'+kind, lambda rows: calls.append(rows))
+    if kind == 'entries':
+        renderer = lambda rows, **_kwargs: calls.append(rows)
+    else:
+        renderer = lambda rows: calls.append(rows)
+    setattr(owner, '_render_thumbnails_from_'+kind, renderer)
     method('_pw_thumbnails.py', '_render_thumbnails_from_'+kind+'_slot')(owner)
     assert calls == ([] if retired else [['synthetic']])
 

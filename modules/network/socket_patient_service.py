@@ -283,7 +283,7 @@ class SocketPatientService(QObject):
             if client:
                 self._return_client(client)
     
-    def search_patients_sync(self, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def search_patients_sync(self, search_params: Dict[str, Any], *, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         """
         Search patients synchronously
         
@@ -315,6 +315,8 @@ class SocketPatientService(QObject):
             client = self._get_client()
             if not client:
                 logger.error("❌ Failed to get client instance")
+                if raise_on_error:
+                    raise RuntimeError("Patient search connection unavailable")
                 return []
             
             logger.info(f"🔍 Starting synchronous patient search with params: {search_params}")
@@ -324,12 +326,16 @@ class SocketPatientService(QObject):
                 logger.info(f"📊 Found {len(patients)} patients")
             else:
                 logger.error("❌ Search returned None")
+                if raise_on_error:
+                    raise RuntimeError("Patient search request failed")
                 patients = []
             
             return patients
         
         except Exception as e:
             logger.error(f"❌ Search error: {str(e)}")
+            if raise_on_error:
+                raise RuntimeError("Patient search request failed") from e
             return []
         
         finally:

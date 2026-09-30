@@ -4718,6 +4718,8 @@ class PatientTableWidget(QWidget):
 
     def _stream_in_flight(self) -> bool:
         """True while a progressive load still has rows left to render."""
+        if getattr(self, "_external_search_generation", None) is not None:
+            return True
         try:
             return int(getattr(self, '_prog_cursor', 0)) < int(getattr(self, '_prog_total', 0))
         except Exception:

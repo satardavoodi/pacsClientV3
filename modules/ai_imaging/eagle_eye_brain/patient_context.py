@@ -62,8 +62,9 @@ def demographics_for_report(context, manual=None):
     return BrainDemographics(age if age is not None else manual.age_years, sex)
 
 
-def require_same_examination(t1_context, flair_context):
-    for key in ("patient_id", "study_uid", "frame_uid"):
+def require_same_examination(t1_context, flair_context, *, allow_frame_registration=False):
+    keys = ("patient_id", "study_uid") if allow_frame_registration else ("patient_id", "study_uid", "frame_uid")
+    for key in keys:
         a, b = t1_context.get(key), flair_context.get(key)
         if a and b and a != b:
             raise BrainError("T1 and FLAIR DICOM examinations do not match.")

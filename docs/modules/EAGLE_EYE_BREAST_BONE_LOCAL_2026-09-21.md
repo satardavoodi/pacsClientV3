@@ -194,6 +194,55 @@ message no longer states a normal case. No existing clinic server was modified.
 The earlier network-service deferral above is superseded by that implementation
 ledger; portable packaging, GUI acceptance and server deployment remain open.
 
+## Standalone Windows build inputs for v3.6.9 (2026-09-28)
+
+`tools/eagle_eye/prepare_portable_breast_bone.py` now creates new, sealed Server
+build inputs from the verified development bundles plus complete relocatable
+Windows Python bases. It does not rewrite the development venvs. The exact
+sources used here were the existing `generated-files/eagle-eye/{breast,bone-age}`
+bundles and the local uv-managed CPython 3.10.20 and 3.12.13 bases, respectively.
+The source manifests were hash-validated before copying. Compile-time PyTorch
+headers and interpreter development headers/libs/scripts are excluded; the
+runtime dependency and model files are inventoried and SHA-256 sealed. Neither
+bundle contains `pyvenv.cfg` or requires the developer's interpreter launcher.
+
+The resulting ignored immutable inputs are
+`generated-files/eagle-eye/breast-portable-3.6.9` (18,796 manifested files) and
+`generated-files/eagle-eye/bone-age-portable-3.6.9` (12,667 files). Both passed
+isolated interpreter/import probes and full bundle hash validation. From a
+separate `C:\b` working directory, the sealed Bone Age interpreter completed a
+real-model synthetic job. The sealed Breast interpreter loaded its detector and
+base classifiers and completed synthetic-image detection; the known nine-versus-
+four feature mismatch was truthfully returned as
+`classification_status=unavailable`. These are relocation/functional input
+checks, not clinical accuracy, clean-host, frozen Server, or redistribution
+acceptance.
+
+`builder/eagle_eye_engine_payload.py`, both backend materializers, the Server
+distribution profile, and the existing Inno installer now stage these two
+standalone assets only for Eagle Eye. Standard and ARM keep excluding all
+`eagle_eye` assets. Missing interpreter/model manifests fail closed; actual
+server staging validates the complete file hashes and a bound runtime probe.
+Release-mode staging additionally requires a real, manifest-bound rights
+approval for each engine; no such approval was fabricated here. The compile-only
+synthetic installer probe passed all three editions and missing-engine rejection.
+Both installed backends use the shared frozen detector, so Nuitka cannot accept
+a development venv where PyInstaller rejects it.
+
+To prepare a *new* bundle version, use the same tool with new destination paths,
+the verified source bundle and an actual standalone Python base of the required
+minor version. Never overwrite these completed inputs. Select the two paths via
+`AIPACS_EAGLE_EYE_BREAST_SOURCE` and
+`AIPACS_EAGLE_EYE_BONE_AGE_SOURCE`, or let the canonical build coordinator use
+its `generated-files/eagle-eye/<engine>-portable-<version>` defaults. Do not
+copy patient jobs, probe outputs, credentials or development venv directories
+into a staged payload. The only full-build entry point remains root `BUILD.md`.
+
+Remaining Server promotion gates: complete installer/SCM lifecycle and rollback,
+both frozen backends on a clean Windows host, model rights evidence, current
+security incident closure, and clinical acceptance. The Breast classifier is
+not qualified and must not be presented as a normal finding.
+
 ## Hosted execution correction and native acceptance (2026-09-22)
 
 The [phase-1 execution receipt](EAGLE_EYE_SERVER_PHASE1_2026-09-21.md) supersedes the historical local-selection and unreachable-UI notes above. Both owner-selected studies now run through the desktop-owned local server and return results to the actual UI. Bone Age displays its prediction; Breast displays returned detection rectangles and selectable findings, with unavailable classification explicitly reported. Development venv homes use physical interpreter paths to avoid the Codex MSIX profile alias. WRIST-tagged inputs retain unchanged DICOM and a coverage-review warning. No model weights were changed and the nine-feature classifier mismatch remains unresolved. Final focused execution/transport checks: 60 passed; 470 mirrors match. No server deployment or installer qualification is claimed.

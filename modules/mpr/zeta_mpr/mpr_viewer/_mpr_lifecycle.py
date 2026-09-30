@@ -55,6 +55,7 @@ MPR_CHILD_ATTRS = (
     "_zeta_mpr_widget",
     "_new_mpr_zeta_widget",
     "_curved_mpr_widget",
+    "_curve_mpr_widget",
     "_mpr_widget",
 )
 

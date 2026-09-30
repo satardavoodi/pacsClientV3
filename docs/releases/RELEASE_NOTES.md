@@ -1,6 +1,8 @@
 # AIPacs Release Notes (Consolidated)
 
-**Latest local build:** v3.6.7 (2026-09-21), six local install-QA installers compiled.
+**Latest receipt-backed Client build:** v3.6.8 (2026-09-26), four installers compiled and independently verified. Later v3.6.9 local install-QA artifacts are recorded separately; they do not establish a synchronized source release.
+
+**Pending release:** v3.7.0 (2026-09-30), four Standard/ARM64-emulated Client installers requested after publication to all three Git repositories. The owner accepted the current Developer Client as build input. No Eagle Eye Server rebuild is requested. Build completion and artifact QA must be recorded independently.
 
 **Current Stable Version:** v3.6.4 (2026-08-29)
 **Previous Stable:** v3.6.3 (2026-08-23)
@@ -9,7 +11,46 @@
 
 ---
 
-## v3.6.8 (source preparation 2026-09-26) - Standard Client release candidate
+## v3.7.0 (Client release preparation, 2026-09-30)
+
+This release captures the accepted current Standard Client, including Education
+authoring/import/transfer and presentation changes, Home/search/thumbnail and
+Structured Report handling, MPR/CurveMPR controls, and the latest customized
+Advanced Analysis launch, hidden warm-up, close/reopen and lumen workspaces.
+The immutable September 28 VC143 native Slicer/VMTK cache is reused; native
+Slicer is not rebuilt. Current Python presentation/runtime payloads are taken
+from the same source snapshot for both backends.
+
+Exactly four installers are requested: Standard and x64-on-ARM64-emulated
+Client editions for PyInstaller and Nuitka, in the existing backend installer
+folders. Offline Eagle Eye model bundles and Server installers are excluded.
+EchoMind's server-owned processing boundary is retained in the shared source;
+Razi Server acceptance is a separate workstream and is not claimed here.
+
+See [VERSION_3.7.0_RELEASE.md](VERSION_3.7.0_RELEASE.md) for reviewed scope,
+verification, publication status, exclusions and remaining install-QA gates.
+Source publication and compilation do not constitute production acceptance.
+
+---
+
+## v3.6.9 (preparation, 2026-09-28) - Client and Eagle Eye Server candidates
+
+The requested matrix contains four Standard/ARM64-emulated Client installers and
+two Eagle Eye Server installers, one of each edition per PyInstaller and Nuitka.
+It is intended to include the later MPR/Advanced Analysis, Eagle Eye, EchoMind,
+and stability changes after v3.6.8, using the verified native Slicer/VMTK asset
+cache. Source and asset checks alone do not prove frozen installer inclusion.
+
+The official Server lane remains blocked by portable Breast/Bone packaging,
+transactional Windows service installation, missing model acceptance evidence,
+and clean-host verification. The exact source scope, reviewed release commit,
+three-remote Git receipt, installer inventory and hashes are pending. See
+[the v3.6.9 release record](VERSION_3.6.9_RELEASE.md) and the
+[deployment safety record](deploy-record-client-server-2026-09-28.md).
+
+---
+
+## v3.6.8 (Client candidate compiled 2026-09-26) - Standard Client release candidate
 
 Requested installers are Standard and x64-on-ARM64-emulated Client editions for
 both PyInstaller and Nuitka: four files in the established backend installer
@@ -21,6 +62,13 @@ verified VC143 native Slicer baseline; ordinary workstation builds do not
 recompile Slicer. Cardiac Flow VM normalization and DICOMDIR interoperability
 remain required content gates. Machine configuration, pairing certificates,
 tokens, patient data and generated assets are excluded from Git publication.
+
+Source commit `050cb0b3f17acad274467ce3027797de081cf65d` and tag `v3.6.8`
+were verified on all three configured repositories before the immutable build.
+Both backends and cross-backend coherence completed with exit code 0. All four
+installer lengths, hashes and Windows version resources were independently checked;
+PyInstaller editions are approximately 628 MB and Nuitka editions 610 MB.
+No Server installer was rebuilt, and no installer was uploaded or signed.
 
 Source publication and installer compilation are separate from clean-host,
 ARM64, clinical, licensing, legal and signing acceptance. Progress is recorded
