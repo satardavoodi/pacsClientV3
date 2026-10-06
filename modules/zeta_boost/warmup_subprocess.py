@@ -85,6 +85,7 @@ class WarmupResult:
     metadata: Optional[Dict[str, Any]] = None
     elapsed_ms: float = 0.0
     error: str = ""
+    mpr_stack_geometry: Optional[Tuple[float, ...]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +200,7 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
     spacing = None
     origin = None
     direction = None
+    mpr_stack_geometry = None
     scalar_components = 1
     metadata = None
 
@@ -236,6 +238,9 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
                 direction = tuple(dir_arr.GetValue(i) for i in range(16))
             else:
                 direction = None
+
+            from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import values_from_vtk
+            mpr_stack_geometry = values_from_vtk(vtk_image_data)
 
             # Extract pixel data as numpy array
             from vtk.util.numpy_support import vtk_to_numpy
@@ -293,6 +298,7 @@ def _load_series_in_subprocess(req: WarmupRequest) -> WarmupResult:
         spacing=spacing,
         origin=origin,
         direction=direction,
+        mpr_stack_geometry=mpr_stack_geometry,
         scalar_components=int(scalar_components),
         metadata=metadata,
     )
@@ -498,6 +504,8 @@ def result_to_vtk(result: WarmupResult):
         vtk_image.GetPointData().SetScalars(vtk_arr)
 
         # Restore DirectionMatrix field data if available
+        from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import attach_values
+        attach_values(vtk_image, getattr(result, "mpr_stack_geometry", None))
         if result.direction is not None and len(result.direction) == 16:
             dir_array = vtk.vtkDoubleArray()
             dir_array.SetName("DirectionMatrix")

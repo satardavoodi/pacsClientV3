@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "status": "paired_development_screen_complete_not_qualified",
+  "target": "CalcificationRegion; region boxes, not individual punctum segmentation",
+  "initialization_sha256": "21abbfda6830891a379f4115e7f3d97977bf2609a2e64b0610e93af63b1392e6",
+  "training": {
+    "shared_mixed_manifest": true,
+    "updates_each": 128,
+    "unique_contributing_sources_each": 128,
+    "seed": 20261001,
+    "learning_rate": 0.000003,
+    "batch_size": 1,
+    "native_patch_size": 1024,
+    "convolution_precision": "BF16",
+    "anchor_and_decoded_box_precision": "FP32",
+    "negative_training_images": 0
+  },
+  "architectures": {
+    "p3": {
+      "levels": "P3-P7",
+      "checkpoint_sha256": "48873320f4fb6f937c73aca247bbb503f6eb7c1d8dc2194f48bf72b6ceb8a868",
+      "peak_training_vram_gib": 1.7672
+    },
+    "p2": {
+      "levels": "P2-P7",
+      "migration": "strict C3-C5 state shift; new C2 lateral zero-initialized, P2 output copied from old P3",
+      "checkpoint_sha256": "dbe761083ace5b62dac283d48dcbe8e3e08b4f50c1c240637768cdfad2b11b23",
+      "peak_training_vram_gib": 3.1402
+    }
+  },
+  "decision": "P2 has a small development gain at 0.30 but loses one digital reference at 0.40; no universal superiority or promotion",
+  "limitations": [
+    "Single seed, short architecture screen; not optimized P2 training",
+    "Repeatedly inspected development cohorts and unverified initial medical training lineage",
+    "Control and unmatched boxes are not verified clinical false positives",
+    "No independent clinical qualification or production GUI acceptance"
+  ],
+  "production_changes": false
+}

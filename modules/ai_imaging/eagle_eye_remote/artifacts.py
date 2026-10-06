@@ -113,6 +113,7 @@ def publish(job, request, records, result):
     packet['server_job_id'] = job.name
     packet['analysis_series'] = request.get('series', {})
     packet['analysis_study_uid'] = request['study_uid']
+    packet['server_module'] = request['module']
     envelope = {k: request[k] for k in ('protocol', 'request_id', 'module', 'study_uid')}
     hashes = {}
     temporary = job / 'artifacts.partial'

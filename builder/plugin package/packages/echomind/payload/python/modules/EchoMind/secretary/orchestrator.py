@@ -19,6 +19,7 @@ from .parser_rules import is_chitchat, parse_command_rule
 from .repair_loop import retry_plan_with_llm
 from .session_log import SessionLog
 from .validator import validate_plan
+from .workflow import ExecutionCall, drive_steps, drive_steps_async
 
 
 class SecretaryOrchestrator:
@@ -82,10 +83,18 @@ class SecretaryOrchestrator:
         return state
 
     @staticmethod
+    def _accepts_source(action):
+        from .command_envelope import ACTION_ENTITY_MODELS
+        from .validator import _ALLOWED_ENTITY_KEYS_BY_ACTION
+        model = ACTION_ENTITY_MODELS.get(action)
+        return (model is not None and "source" in model.model_fields) or (
+            "source" in _ALLOWED_ENTITY_KEYS_BY_ACTION.get(action, set()))
+
+    @staticmethod
     def _ensure_source(plan: SecretaryActionPlan, cmd: SecretaryCommand) -> SecretaryActionPlan:
         out = copy.deepcopy(plan)
         source_scope = cmd.get("source_scope", "active_tab")
-        if source_scope in ("local", "server"):
+        if SecretaryOrchestrator._accepts_source(out.get("action")) and source_scope in ("local", "server"):
             out.setdefault("entities", {})
             out["entities"]["source"] = source_scope
         return out
@@ -107,7 +116,7 @@ class SecretaryOrchestrator:
         side-effecting workflow (reusing the existing yes/no turn), then runs."""
         steps = plan.get("steps") or []
         goal = str(plan.get("goal") or "the requested steps")
-        if bool(plan.get("needs_confirmation")):
+        if self._workflow_confirmation_required(plan):
             state["pending"] = {"type": "confirm_workflow", "workflow": plan}
             summary = " then ".join(
                 str(s.get("action") or s.get("tool") or "?").replace("_", " ")
@@ -121,11 +130,36 @@ class SecretaryOrchestrator:
             }
         return self._execute_workflow(plan, state)
 
+    async def _handle_workflow_plan_async(self, plan, state):
+        if self._workflow_confirmation_required(plan):
+            return self._handle_workflow_plan(plan, state)
+        return await self._execute_workflow_async(plan, state)
+
+    @staticmethod
+    def _workflow_confirmation_required(plan):
+        from .permissions import decide
+        return bool(plan.get("needs_confirmation")) or any(
+            decide(str(step.get("action") or step.get("tool") or ""), mode="assistant").requires_confirmation
+            for step in (plan.get("steps") or []))
+
     def _execute_workflow(self, plan, state):
         from .workflow import WorkflowExecutor
         from .brain.multistep import to_workflow_plan
         wp = to_workflow_plan(plan)
         result = WorkflowExecutor(self._workflow_runner(state)).run(wp)
+        return self._workflow_result(result)
+
+    async def _execute_workflow_async(self, plan, state):
+        from .workflow import WorkflowExecutor
+        from .brain.multistep import to_workflow_plan
+        async def run_step(action, entities):
+            return await self.executor.execute_async(
+                {"action": action, "entities": dict(entities or {}),
+                 "needs_confirmation": False}, state, confirmed=True)
+        result = await WorkflowExecutor(run_step).run_async(to_workflow_plan(plan))
+        return self._workflow_result(result)
+
+    def _workflow_result(self, result):
         steps_payload = [
             {"tool": s.tool, "ok": s.ok, "verified": s.verified, "error_code": s.error_code}
             for s in result.steps
@@ -204,6 +238,9 @@ class SecretaryOrchestrator:
         Feed the result back as ``cmd["_preplanned"]`` so `handle()` skips
         straight to execution instead of re-running the LLM.
         """
+        state = self._get_state(cmd.get('session_id') or 'secretary-default')
+        if state.get('pending'):
+            return None
         _mem = self._get_memory_store_safe()
         return self._parse_plan(
             cmd,
@@ -232,6 +269,48 @@ class SecretaryOrchestrator:
         # misleading "could not map this command" — see _unparsed_result).
         self._last_parse_failure = ""
         self._last_route = {}  # reset; populated below on the brain path
+
+        from . import remote_planner
+        if remote_planner.uses_server():
+            try:
+                if callable(progress_cb):
+                    progress_cb('Eagle Eye Server: Secretary planning')
+                resolve_bus = getattr(getattr(self, 'executor', None), '_resolve_bus', None)
+                bus = resolve_bus() if callable(resolve_bus) else None
+                fields = {'memory_context':memory_context, 'interaction_mode':cmd.get('interaction_mode', 'act')}
+                if cmd.get('ui_image') is not None:
+                    fields['ui_image']=cmd['ui_image']
+                    fields['question_context']=cmd.get('question_context',{})
+                if fields['interaction_mode'] != 'act':
+                    fields['question_context'] = cmd.get('question_context', {})
+                if bus is not None and callable(getattr(bus, 'capabilities', None)):
+                    fields['runtime_capabilities'] = bus.capabilities()
+                self._last_runtime_capabilities = fields.get('runtime_capabilities')
+                started = time.monotonic()
+                try:
+                    response = remote_planner.request('plan', text, language=language, **fields)
+                except remote_planner.RemotePlanningError as exc:
+                    retryable = {'SERVER_INVALID_JSON','SERVER_ROUTE_INVALID','SERVER_ANSWER_INVALID','SERVER_UPSTREAM_FAILED'}
+                    if (fields['interaction_mode'] not in ('ask','guide')
+                            or getattr(exc,'error_code',None) not in retryable
+                            or time.monotonic()-started > 5):
+                        raise
+                    if callable(progress_cb):
+                        progress_cb('Eagle Eye Server: Retrying answer')
+                    response = remote_planner.request('plan', text, language=language, **fields)
+                self._last_route = dict(response['route'])
+                self._last_modules = list(response['route']['modules'])
+                if cmd.get('interaction_mode', 'act') != 'act':
+                    return {'_mode_reply': response['answer'], '_mode': cmd['interaction_mode'], '_tutorial_id':response.get('tutorial_id')}
+                proposal = response['plan']
+                return self._ensure_source(proposal, cmd) if proposal else None
+            except remote_planner.RemotePlanningError as exc:
+                self._last_parse_failure = f'server_error: {exc}'
+                if cmd.get('interaction_mode','act') != 'act':
+                    return {'_mode':cmd['interaction_mode'], '_mode_error':{
+                        'error_code':getattr(exc,'error_code','SERVER_PLANNING_FAILED'),
+                        'message':str(exc)}}
+                return None
 
         # ── AgentBrain path (two-phase: routing + planning) ───────────────────
         if self._use_brain:
@@ -308,6 +387,9 @@ class SecretaryOrchestrator:
         the fix; otherwise keep the original message.
         """
         failure = str(getattr(self, "_last_parse_failure", "") or "")
+        if failure.startswith('server_error:'):
+            return {'ok': False, 'action': 'unknown', 'message': failure.removeprefix('server_error: ').strip(),
+                    'data': None, 'error_code': 'SECRETARY_SERVER_UNAVAILABLE'}
         low = failure.lower()
         if any(marker in low for marker in (
                 "llm_error", "network error", "connection", "proxy",
@@ -347,12 +429,9 @@ class SecretaryOrchestrator:
         return {
             "ok": False,
             "action": "needs_clarification",
-            "message": (
-                "I wasn't sure which action you meant. For an internet search say "
-                "e.g. 'search the web for <topic>'; for a patient say e.g. 'find "
-                "patient <id/name>' or 'show today's patients'."
-            ),
-            "data": {"reason": reason} if reason else None,
+            "message": (((plan.get("clarification") if isinstance(plan, dict) else None) or {}).get("question") or reason
+                        or "Please specify the action and which patient or results you mean."),
+            "data": {"reason": reason, "clarification": plan.get("clarification")} if isinstance(plan, dict) else None,
             "error_code": "NEEDS_CLARIFICATION",
         }
 
@@ -402,14 +481,20 @@ class SecretaryOrchestrator:
             "error_code": "CONFIRM_REQUIRED",
         }
 
-    def _run_plan(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool) -> SecretaryResult:
+    def _run_plan(self, plan, state, confirmed):
+        return drive_steps(self._run_plan_steps(plan, state, confirmed))
+
+    async def _run_plan_async(self, plan, state, confirmed):
+        return await drive_steps_async(self._run_plan_steps(plan, state, confirmed))
+
+    def _run_plan_steps(self, plan, state, confirmed):
         plan = copy.deepcopy(plan)
         entities = dict(plan.get("entities") or {})
         source = str(entities.get("source") or "").strip().lower()
-        if not source or source in {"active_tab", "active", "current"}:
+        if self._accepts_source(plan.get("action")) and (not source or source in {"active_tab", "active", "current"}):
             entities["source"] = self.adapter.get_active_source()
             plan["entities"] = entities
-        result = self.executor.execute(plan, state, confirmed=confirmed)
+        result = yield ExecutionCall(self.executor.execute, self.executor.execute_async, (plan, state), {"confirmed": confirmed})
         if result.get("ok"):
             # Patient-context capture applies to PATIENT actions only. A
             # successful bus-bridged action (open_module, change_series, …)
@@ -430,6 +515,12 @@ class SecretaryOrchestrator:
                         state["last_patient"] = payload[0]
             else:
                 # Module-context tracking (bridge phase 2): remember which
+                payload = result.get('data')
+                if (_action == 'read_patients' and result.get('ok')
+                        and isinstance(payload, dict) and payload.get('state') == 'ready'
+                        and isinstance(payload.get('rows'), list)):
+                    state['last_list'] = payload['rows']
+                # Other module receipts must not replace patient workflow facts.
                 # module the user last opened so follow-ups can reference it.
                 _module_map = {
                     "toggle_eagle": "eagle_ai",
@@ -455,7 +546,7 @@ class SecretaryOrchestrator:
             candidate = None
             if isinstance(result.get("data"), dict):
                 candidate = result["data"].get("candidate")
-            if isinstance(candidate, dict):
+            if isinstance(candidate, dict) and "row_index" not in entities:
                 pending_plan.setdefault("entities", {})
                 pending_plan["entities"]["resolved_patient"] = candidate
             state["pending"] = {"type": "confirm", "plan": pending_plan}
@@ -477,8 +568,30 @@ class SecretaryOrchestrator:
         return result
 
     def handle(self, cmd: SecretaryCommand) -> SecretaryResult:
+        return drive_steps(self._handle_steps(cmd))
+
+    async def handle_async(self, cmd: SecretaryCommand) -> SecretaryResult:
+        sid = cmd.get("session_id") or "secretary-default"
+        running = getattr(self, "_running_sessions", None)
+        if running is None:
+            running = self._running_sessions = set()
+        if sid in running:
+            return {"ok": False, "action": "unknown", "data": None,
+                    "error_code": "EXECUTION_IN_PROGRESS",
+                    "message": "A command is already running in this session."}
+        running.add(sid)
+        try:
+            return await drive_steps_async(self._handle_steps(cmd))
+        finally:
+            running.discard(sid)
+
+    def _handle_steps(self, cmd):
         """Public entry-point: wraps _handle_core with per-request session logging."""
         text = (cmd.get("text") or "").strip()
+        from .credential_guard import contains_api_credential, LOCAL_ENTRY_MESSAGE
+        if contains_api_credential(text):
+            return {'ok':False, 'action':'unknown', 'data':None,
+                    'error_code':'LOCAL_CREDENTIAL_ENTRY_REQUIRED', 'message':LOCAL_ENTRY_MESSAGE}
         _session = SessionLog(user_text=text)
         _result: SecretaryResult = {
             "ok": False,
@@ -488,16 +601,45 @@ class SecretaryOrchestrator:
             "error_code": "INTERNAL",
         }
         try:
-            _result = self._handle_core(cmd, _session)
+            if cmd.get('interaction_mode', 'act') != 'act':
+                reply = cmd.get('_preplanned') or {}
+                if reply.get('_mode') == cmd.get('interaction_mode') and isinstance(reply.get('_mode_error'),dict):
+                    failure = reply['_mode_error']
+                    _result = {'ok':False,'action':'mode_reply','message':failure['message'],
+                               'data':None,'error_code':failure['error_code']}
+                    return _result
+                if reply.get('_mode') == cmd.get('interaction_mode') and reply.get('_mode_reply'):
+                    memory = self._get_memory_store_safe()
+                    if memory:
+                        memory.start_cycle(text)
+                        memory.close_cycle()
+                    _result = {'ok':True, 'action':'mode_reply', 'message':reply['_mode_reply'], 'data':None, 'error_code':None}
+                    if cmd.get('interaction_mode') == 'guide' and reply.get('_tutorial_id'):
+                        bus = self.executor._resolve_bus()
+                        if bus is None:
+                            _result['message'] += " Tutorial controls are unavailable."
+                        else:
+                            highlighted = bus.execute({'action':'show_tutorial', 'entities':{'tutorial_id':reply['_tutorial_id']}})
+                            _result['data'] = highlighted.data
+                            _result['message'] += " " + (highlighted.message or "Tutorial target could not be shown.")
+
+                else:
+                    _result = {'ok':False, 'action':'mode_reply', 'message':'Selected mode could not produce a response. No control action was executed.', 'data':None, 'error_code':'MODE_RESPONSE_REQUIRED'}
+                return _result
+            _result = yield from self._handle_core_steps(cmd, _session)
         finally:
             _session.close(_result)
         return _result
 
-    def _handle_core(self, cmd: SecretaryCommand, _session: SessionLog) -> SecretaryResult:  # noqa: C901
+    def _handle_core_steps(self, cmd: SecretaryCommand, _session: SessionLog):  # noqa: C901
         """Core request handler — called by handle()."""
         text = (cmd.get("text") or "").strip()
         sid = cmd.get("session_id") or "secretary-default"
         state = self._get_state(sid)
+        if cmd.get('_confirmation_response') and not state.get('pending'):
+            return {'ok':False, 'action':'unknown', 'data':None,
+                    'error_code':'CONFIRMATION_EXPIRED',
+                    'message':'This confirmation is no longer pending. Please repeat the original request.'}
         source_tab = self.adapter.get_active_source()
         stt_req = cmd.get("stt_route", "native")
         stt_used = cmd.get("stt_route_used", stt_req)
@@ -567,7 +709,7 @@ class SecretaryOrchestrator:
                             "message": "Please answer yes to run the steps, or no to cancel.",
                             "data": None, "error_code": "CONFIRM_REQUIRED"}
                 state["pending"] = None
-                return self._execute_workflow(wf_plan, state)
+                return (yield ExecutionCall(self._execute_workflow, self._execute_workflow_async, (wf_plan, state)))
 
             if pending and pending.get("type") == "confirm":
                 plan = copy.deepcopy(pending.get("plan"))
@@ -627,7 +769,7 @@ class SecretaryOrchestrator:
                     return result
 
                 confirmed = True
-                result = self._run_plan(plan, state, confirmed=True)
+                result = yield ExecutionCall(self._run_plan, self._run_plan_async, (plan, state, True))
                 audit.log_end(
                     action_id=action_id,
                     confirmed=confirmed,
@@ -681,7 +823,7 @@ class SecretaryOrchestrator:
             if (self._workflows_enabled() and isinstance(plan, dict)
                     and plan.get("action") == self._WORKFLOW_ACTION):
                 _session.add_plan(dict(plan))
-                return self._handle_workflow_plan(plan, state)
+                return (yield ExecutionCall(self._handle_workflow_plan, self._handle_workflow_plan_async, (plan, state)))
 
             validated_plan, validation_errors = validate_plan(plan)
             if validation_errors:
@@ -753,13 +895,16 @@ class SecretaryOrchestrator:
             # When the agent explicitly resolved the patient from memory and
             # produced needs_confirmation=False, skip the voice confirmation
             # gate entirely — no second "yes" command required.
-            _auto_confirmed: bool = plan.get("needs_confirmation") is False
+            from .permissions import decide
+            _auto_confirmed: bool = (plan.get("needs_confirmation") is False
+                and not decide(str(plan.get("action") or ""), mode="assistant").requires_confirmation)
             if _auto_confirmed:
                 confirmed = True  # propagate to audit log
             active_plan = copy.deepcopy(plan)
             result = None
-            for _exec_attempt in range(1, self._MAX_EXECUTION_RETRIES + 1):
-                result = self._run_plan(active_plan, state, confirmed=_auto_confirmed)
+            for _exec_attempt in range(max(1, min(self._MAX_EXECUTION_RETRIES,
+                    int(cmd.get("_execution_attempt", 1)))), self._MAX_EXECUTION_RETRIES + 1):
+                result = yield ExecutionCall(self._run_plan, self._run_plan_async, (active_plan, state, _auto_confirmed))
 
                 # Success or pending user input → stop immediately
                 if result.get("ok") or result.get("error_code") in (
@@ -801,6 +946,10 @@ class SecretaryOrchestrator:
                 _session.add_error(
                     str(result.get("message")), attempt=_exec_attempt
                 )
+                if cmd.get('_defer_execution_repair'):
+                    result = {**result, '_execution_repair': {
+                        'failed_plan': copy.deepcopy(active_plan), 'attempt': _exec_attempt}}
+                    break
                 repaired = repair_plan_after_execution_failure(
                     user_text=text,
                     language=language,
@@ -808,12 +957,18 @@ class SecretaryOrchestrator:
                     execution_result=result,
                     attempt=_exec_attempt,
                     max_attempts=self._MAX_EXECUTION_RETRIES,
+                    runtime_capabilities=getattr(self, '_last_runtime_capabilities', None),
                 )
                 if not repaired:
                     break  # LLM could not produce a valid repair
 
                 _session.add_repair(dict(repaired), attempt=_exec_attempt)
                 active_plan = repaired
+                # A server repair is a new proposal, not a continuation of
+                # permission granted for the previous action or target.
+                _auto_confirmed = (repaired.get('needs_confirmation') is False
+                    and not decide(str(repaired.get('action') or ''), mode="assistant").requires_confirmation)
+                confirmed = _auto_confirmed
 
             # ── Memory: record execution result and close cycle ───────────────
             if _mem:
@@ -855,6 +1010,15 @@ class SecretaryOrchestrator:
                 latency_ms=int((time.perf_counter() - t0) * 1000),
             )
             return result
+
+        finally:
+            # Every accepted command owns one cycle, including early-return paths.
+            # close_cycle is idempotent after the normal completion path.
+            if _mem:
+                try:
+                    _mem.close_cycle()
+                except Exception:
+                    pass
 
 
     # ── unified Command Layer bridge (2026-05-27, phase 3) ───────────────

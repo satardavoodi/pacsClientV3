@@ -32,7 +32,7 @@ _DEFAULT_TIMEOUT_S = 30.0
 
 
 class _Job:
-    __slots__ = ("action", "entities", "agent_mode", "confirmed", "event", "result")
+    __slots__ = ("action", "entities", "agent_mode", "confirmed", "event", "result", "started", "cancelled")
 
     def __init__(self, action, entities, agent_mode, confirmed):
         self.action = action
@@ -41,6 +41,8 @@ class _Job:
         self.confirmed = confirmed
         self.event = threading.Event()
         self.result: Optional[Dict[str, Any]] = None
+        self.started = False
+        self.cancelled = False
 
 
 def _make_dispatcher_class():
@@ -74,10 +76,26 @@ def _make_dispatcher_class():
                                       "error_code": "NO_RESULT"}
 
             with self._lock:
+                if len(self._queue) >= 64:
+                    return {"ok": False, "action": action, "error_code": "GUI_BUSY",
+                            "message": "Command queue is full; no action was accepted."}
                 self._queue.append(job)
             QMetaObject.invokeMethod(self, "_drain", Qt.QueuedConnection)
 
             if not job.event.wait(timeout=max(1.0, float(timeout))):
+                with self._lock:
+                    if job.event.is_set():
+                        return job.result
+                    if not job.started:
+                        job.cancelled = True
+                        try:
+                            self._queue.remove(job)
+                        except ValueError:
+                            pass
+                    else:
+                        return {"ok": False, "action": action,
+                                "error_code": "EXECUTION_IN_PROGRESS", "retryable": False,
+                                "message": "Execution has started; do not repeat this command. Check its result first."}
                 return {
                     "ok": False,
                     "action": action,
@@ -89,15 +107,23 @@ def _make_dispatcher_class():
 
         @Slot()
         def _drain(self) -> None:
-            # Runs on the GUI thread. Drain everything queued so far.
-            while True:
-                with self._lock:
-                    if not self._queue:
-                        return
-                    job = self._queue.popleft()
-                self._execute_job(job)
+            # Yield to paint/input between commands; never drain an unbounded batch.
+            with self._lock:
+                if not self._queue:
+                    return
+                job = self._queue.popleft()
+            self._execute_job(job)
+            with self._lock:
+                pending = bool(self._queue)
+            if pending:
+                QMetaObject.invokeMethod(self, "_drain", Qt.QueuedConnection)
 
         def _execute_job(self, job: "_Job") -> None:
+            with self._lock:
+                if job.cancelled:
+                    job.event.set()
+                    return
+                job.started = True
             try:
                 job.result = self._invoke_bus(job)
             except Exception as exc:  # noqa: BLE001

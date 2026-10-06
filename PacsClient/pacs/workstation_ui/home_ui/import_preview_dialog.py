@@ -673,7 +673,8 @@ def _decompress_file_to_destination(src: Path, dest: Path) -> tuple[bool, str]:
     """
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        ds = pydicom.dcmread(str(src), force=True)
+        from PacsClient.utils.dicom_reader import read_dicom
+        ds = read_dicom(str(src), force=True)
         file_meta = getattr(ds, "file_meta", None)
         ts = getattr(file_meta, "TransferSyntaxUID", None)
         if ts is None or not bool(getattr(ts, "is_compressed", False)):

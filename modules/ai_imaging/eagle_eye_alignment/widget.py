@@ -123,6 +123,7 @@ class AlignmentWidget(QWidget):
         self.study_uid=str(study_uid or '')
         self.image=None;self.points={'R':{},'L':{}};self.metrics=None;self.provenance={}
         self._file_rows=[];self.report_result=None;self._pending_report_handle=None
+        self._previous_report=None;self._source_calibration=None
         self._executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='alignment')
         self._cancel=threading.Event();self._future=None;self._kind='';self._disposed=False
         cancel,executor=self._cancel,self._executor
@@ -170,6 +171,9 @@ class AlignmentWidget(QWidget):
         controls.addWidget(self.calibrated)
         self.calibrated.toggled.connect(self._calibration_changed)
         self.row_spacing.valueChanged.connect(self._calibration_changed);self.col_spacing.valueChanged.connect(self._calibration_changed)
+        self.restore_scale=QPushButton("Restore original image scale");controls.addWidget(self.restore_scale)
+        self.restore_scale.setToolTip("Restore DICOM scale without moving landmarks. This does not verify calibration.")
+        self.restore_scale.clicked.connect(self._restore_scale)
         self.table=QTableWidget(0,4);self.table.setHorizontalHeaderLabels(['Measurement','Right','Left','Adult reference / context'])
         self.table.horizontalHeader().setSectionResizeMode(3,QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers);controls.addWidget(self.table,1)
@@ -181,6 +185,9 @@ class AlignmentWidget(QWidget):
             edit.setPlaceholderText(label+' (optional)');edit.setMaxLength(500);controls.addWidget(edit)
             edit.textChanged.connect(self._invalidate_review)
         self.export=QPushButton('Generate reviewed PDF report');controls.addWidget(self.export)
+        self.draft_pdf=QPushButton("Create draft PDF (review pending)");controls.addWidget(self.draft_pdf)
+        self.draft_pdf.clicked.connect(lambda: self._generate_pdf(landmarks_reviewed=False))
+        self.report_help=QLabel();self.report_help.setWordWrap(True);controls.addWidget(self.report_help)
         report_row=QHBoxLayout();controls.addLayout(report_row)
         self.open_pdf=QPushButton('Open PDF');self.save_pdf=QPushButton('Save PDF copy')
         report_row.addWidget(self.open_pdf);report_row.addWidget(self.save_pdf)
@@ -202,6 +209,7 @@ class AlignmentWidget(QWidget):
         self._submit('scan',service.study_images,self.study_uid)
 
     def _series_changed(self):
+        self._previous_report=None;self._source_calibration=None
         self.image=None;self.points={'R':{},'L':{}};self.metrics=None;self.report_result=None
         self.provenance={};self.table.setRowCount(0);self.canvas.scene().clear()
         self.canvas.items_by_key={};self.canvas.lines=[]
@@ -226,6 +234,8 @@ class AlignmentWidget(QWidget):
         self._submit('load',service.load_image,path,self.study_uid,self.series.currentData())
 
     def _apply_image(self,image):
+        self._previous_report=None
+        self._source_calibration=(tuple(image["spacing"]),image["calibrated"],image["calibration_method"])
         self.image=image;self.points={'R':{},'L':{}};self.provenance={};self.metrics=None
         self.report_result=None;self.summary.setText('Review orientation, then locate the landmarks.')
         self.confirm.setChecked(False);self.review.setChecked(False)
@@ -240,7 +250,8 @@ class AlignmentWidget(QWidget):
     def flip_image(self):
         if self.image is None or self._future is not None:return
         image=dict(self.image);image['pixels']=np.ascontiguousarray(image['pixels'][:,::-1])
-        image['flipped']=not image.get('flipped',False);self._apply_image(image)
+        image['flipped']=not image.get('flipped',False)
+        original=self._source_calibration;self._apply_image(image);self._source_calibration=original
 
     def start_ai(self, *, automatic=False):
         if self.image is None or (not automatic and not self.confirm.isChecked()):return
@@ -260,7 +271,18 @@ class AlignmentWidget(QWidget):
         self.canvas.set_points(self.points);self._recalculate()
 
     def _invalidate_review(self):
+        if self.report_result:self._previous_report=deepcopy(self.report_result)
         self.report_result=None;self.review.setChecked(False);self._refresh_controls()
+        if self._previous_report:self.status.setText('Changes are not included in the previous PDF. Create a new draft or reviewed report.')
+
+    def _restore_scale(self):
+        if self.image is None or self._future is not None or self._pending_report_handle or not self._source_calibration:return
+        spacing,calibrated,method=self._source_calibration
+        for spin,value in zip((self.row_spacing,self.col_spacing),spacing):
+            spin.blockSignals(True);spin.setValue(value);spin.blockSignals(False)
+        self.calibrated.blockSignals(True);self.calibrated.setChecked(calibrated);self.calibrated.blockSignals(False)
+        self.image.update(spacing=spacing,calibrated=calibrated,calibration_method=method)
+        self.spacing_label.setText(method);self._recalculate()
 
     def _calibration_changed(self):
         if self.image is None:return
@@ -270,6 +292,7 @@ class AlignmentWidget(QWidget):
         self._recalculate()
 
     def _recalculate(self):
+        if self.report_result:self._previous_report=deepcopy(self.report_result)
         self.report_result=None;self.review.setChecked(False);self.metrics=None;self.table.setRowCount(0)
         try:
             service.validate_points(self.points,self.image['pixels'].shape)
@@ -314,17 +337,19 @@ class AlignmentWidget(QWidget):
         self._submit('report',partial(generate_report, cancel=self._cancel),deepcopy(self.image),deepcopy(self.points),provenance,notes,landmarks_reviewed)
 
     def _open_pdf(self):
-        if self.report_result:
+        result=self.report_result or self._previous_report
+        if result:
             from pathlib import Path
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.report_result['artifact_directory'])/'report.pdf')))
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(result['artifact_directory'])/'report.pdf')))
 
     def _save_pdf(self):
-        if not self.report_result:return
+        result=self.report_result or self._previous_report
+        if not result:return
         from ..eagle_eye_brain.study_workflow import export_pdf
-        path,_=QFileDialog.getSaveFileName(self,'Save Alignment PDF','Alignment-report.pdf','PDF report (*.pdf)')
+        path,_=QFileDialog.getSaveFileName(self,'Save Alignment PDF','Alignment-report.pdf' if self.report_result else 'Alignment-previous-report.pdf','PDF report (*.pdf)')
         if not path:return
         if not path.lower().endswith('.pdf'):path+='.pdf'
-        self._submit('export',export_pdf,deepcopy(self.report_result),path)
+        self._submit('export',export_pdf,deepcopy(result),path)
 
     def _poll(self):
         if self._future is None or not self._future.done():return
@@ -385,7 +410,21 @@ class AlignmentWidget(QWidget):
         for widget in (self.scan,self.series,self.files):widget.setEnabled(not busy)
         for widget in (self.load,self.browse):widget.setEnabled(not busy and self.series.currentData() is not None)
         for widget in (self.indication,self.comparison,self.impression):widget.setEnabled(loaded and not busy)
-        for widget in (self.open_pdf,self.save_pdf):widget.setEnabled(self.report_result is not None and not busy)
+        previous=self.report_result is None and self._previous_report is not None
+        for widget in (self.open_pdf,self.save_pdf):widget.setEnabled(bool(self.report_result or self._previous_report) and not busy)
+        self.open_pdf.setText('Open previous PDF' if previous else 'Open PDF')
+        self.save_pdf.setText('Save previous PDF copy' if previous else 'Save PDF copy')
+        self.restore_scale.setEnabled(loaded and not busy and self._source_calibration is not None)
+        self.draft_pdf.setEnabled(self.metrics is not None and not busy)
+        prefix='Previous PDF available; current edits are not included. ' if previous else ''
+        if self._pending_report_handle:step='Connection interrupted. Click Resume server result.'
+        elif busy:step='Working. PDF actions become available when this operation finishes.'
+        elif not loaded:step='Load the primary alignment image first.'
+        elif self.metrics is None:step='Place or correct all landmarks before creating a PDF.'
+        elif not self.confirm.isChecked():step='Create a draft now, or Confirm standing AP, coverage and orientation above to review the report.'
+        elif not self.review.isChecked():step='Create a draft now, or review the points and scale, then tick the review checkbox.'
+        else:step='Click Generate reviewed PDF to include the current points, scale and notes.'
+        self.report_help.setText(prefix+step)
         for widget in (self.flip,self.manual,self.row_spacing,self.col_spacing,self.calibrated,self.confirm,self.canvas):widget.setEnabled(loaded and not busy)
         self.run.setEnabled(loaded and not busy and self.confirm.isChecked())
         self.review.setEnabled(self.metrics is not None and not busy and self.confirm.isChecked())
@@ -395,7 +434,8 @@ class AlignmentWidget(QWidget):
             self.export.setEnabled(self._future is None)
         else:
             from ..eagle_eye_remote.settings import remote_required
-            self.export.setText('Apply changes on server and generate report' if remote_required() else 'Generate reviewed PDF report')
+            self.export.setText('Generate reviewed PDF')
+            self.export.setToolTip('Apply changes on Eagle Eye Server and download the report.' if remote_required() else 'Generate the reviewed report.')
         self.cancel.setEnabled(self._future is not None and self._kind!='export')
 
     def teardown(self):

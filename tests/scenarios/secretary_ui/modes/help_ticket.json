@@ -1,0 +1,95 @@
+{
+  "mode": "help_ticket",
+  "purpose": "Prepare, review, package, send and track a support issue.",
+  "forbidden_effects": "No automatic submission or success claim without a receipt.",
+  "scenarios": [
+    {
+      "id": "prepare",
+      "request": "The application crashed. Help me prepare a support ticket.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Open typed local review; never auto-send.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_issue_action_is_typed_local_review_and_has_no_auto_send",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "voice",
+      "request": "Use my recorded description for this ticket.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Populate reviewed text; new consent is required before submission.",
+      "guard": "tests/code/echomind/test_support_issue_voice.py::test_form_voice_populates_text_requires_new_consent_and_never_submits",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "package",
+      "request": "Prepare a package with my description, recording and diagnostics.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Retain local audio, logs and retry receipt in the ticket package.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_local_ticket_package_retains_audio_logs_and_retry_receipt",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "privacy",
+      "request": "Include useful logs about this failure.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Omit raw patient and credential text from transmitted diagnostics.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_bundle_never_exports_raw_patient_or_secret_text",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "packaging_failure",
+      "request": "Send the reviewed ticket.",
+      "precondition": "Synthetic isolated session",
+      "expected": "If packaging fails, perform no network submission.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_packaging_failure_prevents_network_submission",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "send_confirmation",
+      "request": "Send this support ticket.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Require local review and keep network/file work off the GUI thread.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_form_send_needs_local_review_and_all_io_is_on_worker",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "delivery_receipt",
+      "request": "Was my ticket sent successfully?",
+      "precondition": "Synthetic isolated session",
+      "expected": "Require actual delivery receipt; distinguish pending from confirmed.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_secretary_feedback_requires_actual_receipt_and_distinguishes_pending",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "restart_retry",
+      "request": "Find my unsent ticket from the previous session and resend it.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Restore frozen package; retry only after local review.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_secretary_submit_restored_ticket_uses_retry_after_local_review",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "retry_identity",
+      "request": "Retry the pending ticket.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Preserve the same frozen payload and retry identity.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_receipt_and_retry_keep_same_frozen_payload",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "wrong_account",
+      "request": "Retry the old ticket after switching accounts.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Refuse cross-account or cross-endpoint replay.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_cross_account_or_endpoint_retry_is_refused",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "unconfirmed",
+      "request": "The upload returned a response. Is the ticket delivered?",
+      "precondition": "Synthetic isolated session",
+      "expected": "Do not claim delivery without a confirmed receipt.",
+      "guard": "tests/code/echomind/test_support_issue_reporting.py::test_unconfirmed_receipt_is_not_delivery",
+      "native_status": "not_run_test_control_unavailable"
+    }
+  ]
+}

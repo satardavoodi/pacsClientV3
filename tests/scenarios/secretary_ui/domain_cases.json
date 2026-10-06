@@ -1,0 +1,247 @@
+[
+  {
+    "id": "patient_id",
+    "persona": "Radiologist",
+    "request": "Search the server for patient ID SYN-001.",
+    "action": "advanced_search_patients",
+    "acceptable_actions": [
+      "advanced_search_patients",
+      "list_patients"
+    ],
+    "entities": {
+      "source": "server",
+      "patient_id": "SYN-001"
+    },
+    "modules": [
+      "homepage"
+    ],
+    "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified."
+  },
+  {
+    "id": "patient_name",
+    "persona": "Radiologist",
+    "request": "Search local studies for patient name Synthetic Example.",
+    "action": "advanced_search_patients",
+    "acceptable_actions": [
+      "advanced_search_patients",
+      "list_patients"
+    ],
+    "entities": {
+      "source": "local",
+      "patient_name": "Synthetic Example"
+    },
+    "modules": [
+      "homepage"
+    ],
+    "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified."
+  },
+  {
+    "id": "exact_date_mr",
+    "persona": "Radiologist",
+    "request": "Search only MRI studies on the server dated 2026-10-02.",
+    "action": "advanced_search_patients",
+    "acceptable_actions": [
+      "advanced_search_patients",
+      "list_patients"
+    ],
+    "entities": {
+      "source": "server",
+      "modality": "MR",
+      "date_from": "20261002",
+      "date_to": "20261002"
+    },
+    "modules": [
+      "homepage"
+    ],
+    "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified."
+  },
+  {
+    "id": "ct_date_range",
+    "persona": "Radiologist",
+    "request": "Find server CT studies from 2026-10-01 through 2026-10-03.",
+    "action": "advanced_search_patients",
+    "acceptable_actions": [
+      "advanced_search_patients",
+      "list_patients"
+    ],
+    "entities": {
+      "source": "server",
+      "modality": "CT",
+      "date_from": "20261001",
+      "date_to": "20261003"
+    },
+    "modules": [
+      "homepage"
+    ],
+    "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified."
+  },
+  {
+    "id": "advanced_age_body",
+    "persona": "Radiologist",
+    "request": "Search the server for knee MRI studies with patient age 12 through 18.",
+    "action": "advanced_search_patients",
+    "acceptable_actions": [
+      "advanced_search_patients",
+      "list_patients"
+    ],
+    "entities": {
+      "source": "server",
+      "modality": "MR",
+      "body_part": "KNEE",
+      "age_min": 12,
+      "age_max": 18
+    },
+    "modules": [
+      "homepage"
+    ],
+    "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified."
+  },
+  {
+    "id": "advanced_multiple_ids",
+    "persona": "Radiologist",
+    "request": "Search the server for MRI studies belonging to patient IDs SYN-001 and SYN-002.",
+    "action": "advanced_search_patients",
+    "acceptable_actions": [
+      "advanced_search_patients",
+      "list_patients"
+    ],
+    "entities": {
+      "source": "server",
+      "patient_ids": [
+        "SYN-001",
+        "SYN-002"
+      ],
+      "modality": "MR"
+    },
+    "modules": [
+      "homepage"
+    ],
+    "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified."
+  },
+  {
+    "id": "toolbar_ruler",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the ruler tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "ruler",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_angle",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the angle tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "angle",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_two_line_angle",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the two line angle tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "two_line_angle",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_roi_rect",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the roi rect tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "roi_rect",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_roi_circle",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the roi circle tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "roi_circle",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_arrow",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the arrow tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "arrow",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_text",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the text tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "text",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_eraser",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the eraser tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "eraser",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  },
+  {
+    "id": "toolbar_select",
+    "persona": "Radiologist",
+    "request": "In the active Fast Viewer, activate the select tool on viewport 0.",
+    "action": "activate_tool",
+    "entities": {
+      "tool": "select",
+      "viewport": 0
+    },
+    "modules": [
+      "patient_viewer"
+    ],
+    "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified."
+  }
+]

@@ -27,6 +27,7 @@ from .cd_writer import (
     normalize_volume_label,
 )
 from .dicom_prepare import DicomPreparer, FORMAT_ORIGINAL
+from .viewer_launch import detect_viewer_launch_mode, IMPORT_FOLDER, LEGACY_DICOMDIR
 
 logger = logging.getLogger(__name__)
 
@@ -811,7 +812,11 @@ class CDBurnWorker(QThread):
             # Stage the branded, double-clickable launcher exe at the media root
             # (no console window, no "open with" prompt). Falls back to
             # RUN_VIEWER.cmd when it isn't available (e.g. custom viewer).
-            launcher_name = self._stage_cd_launcher(staging_path, viewer_path)
+            # Identify the staged bytes, including copies renamed by the user.
+            launch_mode = detect_viewer_launch_mode(viewer_bundle_dir / viewer_path.name)
+            # Existing compiled splash launchers only know --import-folder.
+            launcher_name = (self._stage_cd_launcher(staging_path, viewer_path)
+                             if launch_mode == IMPORT_FOLDER else None)
 
             relative_exe = Path("VIEWER") / viewer_path.name
             self._write_portable_support_files(
@@ -821,6 +826,7 @@ class CDBurnWorker(QThread):
                 viewer_launcher_relative_path=relative_exe,
                 viewer_display_name=viewer_display_name,
                 launcher_exe_name=launcher_name,
+                viewer_launch_mode=launch_mode,
             )
 
             self.progress.emit(55, "Light Viewer added successfully")
@@ -878,6 +884,7 @@ class CDBurnWorker(QThread):
         viewer_launcher_relative_path: Optional[Path] = None,
         viewer_display_name: Optional[str] = None,
         launcher_exe_name: Optional[str] = None,
+        viewer_launch_mode: str = IMPORT_FOLDER,
     ):
         """Write helper files that improve portability on other Windows PCs."""
         staging_path = Path(staging_folder)
@@ -904,6 +911,10 @@ class CDBurnWorker(QThread):
         center = self.options.center_identity()
 
         launch_cmd = staging_path / "RUN_VIEWER.cmd"
+        viewer_arguments = ('"%~dp0DICOMDIR"' if viewer_launch_mode == LEGACY_DICOMDIR
+                            else '--import-folder "%~dp0"')
+        dicomdir_guard = ('if not exist "%~dp0DICOMDIR" goto nodicomdir\n'
+                         if viewer_launch_mode == LEGACY_DICOMDIR else '')
         if viewer_cmd_rel:
             # The bundled viewer is 64-bit (Qt 6 has no 32-bit build). On a
             # genuine 32-bit Windows PC the exe cannot start, so detect that
@@ -928,16 +939,17 @@ class CDBurnWorker(QThread):
                 # 64-bit-only guard (Qt 6 has no 32-bit build)
                 "if /I \"%PROCESSOR_ARCHITECTURE%\"==\"x86\" if not defined PROCESSOR_ARCHITEW6432 goto win32\n"
                 f"if not exist \"%~dp0{viewer_cmd_rel}\" goto noexe\n"
+                + dicomdir_guard +
                 f"set \"VIEWER_SRC=%~dp0{viewer_dir_rel_bs}\"\n"
                 f"set \"VIEWER_EXE={viewer_exe_name}\"\n"
                 "if not exist \"%VIEWER_SRC%\\_internal\" goto runinplace\n"
                 "echo Preparing viewer, please wait.\n"
                 "robocopy \"%VIEWER_SRC%\" \"%TEMP%\\AIPacsLiteViewer\" /E /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul\n"
                 "if not exist \"%TEMP%\\AIPacsLiteViewer\\%VIEWER_EXE%\" goto runinplace\n"
-                "start \"\" \"%TEMP%\\AIPacsLiteViewer\\%VIEWER_EXE%\" --import-folder \"%~dp0\"\n"
+                f"start \"\" \"%TEMP%\\AIPacsLiteViewer\\%VIEWER_EXE%\" {viewer_arguments}\n"
                 "exit /b 0\n"
                 ":runinplace\n"
-                f"start \"\" \"%~dp0{viewer_cmd_rel}\" --import-folder \"%~dp0\"\n"
+                f"start \"\" \"%~dp0{viewer_cmd_rel}\" {viewer_arguments}\n"
                 "exit /b 0\n"
                 ":win32\n"
                 "echo.\n"
@@ -952,6 +964,10 @@ class CDBurnWorker(QThread):
                 "exit /b 0\n"
                 ":noexe\n"
                 "echo Viewer executable was not found.\n"
+                "pause\n"
+                "exit /b 1\n"
+                ":nodicomdir\n"
+                "echo The DICOMDIR index was not found on this media.\n"
                 "pause\n"
                 "exit /b 1\n",
                 encoding="utf-8",
@@ -1001,8 +1017,8 @@ class CDBurnWorker(QThread):
             "How to use this disc/folder on another Windows PC:",
             "1. Insert the disc or open the copied export folder.",
             f"2. If a portable viewer is included, double-click {primary_launcher or 'RUN_VIEWER.cmd'}.",
-            "   The viewer opens directly — no command window and no extra Windows",
-            "   prompts. (If anything blocks it, RUN_VIEWER.cmd is a fallback.)",
+            "   The launcher tells the viewer where to find the images.",
+            "   RUN_VIEWER.cmd may show a command window and is also a fallback.",
             "3. If Windows warns about security, choose Run anyway only if this media is trusted.",
             "4. If the included viewer does not start on that PC, install or use any DICOM viewer and open the DICOMDIR file from the media root.",
             "",
@@ -1023,6 +1039,13 @@ class CDBurnWorker(QThread):
             "- Standard DICOM patient/study/series/image files",
             "- OPEN_DICOM_FOLDER.cmd to browse the media root quickly",
         ]
+        if viewer_launch_mode == LEGACY_DICOMDIR:
+            first = readme_lines.index(f"- Always start the viewer with {primary_launcher or 'RUN_VIEWER.cmd'}. It copies the viewer to")
+            last = readme_lines.index("- The included viewer should be a portable Windows viewer bundle for best compatibility.")
+            readme_lines[first:last] = [
+                '- Start this legacy viewer with RUN_VIEWER.cmd, which passes the root DICOMDIR path.',
+                '- Keep DICOMDIR beside its image folders; do not move only the index into VIEWER.',
+            ]
         if viewer_rel:
             readme_lines.append(f"- Portable viewer bundle: {viewer_rel}")
             if launcher_exe_name:
@@ -1042,6 +1065,7 @@ class CDBurnWorker(QThread):
             "viewer_included": bool(viewer_rel),
             "viewer_launcher": viewer_rel,
             "viewer_display_name": viewer_display_name if viewer_rel else None,
+            "viewer_launch_mode": viewer_launch_mode if viewer_rel else None,
             "dicomdir": "DICOMDIR",
             "portable_launchers": (
                 ([launcher_exe_name] if launcher_exe_name else [])

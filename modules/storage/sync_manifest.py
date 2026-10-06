@@ -112,7 +112,8 @@ def _pixelless_stub_count(series_dir: Path) -> int:
                     continue
                 if f.stat().st_size >= _STUB_PROBE_MAX_BYTES:
                     continue  # a real image — far larger than any header-only stub
-                ds = pydicom.dcmread(str(f), force=True)
+                from PacsClient.utils.dicom_reader import read_dicom
+                ds = read_dicom(str(f), force=True)
                 declares_image = (
                     bool(getattr(ds, "Rows", None))
                     and bool(getattr(ds, "Columns", None))

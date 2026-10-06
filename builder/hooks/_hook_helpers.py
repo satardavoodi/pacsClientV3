@@ -64,6 +64,7 @@ def pyside6_hook_payload() -> tuple[list[str], list[tuple[str, str]], list[tuple
         "tls",
         "networkinformation",
         "multimedia",
+        "texttospeech",
         "position",
         "sqldrivers",
         "webview",
@@ -79,6 +80,7 @@ def pyside6_hook_payload() -> tuple[list[str], list[tuple[str, str]], list[tuple
 
     hiddenimports.extend(
         [
+            "PySide6.QtTextToSpeech",
             "PySide6.QtCore",
             "PySide6.QtGui",
             "PySide6.QtWidgets",

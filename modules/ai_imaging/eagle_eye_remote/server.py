@@ -80,6 +80,7 @@ class Jobs:
         self.retrieval = threading.BoundedSemaphore(1)
         self.slots = threading.BoundedSemaphore(16)
         self.jobs, self.cancelled, self.requests = {}, {}, {}
+        self.case_events = None
         try:
             for file in self.root.glob('*/state.json'):
                 state = json.loads(file.read_text(encoding='utf-8'))
@@ -97,6 +98,8 @@ class Jobs:
         with self.lock:
             self.jobs[job_id].update(values)
             write_json(self.root / job_id / 'state.json', self.jobs[job_id])
+            if self.case_events is not None:
+                self.case_events.publish(self.jobs[job_id]['study_uid'], 'eagle_eye')
 
     def submit(self, owner, request):
         request = validate(request)
@@ -227,6 +230,11 @@ class Jobs:
             self.closed = True
             for event in self.cancelled.values():
                 event.set()
+        bridge = getattr(self, 'case_bridge', None)
+        if bridge:
+            bridge.stop()
+        if self.case_events:
+            self.case_events.close()
         try:
             self.executor.shutdown(wait=True)
             self.source.session.close() if hasattr(self.source, 'session') else None
@@ -234,7 +242,7 @@ class Jobs:
             self.directory_lease.close()
 
 
-def handler(jobs, credentials, certificate_pins=None, *, echomind=None):
+def handler(jobs, credentials, certificate_pins=None, *, echomind=None, secretary=None, cases=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'EagleEye/1'
         def log_message(self, *args):
@@ -264,23 +272,73 @@ def handler(jobs, credentials, certificate_pins=None, *, echomind=None):
                 if not hmac.compare_digest(certificate_pins.get(owner, ''), pin):
                     return self.reply(403, {'error': 'Client pairing required.'})
             try:
+                if (cases is not None and self.path.startswith('/v1/jobs')
+                        and cases.memberships.get(owner) != cases.center):
+                    raise PermissionError('Case access denied.')
                 if self.command == 'GET' and self.path == '/v1/capabilities':
                     return self.reply(200, {'protocol': 1, 'modules': list(MODULES),
                         'echomind': echomind.capabilities if echomind else None,
+                        'secretary': secretary.capabilities if secretary else None,
+                        'case_realtime': {'version': 1, 'transport': 'authenticated-long-poll',
+                            'shared_center_reads': True} if cases else None,
                         'input_mode': 'pacs_references', 'interactive_edits': True,
                         'lesion_acquisition_modes': ['3d', '2d'],
                         'lesion_multisequence_review': True,
                         'spine_box_segmentation': True,
+                        'bone_age_demographic_confirmation': 1,
                         'correction_modules': ['alignment', 'total-spine', 'brain', 'brain-lesions'], 'correction_protocol': 1})
                 if self.command == 'GET' and self.path == '/v1/jobs':
                     return self.reply(200, jobs.recent(owner))
                 if self.command == 'POST':
                     length = int(self.headers.get('Content-Length', '0'))
                     from .contracts import MAX_REVIEW_REQUEST
-                    limit = 2 * 1024 * 1024 if self.path == '/v1/echomind/process' else MAX_REVIEW_REQUEST
+                    limit = (512 * 1024 if self.path == '/v1/secretary/plan' else
+                             2 * 1024 * 1024 if self.path == '/v1/echomind/process' else MAX_REVIEW_REQUEST)
+                    if self.path.startswith('/v1/cases/'):
+                        limit = 4096
                     if not 0 < length <= limit or self.headers.get('Transfer-Encoding'):
                         raise ValueError('Invalid request size.')
                     body = json.loads(self.rfile.read(length))
+                    if self.path.startswith('/v1/cases/'):
+                        if cases is None:
+                            return self.reply(503, {'error': 'Case synchronization is unavailable.'})
+                        if not isinstance(body, dict):
+                            raise ValueError('Invalid case request.')
+                        operation = self.path.removeprefix('/v1/cases/')
+                        fields = {'snapshot': {'case', 'offset'}, 'events': {'case', 'cursor'},
+                            'text': {'case', 'request_id'}, 'job': {'case', 'job_id'},
+                            'artifacts': {'case', 'job_id'}}
+                        if operation not in fields or set(body) - fields[operation] or 'case' not in body:
+                            raise ValueError('Invalid case operation.')
+                        reference = body['case']
+                        if operation == 'snapshot':
+                            return self.reply(200, cases.snapshot(owner, reference, offset=body.get('offset', 0)))
+                        if operation == 'events':
+                            value = cases.wait(owner, reference, body.get('cursor'))
+                            if not hmac.compare_digest(credentials.get(owner, ''), token):
+                                return self.reply(401, {'error': 'Authorization required.'})
+                            return self.reply(200, value)
+                        if operation == 'text':
+                            return self.reply(200, cases.text(owner, reference, body.get('request_id')))
+                        state, request = cases.job(owner, reference, body.get('job_id'))
+                        if operation == 'job':
+                            return self.reply(200, {'state': state, 'request': request})
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/zip')
+                        self.send_header('Content-Length', str(state['artifact_bytes']))
+                        self.send_header('Cache-Control', 'no-store')
+                        self.end_headers()
+                        with (jobs.root / state['job_id'] / 'artifacts.zip').open('rb') as stream:
+                            shutil.copyfileobj(stream, self.wfile)
+                        return
+                    if self.path == '/v1/secretary/plan':
+                        if secretary is None:
+                            return self.reply(503, {'error': 'Secretary is not configured on this Eagle Eye server.'})
+                        from .echomind.hosting import RequestFailed
+                        try:
+                            return self.reply(200, secretary.process(owner, body))
+                        except RequestFailed as exc:
+                            return self.reply(exc.status, {'error': str(exc)})
                     if self.path == '/v1/echomind/process':
                         if echomind is None:
                             return self.reply(503, {'error': 'EchoMind is not configured on this Eagle Eye server.'})
@@ -290,6 +348,8 @@ def handler(jobs, credentials, certificate_pins=None, *, echomind=None):
                         except RequestFailed as exc:
                             return self.reply(exc.status, {'error': str(exc)})
                     if self.path == '/v1/jobs':
+                        if cases is not None:
+                            cases.verify_study(owner, validate(body)['study_uid'])
                         return self.reply(202, jobs.submit(owner, body))
                 match = re.fullmatch(r'/v1/jobs/([a-f0-9]{32})(/cancel|/artifacts)?', self.path)
                 if not match:
@@ -314,6 +374,10 @@ def handler(jobs, credentials, certificate_pins=None, *, echomind=None):
                 self.reply(409, {'error': 'Completed artifacts are not available.'})
             except KeyError:
                 self.reply(404, {'error': 'Analysis not found.'})
+            except PermissionError:
+                self.reply(403, {'error': 'Case access denied.'})
+            except BlockingIOError:
+                self.reply(429, {'error': 'Case event reader limit reached.'})
             except RevisionConflict:
                 self.reply(409, {'error': 'A newer correction exists. Reload the latest result.'})
             except QueueFull:
@@ -372,10 +436,46 @@ def create_server(config):
         jobs = Jobs(config['job_root'], source_provider(config['pacs']),
                     resources=config.get('resources'), max_jobs_per_client=config.get('max_jobs_per_client', 4))
         echomind = None
+        secretary = None
         if config.get('echomind'):
             from .echomind.hosting import EchoMind
             echomind = EchoMind(config['echomind'], credentials)
-        server.RequestHandlerClass = handler(jobs, credentials, pins, echomind=echomind)
+            from .secretary.service import Secretary
+            secretary = Secretary(config.get('secretary', {}), echomind)
+        from .case_realtime import CaseService
+        center = config.get('center_id', 'configured-pacs')
+        memberships = config.get('client_centers', {owner: center for owner in credentials})
+        if not isinstance(memberships, dict) or set(memberships) != set(credentials):
+            raise ValueError('Every paired client requires a server-owned center membership.')
+        cases = CaseService(jobs, echomind.history if echomind else None, memberships, center)
+        scope = {'center': center, 'pacs': hashlib.sha256(json.dumps({
+            k: config['pacs'].get(k) for k in ('url', 'type', 'database')},
+            sort_keys=True).encode()).hexdigest()}
+        scope_file = jobs.root / 'case-scope.json'
+        if scope_file.exists() and json.loads(scope_file.read_text(encoding='utf-8')) != scope:
+            raise ValueError('The case store belongs to another center or PACS source.')
+        write_json(scope_file, scope)
+        if echomind:
+            echomind.history.directory.mkdir(parents=True, exist_ok=True)
+            history_scope = echomind.history.directory / 'case-scope.json'
+            try:
+                with history_scope.open('x', encoding='utf-8') as output:
+                    json.dump(scope, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+            except FileExistsError:
+                if json.loads(history_scope.read_text(encoding='utf-8')) != scope:
+                    raise ValueError('EchoMind history belongs to another center or PACS source.')
+        jobs.case_events = cases.events
+        if echomind:
+            echomind.case_events = cases.events
+            echomind.verify_case = cases.verify_study
+        from .pacs_case_bridge import PacsCaseBridge
+        bridge = PacsCaseBridge(cases, config['pacs'])
+        jobs.case_bridge = bridge
+        bridge.start()
+        server.RequestHandlerClass = handler(jobs, credentials, pins, echomind=echomind,
+                                            secretary=secretary, cases=cases)
         return server, jobs
     except Exception:
         if server is not None:

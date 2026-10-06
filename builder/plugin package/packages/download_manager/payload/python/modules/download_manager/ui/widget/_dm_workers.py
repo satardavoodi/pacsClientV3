@@ -588,9 +588,6 @@ class _DMWorkersMixin:
 
             if success:
                 logger.info(f"✅ [COMPLETION] Download completed successfully: {study_uid[:40]}...")
-                logger.info("   Emitting download_completed signal...")
-                self.download_completed.emit(study_uid)
-                logger.info("   Signal emitted")
 
                 # Update state to COMPLETED — force 100 % so progress bar matches badge.
                 # completed_series is populated from subprocess state; replicate it here
@@ -612,16 +609,30 @@ class _DMWorkersMixin:
                     is_auto_paused=False,
                     viewed_series_number=None  # Clear viewed series on completion
                 )
-                logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... to COMPLETED status (100 %, {total_for_completion} images)")
+                logger.info(f"[COMPLETION] Updated transfer state to COMPLETED (100 %, {total_for_completion} images)")
                 
                 # CRITICAL FIX: Clean up task state to prevent memory accumulation in high-frequency loops
                 # (1000+ cycles with no cleanup = 1000+ dict entries accumulating)
-                self._cleanup_task_state(study_uid)
-                
-                # Log completion to UI
-                state = self.state_store.get(study_uid)
-                patient_name = getattr(state, 'patient_name', 'Unknown') if state else 'Unknown'
-                self.log_message(f"✅ [{study_uid[:10]}...] Download completed successfully for {patient_name}")
+                # State observers and Qt receivers can synchronously replace a task.
+                # Publish only after the transfer state is visible, and never clear
+                # bookkeeping belonging to a replacement created by a receiver.
+                # This notification does not assert catalog or renderer readiness.
+                completion_state = self.state_store.get(study_uid)
+                if (
+                    self._tasks.get(study_uid) is task_for_completion
+                    and completion_state is not None
+                    and completion_state.status == DownloadStatus.COMPLETED
+                ):
+                    self.download_completed.emit(study_uid)
+                    current_state = self.state_store.get(study_uid)
+                    if (
+                        self._tasks.get(study_uid) is task_for_completion
+                        and current_state is completion_state
+                        and current_state.status == DownloadStatus.COMPLETED
+                    ):
+                        self._cleanup_task_state(study_uid)
+                        patient_name = getattr(current_state, 'patient_name', 'Unknown')
+                        self.log_message(f"✅ [{study_uid[:10]}...] Download completed successfully for {patient_name}")
             else:
                 # Check if this is a preemption (series-interrupt): the coordinator
                 # sets state to PENDING before this signal arrives.  Do NOT count

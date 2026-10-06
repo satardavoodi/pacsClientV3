@@ -219,3 +219,24 @@ sanitizer; `enabled` is **force-set to `false`** at packaging (see below).
 - Optional server-initiated SSE stream on `GET /mcp` (v1 is request/response).
 - Token rotation / expiry enforcement (`device_token_ttl_days` is stored but not
   yet enforced).
+
+
+## September 30 execution contract update
+
+`GUI_TIMEOUT` cancels an unstarted queued command. `EXECUTION_IN_PROGRESS` means
+its effect may still complete; never automatically replay it. The queue accepts
+at most 64 pending commands and yields between jobs.
+
+For a single `tools/call`, set `Idempotency-Key` on HTTP or `operation_id` in the
+arguments. Reuse that key only for an identical retry; it is scoped to the paired
+device. Five-minute completed receipts prevent duplicate execution and reject
+changed arguments. This is process-local, not a durable exactly-once protocol.
+Batch calls do not provide per-command retry receipts. Missing keys preserve
+legacy behavior. See the September 30 section of the control architecture review.
+
+`list_patients` now returns `data.state=searching` when Home is still working.
+Poll `read_patients` for `state=ready`; no stale cache is a completion receipt.
+Home tool schemas are shared with CommandBus; invalid confirmation types are
+rejected. Gateway advertises only its implemented 2025-06-18 protocol revision.
+The separate stdio test bridge supports official SDK v1/v2; do not confuse that
+bridge with the production Gateway or enable the Gateway for test attachment.

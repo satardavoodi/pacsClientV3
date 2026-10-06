@@ -488,6 +488,7 @@ class MamoWorker(QThread):
 class BoneAgeWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
+    sex_required = Signal()
 
     def __init__(self, study_uid: str, sex: str | None, boneage_url: str,
                  headers: dict | None = None, metadata_context: dict | None = None):
@@ -499,14 +500,62 @@ class BoneAgeWorker(QThread):
         self.metadata_context = metadata_context or {}
         self.canceled = False
         self.data = None
+        import threading
+        self._sex_ready = threading.Event()
+        self.sex_provenance = None
+
+    def confirm_sex(self, value):
+        from modules.ai_imaging.eagle_eye_remote.demographics import normalize
+        self.sex = normalize(value)
+        if self.sex:
+            self.sex_provenance = dict(source='physician', study_uid=self.study_uid,
+                                       patient_id=str(self.metadata_context.get('patient_id') or ''))
+        else:
+            self.canceled = True
+        self._sex_ready.set()
+
+    def confirm_demographics(self, value):
+        from modules.ai_imaging.eagle_eye_remote.demographics import validate_review
+        if value is None:
+            self.confirm_sex(None)
+            return
+        self.confirmed_demographics = validate_review(
+            value, self.study_uid, str(self.metadata_context.get('patient_id') or ''))
+        self.confirm_sex(self.confirmed_demographics['sex'])
+        self.sex_provenance['source'] = 'physician-review'
 
     def run(self):
         try:
+            from modules.ai_imaging.eagle_eye_remote.demographics import prepare_review
+            self.demographic_draft = prepare_review(self.metadata_context, self.sex, self.study_uid)
+            if not self.canceled:
+                import time
+                self.sex_required.emit()
+                deadline = time.monotonic() + 300
+                while not self._sex_ready.wait(.1):
+                    if self.canceled or time.monotonic() >= deadline:
+                        raise RuntimeError('Bone Age demographic confirmation was cancelled or timed out.')
+            if self.canceled:
+                raise RuntimeError('Bone Age analysis cancelled; no request was submitted.')
             from modules.ai_imaging.eagle_eye_remote.routing import study as run_study
             data = run_study('bone-age', self.study_uid, sex=self.sex,
-                             cancelled=lambda: self.canceled)
+                             sex_provenance=self.sex_provenance, cancelled=lambda: self.canceled)
             if self.canceled:
                 return
+            data['confirmed_demographics'] = self.confirmed_demographics
+            data.setdefault('study_id', self.study_uid)
+            data['patient_id'] = self.confirmed_demographics['patient_id']
+            try:
+                from modules.ai_imaging.eagle_eye_engines.bone_age_report import create_report, assessment
+                assessment(data, self.study_uid, data['patient_id'])
+                from modules.ai_imaging.eagle_eye_remote.bone_report_ui import load_report_inputs, load_evidence
+                report_inputs = load_report_inputs(self.study_uid, result=data, review=False)
+                evidence = load_evidence(report_inputs, self.confirmed_demographics)
+                data.update(create_report(data, self.study_uid, data['patient_id'], ATTACHMENT_PATH / self.study_uid,
+                                          evidence_png=evidence))
+            except (ValueError, RuntimeError, OSError):
+                # Retain successful inference if report rendering is unavailable.
+                data['report_error'] = 'PDF preparation requires review. Use Create Bone Age PDF.'
             self.data = data
             saved = self._save_result_json(data)
             if saved is None:
@@ -543,6 +592,19 @@ class BoneAgeWorker(QThread):
                 "bone_age_years": canonical_years,
                 "bone_age_months": canonical_months,
                 "sex": canonical_sex,
+                "sex_provenance": data.get('sex_provenance'),
+                "confirmed_demographics": data.get('confirmed_demographics'),
+                "study_id": self.study_uid,
+                "patient_id": data.get('patient_id'),
+                "pdf_path": data.get('pdf_path'),
+                "report_error": data.get('report_error'),
+                "reference": data.get('reference'),
+                "model_used": data.get('model_used'),
+                "engine_revision": data.get('engine_revision'),
+                "checkpoint_sha256": data.get('checkpoint_sha256'),
+                "server_job_id": data.get('server_job_id'),
+                "image_count": data.get('image_count'),
+                "reliability_warnings": data.get('reliability_warnings'),
                 # Legacy keys (kept for backward compatibility)
                 "predicted_bone_age_months": canonical_months,
                 "predicted_bone_age_years": canonical_years,
@@ -1091,7 +1153,6 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
         # اگر در متادیتا جنسیت لازم است، اینجا بخوان:
         patient_sex = self.image_viewer.metadata_fixed.get('patient_sex', None)
-        print(f'patient sex : {patient_sex}\n')
         # اگر key واقعی چیز دیگری است، فقط همین خط را عوض کن.
 
         metadata_fixed = getattr(self.image_viewer, 'metadata_fixed', None)
@@ -1109,6 +1170,9 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             'patient_code': metadata_fixed.get('patient_code'),
             'series_instance_uid': series_meta.get('series_uid') or series_meta.get('SeriesInstanceUID') or metadata_fixed.get('series_uid') or metadata_fixed.get('series_instance_uid'),
             'sop_instance_uid': first_instance.get('sop_instance_uid') or first_instance.get('SOPInstanceUID'),
+            'patient_name': metadata_fixed.get('patient_name') or metadata.get('PatientName'),
+            'patient_birth_date': metadata_fixed.get('patient_birth_date') or metadata_fixed.get('birth_date') or metadata.get('PatientBirthDate'),
+            'study_date': metadata_fixed.get('study_date') or metadata.get('StudyDate'),
         }
 
         # 1) Loading overlay (consistent with Eagle Eye tab)
@@ -1150,6 +1214,8 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
             # بر اساس خروجی واقعی سرور:
             # {'predicted_bone_age_months': 157.56, 'predicted_bone_age_years': 13.13, ...}
+            if worker.canceled or current_identity() != (study_uid, str(worker.metadata_context.get('patient_id') or '')):
+                return
             age_months = data.get("predicted_bone_age_months")
             age_years = data.get("predicted_bone_age_years")
             model_used = data.get("model_used")
@@ -1170,6 +1236,9 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
             # دقیقا مثل منطق MG → بعد از موفقیت، AI module رو باز کن
             self.open_ai_module()
+            from modules.ai_imaging.eagle_eye_remote.bone_report_ui import show_completed_report
+            if not show_completed_report(data, study_uid, current_identity()) and data.get('report_error'):
+                show_message(data['report_error'])
 
         worker.finished.connect(on_finished)
         worker.error.connect(lambda msg: (
@@ -1196,6 +1265,15 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         overlay_ref['timer'] = safety_timer
 
         # Track the worker so it can never be GC'd/deleted while running.
+        from modules.ai_imaging.eagle_eye_remote.demographics_ui import SexConfirmation
+        def current_identity():
+            fixed = getattr(self.image_viewer, 'metadata_fixed', {}) or {}
+            current_study = fixed.get('study_uid') or fixed.get('study_instance_uid')
+            return current_study, str(fixed.get('patient_id') or fixed.get('patient_code') or '')
+        confirmation = SexConfirmation(main_window, worker, current_identity, safety_timer)
+        worker.sex_required.connect(confirmation.request)
+        worker.finished.connect(lambda *_: confirmation.deleteLater())
+        worker.error.connect(lambda *_: confirmation.deleteLater())
         self._register_ai_worker(worker)
         worker.start()
 

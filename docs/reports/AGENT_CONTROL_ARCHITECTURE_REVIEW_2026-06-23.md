@@ -614,3 +614,91 @@ executes + verifies them.
 confirm-once UX (set `AIPACS_SECRETARY_WORKFLOWS=1` and say *"download this patient and open it"*),
 and the new GUI tools in `patient_tab_viewer.md` (drop-by-UID, window/level, screenshot, dental-curve
 MPR, toolbar, explicit layout). The engine + verification logic (criteria 7, 8) are proven offscreen.
+
+
+## September 30, 2026: MCP execution reliability correction (OPT-23)
+
+Owner-authorized follow-up to the client-control audit. Company inference remains
+on authenticated Eagle Eye; this change does not deploy server code or move
+prompts/provider calls into MCP. Execution, identity and permission stay local.
+The dirty working tree and earlier ordinal-opening correction were preserved.
+
+### Reproduced defects and changes
+
+- A queued GUI command executed after its caller received GUI_TIMEOUT. The queue
+  now cancels/removes unstarted jobs atomically, limits outstanding queued jobs to
+  64, and yields between commands. Already-started effects return
+  EXECUTION_IN_PROGRESS with retryable=false rather than claiming cancellation.
+- Gateway single-command retries can carry Idempotency-Key or
+  tools/call arguments.operation_id. Receipts are authenticated-device scoped,
+  fingerprint arguments independently of JSON-RPC request IDs, reject key reuse
+  for another command, and prevent duplicate execution. Completed receipts last
+  five minutes; capacity is 256, with at most 128 KiB cached response per receipt.
+  In-flight/uncertain effects are retained until gateway restart. This is not a
+  durable exactly-once guarantee across restarts or after expiry. Clients without
+  an operation key retain their prior semantics and must not blindly retry effects.
+- Secretary UI now uses handle_async on the existing qasync GUI loop. Shared
+  execution generators preserve the synchronous compatibility entry points and
+  confirmation/session logic while async drivers await searches and verification
+  delays. Widgets still execute on Qt's thread. Session overlap is rejected;
+  widget cleanup cancels owned execution tasks and no subsequent step is issued.
+- Home search no longer pumps processEvents or sleeps on Qt. Async search rejects
+  timeout, cancellation and replacement before accepting rows. Failed lookup does
+  not consume stale rows. Bus search reports searching/ready and callers poll
+  read_patients; it no longer claims immediate completion of pending searches.
+  This does not redesign the underlying Home search service or its error handling.
+- Missing explicit workflow success, failed probes and unknown verification rules
+  cannot advance the workflow. Unknown rules are rejected before their action.
+  Empty CommandBus state dictionaries retain identity instead of being replaced.
+- Secretary bus calls default to assistant policy, independent of proposal state.
+  Scoped policy-check failure denies execution. Local permission rules determine
+  server-write confirmation even if a model says needs_confirmation=false.
+  Existing unscoped legacy registry policy and explicit QA mode remain distinct.
+- Home search/read/open schemas are shared by CommandBus validation and Gateway
+  tools/list. Malformed values and non-boolean confirmation are rejected without
+  echoing patient input. Other action schemas remain adapter-specific/generic;
+  this is not a claim that every workstation tool has a complete typed contract.
+- Gateway negotiates only its implemented 2025-06-18 revision, rather than echoing
+  arbitrary client revisions. The stdio test bridge supports official MCP SDK v1
+  and v2 imports. A bounded >=1.27.2,<3 requirements file replaces unbounded setup
+  advice. The production Gateway remains a limited JSON-RPC implementation;
+  it is not represented as a complete SDK-v2 protocol migration.
+
+### Evidence and scope
+
+Twelve new guards failed before their corresponding implementation changes (six
+initial contract/timeout failures, two missing async interfaces, two permission
+failures, one duplicate operation, one missing entity schema). The final focused
+selection passed 279 tests, exit 0, including 18 dedicated lifecycle/execution
+checks and two actual isolated stdio handshakes. Existing TLS datetime deprecation
+warnings remain (three); no lint pass is claimed. SDK 1.27.2 in the app environment
+and SDK 2.2.0 in an isolated generated-files environment each initialized and
+listed 60 tools. No tool call or clinical action was used for SDK checks.
+
+Guards: tests/code/agent_gateway/test_command_lifecycle.py,
+tests/code/echomind/test_execution_contract.py,
+tests/code/system/test_mcp_sdk_compatibility.py. Existing asynchronous UI, repair
+confirmation, ordinal identity, adapter, workflow, gateway and teardown suites
+were included. The AST-only legacy assertions were updated for the shared async
+entry points; behavioral async confirmation and cancellation tests were added.
+All new data are synthetic; no live database, patient report or provider call.
+
+Nine changed EchoMind source/payload pairs match. The global mirror verifier has
+one pre-existing shared chat-page mismatch (viewer_chat/ai_chat_pages.py), left
+untouched. Distribution-profile guards: 19 passed, three failed at that same
+unrelated page mismatch. Standard Client, ARM-emulated Client and Eagle Eye GUI
+consume the shared source/plugin changes for both PyInstaller and Nuitka. The
+headless server inference path is unaffected. No installer was built or released;
+artifact acceptance remains pending in all applicable profiles.
+
+Live source GUI: NOT VERIFIED. The documented client ping could not attach to the
+per-user Test Control listener. Human fresh source launch with run_app.ps1
+-TestServer and Home sign-in was requested after runtime edits. Do not count
+headless Qt or SDK inventory as live acceptance. Required next lap: list then open
+an authorized test study; verify exact identity and responsive UI while waiting;
+confirmation/cancel; panel close while waiting; retry with the same operation key.
+Do not induce server failures or repeat clinical writes to exercise failure paths.
+
+Rollback must restore only this reviewed change set and its nine matching mirrors,
+preserving other dirty work. Never revert the server-only company routing contract
+or restore direct company-provider fallback as a workaround.

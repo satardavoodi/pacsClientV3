@@ -622,3 +622,221 @@ Code guards: PASS for the focused selection. Sampled source GUI: PASS as recorde
 in the download receipt plus the user's patient drag confirmation. Crash/shutdown
 closure, full Unify matrix, matched KPI acceptance and installed-build verification:
 OPEN. This document updates the existing master plan, not a parallel project.
+
+
+## 2026-10-03: OPT-21 / OPT-60 Windows first-chance diagnostic crash
+
+Three source startup failures at 17:57-17:59 are actual native crashes, not
+ordinary exit or the earlier human-terminated import hang. Local WER dumps were
+parsed offline; no dump, patient data or memory contents were uploaded. Exact
+Python 3.13.5 AMD64 symbols from the official core_pdb.msi resolve the fault to
+`PyCode_Addr2Line+0x60` in two runs and `dump_frame` in the third. All three
+exception stacks contain `faulthandler_exc_handler`, `faulthandler_dump_traceback`,
+`_Py_DumpTracebackThreads`, and frame dumping. Their process-exclusive text logs
+start with a first-chance COM exception (0x8001010d) and are interrupted while
+printing another thread. This identifies the diagnostic traversal as the crash
+site; it does not make the arbitrary interrupted configuration read the cause.
+
+The Windows handler can run while Qt has released the GIL. Its all-thread walk
+can inspect concurrently changing foreign frames. `native_fault_log.py` now
+uses `all_threads=False` on Windows and retains `True` elsewhere. Native fault
+capture stays enabled and keeps its exclusive open handle. No exception is
+swallowed, no interpreter upgrade or clinical workflow change is introduced.
+The separate timeout watchdog is unchanged; this receipt does not certify it or
+resolve unrelated earlier Shiboken crashes. Cost: automatic Windows exception
+reports contain only the faulting thread. WER dumps remain available for broader
+native investigation.
+
+Verification: the new platform-policy guard failed before the change (Windows
+True versus required False; Linux passed). A preliminary 2,000-event stress
+probe timed out, so it is not claimed as a reproduced native crash. After the
+fix, 63 focused native handler/isolation/probe/filter tests passed, exit 0. A
+bounded subprocess guard raises 20 handled COM exceptions through ctypes while
+a synthetic worker changes Python frames: process survives, diagnostics persist,
+and foreign worker stacks are absent. No Qt app or database is opened by it.
+
+Source GUI acceptance remains OPEN: the documented control client's ping found
+no Test Control Server. Human fresh source launch/login requested; no app was
+started, stopped or hot-patched. Shared bootstrap applies to Standard and Eagle
+Eye roles. Existing main.py import plus PyInstaller PacsClient collection and
+Nuitka package inclusion cover this existing core module; no new package entry
+is required. Mirror dry-run reports only unrelated EchoMind ai_chat_pages drift;
+it was not synchronized. No installer/release/build acceptance is claimed.
+
+
+## 2026-10-04: retrospective stability review, September 28 through October 4
+
+Read-only runtime investigation; no application restart, patient operation,
+configuration change or runtime patch. Reviewed retained app/viewer/download/DB
+rotations, process-exclusive native logs and Windows Application events 1000,
+1001, 1002. Exact repeated log lines were deduplicated; distinct sampled records
+are not automatically distinct user incidents. Rotation retention is incomplete:
+app/viewer coverage begins September 30, download/DB extends earlier, and no
+October 1 entries were found in the scanned set. Mixed manual and automation
+activity prevents a clinical crash-rate or before/after improvement claim.
+
+### Prioritized findings
+
+1. Windows recorded 16 Application Error records for 12 distinct Python PIDs
+   whose app bootstrap was found. Four Python traceback-diagnostic failures each
+   generated paired access-violation/callback-error records (not eight incidents).
+   Seven Shiboken access violations share offset 0x26f20; their current-thread
+   native stack terminates at main.py:1587 in the final exit path. This is an
+   unresolved shutdown-family finding, not evidence of seven mid-reading crashes.
+   One separate October 4 11:05:41 PySide violation (offset 0x1bbd8) has a stack
+   `_ScanThread.__init__ -> ConsultationPoller.poll_once -> notify` at poller.py:35,
+   217. Prioritize thread/QObject ownership and callback lifetime investigation;
+   the dump site alone does not establish which object corrupted ownership.
+   No matching 1002 hang record was returned by this retained event query; this
+   does not erase the previously documented September 29 AppHang evidence.
+2. Five unhandled `ApiWorker already deleted` exceptions across four PIDs on
+   October 2-3 show a separate asynchronous object-lifetime defect. Inspect late
+   callback/worker retirement before claiming shutdown or notification closure.
+3. October 4 10:09 qasync reports task re-entry involving
+   `_HPDownloadMixin._save_study_to_db_async`. This is a real completion/metadata
+   reliability signal; investigate nested event-loop entry and pending-task
+   recovery. It is not proof of corrupt downloaded DICOM files.
+4. October 4 12:57 progressive Fast display logs STALE-EXHAUSTED at 93/101 after
+   five retries. The message expects a later completion guard to recover; no
+   later exact same series-key record was found in that main PID. Recovery is
+   unverified, not failed by assumption. Keep decoding/render changes with the
+   viewer owner and shared completion notification with Unify.
+5. Download evidence is materially better than raw WARNING totals suggest:
+   all 891 parsed SERIES_FILE_COUNT_CHECK records report passed=True and
+   cancelled=False. This is a lower-bound local-count check, not byte-integrity,
+   exact SOP manifest or whole-study success proof. Seven ERROR records are
+   preemption cancellations; one is user cancellation. Two GetSeriesImages
+   requests were closed by the server during the response header (each also has
+   a traceback record). No thumbnail-producer WARNING/ERROR was found in the
+   logger-name scan; 231 downloading and 229 completed thumbnail-state records
+   are events, not one-to-one tasks, so their difference is not a failure count.
+6. Retained first-series-display KPI samples: n=693, median 69.3 ms, p95 198.0 ms,
+   max 1035.7 ms. Widget creation median/p95/max 15.0/106.6/789.1 ms; first render
+   request 35.2/127.2/891.0 ms. These are emitted stages, not pixel/thumbnail
+   acceptance timings. The worst event-loop gap is 27932 ms in the browser cold
+   activation interval; sampled stacks include WebEngine setup_profile. Other
+   samples show synchronous socket login waits around 3.4 seconds, Secretary
+   workflow verification around 8.6 seconds and source-inspection I/O around
+   7.6 seconds. Repeated stall trace samples can belong to one prolonged stall.
+7. A retained main session reaches 3247.1 MB RSS and later falls to 910.7 MB.
+   Another reaches 2380.4 MB and later 1212.5 MB. These peaks warrant bounded
+   cache/worker-cycle measurements but do not prove a memory leak. Rotated
+   samples and different workloads prohibit a reliable week-over-week trend.
+
+### Next evidence gates (existing OPT-21 / OPT-60 owners)
+
+Prioritize the in-session consultation crash and asynchronous worker lifetime,
+then download completion re-entry and same-series completion recovery, then
+shutdown and measured cold browser stalls. Reproduce each independently with
+synthetic guards and source GUI acceptance before changing runtime behavior.
+The October 3 fault-handler fix does not close these separate crash families.
+No new build/install or clinical stability certification is implied.
+
+
+### 2026-10-04: deeper source and dump review of retrospective findings
+
+No runtime edits. Exact findings supersede speculative ownership attribution:
+
+- Consultation crash: offline minidump exception context and local PE export
+  symbols resolve pyside6.abi3.dll+0x1bbd8 to
+  `PySide::SignalManager::retrieveMetaObject+0x24`. The instruction dereferences
+  RAX=0; the immediate Python caller is `_ScanThread.__init__` at super().__init__.
+  PySide/Shiboken currently report 6.10.2. This proves a null dynamic-metaobject
+  lookup, NOT that the Poller parent was already deleted. The Python wrapper
+  address is outside captured minidump memory; exact invalid-wrapper provenance
+  is unavailable. A deterministic create/poll/retire stress reproducer with table
+  replacement and identity transitions, or a full local dump, is required before
+  choosing a wrapper-ownership or binding-library repair. Do not disable polling
+  or wrap the constructor in try/except as a claimed native-crash fix.
+- Shutdown offset shiboken6+0x26f20 maps within BindingManager::releaseWrapper.
+  The current-thread Python frame is the final main.py exit boundary. Investigate
+  wrapper registry release/Qt destruction ordering, not download disk workers
+  merely because they appear elsewhere in an all-thread stack. Do not remove the
+  hard-exit safeguard without proving owner-drain and termination behavior.
+- All five ApiWorker exceptions originate in SecretaryButtonWidget's recording
+  stop path calling self._worker.isRunning() after C++ deletion. Current source
+  `_retire_worker` now clears self._worker only when it matches the retiring
+  worker, then removes it and calls deleteLater. Existing tests cover old-worker
+  completion after replacement. This correction is already present; do not
+  duplicate it or attribute the historical exceptions to ChatPage cleanup.
+- Async re-entry names the active Secretary execution task and blocked Home
+  save-to-DB task. Current HomeWidgetAdapter.search_async awaits instead of
+  pumping Qt events, and the Secretary uses handle_async/drive_steps_async.
+  These changes are already in the dirty worktree. Historical logs do not prove
+  which nested pump caused that exact occurrence. Residual modal dlg.exec inside
+  the async Secretary method and the legacy Home download processEvents loop
+  remain review targets. Use modeless open/finished-to-Future dialog completion
+  and async prefetch at every reachable async boundary; do not alter asyncio's
+  task re-entry guard or blindly retry potentially duplicated DB writes.
+- Progressive display: source _vc_progressive.py:3786 onward logs exhaustion,
+  pops _progressive_series, exits progressive mode and changes the thumbnail
+  count, relying on a future completion signal. The same session already logged
+  study_dl_complete=True and zero global downloads before exhaustion. Series
+  identity/completeness must still be reconciled before declaring files missing.
+  Best correction is identity-scoped reconciliation against authoritative final
+  state, preserving the known-good loaded set and retry state until actual
+  completion or an explicit bounded failure. Raising retry limits alone cannot
+  repair a completion signal that already happened.
+- Exact KPI defect at _vc_progressive.py:3178: applied_count is calculated from
+  visible_target-last_grow rather than observed post-grow count. The logs can
+  therefore say eight applied while repeated grow calls remain at 93. Record
+  requested/admitted/actual counts separately. This is an instrumentation defect
+  and not proof that eight image files were decoded or displayed.
+
+Focused current-source checks: 23 poller lifecycle/off-thread and Secretary worker
+retirement tests PASS; 22 execution-contract/workflow/receipt tests PASS; direct
+pytest exit 0. Synthetic/offscreen checks are not a source-GUI or native-crash
+reproduction pass. Native binding root provenance remains OPEN. Viewer findings
+are handed to its owning report; no competing rendering patch was made.
+
+
+### 2026-10-04: additional completion-order evidence
+
+The existing _on_worker_completed success-branch statements through state.update
+were extracted by AST and run with a real Qt Signal, synthetic state and no DB.
+A same-thread subscriber received download_completed while state still read
+DOWNLOADING; after the branch it read COMPLETED. This establishes a notification
+ordering defect. It does not establish root cause for the native crash or all
+historical queue symptoms. Producer ordering, reentrant observers and durable
+metadata semantics are evaluated in the master plan's adversarial self-review;
+no runtime implementation was changed by this diagnostic probe.
+
+
+### 2026-10-04: execution receipt, transfer completion publication
+
+Implemented the demonstrated producer-order defect in
+`modules/download_manager/ui/widget/_dm_workers.py::_on_worker_completed`.
+The existing StateStore transition now precedes the existing Qt completion signal.
+Synchronous state observers must leave the same task and COMPLETED state before
+publication. After signal delivery, cleanup requires the same task and state
+object still in COMPLETED; a replacement task's bookkeeping is preserved.
+No new pipeline, blocking I/O, retry loop, feature flag or dependency was added.
+Transfer completion still does not certify catalog persistence or rendered pixels.
+
+Regression guard: `tests/code/download_manager/test_completion_publication_order.py`
+executes the production success branch with real same-thread Qt delivery and
+synthetic state, without importing the application or touching the live database.
+Before the patch, three ordering/reentrant replacement guards failed (exit 1).
+An additional cancellation-after-update guard failed before its status check.
+After the patch, all five guards and 26 adjacent progress, StateStore, retry and
+preemption guards passed (31 total, direct pytest exit 0). The state-update-error
+case now also asserts that no success signal escaped.
+
+Packaging: synchronized only this file using sync_plugin_mirrors.add_paths;
+the download_manager payload matches canonical source. Installer module-catalog
+coverage passed. Global mirror verification and its builder guard remain failed
+because of pre-existing EchoMind viewer_chat/ai_chat_pages.py drift; that other
+workstream's payload was not changed. This is not full release/build acceptance.
+The shared download_manager payload carries the correction wherever the module
+is included; Standard and ELI installed artifacts have not been built or tested.
+
+Live gate: documented client.py ping failed with unavailable Test Control Server.
+No app was launched, restarted or logged into. Pending: human-launched source
+with -TestServer outside clinical work, normal download through terminal queue
+state, viewer refresh and retry/replacement behavior, with session health checks.
+
+Remaining boundaries: this patch does not add attempt IDs to worker signals,
+deduplicate arbitrary repeated terminal events, make filesystem/SQLite/UI atomic,
+or close native shutdown/poller crashes. Those need separate reproductions and
+owner evidence; the progressive viewer handoff remains open. No permanent global
+reliability or historical incident root-cause claim follows from these tests.

@@ -126,6 +126,8 @@ class AiMainWindow(QMainWindow):
         self._install_lazy_tabs()
         from modules.ai_imaging.eagle_eye_result_tabs import AnalysisResultTabs
         self.analysis_result_tabs = AnalysisResultTabs(self)
+        if self.eagle_eye_mode == 'brain_mri':
+            self.ensure_saved_brain_results()
         result_signal = getattr(self.imaging_tab, 'analysis_result_ready', None)
         if result_signal is not None:
             result_signal.connect(self.analysis_result_tabs.show_result)
@@ -141,6 +143,13 @@ class AiMainWindow(QMainWindow):
         
         print("[AiMainWindow] AiMainWindow initialized successfully!")
         print("=" * 80 + "\n")
+
+    def ensure_saved_brain_results(self):
+        if getattr(self, 'saved_brain_results', None) is None:
+            from modules.ai_imaging.eagle_eye_brain.saved_results_widget import SavedBrainResultsWidget
+            self.saved_brain_results = SavedBrainResultsWidget(
+                self, study_uid=self._study_uid, open_result=self.workspace_controller.open_saved_brain_result)
+            self.tab_widget.addTab(self.saved_brain_results, 'Saved Brain Results')
 
     def _install_lazy_tabs(self) -> None:
         for key, title in (

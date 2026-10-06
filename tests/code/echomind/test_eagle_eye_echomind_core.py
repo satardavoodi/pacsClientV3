@@ -15,7 +15,7 @@ def hosted(tmp_path, monkeypatch):
     (tmp_path / 'settings.json').write_text('{}')
     monkeypatch.setattr(service.echomind_http.requests.Session, 'request',
                         lambda *a, **kw: pytest.fail('Live network forbidden'))
-    return hosting.EchoMind({'config_dir': str(tmp_path)}, ['first', 'second'])
+    return hosting.EchoMind({'config_dir': str(tmp_path), 'history_dir': str(tmp_path / 'history')}, ['first', 'second'])
 
 
 @pytest.mark.parametrize('field,value', [('model', 'client-choice'), ('system_prompt', 'private'),

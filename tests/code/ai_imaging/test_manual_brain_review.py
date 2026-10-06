@@ -64,7 +64,8 @@ def test_custom_slicer_has_visible_review_controls_independent_of_hidden_statusb
     from modules.ai_imaging.eagle_eye_brain import manual_slicer
     tree = ast.parse(Path(manual_slicer.__file__).read_text())
     attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
-    assert 'QDialog' in attrs and 'setModal' in attrs and 'show' in attrs
+    assert 'QWidget' in attrs and 'QDialog' not in attrs and 'QToolBar' not in attrs
+    assert 'insertWidget' in attrs
 
 
 def test_segment_array_uses_vtk_supported_unsigned_bytes():
@@ -100,3 +101,56 @@ def test_lesion_revision_remeasures_and_invalidates_stale_spatial_scores(tmp_pat
     assert result['metrics']['total_volume_mm3'] == 26
     assert result['svd_spatial'] == {'status':'new assessment'}
     assert sha256(tmp_path/'original.nii.gz') == manifest['source_sha256']
+
+def test_manual_launch_stages_script_outside_space_containing_checkout(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    from modules.ai_imaging.eagle_eye_brain import manual_review,runtime
+    root=tmp_path/'remote result with spaces';root.mkdir()
+    for name in ('resampled.nii.gz','labels.nii.gz'): (root/name).write_bytes(b'synthetic')
+    (root/'label_names.json').write_text('{"1":"Synthetic"}')
+    monkeypatch.setattr(runtime,'slicer_executable',lambda:Path('Slicer.exe'))
+    from PacsClient.utils import data_paths
+    monkeypatch.setattr(data_paths,'AI_DIR',tmp_path/'private-ai')
+    calls=[]
+    monkeypatch.setattr(manual_review.subprocess,'Popen',lambda command,**kwargs:calls.append((command,kwargs)))
+    session=manual_review.prepare_review({'artifact_directory':str(root),'remote_analysis':True,'server_job_id':'synthetic-parent'})
+    command,options=calls[0];script=Path(command[command.index('--python-script')+1])
+    assert ' ' not in str(script)
+    assert script.read_bytes()==Path(manual_review.__file__).with_name('manual_slicer.py').read_bytes()
+    assert Path(session).is_relative_to(tmp_path/'private-ai')
+    assert options['env']['AIPACS_MANUAL_REVIEW']==session
+    assert json.loads((Path(session)/'session.json').read_text())['source_result']['server_job_id']=='synthetic-parent'
+
+
+def test_review_controls_are_embedded_in_segment_editor():
+    from types import SimpleNamespace
+    from modules.ai_imaging.eagle_eye_brain.manual_slicer import install_review_controls
+    events=[]
+    panel=SimpleNamespace(show=lambda:events.append('show'))
+    host=SimpleNamespace(layout=lambda:SimpleNamespace(insertWidget=lambda index, widget:events.append((index,widget))))
+    install_review_controls(host,panel)
+    assert events==[(0,panel),'show']
+
+
+def test_native_label_import_preserves_sparse_values_without_per_region_arrays():
+    from types import SimpleNamespace
+    from modules.ai_imaging.eagle_eye_brain.manual_slicer import import_segments
+    values = np.array([[[0, 17, 53]]], dtype=np.int16)
+    segments = {key: SimpleNamespace(GetLabelValue=lambda v=v: v, SetName=lambda n: None)
+                for key, v in [('left', 17), ('right', 53)]}
+    container = SimpleNamespace(GetSegmentIDs=lambda: list(segments), GetSegment=lambda key: segments[key])
+    target = SimpleNamespace(GetSegmentation=lambda: container)
+    calls = []
+    logic = SimpleNamespace(ImportLabelmapToSegmentationNode=lambda labels, node: calls.append(node) or True)
+    slicer = SimpleNamespace(modules=SimpleNamespace(segmentations=SimpleNamespace(logic=lambda: logic)))
+    assert import_segments(slicer, object(), target, values, {}) == {'left': 17, 'right': 53}
+    assert calls == [target]
+
+
+def test_native_import_keeps_empty_lesion_editable():
+    from types import SimpleNamespace
+    from modules.ai_imaging.eagle_eye_brain.manual_slicer import import_segments
+    container = SimpleNamespace(AddEmptySegment=lambda *args: 'empty-lesion')
+    target = SimpleNamespace(GetSegmentation=lambda: container)
+    assert import_segments(None, None, target, np.zeros((2, 3, 4)), {}, True) == {'empty-lesion': 1}

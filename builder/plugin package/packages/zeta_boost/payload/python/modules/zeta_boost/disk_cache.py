@@ -149,7 +149,8 @@ class ZetaBoostDiskCache:
         fd = vtk_image_data.GetFieldData()
         field_dict = {}
         if fd is not None:
-            for name in ("DirectionMatrix", "ITKOrigin", "ITKSpacing", "ITKDimensions"):
+            from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import FIELD_NAME
+            for name in ("DirectionMatrix", "ITKOrigin", "ITKSpacing", "ITKDimensions", FIELD_NAME):
                 arr = fd.GetArray(name)
                 if arr is None:
                     continue

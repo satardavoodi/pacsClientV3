@@ -140,6 +140,9 @@ class _PWPanelsMixin:
         self.btn_ai_module.clicked.connect(self._on_sidebar_ai_module_clicked)
         self.btn_advanced_tools.clicked.connect(self._on_sidebar_advanced_tools_clicked)
 
+        from modules.ai_imaging.eagle_eye_remote.case_ui import PatientCaseController
+        self._case_realtime = PatientCaseController(self)
+
         return sidebar
 
     def _on_sidebar_series_clicked(self):
@@ -149,9 +152,17 @@ class _PWPanelsMixin:
         self.switch_right_panel("reception", force=True)
 
     def _on_sidebar_ai_chat_clicked(self):
+        controller = getattr(self, '_case_realtime', None)
+        if controller and controller.open('echomind'):
+            self._apply_sidebar_button_styles(ai_chat=True)
+            return
         self.switch_right_panel("ai_chat", force=True)
 
     def _on_sidebar_ai_module_clicked(self):
+        controller = getattr(self, '_case_realtime', None)
+        if controller and controller.open('eagle_eye'):
+            self._apply_sidebar_button_styles(ai_module=True)
+            return
         from modules.ai_imaging.eagle_eye_workspace import open_eagle_eye_workspace
 
         open_eagle_eye_workspace(self)
@@ -191,7 +202,9 @@ class _PWPanelsMixin:
         if button is None:
             return
         try:
-            button.setStyleSheet(self.sidebar_btn_style(checked))
+            from modules.ai_imaging.eagle_eye_remote.case_ui import availability_style
+            button.setStyleSheet(availability_style(self.sidebar_btn_style(checked),
+                bool(button.property('savedResultAvailable')), checked))
         except RuntimeError:
             pass
 

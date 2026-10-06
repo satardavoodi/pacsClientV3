@@ -378,6 +378,25 @@ class BrainVolumetryWidget(QWidget):
             self.pdf.setEnabled(bool(result.get("pdf_available")))
             self.save_pdf.setEnabled(bool(result.get('pdf_available')))
 
+    def restore_saved_result(self, result):
+        """Present worker-validated history without running inference or discarding edits."""
+        from concurrent.futures import Future
+        from .saved_results import _same_study
+        if not _same_study(result, self.study_uid):
+            raise ValueError('This result belongs to a different examination.')
+        if self._future is not None or self._manual_session:
+            raise ValueError('Finish the active analysis or manual correction before opening another result.')
+        self._control_error = None
+        self._future_kind = 'analysis'
+        self._future = Future()
+        self._future.set_result(dict(result))
+        self._poll()
+        if result.get('_saved_correction_available'):
+            self._manual_session = result['_saved_manual_session']
+            self.manual_recalculate.setEnabled(not result.get('longitudinal'))
+            self.manual_recalculate.setText('Apply saved mask on server' if result.get('remote_analysis') else 'Recalculate saved correction')
+            self.status.setText('Saved correction recovered. Apply it to generate a separate revised report.')
+
     def _manual_open(self):
         if self._future is not None or not self._result:
             return

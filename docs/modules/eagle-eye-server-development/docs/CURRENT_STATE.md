@@ -1,5 +1,20 @@
 # Current state and inventory
 
+October 6 follow-up: recoverable correction toolbar and native labelmap import are
+implemented; 53 guards pass and native voxel roundtrip is exact. GUI save/server
+apply remains pending while preserving reported unsaved edits. See HISTORY.md.
+
+## 2026-10-06: Client manual brain review path fix
+
+The source client stages the Slicer entry script outside space-containing checkout
+paths and stores private review sessions under `AI_DIR/eagle_eye/manual-reviews`.
+Live Slicer loaded the reference image and anatomical segments with the Segment
+Editor source volume selected. Fifty focused guards passed. The authenticated
+server advertises brain correction support. Export and the complete live server
+revision roundtrip remain pending; capabilities alone are not acceptance. The
+already-running PACS process must load the updated source before testing its
+Apply button. See [history](HISTORY.md#2026-10-06-slicer-manual-review-launch-and-path-compatibility).
+
 ## 2026-09-30: Current Developer service with hosted EchoMind
 
 The active SCM source is `revisions/20260930-echomind/source`, Python 3.13.5,
@@ -91,3 +106,14 @@ rule scoping as active protection. No LAN HTTP listener was opened for this pilo
 - 2026-09-27: Shared brain PDF readability updated (sentence breaks, 135% leading, paragraph spacing); 25 focused tests passed and 25-page lesion artifact visually checked.
 
 - 2026-09-27: Shared PDF readability verified for volumetry, lower-limb Alignment and Total Spine; legacy brain path unified and Total Spine methods/references reorganized. 53 focused guards pass; synthetic artifacts inspected.
+
+October 6 saved-results follow-up: background exact-study report recovery and review controls implemented; 95 focused guards pass. Two existing private PDFs recovered. Fresh source GUI, unsaved-edit preservation and live correction submission remain pending. See HISTORY.md.
+
+October 6 saved review follow-up: result-owned dialog routing replaces viewport-dependent open; compact PDF/review controls and sticky errors added. 98 focused passes and synthetic layout inspection; fresh source GUI and live correction return pending. See HISTORY.md.
+
+October 6 sidebar follow-up: local exact-study brain result availability now contributes to the red Eagle Eye indicator; 33 targeted guards pass. Source GUI verification pending. See HISTORY.md.
+
+October 6 inline editor follow-up: floating correction popup/toolbar superseded by controls embedded in native Segment Editor for new sessions. 53 guards and real Slicer widget-parent probe pass; full source GUI/save/server return pending. Preserve existing unsaved sessions.
+
+
+October 6 packaging follow-up: fixed missing Nuitka physical manual-correction script. 71 focused guards pass; distribution staging has 19 passes and 3 existing EchoMind mirror failures. Full source GUI and second-PC installer acceptance remain pending; see HISTORY.md next-build checklist.

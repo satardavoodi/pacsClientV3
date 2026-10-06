@@ -812,3 +812,173 @@ crossed that threshold; every earlier burn happened to fit underneath it.
    through and let IMAPI decide.
 
 Guard: `tests/code/cd_burner/test_burn_capacity_limit.py` (6).
+
+
+## 2026-10-05: download-before-media continuation
+
+Home's CD action now prepares dialog data through the existing OperationStore
+worker facility and opens the existing CDBurnDialog with prepared inputs. Local
+filesystem scans, study metadata reads and COM drive/media checks run off the
+GUI thread. No new downloader or DICOMDIR implementation was introduced.
+
+The Burn confirmation covers the complete selected study set and automatic
+download of missing studies. Approved drive, label, BurnOptions, viewer and
+series selection are retained across downloading. The popup stays open, disables
+option changes, shows download progress, and continues the existing CDBurnManager
+pipeline without a second Burn confirmation. Mixed selections no longer silently
+skip their missing studies. Prepare Folder selects its destination first, then
+uses the same download continuation.
+
+DownloadBeforeMedia observes the existing manager StateStore every 500 ms;
+Home's current patient-discovery/download authority performs enqueue and dedup.
+It waits for every requested missing StudyInstanceUID to reach COMPLETED, then
+runs a fresh prepare_dialog in a worker. The worker checks unique SOP instance
+counts against available row, local series and transfer totals, header study and
+patient identity, and rejects unreadable DICOM payloads. DICOMDIR index files are
+excluded from payload counting. This is a header/count input guard, not a pixel
+integrity certificate or independent server manifest. The existing burn worker
+still validates staging, DICOMDIR and actual capacity before writing.
+
+Failed/cancelled downloads, validation failures and unqueued studies never start
+the disc writer. Unqueued studies time out after 180 seconds; the continuation
+has a two-hour overall limit. Cancel Preparation, Escape and window close stop
+this continuation, including late validation results. Shared downloads remain
+in Download Manager; the popup explicitly explains this. Retry creates a fresh
+continuation and retires the previous QObject. A callback that cancels during a
+progress emission cannot start a validation worker afterward.
+
+Evidence: the production mixed-selection burn guard failed before the runtime
+change because prepare_and_burn was reached without downloading the missing
+study. Initial new continuation guards also failed while the service was absent.
+Twelve new tests now cover queue completion, failure, cancellation, late results,
+identity/count checks, timeouts, actual Qt popup progress, option retention,
+single confirmation and off-thread Home preflight. Focused CD teardown, series
+selection, burn options, capacity, DICOMDIR and package guards: 60 passed, direct
+pytest exit 0. Tests use synthetic headers and stubbed metadata/queue interfaces;
+no live patient data is used and no disc is written.
+
+Next-build handoff: core Home handler plus four cd_burner files; the optional
+run_cd source-tree package includes the two new helpers and its payload has been
+synchronized with the scoped mirror tool. Runtime catalog and package definition
+already include modules/cd_burner, so no new top-level module/config family is
+needed. Applicable to Standard/ARM Client and ELI/Eagle Eye Server GUI installations
+when run_cd is enabled, across PyInstaller/Nuitka; absent run_cd is N/A. No full
+build, installed artifact or service-session acceptance is claimed. Global mirror
+verification remains red only for unrelated EchoMind viewer_chat/ai_chat_pages.py.
+
+Live GUI gate remains pending: documented client.py ping could not reach the
+Test Control Server on October 5. Human source launch/sign-in with -TestServer
+outside clinical work is requested. Verify a missing-only and mixed selection,
+visible download progress, cancel/close, failure recovery, automatic continuation,
+selected study identity and final media contents; test physical writing only on
+the intended blank media. Offscreen Qt acceptance does not replace this gate.
+
+
+## 2026-10-05: external portable viewer investigation (no runtime change)
+
+Request: test current custom-viewer support and research automatic opening of
+media in user-selected alternative viewers. Vendor documentation was consulted
+without sending patient data or downloading/installing vendor executables.
+
+Official contracts:
+- RadiAnt's dedicated CD/DVD/USB Autorun package is meant for patient media.
+  Preserve the complete package layout: RA32, RA64 and COMMON (including the
+  vendor-provided license and configuration). The documented viewer switch -d
+  selects folders to scan. Merely moving viewer64.exe into VIEWER loses sibling
+  dependencies. Desktop installation portability is not established by this.
+- MicroDicom documents passing the DICOMDIR path directly to mDicom.exe. A
+  dedicated CD/DVD product exists; select the properly authorized portable/CD
+  package. Automatic behavior is edition/package dependent, not a universal
+  rule that every viewer opens an adjacent DICOMDIR.
+- Windows policy can disable AutoRun. Retain an explicit user-launchable entry
+  even if autorun.inf is present; do not alter host AutoPlay policy.
+
+Evidence from current AI-PACS: 22 existing copy-mode, custom-setting and
+portability tests pass. A disposable synthetic RA64/RA32/COMMON package was sent
+through the actual _copy_light_viewer method. Its generated RUN_VIEWER.cmd
+contained --import-folder, did not contain the vendor's -d switch, omitted RA32
+and COMMON siblings, and imposed the AI-PACS 64-bit guard on the custom viewer.
+The synthetic probe writes no disc and proves staging/launch-contract defects,
+not actual vendor rendering failure. Existing passing guards miss these vendor
+contracts. No real external viewer binary or clean-host rendering was tested.
+
+Recommended implementation seam: a typed portable-viewer profile resolved at
+selection/preflight, used by the existing copy/launcher/manifest code. Profiles:
+AI-PACS Lite (current arguments/cache rules), RadiAnt CD (whole package root and
+vendor documented -d input), MicroDicom CD/portable (explicit DICOMDIR input),
+and explicitly configured generic portable packages. Keep one root DICOMDIR and
+its original relative image references; do not copy just DICOMDIR into VIEWER,
+since that changes the base directory of its referenced file IDs.
+
+Store package root, executable paths, architecture choices, supported launch
+mode and relative input target as structured values. Use vendor layout/product
+metadata to suggest a profile; require an explicit profile for unknown packages.
+Never assume every filename identifies a vendor or every EXE is redistributable.
+Use the vendor-authorized media package supplied by the user and preserve its
+required files. Do not copy an entire arbitrary Downloads folder, install a
+vendor desktop edition onto patient media, or interpret user/vendor strings as
+arbitrary shell commands. Prefer argument arrays in the existing launcher.
+Vendor packages must not inherit AI-PACS-only local-copy/64-bit policies.
+
+Acceptance for a later implementation: synthetic fail-before guards for profile
+arguments, root-relative DICOMDIR references, sibling dependency preservation,
+32/64 selection, unknown-package handling and no package junk; existing default
+viewer guards; then an authorized actual vendor package with synthetic DICOM
+on a clean Windows host and optical/read-only media. Verify automatic patient
+loading, required runtimes/licenses and manual-launch fallback independently.
+Continue in the existing run_cd payload and source/build parity workflow.
+
+Sources checked October 5, 2026:
+- https://www.radiantviewer.com/dicom-viewer-manual/cd_dvd_autorun_package.html
+- https://www.radiantviewer.com/dicom-viewer-manual/package-contents.html
+- https://www.radiantviewer.com/dicom-viewer-manual/command-line_arguments.html
+- https://www.microdicom.com/microdicom-viewer-documentation/command-line.html
+- https://www.microdicom.com/dicom-viewer-cd-dvd.html
+- https://learn.microsoft.com/en-us/windows/win32/shell/autoplay-reg
+
+
+### October 5: user-supplied legacy AiPacs.exe contract
+
+The supplied single EXE is a 64-bit PyInstaller one-file Python 3.12/PySide6
+viewer (75,351,216 bytes; SHA256
+b8c806dbee628eba00afcab7c268af3fdeeb9f7956829b524b4b51e122224834).
+It differs from the current repository legacy viewer bytes. Filename alone must
+not identify its contract. No binary was launched, installed or reconfigured.
+
+Read-only inspection of its PyInstaller main code, with Python 3.12 bytecode
+instructions decoded under the locally available matching interpreter, found:
+- _find_dicomdir_path accepts sys.argv[1] as an existing DICOMDIR file, or an
+  existing directory containing DICOMDIR.
+- Otherwise find_dicomdir searches beside sys.executable and its immediate
+  child directories. It does not search the parent media root.
+- No --import-folder parser was found in the main module.
+
+Consequently the current VIEWER/AiPacs.exe --import-folder MEDIA_ROOT launcher
+provides an invalid first argument and cannot locate a root-level DICOMDIR through
+that fallback. The correct explicit contract for this verified artifact is
+AiPacs.exe MEDIA_ROOT/DICOMDIR (or MEDIA_ROOT alone). Keep DICOMDIR and its
+referenced file-set tree at the media root; do not relocate only the index beside
+the EXE. A legacy positional-DICOMDIR profile should preserve this identity and
+use its own argument contract. Static inspection is not pixel-rendering or
+optical-media acceptance; these remain pending with synthetic media and the
+actual supplied executable. This receipt changed documentation only.
+
+### October 5: guarded default and legacy launch implementation
+
+The existing burn worker now hashes the staged executable using
+`modules/cd_burner/viewer_launch.py`. Only the verified artifact above selects
+the positional root-DICOMDIR contract; other artifacts retain the existing
+import-folder contract. This is bounded compatibility, not general external
+viewer support. The legacy mode uses RUN_VIEWER.cmd instead of the compiled
+default splash launcher, whose arguments assume the current viewer. The manifest
+records the selected launch mode. The root index and image tree stay unchanged.
+
+The initial legacy launcher guard failed before the fix (wrong --import-folder
+argument). The final focused suite passed 56 tests, including default launch
+preservation, identity detection, legacy arguments, download continuation and
+synthetic file-set/pixel readability for both modes. The actual supplied binary
+was copied into disposable staging and its legacy command verified without
+execution. Run-CD source mirrors were synchronized; unrelated EchoMind mirror
+drift remains. Test Control Server ping failed, so source GUI, actual executable
+rendering and physical/read-only media acceptance remain pending. No application,
+installer or viewer was launched and no disc was written by this verification.

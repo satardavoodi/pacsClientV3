@@ -90,7 +90,7 @@ def runtime_command(root, job, manifest):
             str(root), str(job)]
 
 
-def validate_sources(files, study_uid, engine, sex=None):
+def validate_sources(files, study_uid, engine, sex=None, *, sex_provenance=None):
     """Reject mixed identity, partial/multiframe inputs and guessed sex before decode."""
     import pydicom
     from pydicom.uid import UID
@@ -98,7 +98,7 @@ def validate_sources(files, study_uid, engine, sex=None):
         raise ValueError('A valid study identity is required.')
     if not 1 <= len(files) <= 64:
         raise ValueError('Select between one and 64 source images.')
-    records, seen, sexes = [], set(), set()
+    records, seen, sexes, patient_ids = [], set(), set(), set()
     for source in files:
         path = Path(source).resolve()
         if not path.is_file() or not 0 < path.stat().st_size <= 512 * 1024**2:
@@ -122,6 +122,7 @@ def validate_sources(files, study_uid, engine, sex=None):
         if 'DERIVED' in str(ds.get('ImageType', '')).upper():
             raise ValueError('Select original acquisition images, not derived AI outputs.')
         if engine == 'bone-age':
+            patient_ids.add(str(ds.get('PatientID', '')))
             value = str(ds.get('PatientSex', '')).upper()
             if value in ('M', 'F'):
                 sexes.add(value)
@@ -134,20 +135,36 @@ def validate_sources(files, study_uid, engine, sex=None):
                             body_part=str(ds.get('BodyPartExamined', '')).strip().upper()))
     normalized = {'m': 'M', 'male': 'M', 'f': 'F', 'female': 'F'}.get(str(sex or '').lower())
     if engine == 'bone-age':
-        if len(sexes) != 1 or (normalized and normalized not in sexes):
+        reviewed = bool(sex_provenance and sex_provenance.get('source') == 'physician-review')
+        if len(sexes) > 1 or (sexes and normalized and normalized not in sexes and not reviewed):
             raise ValueError('Bone Age requires consistent verified DICOM sex.')
-        normalized = next(iter(sexes))
+        if sex_provenance is not None:
+            from ..eagle_eye_remote.demographics import validate_provenance
+            evidence = validate_provenance(sex_provenance, study_uid)
+            if patient_ids != {evidence['patient_id']}:
+                raise ValueError('Bone Age demographic confirmation belongs to another patient.')
+        if reviewed and normalized:
+            pass  # Explicit study-bound physician review takes precedence.
+        elif sexes:
+            normalized = next(iter(sexes))
+        elif not normalized or sex_provenance is None:
+            raise ValueError('Bone Age requires verified sex from DICOM, Reception or physician confirmation.')
+        elif sex_provenance['source'] == 'reception':
+            from ..eagle_eye_remote.demographics import lookup_reception
+            if lookup_reception(sex_provenance['patient_id']) != normalized:
+                raise ValueError('The server could not verify the Reception sex. Confirm it with the physician.')
     return records, normalized
 
 
 def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
-        cancelled=lambda: False, root=None, timeout=1200, smoke=False):
+        cancelled=lambda: False, root=None, timeout=1200, smoke=False, sex_provenance=None):
     """Run one process-owned job. Partial or cancelled jobs are never returned."""
     if engine not in ENGINES or not 0.05 <= float(threshold) <= 0.95:
         raise ValueError('Invalid engine or threshold.')
     root = Path(root or bundle_root(engine) or '').resolve()
     manifest = validate_bundle(root, engine, cancelled)
-    records, verified_sex = ([], None) if smoke else validate_sources(files, study_uid, engine, sex)
+    records, verified_sex = ([], None) if smoke else validate_sources(
+        files, study_uid, engine, sex, sex_provenance=sex_provenance)
     parent = Path(output_parent).resolve()
     parent.mkdir(parents=True, exist_ok=True)
     job = parent / ('engine-' + uuid.uuid4().hex)
@@ -195,6 +212,10 @@ def run(engine, files, study_uid, output_parent, *, sex=None, threshold=0.45,
                 raise RuntimeError('Source changed during inference; discard this result.')
         result['input_sha256'] = {r['sop_uid']: r['sha256'] for r in records}
         result['engine_revision'] = manifest['revision']
+        if engine == 'bone-age':
+            result['checkpoint_sha256'] = manifest['sha256']['weights/final_model.pth']
+        if engine == 'bone-age' and not smoke:
+            result['sex_provenance'] = sex_provenance or {'source': 'dicom'}
         if engine == 'bone-age' and any(r.get('body_part') == 'WRIST' for r in records):
             result.setdefault('reliability_warnings', []).append(
                 'Acquisition is tagged WRIST. Confirm full hand and distal forearm coverage before interpreting the prediction.')

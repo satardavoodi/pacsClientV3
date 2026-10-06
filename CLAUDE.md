@@ -17,6 +17,18 @@ new guidance cleanly rather than overwriting existing sections.
 > before a versioned commit, tag, push, or full build. It requires one reviewed SHA
 > across every declared remote/branch and produces the receipt consumed by `BUILD.md`.
 
+## EchoMind routing authority (owner decision, 2026-09-30)
+
+All company EchoMind, Secretary, Assist and Eagle Eye AI computation and prompt
+composition belongs on the authenticated Eagle Eye Server. Client-direct company
+or GapGPT inference is a legacy migration gap, not an approved route for new work.
+The only direct external AI exception is the user's own ChatGPT/OpenAI API account
+with the user's own defined prompt. Structured server command proposals return to
+the local CommandBus/MCP adapters for execution under existing permissions and
+current case identity. Read `AGENTS.md` and
+`docs/echomind/EAGLE_EYE_SERVER_ROUTING_2026-09-30.md` before changing these workflows.
+This owner decision supersedes older direct-company routing statements below.
+
 ## TESTING — the suite is GREEN by default; keep it that way (Q0, 2026-07-14)
 
 > **Current precedence correction (2026-09-02):** the text below is historical. The

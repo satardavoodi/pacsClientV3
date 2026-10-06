@@ -1,5 +1,5 @@
 # ============================================================
-#  AIPacs Module Catalog  —  Document 1
+#  AIPacs Module Catalog  â€”  Document 1
 #  Sent with EVERY user request in Phase 1 (module routing).
 #  Purpose: The LLM reads this and decides which module-specific
 #  documents it needs to answer the user's request.
@@ -20,13 +20,15 @@ modules:
     category: navigation
     description: >
       Controls the main patient-list panel.  Supports searching,
-      filtering (by date, modality, patient name/code), fetching
+      filtering (date, modality, body part, age and patient IDs), exact multi-study selection, download, Filming and CD media output, fetching
       fresh data from the PACS server, and navigating between the
       local-cache tab and the server tab.
     typical_intents:
       - "show / list patients"
       - "search for a patient"
-      - "filter by date or modality"
+      - "filter by date, modality, body part or age"
+      - "select the first and third patients"
+      - "write selected studies to CD or prepare a media folder"
       - "refresh the patient list"
       - "switch to local / server tab"
     side_effects: false
@@ -180,8 +182,38 @@ modules:
     side_effects: false
     doc_file: "modules/education.md"
 
-# ── Routing rules ───────────────────────────────────────────
+# â”€â”€ Routing rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # These are hints to help the LLM decide. The LLM may override:
+  - module_id: settings
+    display_name: "Workstation Settings"
+    category: utility
+    description: >
+      Navigate settings, list and change existing theme presets, diagnose RAM
+      and disk pressure, request locally confirmed cache cleanup, and open
+      secure personal AI or image-quality configuration forms.
+    typical_intents:
+      - "change theme or colors"
+      - "memory full or disk full"
+      - "configure OpenAI or Agent"
+      - "image quality or filters"
+    side_effects: true
+    doc_file: "modules/settings.md"
+
+  - module_id: support_control
+    display_name: "Diagnostics and Patient Communication"
+    category: workflow
+    description: >
+      Bounded local log evidence, visible error severity, Windows Application
+      candidates, patient Comment Sync and explicit study-bound voice operations.
+      Poll actual results; never infer reception delivery from PACS upload.
+    typical_intents:
+      - "diagnose an error or slow software"
+      - "report a software issue, crash or hang to support"
+      - "sync this patient comment to reception"
+      - "record and upload this patient voice"
+    doc_file: "modules/support_control.md"
+    side_effects: true
+
 routing_hints:
   - pattern: "list|show|search|filter.*patient"
     suggested_module: homepage

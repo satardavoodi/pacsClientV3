@@ -28,7 +28,8 @@ def test_primary_series_selection_discards_stale_review_and_pdf(qapp):
     w.teardown();w.deleteLater();qapp.processEvents()
 
 
-def test_pdf_has_three_pages_shared_furniture_and_matching_evidence(qapp,tmp_path):
+def test_pdf_has_three_pages_shared_furniture_and_matching_evidence(qapp,tmp_path,monkeypatch):
+    monkeypatch.setattr('modules.ai_imaging.eagle_eye_remote.settings.remote_required',lambda:False)
     from PySide6.QtGui import QFontDatabase
     import os
     for font in ('arial.ttf','arialbd.ttf'):
@@ -85,6 +86,7 @@ def test_ai_completion_automatically_requests_draft_pdf(qapp,monkeypatch):
 
 
 def test_report_failure_does_not_publish_partial_result(qapp,tmp_path,monkeypatch):
+    monkeypatch.setattr('modules.ai_imaging.eagle_eye_remote.settings.remote_required',lambda:False)
     from modules.ai_imaging.eagle_eye_alignment.report import generate_report
     from modules.ai_imaging.eagle_eye_brain import organized_report
     sample=image();sample['identity']['sop_uid']='1.2.3.4'

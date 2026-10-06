@@ -51,17 +51,23 @@ def retry_plan_with_llm(
     invalid_plan: dict[str, Any],
     validation_errors: list[ValidationError] | list[dict[str, Any]],
     max_retries: int = 2,
+    runtime_capabilities: dict | None = None,
 ) -> SecretaryActionPlan | None:
+    from . import remote_planner
+    if remote_planner.uses_server():
+        try:
+            fields = {'runtime_capabilities':runtime_capabilities} if runtime_capabilities is not None else {}
+            return remote_planner.request('repair', user_text, language=language,
+                invalid_plan=invalid_plan, validation_errors=_normalize_validation_errors(validation_errors), **fields)['plan']
+        except remote_planner.RemotePlanningError:
+            return None
+    own_prompt = remote_planner.personal_prompt('secretary_action')
     current_plan = dict(invalid_plan)
     current_errors = _normalize_validation_errors(validation_errors)
 
     for _ in range(max(0, int(max_retries))):
-        prompt = build_repair_prompt(
-            user_text=user_text,
-            language=language,
-            invalid_plan=current_plan,
-            validation_errors=current_errors,
-        )
+        prompt = json.dumps({'text':user_text,'language':language,
+            'invalid_plan':current_plan,'validation_errors':current_errors}, ensure_ascii=False)
         repaired = parse_command_llm_from_prompt(prompt=prompt)
         if not repaired:
             continue

@@ -3,11 +3,14 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 
-# ── Legacy action names (secretary executor) ──────────────────────────────────
+# â”€â”€ Legacy action names (secretary executor) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ActionName = Literal["list_patients", "open_patient", "download_patient"]
 
-# ── Extended action names (agent brain — all modules) ─────────────────────────
+# â”€â”€ Extended action names (agent brain â€” all modules) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 BrainActionName = Literal[
+    "advanced_search_patients", "read_patients", "sort_patients",
+    "select_patients", "selection_status", "download_selection", "download_selection_status",
+    "film_selection", "media_drives", "media_status", "prepare_selection_media", "write_selection_media", "cancel_media",
     # homepage
     "list_patients",
     # patient_viewer
@@ -64,7 +67,7 @@ class SecretaryResult(TypedDict):
     error_code: str | None
 
 
-# ── Agent brain contracts ─────────────────────────────────────────────────────
+# â”€â”€ Agent brain contracts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class AgentRouteRequest(TypedDict):
     """Input for Phase 1 (router): what the orchestrator sends to the LLM."""

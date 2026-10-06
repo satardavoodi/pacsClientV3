@@ -113,7 +113,8 @@ def test_wrist_result_preserves_coverage_review_warning(tmp_path, monkeypatch):
     ds = pydicom.dcmread(p)
     ds.BodyPartExamined = 'WRIST'
     ds.save_as(p)
-    monkeypatch.setattr(service, 'validate_bundle', lambda *a, **k: {'revision': 'fixture'})
+    monkeypatch.setattr(service, 'validate_bundle', lambda *a, **k: {
+        'revision': 'fixture', 'sha256': {'weights/final_model.pth': 'a' * 64}})
     monkeypatch.setitem(sys.modules, 'modules.mpr.advanced_3d_slicer.owned_process',
         types.SimpleNamespace(ProcessJob=lambda: types.SimpleNamespace(
             assign=lambda p: None, close=lambda: None)))
@@ -124,6 +125,7 @@ def test_wrist_result_preserves_coverage_review_warning(tmp_path, monkeypatch):
     monkeypatch.setattr(service.subprocess, 'Popen', launch)
     result = service.run('bone-age', [p], '1.2.3', tmp_path / 'results', root=tmp_path)
     assert result['input_coverage_confirmation_required'] is True
+    assert result['checkpoint_sha256'] == 'a' * 64
     assert result['reliability_warnings'][0] == 'Existing warning'
     assert 'full hand and distal forearm' in result['reliability_warnings'][1]
     assert json.loads((Path(result['job_directory']) / 'result.json').read_text()) == result

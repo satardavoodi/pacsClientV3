@@ -499,15 +499,17 @@ def ai_count_messages_by_session() -> dict[str, int]:
     return out
 
 
-def ai_fetch_messages_full(sid: str) -> list[tuple[int, str, str, str | None]]:
+def ai_fetch_messages_full(sid: str, *, include_created_at: bool = False) -> list[tuple]:
+    """Retain the four-field API; history rendering can request the stored time."""
     with get_db_connection() as conn:
         cur = conn.cursor()
+        columns = 'id, who, html, origin, created_at' if include_created_at else 'id, who, html, origin'
         cur.execute(
-            "SELECT id, who, html, origin FROM ai_messages WHERE sid=? ORDER BY created_at ASC, id ASC",
+            f"SELECT {columns} FROM ai_messages WHERE sid=? ORDER BY created_at ASC, id ASC",
             (sid,),
         )
         rows = cur.fetchall()
-        return [(int(r[0]), r[1], r[2], r[3]) for r in rows]
+        return [(int(r[0]), *r[1:]) for r in rows]
 
 
 def ai_fetch_messages(sid: str) -> list[tuple[str, str]]:

@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""aipacs-control — MCP server for direct AI-PACS application control.
+"""aipacs-control â€” MCP server for direct AI-PACS application control.
 
-Bridges MCP tools → the in-app Test Control Server (QLocalServer, enabled by
-launching AI-PACS with ``AIPACS_TEST_SERVER=1``) → the EchoMind CommandBus →
+Bridges MCP tools â†’ the in-app Test Control Server (QLocalServer, enabled by
+launching AI-PACS with ``AIPACS_TEST_SERVER=1``) â†’ the EchoMind CommandBus â†’
 real application functions. See docs/reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md.
 
 Run (Claude Desktop / any MCP client), using the app venv python:
     E:\\...\\.venv\\Scripts\\python.exe tools/testing/aipacs_control_mcp/server.py
 
-Requires: ``pip install mcp`` into the app venv (PySide6 already present).
+Requires: ``pip install -r tools/testing/aipacs_control_mcp/requirements.txt`` into the app venv (PySide6 already present).
 """
 from __future__ import annotations
 
@@ -35,14 +35,14 @@ from tools.diagnostics.native_fault_probe import (  # noqa: E402
 _NATIVE_LOG_PATH = _REPO_ROOT / "user_data" / "logs" / "native_fault.log"
 
 try:
-    from mcp.server.fastmcp import FastMCP
-except ImportError as _exc:  # pragma: no cover
-    raise SystemExit(
-        "The 'mcp' package is missing. Install it into the app venv:\n"
-        '  & "<repo>\\.venv\\Scripts\\python.exe" -m pip install mcp'
-    ) from _exc
+    from mcp.server import MCPServer as _MCPServer  # Official SDK v2.
+except ImportError:
+    try:
+        from mcp.server.fastmcp import FastMCP as _MCPServer  # Supported v1 deployments.
+    except ImportError as _exc:  # pragma: no cover
+        raise SystemExit("Install tools/testing/aipacs_control_mcp/requirements.txt into the app venv.") from _exc
 
-mcp = FastMCP("aipacs-control")
+mcp = _MCPServer("aipacs-control")
 
 SESSIONS_DIR = _HERE / "sessions"
 SCENARIOS_DIR = _HERE / "scenarios"
@@ -51,7 +51,7 @@ _client: Optional[AipacsControlClient] = None
 _session_path: Optional[Path] = None
 
 
-# ── plumbing ─────────────────────────────────────────────────────────
+# â”€â”€ plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _get_client() -> AipacsControlClient:
     global _client
     if _client is None:
@@ -77,19 +77,30 @@ def _send(
     entities: Optional[dict] = None,
     timeout_ms: int = 30000,
     mode: str = "",
+    confirmed: bool = False,
 ) -> dict:
     t0 = time.perf_counter()
     try:
+        confirmation = {'confirmed':True} if confirmed is True else {}
         result = _get_client().send(
-            action, entities or {}, timeout_ms=timeout_ms, mode=mode)
+            action, entities or {}, timeout_ms=timeout_ms, mode=mode, **confirmation)
     except Exception as exc:
         global _client
         _client = None  # force reconnect next call
         result = {"ok": False, "action": action, "error_code": "TRANSPORT", "message": str(exc)}
     result["client_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
+    recorded_entities = {} if action in {
+        'prepare_patient_comment', 'prepare_patient_voice', 'open_support_issue'
+    } else entities or {}
+    recorded_result=result
+    if action=='ui_context_status':
+        data=result.get('data')
+        if isinstance(data,dict) and isinstance(data.get('ui_image'),dict):
+            safe_image={key:value for key,value in data['ui_image'].items() if key!='image'}
+            recorded_result=dict(result,data=dict(data,ui_image=safe_image))
     _record("command", {
-        "action": action, "entities": entities or {}, "mode": mode,
-        "result": result,
+        "action": action, "entities": recorded_entities, "mode": mode,
+        "result": recorded_result,
     })
     return result
 
@@ -98,7 +109,7 @@ def _j(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False, default=str)
 
 
-# ── basic tools ──────────────────────────────────────────────────────
+# â”€â”€ basic tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @mcp.tool()
 def ping() -> str:
     """Check connectivity to the running AI-PACS test server."""
@@ -112,12 +123,69 @@ def list_actions() -> str:
 
 
 @mcp.tool()
+def settings_control(action: str, section: str = "", theme: str = "",
+                     operation_id: str = "", category: str = "", strategy: str = "",
+                     value: bool | int | float | None = None, backend: str = "", gpu_boost: bool | None = None,
+                     server_name: str = "", ports: list[int] | None = None,
+                     source_name: str = "", new_name: str = "", modalities: list[str] | None = None,
+                     tool: str = "", color: str = "", line_width: float | None = None,
+                     modality: str = "", parameter: str = "",
+                     confirmed: bool = False) -> str:
+    """Shared settings controls. Keys/passwords/paths are never accepted.
+
+    get_settings_capabilities lists actions. Poll settings_operation_status
+    after set_theme or diagnose_resources. Cleanup and personal AI setup are
+    local human handoffs, not completion receipts. Assistant permissions apply.
+    """
+    from modules.EchoMind.secretary.adapters.settings_command_adapter import SETTINGS_ACTIONS
+    from modules.EchoMind.secretary.command_envelope import validate_action_entities
+    if action not in SETTINGS_ACTIONS:
+        return _j({"ok":False, "error_code":"UNKNOWN_ACTION"})
+    entities = {key:value for key,value in dict(section=section, theme=theme,
+        operation_id=operation_id, category=category, strategy=strategy, backend=backend,
+        server_name=server_name,source_name=source_name,new_name=new_name,tool=tool,color=color,
+        modality=modality,parameter=parameter).items() if value}
+    for key, item in dict(ports=ports,modalities=modalities,line_width=line_width).items():
+        if item is not None:
+            entities[key] = item
+    if value is not None:
+        entities['value'] = value
+    if gpu_boost is not None:
+        entities['gpu_boost'] = gpu_boost
+    try:
+        entities = validate_action_entities(action, entities)
+    except ValueError:
+        return _j({"ok":False, "error_code":"INVALID_ARGUMENTS"})
+    return _j(_send(action, entities, mode="assistant", confirmed=confirmed))
+
+
+@mcp.tool()
+def ai_settings_control(action: str, preferences_json: str = "{}", confirmed: bool = False) -> str:
+    """Read AI settings, change Voice to Text/proxy/personal preferences, or verify Eagle Eye.
+
+    Uses the shared typed CommandBus contracts and asynchronous operation IDs.
+    Poll settings_operation_status until terminal. Credentials, prompts and
+    private file paths cannot be supplied. Company inference stays server-owned.
+    """
+    from modules.EchoMind.secretary.command_envelope import validate_action_entities
+    allowed = {'get_ai_settings','set_voice_to_text_preferences','set_ai_proxy_preferences',
+               'set_personal_ai_preferences','verify_eagle_eye_connection','set_eagle_eye_connection'}
+    if action not in allowed:
+        return _j({'ok':False,'error_code':'UNKNOWN_ACTION'})
+    try:
+        entities = validate_action_entities(action,json.loads(preferences_json))
+    except (ValueError,TypeError):
+        return _j({'ok':False,'error_code':'INVALID_ARGUMENTS'})
+    return _j(_send(action,entities,mode='assistant',confirmed=confirmed))
+
+
+@mcp.tool()
 def raw_command(action: str, entities_json: str = "{}", mode: str = "") -> str:
     """Send any bus action with a JSON entities object (escape hatch)."""
     return _j(_send(action, json.loads(entities_json or "{}"), mode=mode))
 
 
-# ── workflow tools (requested command set) ───────────────────────────
+# â”€â”€ workflow tools (requested command set) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @mcp.tool()
 def open_patient(patient_id: str, patient_name: str = "", study_uid: str = "") -> str:
     """OpenPatient: open a patient tab via the real double-click handler."""
@@ -181,7 +249,7 @@ def eagle_eye(action: str, study_uid: str, series_uid: str = "", function: str =
 @mcp.tool()
 def drag_series(series_number: int, viewport: int = 0) -> str:
     """DragSeries (T1): load a series into a viewport via the exact function a
-    real drop defers to (change_series_on_viewer). Async — pair with
+    real drop defers to (change_series_on_viewer). Async â€” pair with
     query_viewport_state to observe the load."""
     return _j(_send("change_series", {"series_number": series_number, "viewport": viewport}))
 
@@ -333,7 +401,65 @@ def snapshot_health(since_minutes: int = 10) -> str:
     return _j({"resources": res, "native_faults": faults})
 
 
-# ── browser tools ────────────────────────────────────────────────────
+# â”€â”€ browser tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+@mcp.tool()
+def support_control(action: str, operation_id: str = "", include_windows_events: bool = False,
+                    description: str = "") -> str:
+    """Bounded support collection/status or visible Qt error severity. No raw logs."""
+    allowed = {"collect_support_diagnostics", "support_operation_status", "get_visible_app_errors",
+               "get_recent_function_results", "get_control_capabilities", "open_support_issue", "support_issue_status"}
+
+    if action not in allowed:
+        return _j({"ok":False, "error_code":"INVALID_ACTION"})
+    entities = ({"operation_id":operation_id} if action=="support_operation_status" else
+                {"include_windows_events":include_windows_events} if action=="collect_support_diagnostics" else
+                {"description":description} if action=="open_support_issue" else {})
+    return _j(_send(action, entities, mode="assistant" if action=="open_support_issue" else "read_only"))
+
+
+@mcp.tool()
+def offline_support_diagnostics(include_windows_events: bool = False) -> str:
+    """Read safe source-runtime evidence outside Qt, even when app IPC is unavailable."""
+    from PacsClient.utils.data_paths import LOGS_DIR
+    from PacsClient.utils.support_diagnostics import collect_log_evidence, collect_windows_events
+    result = {"logs":collect_log_evidence(LOGS_DIR), "scope":"source_runtime",
+              "app_ipc_required":False, "ticket_submitted":False}
+    if include_windows_events:
+        result["windows_events"] = collect_windows_events()
+    return _j(result)
+
+
+@mcp.tool()
+def home_selection_control(action: str, entities_json: str = "{}", confirmed: bool = False) -> str:
+    """Advanced filters, exact selections and existing download/Filming/CD workers."""
+    allowed={'advanced_search_patients','read_patients','sort_patients','select_patients',
+             'selection_status','download_selection','download_selection_status','film_selection',
+             'media_drives','media_status','prepare_selection_media','write_selection_media','cancel_media'}
+    if action not in allowed:
+        return _j({'ok':False,'error_code':'INVALID_ACTION'})
+    from modules.EchoMind.secretary.command_envelope import validate_action_entities
+    try:
+        entities=validate_action_entities(action,json.loads(entities_json))
+    except (ValueError,TypeError):
+        return _j({'ok':False,'error_code':'INVALID_ARGUMENTS'})
+    return _j(_send(action,entities,mode='assistant',confirmed=confirmed))
+
+
+@mcp.tool()
+def patient_communication_control(action: str, entities_json: str, confirmed: bool = False) -> str:
+    """Typed Comment Sync and one-take voice commands. Confirm server writes explicitly."""
+    from modules.EchoMind.secretary.adapters.patient_communication_adapter import COMMUNICATION_ACTIONS
+    from modules.EchoMind.secretary.adapters.patient_voice_adapter import VOICE_ACTIONS
+    from modules.EchoMind.secretary.command_envelope import validate_action_entities
+    if action not in COMMUNICATION_ACTIONS and action not in VOICE_ACTIONS:
+        return _j({"ok":False, "error_code":"INVALID_ACTION"})
+    try:
+        entities = validate_action_entities(action, json.loads(entities_json))
+    except (ValueError, TypeError):
+        return _j({"ok":False, "error_code":"INVALID_ARGUMENTS"})
+    return _j(_send(action, entities, mode="assistant", confirmed=confirmed))
+
+
 @mcp.tool()
 def browser_open() -> str:
     """Open or activate the embedded AI-PACS Web Browser tab."""
@@ -507,7 +633,7 @@ def browser_submit_form(selector: str = "") -> str:
     return _j(_send("browser_submit_form", ent, timeout_ms=60000))
 
 
-# ── pressure tools ───────────────────────────────────────────────────
+# â”€â”€ pressure tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @mcp.tool()
 def burst(commands_json: str, interval_ms: int = 0, seed: int = 0) -> str:
     """Fire a list of commands back-to-back (interval_ms apart, 0 = as fast as
@@ -629,7 +755,7 @@ def _check_scenario_health(baseline: NativeFaultWindow, limits: dict) -> tuple[d
     return health, None
 
 
-# ── app lifecycle tools (launch / dialogs / login / monitors / ready) ─
+# â”€â”€ app lifecycle tools (launch / dialogs / login / monitors / ready) â”€
 @mcp.tool()
 def launch_app(monitor: str = "", wait_ready_s: int = 240) -> str:
     """Launch the AI-PACS SOURCE build with the test server enabled, dismiss
@@ -668,7 +794,7 @@ def wait_app_ready(timeout_s: int = 240) -> str:
 
 @mcp.tool()
 def dismiss_startup_dialogs() -> str:
-    """Detect known startup notifications (Disk Space Alert, …) and press OK."""
+    """Detect known startup notifications (Disk Space Alert, â€¦) and press OK."""
     import lifecycle
     return _j(lifecycle.dismiss_startup_dialogs())
 
@@ -683,19 +809,51 @@ def login(username: str = "", password: str = "") -> str:
 
 @mcp.tool()
 def list_monitors() -> str:
-    """List monitors as A/B/… with geometry and primary flag."""
+    """List monitors as A/B/â€¦ with geometry and primary flag."""
     import lifecycle
     return _j(lifecycle.list_monitors())
 
 
 @mcp.tool()
 def move_app_to_monitor(monitor: str = "A", maximize: bool = True) -> str:
-    """Move the app main window to monitor 'A'/'B'/… (or an index)."""
+    """Move the app main window to monitor 'A'/'B'/â€¦ (or an index)."""
     import lifecycle
     res = lifecycle.move_app_to_monitor(monitor, maximize=maximize)
     _record("lifecycle", {"tool": "move_app_to_monitor", "result": res})
     return _j(res)
 
+
+@mcp.tool()
+def ui_control_catalog(area: str = "all", offset: int = 0, limit: int = 50) -> str:
+    """Source-traced fields/toolbars plus actual typed execution contracts; discovery is not permission."""
+    return _j(_send("get_ui_control_catalog", {"area":area,"offset":offset,"limit":limit}))
+
+
+@mcp.tool()
+def inspect_ui_controls() -> str:
+    """Read bounded visible controls/options with input values redacted."""
+    return _j(_send("inspect_ui_controls", {}))
+
+
+@mcp.tool()
+def capture_ui_context() -> str:
+    """Start redacted control-only UI capture; poll ui_context_status for actual pixels."""
+    return _j(_send("capture_ui_context", {}))
+
+
+@mcp.tool()
+def ui_context_status(snapshot_id: str):
+    """Read correlated redacted pixels; stale/expired pages fail closed."""
+    from mcp.types import TextContent, ImageContent
+    from modules.ai_imaging.eagle_eye_remote.secretary.ui_observation import UiImage, receipt
+    result=_send("ui_context_status", {"snapshot_id":snapshot_id})
+    data=result.get('data') if isinstance(result,dict) else None
+    if isinstance(data,dict) and data.get('state')=='ready' and data.get('ui_image'):
+        wire=UiImage.model_validate(data['ui_image'])
+        safe=dict(result,data=dict(data,ui_image=receipt(wire)))
+        return [TextContent(type='text',text=_j(safe)),
+                ImageContent(type='image',mimeType='image/png',data=wire.image)]
+    return [TextContent(type='text',text=_j(result))]
 
 if __name__ == "__main__":
     mcp.run()

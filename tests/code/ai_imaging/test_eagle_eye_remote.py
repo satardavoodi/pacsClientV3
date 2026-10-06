@@ -40,6 +40,10 @@ def test_request_requires_exact_series_roles_and_count():
 
 
 class SyntheticSource:
+    def case_identity(self, study_uid):
+        assert study_uid == '1.2.3'
+        return {'study_uid': study_uid, 'patient_id': 'synthetic-patient'}
+
     def stage(self, request, destination, cancel):
         destination.mkdir()
         path = destination / 'synthetic.dcm'

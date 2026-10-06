@@ -400,7 +400,8 @@ class PyDicom2DBackend(QObject):
 
         t_read = time.perf_counter()
         with decode_serialisation_guard():
-            ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+            from PacsClient.utils.dicom_reader import read_dicom
+            ds = read_dicom(sm.path, stop_before_pixels=False, force=True)
             read_ms = (time.perf_counter() - t_read) * 1000.0
 
             t_pixel = time.perf_counter()

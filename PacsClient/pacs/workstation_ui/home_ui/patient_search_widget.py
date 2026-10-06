@@ -92,7 +92,7 @@ class PatientSearchWidget(QWidget):
         self._apply_date_field_styling()
 
         # تنظیم SizePolicy برای کل ویجت
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
     def _create_modalites_box(self):
         """Create modality checkboxes group"""
@@ -173,7 +173,7 @@ class PatientSearchWidget(QWidget):
             self.modality_checks[modality] = check
             self._modality_layout.addWidget(check, idx // cols, idx % cols)
 
-    def reload_modalities(self):
+    def reload_modalities(self, modalities=None):
         """Rebuild the modality filter checkboxes from the saved Viewer
         Configuration (called after Settings 'Save Changes'). Added
         modalities appear, removed ones disappear; check states of the
@@ -189,7 +189,7 @@ class PatientSearchWidget(QWidget):
                     w.deleteLater()
             self.modality_checks = {}
             self._populate_modality_checks(
-                self._load_configured_modalities(), previously_checked
+                self._load_configured_modalities() if modalities is None else modalities, previously_checked
             )
         except Exception:
             import logging
@@ -206,7 +206,7 @@ class PatientSearchWidget(QWidget):
         self._add_widget_to_search_layout('Date To', self.date_to_edit)
 
         # Spacer برای پر کردن فضای باقی‌مانده
-        self.search_layout.addStretch(1)
+        # Keep search fields content-sized instead of stretching below dates.
 
     def _add_widget_to_search_layout(self, name: str, widget):
         """Add widget to vertical layout without label (using placeholder instead)"""

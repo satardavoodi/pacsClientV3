@@ -188,6 +188,11 @@ class CustomTabManager:
             # Compact layout to fit service tabs cleanly beside user/admin controls.
             self.right_tab_layout.setContentsMargins(2, 3, 2, 3)  # Minimal margins
             self.right_tab_layout.setSpacing(2)  # Tight spacing between tabs
+            from aipacs_runtime import is_module_enabled
+            if is_module_enabled("echomind"):
+                from PacsClient.pacs.workstation_ui.home_ui.secretary_header_shortcut import create_secretary_header_shortcut
+                self.secretary_header_button = create_secretary_header_shortcut(self.right_tab_area)
+                self.right_tab_layout.addWidget(self.secretary_header_button, 0, Qt.AlignVCenter)
 
     def _add_title_bar_tab_widget(self, widget: QWidget, insert_at_start: bool = False) -> None:
         """Insert a custom tab widget either at the start (right after logo) or before the stretch spacer.
@@ -215,7 +220,9 @@ class CustomTabManager:
         """Insert a custom tab widget into the right-side tab area (near admin/user info)."""
         if self.right_tab_layout is not None:
             # AlignVCenter: same one-visual-axis rule as the left chip strip.
-            self.right_tab_layout.addWidget(widget, 0, Qt.AlignVCenter)
+            shortcut = getattr(self, "secretary_header_button", None)
+            index = self.right_tab_layout.indexOf(shortcut) if shortcut is not None else self.right_tab_layout.count()
+            self.right_tab_layout.insertWidget(index, widget, 0, Qt.AlignVCenter)
             return
         # Fallback to the main title bar tabs area.
         self._add_title_bar_tab_widget(widget)

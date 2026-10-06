@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pydicom
+from PacsClient.utils.dicom_reader import read_dicom
 from pydicom.charset import python_encoding
 from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 from PySide6.QtGui import QImage
@@ -2480,7 +2481,7 @@ class Lightweight2DPipeline(QObject):
         try:
             with warnings.catch_warnings():
                 _ignore_unknown_encoding_warning()
-                ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+                ds = read_dicom(sm.path, stop_before_pixels=False, force=True)
         except Exception:
             return
         # Overlay plane (group 60xx) — chart graphics / ROI annotation.
@@ -2900,7 +2901,7 @@ class Lightweight2DPipeline(QObject):
             t_read = time.perf_counter()
             with warnings.catch_warnings():
                 _ignore_unknown_encoding_warning()
-                ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+                ds = read_dicom(sm.path, stop_before_pixels=False, force=True)
             read_ms = (time.perf_counter() - t_read) * 1000.0
             file_size = 0
             try:

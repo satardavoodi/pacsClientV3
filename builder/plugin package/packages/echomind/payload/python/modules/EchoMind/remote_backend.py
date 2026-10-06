@@ -8,6 +8,29 @@ from __future__ import annotations
 
 import json
 import requests
+import sqlite3
+from contextvars import ContextVar
+from uuid import uuid4
+
+_case_context = ContextVar('echomind_case_context', default=None)
+
+
+def _history_directory():
+    from PacsClient.utils.data_paths import ECHOMIND_DIR
+    return ECHOMIND_DIR / 'remote_history'
+
+
+def bind_history(work, study_uid, session_id):
+    """Capture GUI case identity before scheduling; all I/O stays in the worker."""
+    context = {key: value for key, value in
+               (('study_uid', study_uid), ('session_id', session_id)) if value}
+    def run():
+        token = _case_context.set(context)
+        try:
+            return work()
+        finally:
+            _case_context.reset(token)
+    return run
 
 CENTER_CODE = 'RAZI_SERVER'
 MAX_RESPONSE = 8 * 1024 * 1024
@@ -54,6 +77,17 @@ def _request(workflow, text, *, provider='company', **fields):
     if not isinstance(text, str) or not text.strip() or len(text) > 200000:
         raise RemoteError('Enter nonempty text of at most 200,000 characters.')
     payload = dict(text=text, provider=provider, workflow=workflow, response_format='json', **fields)
+    context = _case_context.get()
+    history = None
+    if context is not None:
+        from modules.ai_imaging.eagle_eye_remote.text_history import History
+        history = History(_history_directory())
+        rid = str(uuid4())
+        payload.update(request_id=rid, case_context=context)
+        try:
+            history.begin(rid, 'local', context, payload)
+        except (OSError, ValueError, sqlite3.Error):
+            raise RemoteError('EchoMind local history is unavailable. No request was sent.') from None
     from modules.ai_imaging.eagle_eye_remote.client import Client, ServerHTTPError
     try:
         with Client().open('/v1/echomind/process', payload, timeout=360) as response:
@@ -63,6 +97,13 @@ def _request(workflow, text, *, provider='company', **fields):
         result = json.loads(body)
         if not isinstance(result, dict) or not result.get('content'):
             raise RemoteError('EchoMind Server returned no report content.')
+        if history is not None:
+            if result.get('request_id') != rid:
+                raise RemoteError('EchoMind Server returned a different request identifier. Update the server before retrying.')
+            try:
+                history.finish(rid, 'local', result)
+            except (OSError, sqlite3.Error):
+                raise RemoteError('EchoMind returned a response but local history could not be saved. Do not resubmit automatically.') from None
         return result
     except ServerHTTPError as exc:
         messages = {401:'Eagle Eye authentication failed.', 403:'Eagle Eye client pairing was rejected.',

@@ -24,8 +24,8 @@ class ThumbnailImageSourceService:
     def prepare_home_image(thumb: dict, file_path=None) -> QImage:
         """Detached Home policy: explicit file first, then embedded PNG bytes.
 
-        Unlike the patient sidebar, Home already has a resolved source projection;
-        do not reinterpret its ordinal as a ThumbnailStore key. No QPixmap/widget
+        Home may use the shared store only with explicit study/storage identity;
+        never reinterpret its display ordinal as a storage key. No QPixmap/widget
         access, clinical writes or placeholder painting on this worker boundary.
         """
         import base64
@@ -52,6 +52,9 @@ class ThumbnailImageSourceService:
                     pass
         elif isinstance(raw, (bytes, bytearray)):
             image.loadFromData(bytes(raw))
+        if image.isNull() and thumb.get('study_uid') and thumb.get('folder_key'):
+            image = ThumbnailImageSourceService.prepare_image(
+                str(thumb['study_uid']), str(thumb['folder_key']), path)
         return image
 
     @staticmethod

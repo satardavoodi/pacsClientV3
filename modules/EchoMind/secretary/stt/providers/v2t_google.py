@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import time
 
 
 class V2tGoogleProvider:
@@ -26,7 +27,7 @@ class V2tGoogleProvider:
         except Exception:
             return 0.0
 
-    def _transcribe_single(self, recognizer, sr, path: str) -> tuple[str, str | None]:
+    def _transcribe_single(self, recognizer, sr, path: str, deadline: float) -> tuple[str, str | None]:
         chunks: list[str] = []
         duration = self._duration_seconds(path)
         if duration <= 0:
@@ -35,6 +36,10 @@ class V2tGoogleProvider:
 
         with sr.AudioFile(path) as source:
             while consumed < duration + 0.01:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "", "Google transcription timed out."
+                recognizer.operation_timeout = remaining
                 window = min(self.chunk_seconds, max(0.1, duration - consumed))
                 try:
                     audio_data = recognizer.record(source, duration=window)
@@ -53,7 +58,7 @@ class V2tGoogleProvider:
         return " ".join(chunks).strip(), None
 
     def transcribe_files(self, paths: list[str], quality_mode: str = "clear", timeout: int = 360) -> dict[str, Any]:
-        del quality_mode, timeout
+        del quality_mode
         try:
             import speech_recognition as sr
         except Exception:
@@ -66,6 +71,8 @@ class V2tGoogleProvider:
             }
 
         recognizer = sr.Recognizer()
+        recognizer.operation_timeout = max(1, int(timeout))
+        deadline = time.monotonic() + max(1, int(timeout))
         file_results: list[dict[str, Any]] = []
         all_text: list[str] = []
 
@@ -74,7 +81,7 @@ class V2tGoogleProvider:
                 file_results.append({"path": path, "ok": False, "error": "missing_path"})
                 continue
             try:
-                text, err = self._transcribe_single(recognizer, sr, path)
+                text, err = self._transcribe_single(recognizer, sr, path, deadline)
                 if err:
                     file_results.append({"path": path, "ok": False, "error": err})
                     continue

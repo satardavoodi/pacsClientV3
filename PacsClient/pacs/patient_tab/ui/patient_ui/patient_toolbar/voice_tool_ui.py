@@ -375,11 +375,11 @@ class VoiceWidget(QWidget):
         except Exception:
             return False
 
-    def start_recording_inline(self, selected_widget) -> bool:
+    def start_recording_inline(self, selected_widget, prepared_path=None) -> bool:
         self._inline_mode = True
         if self._is_recording or self._save_in_progress:
             return False
-        return self._start_new_recording(selected_widget, show_ui=False)
+        return self._start_new_recording(selected_widget, show_ui=False, prepared_path=prepared_path)
 
     def closeEvent(self, event):
         try:
@@ -449,7 +449,7 @@ class VoiceWidget(QWidget):
         self._inline_mode = False
         self._start_new_recording(selected_widget, show_ui=True)
 
-    def _start_new_recording(self, selected_widget, show_ui: bool) -> bool:
+    def _start_new_recording(self, selected_widget, show_ui: bool, prepared_path=None) -> bool:
         # شروع ضبط جدید
         study_uid = self._resolve_study_uid(selected_widget)
         if not study_uid:
@@ -457,9 +457,17 @@ class VoiceWidget(QWidget):
             return False
 
         dest_dir = ATTACHMENT_PATH / study_uid
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._file_path = dest_dir / f"REC_{timestamp}.wav"
+        if prepared_path is None:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self._file_path = dest_dir / f"REC_{timestamp}.wav"
+        else:
+            # Assistant preparation creates the folder on a worker. Only an
+            # app-owned path is accepted; this branch performs no disk I/O.
+            prepared_path = Path(prepared_path)
+            if prepared_path.parent != dest_dir or prepared_path.suffix.lower() != '.wav':
+                return False
+            self._file_path = prepared_path
 
         # ریست وضعیت
         self._audio_q = queue.Queue()

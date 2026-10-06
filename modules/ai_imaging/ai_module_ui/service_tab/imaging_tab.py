@@ -296,6 +296,15 @@ class DXSidebar(BaseSidebar):
         self.save_review_btn = QPushButton("Save Review")
         self.save_review_btn.clicked.connect(self._save_review)
 
+        self._report_result = {}
+        self.pdf_btn = QPushButton('Create Bone Age PDF')
+        self.pdf_btn.setEnabled(False)
+        self.pdf_status = QLabel('Confirm patient information to prepare an unsigned report.')
+        self.pdf_status.setWordWrap(True)
+        from modules.ai_imaging.eagle_eye_remote.bone_report_ui import BoneReportController
+        self._bone_report = BoneReportController(self)
+        self.pdf_btn.clicked.connect(self._bone_report.request)
+
         self.layout.addWidget(title)
         self.layout.addWidget(self.feature_label)
         self.layout.addWidget(self.feature_list)
@@ -312,6 +321,8 @@ class DXSidebar(BaseSidebar):
         self.layout.addWidget(self.notes_label)
         self.layout.addWidget(self.notes_edit)
         self.layout.addWidget(self.save_review_btn)
+        self.layout.addWidget(self.pdf_btn)
+        self.layout.addWidget(self.pdf_status)
         self.layout.addStretch()
 
     def load_data(self):
@@ -326,6 +337,7 @@ class DXSidebar(BaseSidebar):
             with open(bone_json, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            self.apply_result(data, restore_review=False)
             self.feature_list.clear()
 
             # Ù†Ù…Ø§ÛŒØ´ Ø§Ø·Ù„Ø§Ø¹Ø§Øª bone age
@@ -365,6 +377,12 @@ class DXSidebar(BaseSidebar):
 
     def apply_result(self, data, *, restore_review=True):
         """Apply worker-loaded values without reading files on the GUI thread."""
+        self._report_result = dict(data)
+        self.pdf_btn.setEnabled(bool(data) and not self._bone_report.busy)
+        if data.get('pdf_path'):
+            self.pdf_status.setText('Unsigned PDF available. Create PDF to review current patient information.')
+        elif data.get('report_error'):
+            self.pdf_status.setText('Analysis saved; PDF preparation requires review.')
         self.feature_list.clear()
         for label, primary, fallback in (
                 ('Bone Age (Years)', 'bone_age_years', 'predicted_bone_age_years'),

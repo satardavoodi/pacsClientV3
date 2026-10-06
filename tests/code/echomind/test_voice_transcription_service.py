@@ -91,6 +91,15 @@ def test_builtin_servers_are_labelled_by_name_only():
         assert "81.16" not in label and "80.210" not in label
 
 
+def test_google_is_first_then_existing_dedicated_whisper(cfg):
+    """Presentation priority must not remap or overwrite saved provider IDs."""
+    ids = [provider for provider, _label in vt.STT_PROVIDER_CHOICES]
+    assert ids == ["auto", "v2t", "aipacs_1", "aipacs_2", "aipacs_3", "openai", "custom"]
+    for provider in ids:
+        ss.save_stt_settings({"provider": provider})
+        assert ss.get_stt_provider() == provider
+
+
 def test_custom_server_url_and_port():
     assert vt.base_url_for("custom", "http://10.0.0.5", 9000) == "http://10.0.0.5:9000"
     # a port already in the URL wins
@@ -190,13 +199,9 @@ def test_missing_file_and_unconfigured_server_report_errors(cfg, captured):
 
 
 # ── back-compat: an install that never touched the setting is unchanged ─────
-def test_legacy_native_route_maps_to_the_windows_server(cfg):
-    """`secretary_stt_provider: "native"` meant the hard-coded AI_BASE = the
-    WINDOWS server. It must map to Server 2, or existing installs would silently
-    move to a different server on upgrade."""
-    ss.save_settings({"secretary_stt_provider": "native"})   # no stt_provider yet
-    assert ss.get_stt_provider() == "aipacs_2"
-    assert vt.base_url_for(ss.get_stt_provider()) == vt.AIPACS_SERVER_2_BASE
+def test_default_native_migrates_to_automatic(cfg):
+    ss.save_settings({"secretary_stt_provider": "native"})
+    assert ss.get_stt_provider() == "auto"
 
 
 def test_legacy_v2t_and_openai_routes_are_preserved(cfg):

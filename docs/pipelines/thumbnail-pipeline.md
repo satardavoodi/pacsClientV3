@@ -1,5 +1,24 @@
 # Thumbnail Pipeline — As-Built Reference
 
+## October 6 Home and Patient catalog/media join
+
+`PacsClient.utils.series_identity.reconcile_thumbnail_catalog` is the pure join
+used by Patient Tab's adapter and Home's single/grouped Server adapters. Catalog
+membership is independent of available PNG files. Missing media preserves the card;
+exact Study/Series UID matching prevents foreign or ambiguous number-based enrichment.
+Home reuses its existing study-info snapshot rather than a second thumbnail catalog.
+A previous fetch flag is not proof that a later disk inventory is complete.
+Local single/grouped Home consumes the existing indexed worker projection even when
+some PNGs exist. Offline Cloud retains its separate package-sync admission.
+
+PNG publication stays asynchronous; Home warms the existing bounded ThumbnailStore,
+and the worker image-source adapter reads it only through explicit study/folder keys.
+Metadata snapshots strip inline bytes. Use the canonical folder resolver for duplicate
+SeriesNumbers; UI display aliases are never storage keys. Existing group/slot ordering,
+download state and viewer-private rendering are unchanged. This is the scoped
+catalog/media correction, not closure of U0-U5. See the October 6 receipt in the
+UI-stall report and `test_home_catalog_convergence.py`.
+
 ## September 30 patient-wide study discovery before Server admission
 
 Complete card membership starts with complete StudyInstanceUID discovery. A filtered

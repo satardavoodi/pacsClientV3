@@ -1,0 +1,149 @@
+{
+  "mode": "ask",
+  "purpose": "Answer from scoped read-only facts.",
+  "forbidden_effects": "No mutation, cleanup, submission or unsolicited action.",
+  "scenarios": [
+    {
+      "id": "voice_counts",
+      "request": "How many of today's MRI studies have voice recordings, and how many still need one?",
+      "precondition": "Synthetic dated loaded-study facts with present, absent and unknown voice evidence",
+      "expected": "Report verified present, absent and unknown separately; do not infer personal authorship.",
+      "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "download_health",
+      "request": "Are downloads progressing normally? Are there clear errors in the download logs?",
+      "precondition": "Synthetic isolated session",
+      "expected": "Read shared download counts and bounded safe diagnostics; explain missing evidence without changing downloads.",
+      "guard": "tests/code/echomind/test_secretary_ask_diagnostics.py::test_ask_snapshot_uses_shared_read_only_download_counts_and_worker_log_projection",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "aggregate_privacy",
+      "request": "How many loaded studies are MRI and how many remain unreported?",
+      "precondition": "Synthetic isolated session",
+      "expected": "Return scoped aggregates without patient identifiers.",
+      "guard": "tests/code/echomind/test_secretary_guidance.py::test_summary_exports_aggregates_without_patient_identity",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "answer_failure",
+      "request": "Check download health and tell me the result.",
+      "precondition": "Synthetic isolated session",
+      "expected": "Surface bounded server failure; do not execute an action or silently switch provider.",
+      "guard": "tests/code/echomind/test_secretary_ask_diagnostics.py::test_question_preplanning_failure_survives_to_response_without_control_execution",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "settings_server",
+      "request": "Report the current server settings.",
+      "expected": "Report persisted values and availability; no saving, connectivity test or credential/prompt disclosure.",
+      "guard": "tests/code/echomind/test_secretary_guide_page_context.py::test_settings_report_uses_read_only_repository_on_worker_and_is_partial",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "settings_modality_grid",
+      "request": "Report the current modality grid settings.",
+      "expected": "Report persisted values and availability; no saving, connectivity test or credential/prompt disclosure.",
+      "guard": "tests/code/echomind/test_secretary_guide_page_context.py::test_settings_report_uses_read_only_repository_on_worker_and_is_partial",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "settings_tools",
+      "request": "Report the current tools settings.",
+      "expected": "Report persisted values and availability; no saving, connectivity test or credential/prompt disclosure.",
+      "guard": "tests/code/echomind/test_secretary_guide_page_context.py::test_settings_report_uses_read_only_repository_on_worker_and_is_partial",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "settings_image_filter",
+      "request": "Report the current image filter settings.",
+      "expected": "Report persisted values and availability; no saving, connectivity test or credential/prompt disclosure.",
+      "guard": "tests/code/echomind/test_secretary_guide_page_context.py::test_settings_report_uses_read_only_repository_on_worker_and_is_partial",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "settings_ai",
+      "request": "Report the current ai settings.",
+      "expected": "Report persisted values and availability; no saving, connectivity test or credential/prompt disclosure.",
+      "guard": "tests/code/echomind/test_secretary_guide_page_context.py::test_settings_report_uses_read_only_repository_on_worker_and_is_partial",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "received_scope",
+      "request": "How many patients were received today?",
+      "expected": "Differentiate loaded displayed studies from complete reception admissions; missing complete population is unavailable.",
+      "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "report_counts",
+      "request": "How many of today's MRI studies have completed reports, pending reports or unknown report status?",
+      "expected": "Keep completed, approval stages, pending and unknown separate within date/modality scope.",
+      "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "voice_authorship",
+      "request": "How many MRI recordings did I personally create today?",
+      "expected": "Do not infer authorship from recording presence or assignment.",
+      "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "voice_missing",
+      "request": "How many MRI studies still have no voice?",
+      "expected": "Count only authoritative absent evidence; unknown/stale evidence is separate.",
+      "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "download_vs_received",
+      "request": "How many received MRI studies have downloaded successfully?",
+      "expected": "Do not equate download-store counts with received patient counts without authoritative linkage.",
+      "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    },
+    {
+      "id": "settings_all",
+      "request": "Give me a report of every Settings page.",
+      "expected": "Report available persisted sections and explicitly list unsupported sections; no invented completeness.",
+      "guard": "tests/code/echomind/test_secretary_guide_page_context.py::test_settings_report_uses_read_only_repository_on_worker_and_is_partial",
+      "precondition": "Synthetic visible software controls and isolated configuration",
+      "native_status": "not_run_test_control_unavailable",
+      "natural_language_brain_status": "not_run",
+      "verification_scope": "referenced_component_guard_not_full_request_execution"
+    }
+  ]
+}

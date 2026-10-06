@@ -207,6 +207,8 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         self.setup_left_panel()
         self.setup_center_panel()
         self.setup_right_panel()
+        from ..workflow_realtime import WorkflowRealtime
+        self.workflow_realtime = WorkflowRealtime(self)
         # Archetype 4: convert the tri-pane HBoxLayout into a user-resizable
         # QSplitter so the user can drag dividers to rebalance the layout on
         # narrower monitors. Previously left/right were pinned and the centre

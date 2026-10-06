@@ -32,6 +32,14 @@ def test_completed_advanced_volume_still_uses_existing_pixels():
     image = vtk.vtkImageData()
     image.SetDimensions(4, 4, 104)
     image.AllocateScalars(vtk.VTK_SHORT, 1)
+    from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import attach_values
+    attach_values(image, [1, 1, 4, 4, 104, 1, 1, 1, 0, 0, 0,
+                         1, 0, 0, 0, 1, 0, 0, 0, 1] + [1] * 32)
+    direction = vtk.vtkDoubleArray()
+    direction.SetName("DirectionMatrix")
+    for value in (1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1):
+        direction.InsertNextValue(value)
+    image.GetFieldData().AddArray(direction)
     metadata = {"series": {"viewer_backend": "vtk_simpleitk"},
                 "preview_only": False, "instances": [{} for _ in range(104)]}
     state = SimpleNamespace(_emit_mpr_launch_route=Mock())

@@ -629,3 +629,19 @@ and 7 remain valid in both modes.
   `aipacs-dual-app-and-license`, `aipacs-launch-control-sop`.
 - Advanced (separate) viewer geometry: `docs/architecture/ADVANCED_VTK_GEOMETRY_CONTRACT.md`.
 - Pixel spacing (separate clinical fix): memory `radiography-pixel-spacing-fix`.
+
+
+## 2026-09-30 addendum: stack direction belongs to the decoded buffer
+
+The active anatomical-camera path now reads `AIPacsMPRStackGeometryV1` from the
+volume, rather than sorting the directory by InstanceNumber. The actual reader
+records and validates this orientation receipt before any intensity filtering;
+filters, conversion, cache and subprocess IPC preserve it. Original camera math,
+X/Y reversals, interpolation and no-resample behavior remain unchanged. Missing
+legacy receipts rebuild once per launch; invalid spatial geometry blocks MPR
+without disabling ordinary 2D viewing. This addendum supersedes earlier text that
+uses directory InstanceNumber order as the source of actual buffer direction.
+See the September 30 implementation receipt in
+[the VTK-domain report](../reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md).
+Automated candidate verification is complete; fresh source clinical acceptance
+and future installed-artifact acceptance remain pending.

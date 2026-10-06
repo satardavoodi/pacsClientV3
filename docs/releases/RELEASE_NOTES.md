@@ -2,7 +2,9 @@
 
 **Latest receipt-backed Client build:** v3.6.8 (2026-09-26), four installers compiled and independently verified. Later v3.6.9 local install-QA artifacts are recorded separately; they do not establish a synchronized source release.
 
-**Pending release:** v3.7.0 (2026-09-30), four Standard/ARM64-emulated Client installers requested after publication to all three Git repositories. The owner accepted the current Developer Client as build input. No Eagle Eye Server rebuild is requested. Build completion and artifact QA must be recorded independently.
+**Pending release:** v3.7.1 (2026-10-06), four Standard/ARM64-emulated Client installers requested with the latest working-source changes and publication to all three configured Git repositories. No Eagle Eye Server build is requested. Source, build-input and artifact verification are recorded separately.
+
+**Previous published source:** v3.7.0, verified online on both release branches in all three repositories on 2026-10-06. Only its PyInstaller pair completed; the Nuitka compression run was interrupted before the September 30 host reboot. The existing tag and artifacts are preserved.
 
 **Current Stable Version:** v3.6.4 (2026-08-29)
 **Previous Stable:** v3.6.3 (2026-08-23)
@@ -11,7 +13,34 @@
 
 ---
 
-## v3.7.0 (Client release preparation, 2026-09-30)
+## v3.7.1 (Standard Client candidate preparation, 2026-10-06)
+
+The requested candidate captures the latest Home/catalog and thumbnail state,
+EchoMind Assist/private history and Secretary controls, patient workflow/realtime
+integration, Support diagnostics, portable media readiness, stored analysis
+results, demographic/report handling and MPR geometry changes. Shared Server
+source remains source only: no Server installer or Razi service deployment is
+requested or qualified by this Client task.
+
+Both backends use the existing verified September 28 custom native Slicer/VMTK
+cache and current snapshot Python/UI payloads. One stale shared EchoMind page
+mirror was corrected with the scoped synchronizer after reviewing its source
+diff; all 512 Python mirror pairs then matched and 63 adjacent/parity guards
+passed. No runtime implementation was changed by that packaging correction.
+
+The owner-requested fix 2 EOF compatibility reader is retained in both core
+specs and current viewer payloads. Complete encapsulated pixels missing only
+the final delimiter can be recovered without editing the original DICOM;
+malformed or truncated payloads remain rejected. Synthetic decoding and
+packaging verification are separate from installed viewport acceptance.
+
+See [VERSION_3.7.1_RELEASE.md](VERSION_3.7.1_RELEASE.md) and
+[the safety record](deploy-record-client-2026-10-06.md) for current evidence,
+exclusions and unresolved acceptance. Compilation is not production approval.
+
+---
+
+## v3.7.0 (Published source; interrupted Client matrix, 2026-09-30)
 
 This release captures the accepted current Standard Client, including Education
 authoring/import/transfer and presentation changes, Home/search/thumbnail and

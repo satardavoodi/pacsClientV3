@@ -1,0 +1,728 @@
+{
+  "mode": "act",
+  "purpose": "Execute only supported typed actions and verify terminal receipts.",
+  "forbidden_effects": "No guessed completion; preserve permissions, confirmations and identity bindings.",
+  "scenarios": [
+    {
+      "id": "server_echo_two_ports",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Verify the configured Test Center using DICOM ports 105 and 104. Do not change its configuration.",
+      "action": "verify_settings_server",
+      "entities": {
+        "server_name": "Test Center",
+        "ports": [
+          105,
+          104
+        ]
+      },
+      "expected": "port_receipts",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "server_clone",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Copy Test Center as Test Center 2, preserving its socket and reception endpoints.",
+      "action": "clone_settings_server",
+      "entities": {
+        "source_name": "Test Center",
+        "new_name": "Test Center 2"
+      },
+      "expected": "independent_clone",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "persistent_modalities",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Settings Modality Grid, remove NM and XA. Keep MR and CT available for future searches.",
+      "action": "remove_settings_modalities",
+      "entities": {
+        "modalities": [
+          "NM",
+          "XA"
+        ]
+      },
+      "expected": "persist_grid",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "reference_line_color",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, change the reference line color to #00FF80.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "reference_line",
+        "color": "#00FF80"
+      },
+      "expected": "tool_color",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "reference_line_width",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, set reference line line width to 4.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "reference_line",
+        "line_width": 4.0
+      },
+      "expected": "tool_width",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ruler_color",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, change the ruler color to #00FF80.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "ruler",
+        "color": "#00FF80"
+      },
+      "expected": "tool_color",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ruler_width",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, set ruler line width to 4.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "ruler",
+        "line_width": 4.0
+      },
+      "expected": "tool_width",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "arrow_color",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, change the arrow color to #00FF80.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "arrow",
+        "color": "#00FF80"
+      },
+      "expected": "tool_color",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "arrow_width",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, set arrow line width to 4.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "arrow",
+        "line_width": 4.0
+      },
+      "expected": "tool_width",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "angle_color",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, change the angle color to #00FF80.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "angle",
+        "color": "#00FF80"
+      },
+      "expected": "tool_color",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "angle_width",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, set angle line width to 4.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "angle",
+        "line_width": 4.0
+      },
+      "expected": "tool_width",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "polygon_color",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, change the polygon color to #00FF80.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "polygon",
+        "color": "#00FF80"
+      },
+      "expected": "tool_color",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "polygon_width",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, set polygon line width to 4.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "polygon",
+        "line_width": 4.0
+      },
+      "expected": "tool_width",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "rectangle_color",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, change the rectangle color to #00FF80.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "rectangle",
+        "color": "#00FF80"
+      },
+      "expected": "tool_color",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "rectangle_width",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Tool Settings, set rectangle line width to 4.",
+      "action": "set_settings_tool_style",
+      "entities": {
+        "tool": "rectangle",
+        "line_width": 4.0
+      },
+      "expected": "tool_width",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ct_min_slices",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set CT min slices to 5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "CT",
+        "parameter": "min_slices",
+        "value": 5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ct_enabled",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set CT enabled to False.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "CT",
+        "parameter": "enabled",
+        "value": false
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ct_gaussian_smoothing_sigma",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set CT gaussian smoothing sigma to 1.5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "CT",
+        "parameter": "gaussian_smoothing.sigma",
+        "value": 1.5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ct_gaussian_high_pass_sigma",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set CT gaussian high pass sigma to 1.5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "CT",
+        "parameter": "gaussian_high_pass.sigma",
+        "value": 1.5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ct_laplacian_sharpening_alpha",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set CT laplacian sharpening alpha to 0.5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "CT",
+        "parameter": "laplacian_sharpening.alpha",
+        "value": 0.5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "mr_min_slices",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set MR min slices to 5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "MR",
+        "parameter": "min_slices",
+        "value": 5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "mr_enabled",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set MR enabled to False.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "MR",
+        "parameter": "enabled",
+        "value": false
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "mr_gaussian_smoothing_sigma",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set MR gaussian smoothing sigma to 1.5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "MR",
+        "parameter": "gaussian_smoothing.sigma",
+        "value": 1.5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "mr_gaussian_high_pass_sigma",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set MR gaussian high pass sigma to 1.5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "MR",
+        "parameter": "gaussian_high_pass.sigma",
+        "value": 1.5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "mr_laplacian_sharpening_alpha",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In Image Filter Settings, set MR laplacian sharpening alpha to 0.5.",
+      "action": "set_settings_filter_parameter",
+      "entities": {
+        "modality": "MR",
+        "parameter": "laplacian_sharpening.alpha",
+        "value": 0.5
+      },
+      "expected": "filter_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "voice_v2t",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In AI Settings, select v2t as the voice transcription provider. Preserve my existing credentials.",
+      "action": "set_voice_to_text_preferences",
+      "entities": {
+        "provider": "v2t"
+      },
+      "expected": "voice_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "voice_openai",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In AI Settings, select OpenAI Whisper as the voice transcription provider. Preserve my existing credentials.",
+      "action": "set_voice_to_text_preferences",
+      "entities": {
+        "provider": "openai"
+      },
+      "expected": "voice_persistence",
+      "preconditions": "User has entered own API key and explicitly defined prompt in local form; synthetic fixtures only.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "voice_auto",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In AI Settings, select auto as the voice transcription provider. Preserve my existing credentials.",
+      "action": "set_voice_to_text_preferences",
+      "entities": {
+        "provider": "auto"
+      },
+      "expected": "voice_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "proxy_direct",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In AI Settings, choose direct with the configured proxy port 2082.",
+      "action": "set_ai_proxy_preferences",
+      "entities": {
+        "connection_type": "direct",
+        "proxy_port": 2082
+      },
+      "expected": "proxy_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "proxy_socks5",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "In AI Settings, choose socks5 with the configured proxy port 2082.",
+      "action": "set_ai_proxy_preferences",
+      "entities": {
+        "connection_type": "socks5",
+        "proxy_port": 2082
+      },
+      "expected": "proxy_persistence",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "read_server",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Show the safe current server configuration.",
+      "action": "get_settings_snapshot",
+      "entities": {
+        "section": "server"
+      },
+      "expected": "safe_snapshot",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "read_modality_grid",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Show the safe current modality grid configuration.",
+      "action": "get_settings_snapshot",
+      "entities": {
+        "section": "modality_grid"
+      },
+      "expected": "safe_snapshot",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "read_tools",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Show the safe current tools configuration.",
+      "action": "get_settings_snapshot",
+      "entities": {
+        "section": "tools"
+      },
+      "expected": "safe_snapshot",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "read_image_filter",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Show the safe current image filter configuration.",
+      "action": "get_settings_snapshot",
+      "entities": {
+        "section": "image_filter"
+      },
+      "expected": "safe_snapshot",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "read_ai",
+      "persona": "Radiologist",
+      "mode": "act",
+      "request": "Show my AI settings without displaying passwords or tokens.",
+      "action": "get_ai_settings",
+      "entities": {},
+      "expected": "safe_snapshot",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "patient_id",
+      "persona": "Radiologist",
+      "request": "Search the server for patient ID SYN-001.",
+      "action": "advanced_search_patients",
+      "acceptable_actions": [
+        "advanced_search_patients",
+        "list_patients"
+      ],
+      "entities": {
+        "source": "server",
+        "patient_id": "SYN-001"
+      },
+      "modules": [
+        "homepage"
+      ],
+      "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "patient_name",
+      "persona": "Radiologist",
+      "request": "Search local studies for patient name Synthetic Example.",
+      "action": "advanced_search_patients",
+      "acceptable_actions": [
+        "advanced_search_patients",
+        "list_patients"
+      ],
+      "entities": {
+        "source": "local",
+        "patient_name": "Synthetic Example"
+      },
+      "modules": [
+        "homepage"
+      ],
+      "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "exact_date_mr",
+      "persona": "Radiologist",
+      "request": "Search only MRI studies on the server dated 2026-10-02.",
+      "action": "advanced_search_patients",
+      "acceptable_actions": [
+        "advanced_search_patients",
+        "list_patients"
+      ],
+      "entities": {
+        "source": "server",
+        "modality": "MR",
+        "date_from": "20261002",
+        "date_to": "20261002"
+      },
+      "modules": [
+        "homepage"
+      ],
+      "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "ct_date_range",
+      "persona": "Radiologist",
+      "request": "Find server CT studies from 2026-10-01 through 2026-10-03.",
+      "action": "advanced_search_patients",
+      "acceptable_actions": [
+        "advanced_search_patients",
+        "list_patients"
+      ],
+      "entities": {
+        "source": "server",
+        "modality": "CT",
+        "date_from": "20261001",
+        "date_to": "20261003"
+      },
+      "modules": [
+        "homepage"
+      ],
+      "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "advanced_age_body",
+      "persona": "Radiologist",
+      "request": "Search the server for knee MRI studies with patient age 12 through 18.",
+      "action": "advanced_search_patients",
+      "acceptable_actions": [
+        "advanced_search_patients",
+        "list_patients"
+      ],
+      "entities": {
+        "source": "server",
+        "modality": "MR",
+        "body_part": "KNEE",
+        "age_min": 12,
+        "age_max": 18
+      },
+      "modules": [
+        "homepage"
+      ],
+      "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "advanced_multiple_ids",
+      "persona": "Radiologist",
+      "request": "Search the server for MRI studies belonging to patient IDs SYN-001 and SYN-002.",
+      "action": "advanced_search_patients",
+      "acceptable_actions": [
+        "advanced_search_patients",
+        "list_patients"
+      ],
+      "entities": {
+        "source": "server",
+        "patient_ids": [
+          "SYN-001",
+          "SYN-002"
+        ],
+        "modality": "MR"
+      },
+      "modules": [
+        "homepage"
+      ],
+      "verification": "Actual offscreen PatientSearchWidget field readback or advanced-query dispatch; PACS query results/native GUI not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_ruler",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the ruler tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "ruler",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_angle",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the angle tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "angle",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_two_line_angle",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the two line angle tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "two_line_angle",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_roi_rect",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the roi rect tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "roi_rect",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_roi_circle",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the roi circle tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "roi_circle",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_arrow",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the arrow tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "arrow",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_text",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the text tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "text",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_eraser",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the eraser tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "eraser",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    },
+    {
+      "id": "toolbar_select",
+      "persona": "Radiologist",
+      "request": "In the active Fast Viewer, activate the select tool on viewport 0.",
+      "action": "activate_tool",
+      "entities": {
+        "tool": "select",
+        "viewport": 0
+      },
+      "modules": [
+        "patient_viewer"
+      ],
+      "verification": "Actual ToolController state through viewer adapter; rendered annotation/native viewport not verified.",
+      "native_status": "not_run_test_control_unavailable"
+    }
+  ]
+}

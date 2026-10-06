@@ -3354,3 +3354,269 @@ Live GUI/native drag acceptance and produced-artifact verification remain pendin
 Thumbnail follow-up verification: 35 focused/adjacent tests passed, exit 0;
 495 plugin mirror pairs matched. Core PacsClient collection covers both freezer
 paths; no full build was started.
+
+
+## 2026-09-30 Standard MPR stack direction: guarded source candidate
+
+User authorized implementation for a fresh source restart and clinical review.
+This follows the September 23 diagnosis/design and September 30 investigation;
+no anatomy, modality, vendor or PatientPosition exception was introduced.
+
+### Root cause and implementation seam
+
+The directory InstanceNumber order was an independent authority from the decoder
+buffer order. An additional synthetic GDCM experiment confirmed that this
+checkout's SimpleITK reader can retain a positive nominal third direction even
+when its actual decoded slices run in the opposite direction. Trusting the old
+DirectionMatrix alone therefore does not repair the defect.
+
+`PacsClient/pacs/patient_tab/utils/mpr_stack_geometry.py` records a numeric,
+versioned `AIPacsMPRStackGeometryV1` receipt from the actual ImageSeriesReader
+metadata dictionaries immediately after Execute. This seam is more precise than
+reusing a pre-read order index: it also follows the existing dominant-size retry's
+final file subset. No additional folder/header scanner is introduced. The receipt
+contains validity, original grid, row/column directions, signed physical stack
+axis, and a digest of ordered identities/spatial facts; no raw identifiers are
+stored in it. It is an orientation receipt, not a full index-to-patient affine.
+
+All decoded frame positions must fit one regular lattice. Consistent IOP, pixel
+spacing, matrix, identities, unique SOPs, decoder origin/spacing and supported
+non-sheared geometry are required. Missing geometry, repeated positions, mixed
+identities, varying planes, irregular spacing and unsupported shear are invalid;
+this does not claim new enhanced-multiframe support. The existing admission gate
+remains. Pixel/whole-file content hashing is not added by this correction; cache
+content revision/invalidation remains owned by the existing domain contracts.
+
+The receipt is carried through intensity filters, ITK-to-VTK conversion,
+ZetaBoost disk serialization, subprocess IPC and VTK copies/flips. Standard/Curve
+route admission rebuilds missing legacy receipts through the existing MPR loader
+at most once per launch, bypassing stale cached geometry; invalid receipts are
+blocked with a readable message while ordinary 2D viewing remains usable. This
+is not a global cache migration or purge. Geometry lookup on MPR open is in memory.
+The small/large read scheduling of the existing MPR loader is unchanged.
+
+The anatomical canonicalizer now obtains only the signed stack axis from that
+receipt. Existing DirectionMatrix storage, Y conversion, MPR X reversal, camera
+selection, interpolation, jitter correction, pixels, spacing and origins are
+unchanged. The existing canonicalization-off kill switch retains its legacy
+launch behavior; no new feature flag/configuration or version bump was added.
+
+### Verification
+
+- Before runtime changes: new real synthetic decoder-to-camera tests produced
+  **7 failed / 6 passed**, exit 1 (reversed actual order and post-build renumbering).
+- Final new guard file: **125 cases**, including 96 signed axis/oblique/order
+  configurations, CT/MR, all three views, camera-rule equivalence, source file
+  renumbering/unavailable source folder, filters, disk round trip, warmup export
+  and import, copies, stale grid, invalid geometry and bounded rebuilds.
+- Final affected selection: **463 passed**, exit 0, using direct pytest with
+  `--reruns 0`. It includes all `tests/code/mpr` except the independently failing
+  branding guard, plus MPR launch/admission/load/large-volume, filter pixel hashes,
+  series geometry and multiframe guards.
+- Broad first run: **363 passed / 7 failed**, exit 1, before expansion of the new
+  matrix. All seven failures belong to `test_advanced_analysis_brand_version.py`
+  (isolated title function missing os and old native/display versions). The test,
+  pyproject and all its source inputs match HEAD exactly, verified by git diff.
+  These are not repaired or hidden by this MPR change.
+- Updated `tools/testing/probe_mpr_stack_order.py` now exercises real synthetic
+  decoding: **0/8 presentation invariant failures**, exit 0.
+- Existing CT/MR filter pixel-hash guards pass: receipt propagation changes no
+  filter pixels or geometry.
+
+### Build handoff and remaining acceptance
+
+Affected ZetaBoost payload mirrors were synchronized with the existing sync tool's
+scoped add_paths API after dry-run; both match their canonical sources. No
+PacsClient or zeta_mpr payload mirror exists. The new helper is in the existing
+PacsClient package, statically imported by the source chain (Nuitka includes the
+whole package). It is not a new optional application module. Client, ARM-emulated
+Client and Eagle Eye Server must include the coherent source/helper/payload set
+for both PyInstaller and Nuitka. Do not ship just the plugin over an older engine.
+No installer build, release, push or version bump was performed.
+
+Global mirror verification was initially blocked by concurrently edited EchoMind
+pages/widgets (outside this workstream); do not overwrite those edits to force a
+release gate green. Exact future snapshot/mirror gates still apply under BUILD.md.
+
+Source GUI: **pending human restart and clinical acceptance**, not a pass. The
+existing local Test Control Server was unavailable. The human will close/reopen
+one source instance and sign in. First review the reported neck CT, then a working
+abdomen CT and separate MR T1/T2/other available spatial sequences, including
+native sagittal/coronal or oblique acquisition. Check all three views' S/I and L/R,
+scroll, crosshair, reset and close/reopen in Fast and Advanced entry routes, plus
+warm reuse. Preserve the previous no-jitter result and Curve source orientation.
+Do not mark stable/clinical or artifact-verified until those observations exist.
+Rollback is the scoped source change plus matching ZetaBoost mirrors; the existing
+canonicalization-off switch is only the previously documented legacy diagnostic
+escape hatch, not proof of correct geometry.
+
+
+## 2026-09-30 user acceptance and separate orientation-marker investigation
+
+The user reports that the corrected Standard MPR is now correct across their
+varied tests, with no observed problems. Record this as human-reported source
+acceptance of the stack-direction correction. The exact series/test matrix was
+not supplied; do not infer completion of every proposed scenario or installer
+acceptance. Existing automated evidence and future immutable build gates remain.
+
+A new request asks only to investigate viewport anatomical labels that stay fixed
+after rotation or fail to describe unusual orientations. No runtime edits were
+made for this investigation.
+
+Confirmed from current code and a synthetic VTK renderer/camera experiment:
+
+- Advanced toolbar uses RotateInteractorStyle: camera Roll/Azimuth followed by
+  Render. It does not apply the DisplayGeometry rotation functions. The preferred
+  slice-update marker path calls update_from_geometry_contract, which selects the
+  effective display affine's i/j axes and explicitly ignores the active camera.
+  Re-running that marker update after a 90-degree camera roll still yields the
+  initial labels. Synthetic axial result: top A/right L remains A/L although the
+  final screen basis requires top L/right P. This is both a missing transform
+  composition and a refresh-path gap; repainting alone cannot fix it.
+- Standard MPR apply_view_transform also changes only the active camera and queues
+  a render. Its _anatomical_labels calls _anatomical_camera, which describes the
+  initial/cached canonical camera, not the renderer's current camera. Synthetic
+  90-degree roll leaves computed top A even when current-camera patient up is L.
+  Edge text actors are constructed in _add_orientation_labels and are not retained
+  in a per-view edge-label map for transform updates.
+- Advanced _vector_to_lps_label and MPR _lps_label report only the dominant patient
+  axis. For example LPS vector (.6,.8,0) produces P; the L component is omitted.
+  This is an oblique-label information limitation, not proof that the source IOP
+  itself is incorrect. Missing-metadata/default-axial fallback and varying-frame
+  IOP need separate tests before declaring additional causes.
+- Fast QtSliceViewer is a separate rendering/annotation path. Its corner metadata
+  painter was inspected; the Advanced marker class is not used there. Do not
+  attribute the proven Advanced/MPR defect to Fast without tracing an actual
+  visible marker in that route.
+
+Proposed seam, not implemented: derive edge directions from the displayed
+screen-to-patient mapping (source geometry plus final view transform). Refresh
+existing per-viewport text on rotation/flip/reset/frame or series change. For MPR
+include the current reslice plane when oblique. Keep all voxel buffers, source
+geometry and the now accepted MPR cameras/reslicing untouched. Use synthetic
+asymmetric landmarks to verify 90/180/270-degree rotations, both flips, oblique
+planes, reset, scroll, series switch and missing metadata. Decide multi-letter
+oblique presentation explicitly instead of silently presenting a guessed axis.
+
+The local Test Control Server still could not be reached; these are deterministic
+code-level findings, not a fresh live GUI marker acceptance. No patient data was
+used in the reproduction.
+
+
+## 2026-10-04 review handoff: progressive exhaustion and requested-count KPI
+
+Review-only evidence from the weekly crash audit: Fast progressive growth in one
+session exhausted five no-progress retries at 93/101, after study-level completion
+was already logged. `_vc_progressive.py` exhaustion removes the progressive owner
+and waits for a future completion event; reconcile authoritative series identity
+and completed state rather than assuming another event will arrive. Preserve the
+known-good loaded set; do not accept a partial snapshot as terminal or enlarge
+retry limits as the sole fix. Decoder internals remain this viewer workstream's
+responsibility; shared download terminal state remains Unify's contract.
+
+At the PROGRESSIVE_GROW_BUDGET_APPLY emitter, applied_count uses the requested
+visible_target minus prior last_grow, not measured growth. It reported eight during
+no-progress retries. Split requested and actual admission metrics, including zero
+when growth fails or returns unchanged. The caller needs an observed result from
+the grow operation; stage duration alone is insufficient.
+
+No viewer code changed by this handoff. Full evidence/limits and adjacent tests:
+`CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md`, October 4 deeper review.
+
+### 2026-10-06: current-log filter and teardown stall handoff
+
+At 09:56:52, FAST_SET_SLICE_STAGE measured total_ms=3319.4 and
+filter_ms=3250.5. Three GUI stall samples reach get_rendered_frame ->
+_render_frame_uncached -> _apply_opencv_filter_uint8 -> pooyan_filter_center,
+opencv_filter_pipeline.py:183-184 (GaussianBlur / addWeighted). This is direct
+evidence of blocking filter work in the foreground path, not network delay.
+Adjacent warm filter timings are roughly 0.4-4.1 ms; one earlier first frame
+used 202 ms. The reason for this cold outlier (initialization, contention or
+input/filter cost) is not established. Do not disable sharpening or change
+pixels to hide it. Use the existing FAST worker/cache authority, immutable
+inputs and revision-fenced delivery; compare identical cold/warm workloads.
+
+At 10:01:28-37, paired exit_patient_widget breadcrumbs measure 9425.4 ms,
+inside a 10558.1-ms timer gap. Repeated samples trace cleanup_all_viewers ->
+delete_widgets_in_layout -> utils.py:2018 _release_mpr_before_drop -> import
+modules.mpr.zeta_mpr.mpr_viewer._mpr_lifecycle. Both parent package __init__
+files eagerly import StandardMPRViewer, pulling widget/mixin/preset modules
+into an otherwise generic cleanup. This identifies a cold heavy-import seam
+in teardown; it does not demonstrate active MPR resource release itself takes
+9 seconds. Preserve real MPR release-before-orphan semantics while avoiding
+first-time viewer construction imports for non-MPR cleanup. Required guard:
+non-MPR teardown does not load the MPR package, while loaded MPR children still
+release resources exactly once before detachment. No viewer runtime patch made.
+
+Native drag timer gaps remain separately classified; drag.exec samples alone
+are not proof of a hung application. No artifact or clinical acceptance claim.
+
+### 2026-10-06: imported MR black viewport, missing encapsulation delimiter
+
+Read-only investigation of the latest local import: conventional MR Image
+Storage (1.2.840.10008.5.1.4.1.1.4), single-frame MONOCHROME2, 16-bit,
+JPEG Lossless SV1 transfer syntax 1.2.840.10008.1.2.4.70. All 1436 stored
+instances in the inspected import have encapsulated Pixel Data fragments ending
+exactly at EOF without the required (FFFE,E0DD) Sequence Delimitation Item.
+The full pydicom reader warns about the missing delimiter and drops PixelData;
+the FAST decode log consequently reports a missing PixelData element. This is
+malformed encapsulation handling, not evidence of an unavailable JPEG codec.
+
+One selected original instance matched the imported copy byte-for-byte and had
+the same missing delimiter, falsifying copy-time truncation for that instance.
+SimpleITK/GDCM decoded it as a nonzero 640x640 uint16 image. A diagnostic BytesIO
+probe, after verifying the complete fragment ends exactly at EOF, appended only
+the standard eight-byte delimiter in memory. Pydicom then decoded pixel values
+exactly equal to the GDCM reference. No patient file was changed or exported.
+No actual viewport/Advanced acceptance follows from these decoder probes.
+
+Candidate correction belongs at the existing reader compatibility boundary:
+bounded recovery only for validated complete encapsulated items at EOF, preserving
+original files, or the existing background GDCM authority. Reject truncated items,
+invalid lengths and arbitrary byte-pattern searches as production recovery.
+Cover classification/import as well as FAST decode with a synthetic guard, so
+present compressed pixels are not labelled metadata-only. Preserve normal valid
+files and edition/package codec parity. Diagnosis only: no runtime patch applied.
+
+Normative sources checked:
+https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_8.2.html
+https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_10.2.html
+
+### 2026-10-06: missing-delimiter compatibility execution receipt
+
+User authorized the bounded reader fix for both viewer modes. Added pure
+`PacsClient/utils/dicom_reader.py::read_dicom`: normal reads first, then recovery
+only for compressed OB/undefined-length Pixel Data located by read_partial,
+complete even-length item values, a valid Basic Offset Table, and exact EOF.
+Limits: 256 MiB recovered value, 65536 items; truncation, odd/undefined fragment
+lengths, trailing elements and invalid offsets are rejected. Metadata/payload
+come from one descriptor; file-size/mtime changes reject recovery. Originals
+and TransferSyntaxUID remain unchanged. No VTK/GDCM dependency added to FAST.
+
+The existing FAST foreground/extras reader, decode subprocess worker and legacy
+pydicom backend now use it. Existing Advanced metadata/full pydicom helper uses
+the same pure reader; Advanced volume decode retains SimpleITK/GDCM, which already
+reads this export. Import decompression and the small-file sync-stub verifier use
+the same contract so they no longer contradict decoding. No new scheduler/cache
+or GUI-thread I/O entry point was introduced; existing foreground fallback
+execution remains an earlier performance concern, not closed by this fix.
+
+Guard: tests/code/viewer/test_encapsulation_eof_compatibility.py. Initial reader
+and decode-worker guards failed before the patch (2 failed, 7 passed, exit 1).
+A subsequent legacy-backend behavioral guard failed before its matching read
+replacement. Synthetic RLE fixtures cover exact pixels, original-byte preservation,
+header/specific-tag semantics, malformed items, size bound, invalid offset table,
+actual FAST pipeline/worker/backend, GDCM comparator, import normalization and
+sync classification. Fifteen new guards pass; adjacent import, multiframe, color
+and sync tests pass (three opt-in clinical color cases skipped). Three local
+JPEG Lossless samples decoded through the new reader match GDCM exactly and
+their original hashes stayed unchanged; no patient bytes committed or exported.
+
+Viewer mirrors synchronized through scoped sync_plugin_mirrors.add_paths; global
+verification now passes all 512 pairs. The helper is statically imported core
+PacsClient Python, not a new installable module or config family. Standard/ELI
+source paths share it; no installer was built or certified. Test Control Server
+ping failed; human fresh source launch/login was requested. Actual viewport,
+Advanced volume and clinical/rendered acceptance remain pending. No existing
+source/installed process was restarted or hot-patched. Rollback is reverting
+only these reader substitutions/helper and owned mirror edits.

@@ -379,10 +379,12 @@ def chat_completion(
         if "max_tokens" in payload:
             payload["max_completion_tokens"] = payload.pop("max_tokens")
         # Reasoning families do not universally accept custom temperature.
-        if resolved_model.startswith(("gpt-5", "o1", "o3", "o4")):
+        if resolved_model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
             payload.pop("temperature", None)
-        if reasoning_effort:
-            payload["reasoning_effort"] = str(reasoning_effort).strip()
+    if reasoning_effort:
+        payload["reasoning_effort"] = str(reasoning_effort).strip()
+        if resolved_model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
+            payload.pop("temperature", None)
 
     # Transport policy (proxy + connect/read split) comes from the ONE authority.
     # This used to pass a SCALAR timeout, which requests applies to the CONNECT

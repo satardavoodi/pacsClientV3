@@ -35,6 +35,24 @@ def test_frozen_app_ships_external_slicer_worker(monkeypatch):
     assert (str(worker.resolve()), 'modules/ai_imaging/eagle_eye_brain') in spec_utils.app_a_datas()
 
 
+def test_both_builders_ship_native_manual_correction_script(monkeypatch):
+    import ast
+    from builder.spec import spec_utils
+
+    monkeypatch.setattr(spec_utils, 'common_app_datas', lambda: [])
+    relative = 'modules/ai_imaging/eagle_eye_brain/manual_slicer.py'
+    destination = 'modules/ai_imaging/eagle_eye_brain'
+    root = Path(__file__).resolve().parents[3]
+    assert (str((root / relative).resolve()), destination) in spec_utils.app_a_datas()
+    # Parse the literal without executing configuration sanitization/build side effects.
+    tree = ast.parse((root / 'builder nuitka/AIPacs_nuitka.spec.py').read_text(encoding='utf-8'))
+    data = next(ast.literal_eval(node.value) for node in tree.body
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+                and any(isinstance(target, ast.Name) and target.id == 'OPTIONAL_DATA'
+                        for target in node.targets))
+    assert (relative, destination) in data
+
+
 def test_child_process_paths_do_not_depend_on_job_working_directory(tmp_path, monkeypatch):
     from modules.ai_imaging.eagle_eye_brain.contracts import BrainPlan
     monkeypatch.chdir(tmp_path)

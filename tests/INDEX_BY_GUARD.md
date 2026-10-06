@@ -1,4 +1,60 @@
-# AI-PACS Test Inventory — Index by Guard
+# AI-PACS Test Inventory ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Index by Guard
+
+## Slicer manual brain review launch (2026-10-06)
+
+`code/ai_imaging/test_manual_brain_review.py` verifies space-free script staging,
+shallow private session storage and preservation of the parent server result.
+Pair with `test_remote_review_modules.py` and the Eagle Eye brain payload guard.
+The launch guard failed before the fix; 50 focused guards pass. Native image and
+segmentation loading passed; save and server revision acceptance remain separate.
+
+## Shared Home / Patient catalog guard (2026-10-06, OPT-58/60)
+
+`code/ui_services/test_home_catalog_convergence.py` exercises production adapters
+against synthetic catalogs and isolated I/O: 14->2 / 17->1 prevention, grouped
+Server/Local and single Local completeness, UID/study isolation, document/duplicate
+numbers, stable growth handles, late selection, input immutability, bounded-store
+pending PNG reads and no inline image retention in metadata. Pair with Patient Tab
+convergence, sidebar bounded-build, Home image preparation, Local offline and
+study-set/backfill suites. Live first-click and grouped GUI remain separate gates.
+
+## Alignment report recovery (2026-10-06)
+
+`code/ai_imaging/test_alignment_pdf_recovery.py` covers previous/current PDF
+separation, source change isolation, original-scale restoration, draft creation
+without clinical attestation, real Open/Save target selection and busy controls.
+
+## Private workstation support issue guards (2026-10-02)
+
+Private issue reporting: `tests/code/echomind/test_support_issue_reporting.py`
+covers diagnostics, native stacks, protected replay, receipt, Qt consent/threading,
+session changes and MCP modes. `tests/code/builder/test_support_issue_payload.py`
+checks owned mirrors/server snapshot hashes. The paired receiver guard is Laravel
+`tests/Feature/PacsIssuesTest.php`; see the October 2 issue-reporting receipt.
+
+## Breast preservation, feature and calibration guards (2026-10-01)
+
+`tests/code/ai_imaging/test_breast_small_lesion_preservation.py` and
+`tests/code/ai_imaging/test_breast_feature_contract.py`.
+Complete image-target and stratified study-partition preparation is covered by
+`tests/code/ai_imaging/test_breast_training_targets.py`. See the October 1
+implementation/evaluation receipt in
+`docs/modules/EAGLE_EYE_BREAST_BONE_LOCAL_2026-09-21.md`.
+
+CBIS image/mask geometry and cross-category patient partitioning are covered by
+`tests/code/ai_imaging/test_cbis_calcification_preparation.py`; the implementation
+workflow is `docs/modules/BREAST_CALCIFICATION_TRAINING_WORKFLOW.md`.
+
+Native-resolution crop geometry, partial-target rejection and unknown-negative
+handling are covered by `tests/code/ai_imaging/test_calcification_pilot_crops.py`.
+
+Calcification proposal rejection versus explicit complete-crop negative review is
+covered by `tests/code/ai_imaging/test_calcification_review_labels.py`.
+Digital positive-training cohort selection and exclusion of held-out/unlabelled
+records are covered by `tests/code/ai_imaging/test_vindr_calcification_training_selection.py`.
+Strict P3-to-P2 research state migration is covered by
+`tests/code/ai_imaging/test_calcification_p2_migration.py`. BF16 stride-four geometry
+is exercised on the GPU worker by `tools/eagle_eye/guard_calcification_p2_geometry.py`.
 
 ## Eagle Eye-hosted EchoMind (2026-09-30)
 
@@ -1120,18 +1176,18 @@ When you ship a fix:
 | `test_kpi_schema.py` | KPI registry integrity | Each KPI key registered + threshold ordering correct |
 | `test_diagnostic_logging_catchall.py` | **7** | `app.log` catch-all handler (download/viewer/db component routing + 4th catch-all for everything else); without this, UI/home events vanish |
 | `test_hp_search_logging_guard.py` | **5** | Error paths in `_hp_search.py` use `_logger.error`, not `print()` |
-| `test_hp_patient_open_logging_guard.py` | **4** | Error paths in `_hp_patient_open.py` bypass the `print → _logger.debug` rebind; success traces stay at debug |
+| `test_hp_patient_open_logging_guard.py` | **4** | Error paths in `_hp_patient_open.py` bypass the `print ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ _logger.debug` rebind; success traces stay at debug |
 | `test_responsive_layout_qscrollarea_guard.py` | **4** | `wrap_in_horizontal_scroll` uses `setSingleStep` not the bogus `setHorizontalScrollMode`; `QAbstractScrollArea` not re-imported |
 | `test_titlebar_userinfo_clamp_guard.py` | **7** | TitleBar QFrame + user_info_container both have `setMaximumHeight` + Fixed vertical size policy; 84 / 70 px floors preserved |
 | `test_thumbnail_card_height_guard.py` | **6** | Right-panel card height 215 px so server-desc + image-count labels coexist; progress overlay y-center recomputed for new height |
 | `test_ui_polish_2026_05_29_guard.py` | **4** | Title bar maxHeight 110, right-panel grid vert spacing 14 + right margin 22, patient table `setShowGrid(False)` |
-| `test_patient_tab_strip_width_guard.py` | **6** | tab_area carries stretch=1 (claims ~2/3 title bar); chip strip max_height ≥ 80 (10 px buffer); no outer trailing addStretch; **inner title_bar_tabs_layout has trailing addStretch(1) so chips left-pack inside QScrollArea (round-4)**; `_add_title_bar_tab_widget` uses `count()-1` to insert before the stretch |
+| `test_patient_tab_strip_width_guard.py` | **6** | tab_area carries stretch=1 (claims ~2/3 title bar); chip strip max_height ط£آ¢أ¢â‚¬آ°ط¢آ¥ 80 (10 px buffer); no outer trailing addStretch; **inner title_bar_tabs_layout has trailing addStretch(1) so chips left-pack inside QScrollArea (round-4)**; `_add_title_bar_tab_widget` uses `count()-1` to insert before the stretch |
 | `test_max_patient_tabs_message_guard.py` | **3** | "Maximum Patient Tabs Reached" message in `_hp_modules.py` interpolates `MAX_PATIENT_TABS` (no hardcoded digit); constant is imported; `add_patient_tab` docstring doesn't pin a stale numeric literal |
 | `test_right_panel_reserved_height_guard.py` | **2** | `RightPanelWidget.THUMBNAIL_BOX_HEIGHT` is coupled to `ThumbnailManager.create_thumbnail_widget`'s real card height (215) by source-parse; constant has a comment pointing at thumbnail_manager.py as source-of-truth |
 | `test_patient_click_double_click_guard.py` | **4** | `_on_patient_clicked` does NOT call the redundant `highlight_selected_row(row)` that broke double-click detection; `itemClicked` + `itemDoubleClicked` signals stay wired to their handlers; table keeps `SelectRows` behaviour so Qt's native selection still fires |
 | `test_ui_stall_boundaries_2026_09_02.py` | **8** | Measured UI-stall boundaries: no eager retired gRPC import, no completed-tree root stylesheet, asynchronous Agent Gateway startup, off-thread patient completeness and Zeta schema work, asynchronous WAV flush, lazy Eagle Eye secondary tabs, and off-thread DICOM probing. |
 | `test_import_registration_layout_crash_guard.py` | **4** | Large Local import registration stays on the managed worker boundary, preserves per-study results and exact DICOM bytes while writing only an isolated local index, never accesses the server, and viewport layout construction cannot pump a nested Qt event loop. |
-| `test_right_panel_min_width_guard.py` | **2** | `RightPanelWidget.setMinimumWidth(N)` is large enough that at the floor there's ≥22 px gap between the 190 px card right edge and the AlwaysOn 12 px vertical scrollbar (so the dotted border can't visually clip into the scrollbar); constant has a geometry comment so future agents don't lower it |
+| `test_right_panel_min_width_guard.py` | **2** | `RightPanelWidget.setMinimumWidth(N)` is large enough that at the floor there's ط£آ¢أ¢â‚¬آ°ط¢آ¥22 px gap between the 190 px card right edge and the AlwaysOn 12 px vertical scrollbar (so the dotted border can't visually clip into the scrollbar); constant has a geometry comment so future agents don't lower it |
 | `test_system_stress.py` | (env-gated) | Multi-process stress patterns (skips in sandbox) |
 
 **Subtotal: 81 system-level guards across 15 active files.**
@@ -1158,10 +1214,10 @@ behavior. Full affected selection: 205 passed, 1 existing xfail.
 | `test_system_adapter.py` | `SystemAdapter` psutil probes (resources, process count, native faults, idle CPU) |
 | `test_download_adapter.py` | `DownloadAdapter` pause / cancel / list / statistics |
 | `test_module_adapter.py` | `ModuleAdapter` open_module / convenience aliases / launcher-failure handling |
-| `test_viewer_adapter.py` | **Structural read-only enforcement** — no write-verb actions exist; multi-study flag propagation; offset-key preservation |
+| `test_viewer_adapter.py` | **Structural read-only enforcement** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ no write-verb actions exist; multi-study flag propagation; offset-key preservation |
 | `test_bus_factory.py` | `build_command_bus()` wires adapters correctly given different launcher dicts |
 | `test_kpi_auto_record.py` | `hook_bus(bus)` auto-records `<action>.elapsed_ms` to the sink |
-| `test_module_catalog_coverage.py` | Catalog vs CommandBus drift reporter; INFRASTRUCTURE_ACTIONS ⊥ catalog actions invariant |
+| `test_module_catalog_coverage.py` | Catalog vs CommandBus drift reporter; INFRASTRUCTURE_ACTIONS ط£آ¢ط¸آ¹ط¢آ¥ catalog actions invariant |
 | `test_credential_obfuscation.py` | EchoMind center access codes and provider credentials never ship as plaintext; access-code-derived AES-GCM envelopes open only the selected center; the protected owner-approved demo is available by default; tampering and missing Company Server 3 entitlement fail closed |
 | `test_entitlement.py` | TEST is an end-user demo, authenticates by default, and reaches the same company-backend authorization chokepoint; explicit opt-out removes only the demo; legacy deployment flags remain compatible; direct-user backends remain independent |
 
@@ -1184,18 +1240,18 @@ Tests in this folder may use fakes/offscreen Qt or skip without a live app: loca
 not proof of live execution. MCP series switching bypasses Home-card click and OLE input;
 run the actual affected input boundary plus render/identity checks. Report BLOCKED separately.
 
-### `pywinauto/` — Windows UI Automation
+### `pywinauto/` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Windows UI Automation
 
 | Test file | What it protects |
 |---|---|
-| `test_eagle_eye_dragdrop.py` | **The canonical 0x8001010d COM crash test** — only test that fires real Win32 OLE drag-drop messages. Requires source build + `_verify_source_build()`. |
-| `test_close_no_zombie.py` | App fully exits — no orphan process in Task Manager after close |
+| `test_eagle_eye_dragdrop.py` | **The canonical 0x8001010d COM crash test** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ only test that fires real Win32 OLE drag-drop messages. Requires source build + `_verify_source_build()`. |
+| `test_close_no_zombie.py` | App fully exits ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ no orphan process in Task Manager after close |
 | `test_open_close_cycles.py` | N-launch restart-to-ready KPI + zombie process leak (env-gated `AIPACS_CYCLE_LAUNCH_CMD`) |
 | `test_thumbnail_pixel_isolation.py` | Pixel-diff: cross-patient thumbnail leak at the rendered-output level |
 
 **Subtotal: 4 pywinauto tests.**
 
-### `echomind_driven/` — CommandBus-driven scenarios
+### `echomind_driven/` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ CommandBus-driven scenarios
 
 | Test file | What it protects |
 |---|---|
@@ -1203,16 +1259,16 @@ run the actual affected input boundary plus render/identity checks. Report BLOCK
 | `test_scenario_1_patient_open.py` | Click-to-thumbnail latency KPI (`patient_open.elapsed_ms`) |
 | `test_scenario_3_bulk_download.py` | 20+ patient enqueue speed |
 | `test_idle_resource_budget.py` | `proc.idle_cpu_pct` + `crash.native_fault_count` budgets |
-| `test_dm_status_workflow.py` | Status → list → cancel via `bus.execute` |
+| `test_dm_status_workflow.py` | Status ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ list ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ cancel via `bus.execute` |
 | `test_cross_patient_thumbnail_isolation.py` | Typed regression: patient A's thumbnails must not appear on B |
 | `test_long_session_workload.py` | RSS-growth + leak KPI across hours (env-gated) |
 
 **Subtotal: 7 bus-driven scenarios.**
 
-### `live_walkthroughs/` — one-off agentic scripts
+### `live_walkthroughs/` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ one-off agentic scripts
 
-- `_verify_source_build.py` — pre-flight: refuses to run against the frozen exe
-- `extract_2026_05_27_kpis.py` — log → PASS / CHECK extractor
+- `_verify_source_build.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ pre-flight: refuses to run against the frozen exe
+- `extract_2026_05_27_kpis.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ log ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ PASS / CHECK extractor
 
 ---
 
@@ -1227,9 +1283,9 @@ run the actual affected input boundary plus render/identity checks. Report BLOCK
 | [`README.md`](_kpi/README.md) | How to add a new KPI |
 
 **Tools that consume this sink:**
-- `tools/kpi_dashboard.py` — framework health snapshot
-- `tools/kpi_html_report.py` — self-contained trend report
-- `tools/kpi_build_compare.py` — cross-build divergence detector
+- `tools/kpi_dashboard.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ framework health snapshot
+- `tools/kpi_html_report.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ self-contained trend report
+- `tools/kpi_build_compare.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ cross-build divergence detector
 
 ---
 
@@ -1253,11 +1309,11 @@ The `tests/code/` directory has 26 domain folders; **183 files total**. Highligh
 | `system/` | **Cross-cutting structural guards listed above** |
 | `echomind/` | **Command Layer unit tests listed above** |
 
-For each domain, the matching docs live under `docs/` — start at [`../docs/INDEX_BY_SUBSYSTEM.md`](../docs/INDEX_BY_SUBSYSTEM.md).
+For each domain, the matching docs live under `docs/` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ start at [`../docs/INDEX_BY_SUBSYSTEM.md`](../docs/INDEX_BY_SUBSYSTEM.md).
 
 ---
 
-## 2026-08 additions — startup, warm-up and thumbnail guards
+## 2026-08 additions ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ startup, warm-up and thumbnail guards
 
 These live outside `tests/code/system/`, so they are easy to miss from the
 system table above. Each pairs with a 2026-08 row in the regression catalog.
@@ -1272,8 +1328,8 @@ system table above. Each pairs with a 2026-08 row in the regression catalog.
 | `code/viewer/test_viewer_import_warm.py` | **8** | The import warm creates **no Qt object** (it runs off the GUI thread) and fails loudly if the windowing path stops using the numpy calls it warms. |
 | `code/viewer/test_dicom_import_preview.py` | **5** | Import groups by immutable study/series UID, assigns duplicate raw numbers through the shared collision resolver, and distinguishes copied DICOM object count from pixel-bearing image count. Metadata-only SR/vendor objects remain importable but must report zero displayable images. |
 | `code/dicom_media/test_dicom_vm_normalization.py` | **5** | Restores only standard textual VM>1 elements collapsed into Python-list strings; preserves clean/unreadable payload bytes, private and VM=1 text, transfer syntax, pixels and all identity UIDs; proves socket normalization precedes the atomic write and DICOMDIR export repairs only its copy. Same-study flow validation is recorded in `FLOW_CVI42_SAME_STUDY_VM_COLLAPSE_2026-09-01.md`. |
-| `code/viewer/test_disk_pixel_cache_persistence.py` | **20** | The L2 cache SURVIVES shutdown (before this it was `rmtree`'d every exit and had never served a cross-session hit). Pins: persistence is the default; `AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1` really restores the wipe; **`clear()` itself stays unconditional** so an explicit user clear always clears; the shutdown path calls `clear_on_exit()` not `clear()` (AST pin — a comment naming `.clear()` cannot fool it); and eviction still bounds a *persisted* cache, with LRU order surviving a restart. |
-| `code/ui_services/test_thumbnail_active_state_and_strip.py` | **20** | **Behavioural, on real Qt widgets.** The download bar is not buried by the re-parenting `addWidget`; the red active line is stacked above it; A→B→A returns a series to the active state. A source-string pin cannot see a z-order bug — that is exactly how the buried bar survived `test_thumbnail_panel_ui_fixes.py`. |
+| `code/viewer/test_disk_pixel_cache_persistence.py` | **20** | The L2 cache SURVIVES shutdown (before this it was `rmtree`'d every exit and had never served a cross-session hit). Pins: persistence is the default; `AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1` really restores the wipe; **`clear()` itself stays unconditional** so an explicit user clear always clears; the shutdown path calls `clear_on_exit()` not `clear()` (AST pin ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a comment naming `.clear()` cannot fool it); and eviction still bounds a *persisted* cache, with LRU order surviving a restart. |
+| `code/ui_services/test_thumbnail_active_state_and_strip.py` | **20** | **Behavioural, on real Qt widgets.** The download bar is not buried by the re-parenting `addWidget`; the red active line is stacked above it; Aط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢Bط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢A returns a series to the active state. A source-string pin cannot see a z-order bug ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ that is exactly how the buried bar survived `test_thumbnail_panel_ui_fixes.py`. |
 | `code/ui_services/test_thumbnail_panel_ui_fixes.py::test_thumbnail_card_root_style_is_scoped_and_applied_before_child_tree` | **1** | The thumbnail card root style stays object-scoped and is applied before Qt children, graphics effects, and event filters exist. This guards the exact main-thread site of the 2026-09-01 Windows heap-corruption termination. |
 | `code/system/test_windows_multiprocessing_visibility.py` | **7** | The bootstrap remains before `freeze_support`; direct Python may select a direct `pythonw` sibling, but supported virtual-environment source runs never select the `pythonw` redirector. A real Windows spawn child must read a shared cancellation Event without WinError 5. Frozen/non-Windows/missing-interpreter and installed-application executables remain untouched. |
 | `code/viewer/test_viewport_drop_replacement.py::test_retired_fast_viewer_child_never_becomes_a_top_level_window` + `test_fast_viewer_replacement_never_detaches_layout_children` | **2** | A retired FAST preview/full-series child is hidden but remains parented until deferred deletion, and both bridge-install paths use the shared retirement authority. Prevents `setParent(None)` from turning a visible embedded viewer into a millisecond Windows top-level window during Preview -> Complete promotion. |
@@ -1291,12 +1347,12 @@ system table above. Each pairs with a 2026-08 row in the regression catalog.
 | `code/viewer/test_series_ref_authority.py` | **29** | Immutable display/study/series authority; a numeric collision alias retains the original DICOM number but loads the exact suffixed storage folder. |
 | `code/ui_services/test_advanced_search_routing.py` + `code/database/test_local_advanced_search.py` | **8 + 3** | Advanced Search follows the active source and preserves bounded multi-ID, normalized acquisition/import date, multi-valued modality, body part, DICOM age, and persisted physician filters in Local SQLite. Valid online physician hydration is persisted for later offline reuse; the database tests use an isolated patched `DATABASE_FILE` and cleared pool. |
 | `code/ui_services/test_local_incremental_and_import_date.py` | **13** | Imported Date means the immutable first entry into this computer's Local SQLite, never acquisition date or last refresh. Single-day/preset/range queries use full-day boundaries, NULL legacy timestamps do not match, import-date queries stay Local, and reversed custom ranges are normalized in both the dialog and repository. Also retains the incremental Local-list guards. |
-| `code/viewer/test_reference_line_active_viewport.py` | **17** | The ACTIVE viewport carries no reference line — it is the source and stays clean; the line goes only on the series being cross-referenced. Load-bearing pin: the source overlay is **cleared**, not merely skipped, so a line drawn while a viewport was inactive vanishes the instant it becomes active. Also pins that `AIPACS_REFERENCE_LINES_ALL_PAIRS=1` restores bidirectional lines end-to-end. |
-| `code/viewer/test_text_annotation_input.py` | **25** | The Text tool ASKS what to write. Before this it stamped the literal word "Text" — the whole chain was wired except the input step. Pins: the typed string is what reaches the `TextModel`; cancel / whitespace / a raising prompt all place **nothing** and return `False`, so the tool stays armed; a bare `ToolController` still places the legacy `"Text"` (every headless tool test and the EchoMind adapter build one that way); only the TEXT tool may prompt; `controller.py` stays **Qt-free**; the Qt bridge really wires `_text_prompt_fn` (AST pin — the controller change is inert without it); the dialog is re-entrancy-guarded and releases its flag even when it raises; and both backends word the prompt identically. |
-| `code/reporting/test_report_image_insert.py` | **68** | Captured viewer images can be inserted into the Medical Report Editor and survive the whole trip. Also pins study RESOLUTION: a report opened from the Reception Data tab carries a reception record with no `studyUID`, so the study is found by joining `patients.patient_id -> patient_pk -> studies.patient_fk` — `patient_fk` is a FK to `patient_pk`, NOT the DICOM PatientID, and a direct comparison returns zero rows silently. Identifiers are tried in order and the FIRST match wins; `test_resolution_stops_at_the_first_identifier_that_matches` exists because unioning them could mix another patient's key images into the report. Load-bearing: **`test_the_upload_normaliser_keeps_the_image`** — the normaliser already strips `<style>`/`<script>`/chrome, and adding `img` to `_DIR_BLOCK_TAGS` would lose the key image for the referring doctor while the author's copy still shows it, the worst failure mode there is. Also pins: the picker's file list matches the viewer's "Captured Images" dropdown exactly; the encoder refuses rather than embedding over the byte ceiling (a report that will not upload is worse than a refused insert); and the resize actually changes the stored width — **behavioural, because the AST guards did not catch a reversed-cursor-selection bug where every button was wired, every handler ran, and nothing moved**. `test_a_document_can_render_a_data_uri` pins behaviour, not mechanism, so it holds on any Qt. |
-| `code/mpr/test_mpr_lifecycle_release.py` | **28** | MPR teardown runs on EVERY destruction path, not just the toolbar toggle. Before this: 14 MPR opens vs 6 `cleanup()` completions across the logged sessions. **The load-bearing pair is `test_layout_teardown_releases_before_orphaning` + `test_patient_close_releases_the_mpr_child`** — they pin the two paths that actually leaked *and their ordering*, because a `closeEvent` hook alone does NOT fix this (Qt never calls `closeEvent` when a parent is destroyed or a widget is re-parented away). Anyone who "simplifies" the fix down to the closeEvent comes back green on the closeEvent tests and is caught here. Also pins: release must happen BEFORE `setParent(None)` or the GL context is gone and the VRAM cannot be freed; the 3D mapper is really re-pointed on an in-MPR series switch (behavioural, on real VTK); and teardown survives an already-deleted C++ object. |
+| `code/viewer/test_reference_line_active_viewport.py` | **17** | The ACTIVE viewport carries no reference line ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it is the source and stays clean; the line goes only on the series being cross-referenced. Load-bearing pin: the source overlay is **cleared**, not merely skipped, so a line drawn while a viewport was inactive vanishes the instant it becomes active. Also pins that `AIPACS_REFERENCE_LINES_ALL_PAIRS=1` restores bidirectional lines end-to-end. |
+| `code/viewer/test_text_annotation_input.py` | **25** | The Text tool ASKS what to write. Before this it stamped the literal word "Text" ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the whole chain was wired except the input step. Pins: the typed string is what reaches the `TextModel`; cancel / whitespace / a raising prompt all place **nothing** and return `False`, so the tool stays armed; a bare `ToolController` still places the legacy `"Text"` (every headless tool test and the EchoMind adapter build one that way); only the TEXT tool may prompt; `controller.py` stays **Qt-free**; the Qt bridge really wires `_text_prompt_fn` (AST pin ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the controller change is inert without it); the dialog is re-entrancy-guarded and releases its flag even when it raises; and both backends word the prompt identically. |
+| `code/reporting/test_report_image_insert.py` | **68** | Captured viewer images can be inserted into the Medical Report Editor and survive the whole trip. Also pins study RESOLUTION: a report opened from the Reception Data tab carries a reception record with no `studyUID`, so the study is found by joining `patients.patient_id -> patient_pk -> studies.patient_fk` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `patient_fk` is a FK to `patient_pk`, NOT the DICOM PatientID, and a direct comparison returns zero rows silently. Identifiers are tried in order and the FIRST match wins; `test_resolution_stops_at_the_first_identifier_that_matches` exists because unioning them could mix another patient's key images into the report. Load-bearing: **`test_the_upload_normaliser_keeps_the_image`** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the normaliser already strips `<style>`/`<script>`/chrome, and adding `img` to `_DIR_BLOCK_TAGS` would lose the key image for the referring doctor while the author's copy still shows it, the worst failure mode there is. Also pins: the picker's file list matches the viewer's "Captured Images" dropdown exactly; the encoder refuses rather than embedding over the byte ceiling (a report that will not upload is worse than a refused insert); and the resize actually changes the stored width ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ **behavioural, because the AST guards did not catch a reversed-cursor-selection bug where every button was wired, every handler ran, and nothing moved**. `test_a_document_can_render_a_data_uri` pins behaviour, not mechanism, so it holds on any Qt. |
+| `code/mpr/test_mpr_lifecycle_release.py` | **28** | MPR teardown runs on EVERY destruction path, not just the toolbar toggle. Before this: 14 MPR opens vs 6 `cleanup()` completions across the logged sessions. **The load-bearing pair is `test_layout_teardown_releases_before_orphaning` + `test_patient_close_releases_the_mpr_child`** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ they pin the two paths that actually leaked *and their ordering*, because a `closeEvent` hook alone does NOT fix this (Qt never calls `closeEvent` when a parent is destroyed or a widget is re-parented away). Anyone who "simplifies" the fix down to the closeEvent comes back green on the closeEvent tests and is caught here. Also pins: release must happen BEFORE `setParent(None)` or the GL context is gone and the VRAM cannot be freed; the 3D mapper is really re-pointed on an in-MPR series switch (behavioural, on real VTK); and teardown survives an already-deleted C++ object. |
 | `code/viewer/test_mpr_step_instrumentation.py` | **20** | Every MPR view creator emits `[MPR-STEP]` under its OWN view name. Before this all 17 call sites passed `'axial'`, so sagittal/coronal/3D cost was invisible and an 8.7 s activation freeze could not be attributed. AST-based, so a renamed-but-still-hardcoded creator fails. |
-| `code/network/test_ino_state_batch_write.py` | **28** | The assignment snapshot is written ONCE per refresh batch, not once per reception. Each write rewrites the whole file under a lock the GUI thread takes per patient-list row — the per-row version froze the UI for 10.79 s. Pins: one `_save` + one lock acquisition per batch; `set_state`/`set_many` cannot drift (shared `_entry`); `_load` happens inside the save's lock so a concurrent single write is not rolled back; the fsync is opt-in; and the refresh contracts that must NOT change (per-row `on_row`, summary shape, a failed fetch never wipes, an interrupted refresh still persists). |
+| `code/network/test_ino_state_batch_write.py` | **28** | The assignment snapshot is written ONCE per refresh batch, not once per reception. Each write rewrites the whole file under a lock the GUI thread takes per patient-list row ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the per-row version froze the UI for 10.79 s. Pins: one `_save` + one lock acquisition per batch; `set_state`/`set_many` cannot drift (shared `_entry`); `_load` happens inside the save's lock so a concurrent single write is not rolled back; the fsync is opt-in; and the refresh contracts that must NOT change (per-row `on_row`, summary shape, a failed fetch never wipes, an interrupted refresh still persists). |
 
 Run them all with:
 
@@ -1316,22 +1372,22 @@ pytest tests/code/reporting
        tests/code/ai_imaging  ->  297 passed, 8 xfailed
 ```
 
-**2026-08-19** — `tests/code/mpr + viewer + ui_services` → **3091 passed**,
+**2026-08-19** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/mpr + viewer + ui_services` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **3091 passed**,
 29 skipped, 54 xfailed, 5 xpassed. The 2 failures in that run
 (`test_login_carries_the_user_identity_ids`,
 `test_status_flags_are_stashed_on_the_widget_to_avoid_recompute`) are
 pre-existing source-string pins on the login/JWT path and the patient-list
 status renderer; confirmed unrelated by running them in isolation.
 
-**2026-08-21** — `tests/code/viewer + fast_viewer + ui_services + system +
-dicom_media` → **3814 passed**, 41 skipped, 38 deselected, 55 xfailed,
+**2026-08-21** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/viewer + fast_viewer + ui_services + system +
+dicom_media` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **3814 passed**, 41 skipped, 38 deselected, 55 xfailed,
 5 xpassed. **6 failures, all pre-existing and all proved to fail at HEAD:**
 `test_login_carries_the_user_identity_ids` and
 `test_status_flags_are_stashed_on_the_widget_to_avoid_recompute` (carried over
 from 2026-08-19), plus four in
-`tests/code/system/test_local_search_progressive.py` — three assert first-batch
+`tests/code/system/test_local_search_progressive.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ three assert first-batch
 sizes of 100/40 that a June change to `_PROGRESSIVE_INITIAL_BATCH` (now 20) made
-stale, and one pins a renamed constant (`_LOCAL_SEARCH_BATCH` →
+stale, and one pins a renamed constant (`_LOCAL_SEARCH_BATCH` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢
 `_LOCAL_PROGRESSIVE_MIN`). Proved with
 `tools/analysis/oneoff/prove_progressive_test_prefails_2026_08_21.py`, which runs
 that file's own exec-the-source harness against a `git show HEAD:` copy and gets
@@ -1342,8 +1398,8 @@ HEAD) and `tests/code/ui_services/test_list_stream_backpressure.py` (17 guards,
 15 fail at HEAD). Both pre-fix checks swap `git show HEAD:` copies into the tree
 and restore them in a `finally`.
 
-**2026-08-22** — same five folders, same order → **3841 passed**, 41 skipped,
-38 deselected, 55 xfailed, 5 xpassed, **6 failed — the same six as 2026-08-21 and
+**2026-08-22** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ same five folders, same order ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **3841 passed**, 41 skipped,
+38 deselected, 55 xfailed, 5 xpassed, **6 failed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the same six as 2026-08-21 and
 nothing new**. New guard file:
 `tests/code/ui_services/test_gui_thread_disk_paths.py` (29 guards: the original
 27 retain **19 fail at HEAD** via
@@ -1351,7 +1407,7 @@ nothing new**. New guard file:
 2026-09-02 initial-row probe guard independently failed before its correction,
 while the explicit-state parity guard already passed).
 
-**2026-09-02 R1 follow-up** — initial Server Search row construction still
+**2026-09-02 R1 follow-up** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ initial Server Search row construction still
 called `get_study_download_status` synchronously after the 2026-08-22 scanner
 optimization. The result was not consumed by the row renderer, whose Status
 cell already uses `statusFlagsReady`. The new behavioral guards execute the real
@@ -1362,17 +1418,17 @@ search/table selection passed 95 with two registered xfails and one known
 pre-existing fixed-window assertion from 2026-08-21; the changed production
 file is outside that failure.
 
-**2026-08-23** — `tests/code/system + runtime + utils + builder` → **580 passed**,
+**2026-08-23** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/system + runtime + utils + builder` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **580 passed**,
 5 deselected, 1 xfailed, **11 failed, 0 of them ours**. New guard files:
 `tests/code/system/test_close_path_hang_visibility.py` (14) and
-`tests/code/runtime/test_seed_config_once.py` (12) — **all 26 fail pre-fix.**
+`tests/code/runtime/test_seed_config_once.py` (12) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ **all 26 fail pre-fix.**
 
 > **The pre-fix check could not use `git show HEAD:` this time, and that is the
 > point.** This working tree carries **389 lines of unrelated uncommitted work in
 > `aipacs_runtime.py`** and 17 in `_pw_lifecycle.py` (3.6.1/3.6.2 were built from
 > the working tree, not from a commit). Restoring those files from HEAD would
 > have reverted far more than the A0 change, and the guards would have "failed"
-> for the wrong reason — a green result that proves nothing. So
+> for the wrong reason ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a green result that proves nothing. So
 > `tools/analysis/oneoff/verify_close_path_guard_fails_prefix_2026_08_23.py`
 > removes **exactly** the A0 additions instead: anchor-based, every anchor
 > asserted present before anything is written, restored in a `finally`. Check
@@ -1383,23 +1439,23 @@ The 11 failures were **measured**, not argued, by
 same file set with and without the A0 additions and diffs the failure sets:
 identical both ways, **caused by A0: 0**. They are
 
-* 6 × `tests/code/builder/test_nuitka_arm64_parity.py`
-* 4 × `tests/code/system/test_local_search_progressive.py` — the same four
+* 6 ط·آ£أ¢â‚¬â€‌ `tests/code/builder/test_nuitka_arm64_parity.py`
+* 4 ط·آ£أ¢â‚¬â€‌ `tests/code/system/test_local_search_progressive.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the same four
   carried since 2026-08-21 (stale batch-size pins)
-* 1 × `tests/code/builder/test_release_parity_guards.py::test_plugin_mirrors_are_fresh`
+* 1 ط·آ£أ¢â‚¬â€‌ `tests/code/builder/test_release_parity_guards.py::test_plugin_mirrors_are_fresh`
 
 The arm64 six and the plugin-mirror one are **new to this index and unexplained**
-— they were not in the 08-21/08-22 folder set, so this is the first run that
+ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ they were not in the 08-21/08-22 folder set, so this is the first run that
 covered `tests/code/builder`. Worth their own look; they are not A0.
 
-**2026-08-23 (second run, MPR surface)** — `tests/code/mpr + viewer + system +
-architecture + fast` → **2 919 passed**, 28 skipped, 37 deselected, 56 xfailed,
-2 xpassed, **4 failed — the four `test_local_search_progressive.py` pins carried
+**2026-08-23 (second run, MPR surface)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/mpr + viewer + system +
+architecture + fast` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **2 919 passed**, 28 skipped, 37 deselected, 56 xfailed,
+2 xpassed, **4 failed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the four `test_local_search_progressive.py` pins carried
 since 2026-08-21, nothing new**. This is the **baseline for the MPR geometry
 surface**: it is currently fully green apart from those four, so any red in
 `tests/code/mpr` or `tests/code/viewer` after a geometry change is a regression.
 
-Run because A1 (oblique MPR) was about to be changed. **It was not changed** —
+Run because A1 (oblique MPR) was about to be changed. **It was not changed** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 reading the prior documentation showed the proposed fix would have reverted
 v1.09.Fix-E. See `docs/plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md`.
 Only docs and one stale docstring were edited, hence the clean sweep.
@@ -1410,29 +1466,29 @@ Only docs and one stale docstring were edited, hence the clean sweep.
 > `_capture_baseline_camera_state` and the 2200/2600-char windows at the two
 > wheel handlers are the ones that will bite an oblique-camera change. The
 > 2600-char ones hold **negative** assertions, so growth silently *weakens* them
-> instead of failing — a worse failure mode than a red test.
+> instead of failing ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a worse failure mode than a red test.
 
-> **Folder order changes the result — watch for it.** Running the same folders as
-> `ui_services → system → viewer → fast_viewer` instead adds four
+> **Folder order changes the result ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ watch for it.** Running the same folders as
+> `ui_services ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ system ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ viewer ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ fast_viewer` instead adds four
 > `test_fast_viewer_pipeline.py::test_b41_*` failures. They are **run-order
 > pollution, not a regression**: the file passes in isolation (`170 passed`), and
 > `tools/analysis/oneoff/check_b41_order_pollution_2026_08_22.py` runs that order
-> twice — once with the working tree, once with the three changed files swapped
-> for their HEAD copies — and gets the **same four failures both times**.
+> twice ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ once with the working tree, once with the three changed files swapped
+> for their HEAD copies ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ and gets the **same four failures both times**.
 > Whatever leaks between those folders predates this work and is still unfixed.
 
-> **The fixed-window trap bit again — third file, fourth time.**
+> **The fixed-window trap bit again ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ third file, fourth time.**
 > `test_status_refresh_dicom_only.py::test_storage_clear_still_full_recomputes`
 > searched a FIXED 1,800-character window from
 > `def refresh_download_statuses_local_only`. Moving that method off the GUI
 > thread added an explanatory paragraph, which pushed
-> `self._local_status_cache.clear()` out of the window — the assertion was still
+> `self._local_status_cache.clear()` out of the window ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the assertion was still
 > TRUE in the code. Re-bounded at the next `def`, assertion untouched, exactly as
 > `test_mpr_defer_3d_view.py` was on 2026-08-18 and 2026-08-19. **If you are
-> writing a source-pin guard, bound it at the next `def` — never at a character
+> writing a source-pin guard, bound it at the next `def` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ never at a character
 > count.**
 
-(`tests/code/fast` and `tests/code/fast_viewer` are two different folders —
+(`tests/code/fast` and `tests/code/fast_viewer` are two different folders ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 15 and 17 files. Running only one of them is a common way to miss a break.)
 
 The xfail/xpass set is the pre-existing quarantine, unchanged.
@@ -1440,7 +1496,7 @@ The xfail/xpass set is the pre-existing quarantine, unchanged.
 > **`tests/code/fast_viewer` needs `-p no:debugging`.** Without it pytest dies
 > with an INTERNALERROR before collection: `_pytest.debugging.pytest_configure`
 > does `import pdb`, `pdb` does `import code`, and once `tests/` is on
-> `sys.path` that resolves to this repo's `tests/code` package —
+> `sys.path` that resolves to this repo's `tests/code` package ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 > `AttributeError: module 'code' has no attribute 'InteractiveConsole'`.
 > `tests/code/viewer` is unaffected because it has no `__init__.py`.
 > Pre-existing; the real fix is renaming `tests/code` or putting
@@ -1448,39 +1504,39 @@ The xfail/xpass set is the pre-existing quarantine, unchanged.
 
 ---
 
-**2026-08-23 (third run, CPU budget)** — `tests/code/system + runtime + utils +
-builder` → **593 passed**, 5 deselected, 1 xfailed, **11 failed — the same 11 as
+**2026-08-23 (third run, CPU budget)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/system + runtime + utils +
+builder` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **593 passed**, 5 deselected, 1 xfailed, **11 failed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the same 11 as
 the A0 run above, byte for byte**. 580 + the 13 new guards = 593, so **0
 regressions**. New guard file:
-`tests/code/system/test_cpu_budget_priority_boost.py` (13) — **5 fail pre-fix**
+`tests/code/system/test_cpu_budget_priority_boost.py` (13) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ **5 fail pre-fix**
 (`tools/analysis/oneoff/verify_cpu_budget_guard_fails_prefix_2026_08_23.py`).
 
-> **This pre-fix script DOES use `git show HEAD:` — and proves it is allowed
+> **This pre-fix script DOES use `git show HEAD:` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ and proves it is allowed
 > to.** The A0 note above says not to reach for it blindly; the discriminator is
 > `git diff --numstat -- <file>`. For `main.py` that is exactly `18  0  main.py`
-> — the fix hunk and nothing else — so HEAD really is the pre-fix state. The
+> ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the fix hunk and nothing else ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ so HEAD really is the pre-fix state. The
 > script asserts this and **refuses to run** if it stops being true. Check the
 > numstat before deciding which technique a pre-fix script needs.
 
 Only 5 of the 13 fail pre-fix, and that is correct rather than weak: the other 8
 are either preservation guards (the block, the log lines, the `AIPACS_PRIORITY`
-kill switch — they must pass on BOTH sides, that is their job) or the two
+kill switch ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ they must pass on BOTH sides, that is their job) or the two
 behavioural Win32 probes, which test Windows' pseudo-handle semantics rather
 than our source and therefore pass on both sides by construction. The five that
 flip are the three ctypes declarations and the two ORDERING pins.
 
 ---
 
-**2026-08-23 (fourth run, HIGH on deployed workstations)** — `tests/code/system +
-runtime + utils` → **519 passed**, 1 xfailed, **4 failed — the same four
+**2026-08-23 (fourth run, HIGH on deployed workstations)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/system +
+runtime + utils` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **519 passed**, 1 xfailed, **4 failed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the same four
 `test_local_search_progressive` pins carried since 2026-08-21**. 0 regressions.
-`test_cpu_budget_priority_boost.py` grew 13 → **23 guards**, of which **16 fail
+`test_cpu_budget_priority_boost.py` grew 13 ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **23 guards**, of which **16 fail
 pre-fix**.
 
 > **`tests/code/builder` was NOT in this run, and that is a measurement gap, not
 > a pass.** `test_release_parity_guards.py` calls
 > `builder/release_gate.check_source_freshness()`, which shells out to
-> `git fetch` with a 90 s timeout — the fetch hung on this network and took the
+> `git fetch` with a 90 s timeout ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the fetch hung on this network and took the
 > whole pytest process with it. Environmental, not ours: the same folder ran 90
 > minutes earlier in this session. **Re-run `tests/code/builder` with network
 > access before a release build.**
@@ -1501,23 +1557,23 @@ Two new techniques in this file worth copying:
 > working diff touches anything outside the block being fixed.
 > `verify_cpu_budget_guard_fails_prefix_2026_08_23.py` now parses
 > `git diff -U0` hunk headers and requires every hunk to fall inside the CPU
-> BUDGET block's line range at HEAD — and **refuses to run** otherwise. That is
+> BUDGET block's line range at HEAD ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ and **refuses to run** otherwise. That is
 > strictly better than the literal numstat check it replaced, which broke the
 > moment the fix grew a second landing.
 
 Two guards were **re-pinned, not deleted**, and both record why in the file:
 `test_normal_escape_hatch_preserved` (spelling moved) and
-`test_high_priority_class_is_not_the_default` →
+`test_high_priority_class_is_not_the_default` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢
 `test_high_is_the_default_only_for_installed_builds` (**the policy changed by
-owner request** — the guard now pins the new rule so a later edit that quietly
+owner request** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the guard now pins the new rule so a later edit that quietly
 makes HIGH the default for source runs too is still caught).
 
 ---
 
-**2026-08-24 (completion pass)** — the measurement gap left open on 08-23 is now
+**2026-08-24 (completion pass)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the measurement gap left open on 08-23 is now
 closed and one piece of tooling was repaired.
 
-`tests/code/builder` finally ran: **85 passed, 6 failed** — the six
+`tests/code/builder` finally ran: **85 passed, 6 failed** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the six
 `test_nuitka_arm64_parity` pins, unchanged and unrelated. The seventh failure
 carried since 08-23, `test_release_parity_guards::test_plugin_mirrors_are_fresh`,
 now **passes** (the v3.6.3 release re-synced the plugin mirrors), and the
@@ -1525,7 +1581,7 @@ now **passes** (the v3.6.3 release re-synced the plugin mirrors), and the
 the CPU-budget work: `system+runtime+utils` 519 passed / 4 failed +
 `builder` 85 passed / 6 failed = **604 passed, 10 failed, none of them ours**.
 
-> **A pre-fix verification script dies the moment its fix is committed — fix that
+> **A pre-fix verification script dies the moment its fix is committed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ fix that
 > when you write it, not after.** `verify_cpu_budget_guard_fails_prefix_2026_08_23.py`
 > asserted `HEAD:main.py` lacks the fix. The fix shipped in
 > `5deb8ee7 release(v3.6.3)`, so from that commit onward the script aborted with
@@ -1537,9 +1593,9 @@ the CPU-budget work: `system+runtime+utils` 519 passed / 4 failed +
 
 ---
 
-**2026-08-26 (overlay re-entrancy crash)** — `tests/code/{viewer,system,ui_services,
-fast_viewer}` + `test_loading_overlay_liveness_guard.py` → **3,862 passed**, 41
-skipped, 55 xfailed, 5 xpassed, **6 failed — 0 of them ours**. New guard file:
+**2026-08-26 (overlay re-entrancy crash)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/{viewer,system,ui_services,
+fast_viewer}` + `test_loading_overlay_liveness_guard.py` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **3,862 passed**, 41
+skipped, 55 xfailed, 5 xpassed, **6 failed ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 0 of them ours**. New guard file:
 `tests/code/system/test_overlay_reentrancy_crash.py` (13 guards, **11 fail pre-fix**).
 
 Four of the six are the `test_local_search_progressive` pins carried since 08-21.
@@ -1553,20 +1609,20 @@ with and without the two changed files and gets the identical failure set.
 > `test_overlay_init_refuses_a_destroyed_anchor` was reading the wrong function
 > and would have guarded nothing. `_func_src(path, name, cls=...)` now takes the
 > class. This is the AST-shaped cousin of the fixed-character-window trap above
-> — same failure mode, different mechanism: the guard is bound to the wrong text
+> ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ same failure mode, different mechanism: the guard is bound to the wrong text
 > and still goes green.
 
 > **Binding a real method to a stub beats constructing the real object.**
 > `QtFastContainer` is a QWidget subclass, so `object.__new__` is refused and a
-> real instance needs a QApplication and a live viewport — neither of which the
+> real instance needs a QApplication and a live viewport ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ neither of which the
 > re-entrancy guard is about. `QtFastContainer.switch_series.__get__(stub, Stub)`
 > runs the SHIPPED method against a plain object, which is how
 > `test_a_nested_switch_is_refused` reproduces a native crash with no Qt at all.
 
 ---
 
-**2026-08-26 (Eagle Eye lumbar — wrong series in the panes)** — `tests/code/ai_imaging`
-→ **385 passed**, 8 pre-existing xfail; `tests/code/viewer` green;
+**2026-08-26 (Eagle Eye lumbar ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ wrong series in the panes)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/ai_imaging`
+ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **385 passed**, 8 pre-existing xfail; `tests/code/viewer` green;
 `verify_plugin_mirrors.py` 456/456. Three guards added to
 `test_eagle_eye_protocol_resolution.py`:
 `test_the_tab_does_not_pre_wait_on_the_thumbnail_list`,
@@ -1576,12 +1632,12 @@ The 10 `tests/code/ui_services` failures seen in the same run were **measured**
 pre-existing: stashing this work reproduces the identical set (a qtawesome
 font-directory `TypeError` plus two stale source pins).
 
-> **A parameter name is not a contract — read the first line of the callee.**
-> `change_series_on_viewer(series_index, …)` opens with
+> **A parameter name is not a contract ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ read the first line of the callee.**
+> `change_series_on_viewer(series_index, ط£آ¢أ¢â€ڑآ¬ط¢آ¦)` opens with
 > `series_number = str(series_index)`: the argument is a series KEY, not a
 > position. Passing a `lst_thumbnails_data` index loaded whichever series was
 > *numbered* "1" and "2" (the localizer and a coronal myelogram) while every
-> log line upstream said the mapping was correct — the defect was invisible
+> log line upstream said the mapping was correct ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the defect was invisible
 > from the resolver's side and only the viewport's own metadata revealed it.
 
 > **Waiting for a precondition that your own call would satisfy is a deadlock
@@ -1593,15 +1649,15 @@ font-directory `TypeError` plus two stale source pins).
 
 ---
 
-**2026-08-26 (Eagle Eye v1.1.0 — protocol-driven engine + reference-line policy)** —
-`tests/code/ai_imaging` → **426 passed**, `tests/code/viewer` → **2,288 passed**
+**2026-08-26 (Eagle Eye v1.1.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ protocol-driven engine + reference-line policy)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
+`tests/code/ai_imaging` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **426 passed**, `tests/code/viewer` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **2,288 passed**
 (2,714 together), `verify_plugin_mirrors.py` 456/456. Eighteen guards added in two
-new sections of `test_eagle_eye_lumbar_pipeline.py`: §8b the reference-line policy
-(real behaviour against fake viewers) and §8c the protocol architecture.
+new sections of `test_eagle_eye_lumbar_pipeline.py`: ط·آ¢ط¢آ§8b the reference-line policy
+(real behaviour against fake viewers) and ط·آ¢ط¢آ§8c the protocol architecture.
 
 > **A guard that says "the engine must not know about X" belongs on the AST, not
 > the text.** `test_the_engine_names_no_body_part` first failed on the module
-> docstring — which deliberately explains the lumbar history — and on the
+> docstring ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ which deliberately explains the lumbar history ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ and on the
 > back-compat class alias. Parsing instead, and excluding docstring constants,
 > makes it test the values the engine COMPUTES with rather than what it SAYS.
 > The text version would have forced the comments to be worse.
@@ -1620,15 +1676,15 @@ new sections of `test_eagle_eye_lumbar_pipeline.py`: §8b the reference-line pol
 
 ---
 
-**2026-08-27 (Eagle Eye LLM pipeline 3.3.0 — explicit stenosis grades and
-provider-specific stage sampling)** — `tests/code/ai_imaging` → **499 passed**,
+**2026-08-27 (Eagle Eye LLM pipeline 3.3.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ explicit stenosis grades and
+provider-specific stage sampling)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/ai_imaging` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **499 passed**,
 8 pre-existing xfail. Five guards were added to
 `test_eagle_eye_llm_analysis.py`; all five failed before the implementation and
 passed afterward. They protect the immutable/versioned central-canal, neural-
 foraminal and lateral-recess grading catalog; identical grading semantics in
 both passes; ordinal grading fields in the screening contract; temperature in
 stored provenance; and actual forwarding of each stage's temperature across
-the Eagle Eye → EchoMind boundary.
+the Eagle Eye ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ EchoMind boundary.
 
 > **Two readers may have opposite dispositions without having different
 > dictionaries.** Screening remains inclusive and verification remains
@@ -1640,10 +1696,10 @@ the Eagle Eye → EchoMind boundary.
 
 ---
 
-**2026-08-27 (Eagle Eye — patient-free GapGPT capability matrix)** —
-`tests/code/ai_imaging` → **504 passed**, 8 pre-existing xfail;
-Eagle Eye/GapGPT/EchoMind cross-boundary selection → **94 passed**;
-`verify_plugin_mirrors.py` → **456/456**. New guard file:
+**2026-08-27 (Eagle Eye ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ patient-free GapGPT capability matrix)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
+`tests/code/ai_imaging` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **504 passed**, 8 pre-existing xfail;
+Eagle Eye/GapGPT/EchoMind cross-boundary selection ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **94 passed**;
+`verify_plugin_mirrors.py` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **456/456**. New guard file:
 `tests/code/ai_imaging/test_eagle_eye_gapgpt_capability.py` (5 guards; all five
 failed before the pure contract and adapter existed).
 
@@ -1662,7 +1718,7 @@ redaction; and the absence of any direct OpenAI endpoint or key path.
 
 ---
 
-**2026-08-28 (Eagle Eye workflow/UI boundary)** — New guard file:
+**2026-08-28 (Eagle Eye workflow/UI boundary)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ New guard file:
 `tests/code/ai_imaging/test_eagle_eye_ui_boundary.py` (4 guards). The architecture
 guard failed before implementation because the coordinator did not exist and all
 capture, analysis, result, and teardown methods were still members of
@@ -1680,7 +1736,7 @@ gate: **518 passed, 8 pre-existing xfailed**.
 
 ---
 
-**2026-08-28 (Eagle Eye pipeline 4.0.0 — parallel clinical context)** —
+**2026-08-28 (Eagle Eye pipeline 4.0.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ parallel clinical context)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 `tests/code/ai_imaging/test_eagle_eye_llm_analysis.py` now contains 77 guards,
 including four new guards that all failed before implementation. They protect:
 the versioned Gemini clinical-context stage and GPT fusion input; bounded,
@@ -1696,7 +1752,7 @@ the document branch is absent or fails. Complete AI Imaging gate: **522 passed,
 
 ---
 
-**2026-08-28 (Eagle Eye pipeline 4.1.0 — multi-source context)** — The parallel
+**2026-08-28 (Eagle Eye pipeline 4.1.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ multi-source context)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ The parallel
 Gemini context branch now reads allowlisted reception facts and prior reports,
 a sanitized full-or-limited PACS series catalogue, DICOMized clinical history
 series `100000`, supported attachment documents, and a bounded MRI overview.
@@ -1714,7 +1770,7 @@ patient-free GapGPT capability gate: **21 passed**.
 
 ---
 
-**2026-08-29 (Eagle Eye original-tab context handoff repair)** — Three new
+**2026-08-29 (Eagle Eye original-tab context handoff repair)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Three new
 guards failed before the fix and protect the live-discovered loss of patient ID
 and complete series inventory between the original patient tab and the reduced
 Eagle Eye widget. `test_preflight_handoff_snapshots_patient_id_and_the_complete_catalog`
@@ -1744,8 +1800,8 @@ plugin mirrors: **456 matched**. The broader builder baseline remains red for
 six unrelated ARM64 parity guards, one stale staged-config guard, and one
 network source-freshness timeout; no full-build pass is claimed.
 
-**2026-08-30 (Eagle Eye pipeline 4.2.0 — disc hydration specificity and
-provider-neutral popup)** — Two behavioral guards failed before the fix and
+**2026-08-30 (Eagle Eye pipeline 4.2.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ disc hydration specificity and
+provider-neutral popup)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Two behavioral guards failed before the fix and
 pass afterward. The LLM guard requires both image-reading stages to treat
 preserved central nucleus-pulposus T2 hyperintensity on adjacent mid-sagittal
 slices as evidence against desiccation, and forbids axial-only or dark-annulus
@@ -1757,8 +1813,8 @@ changed-boundary files: **90 passed**; complete AI Imaging gate: **559 passed,
 8 pre-existing xfailed**; default-build inclusion guard: **3 passed**. Live
 radiologist validation of pipeline 4.2.0 remains pending.
 
-**2026-08-30 (Eagle Eye pipeline 4.3.0 — pathology-focus differential
-adjudication)** — Four new prompt-contract guards failed before the fix. They
+**2026-08-30 (Eagle Eye pipeline 4.3.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ pathology-focus differential
+adjudication)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Four new prompt-contract guards failed before the fix. They
 pin screening as a sensitivity-oriented attention map, a shared multi-plane
 disc-displacement nomenclature, separate authorities for screening/context/MRI,
 and mandatory differential reclassification at every positive focus. A wrong
@@ -1770,8 +1826,8 @@ Focused LLM file: **88 passed**. Live radiologist validation of pipeline 4.3.0
 remains pending. Complete AI Imaging gate: **563 passed, 8 pre-existing
 xfailed**; default-build inclusion guard: **3 passed**.
 
-**2026-08-30 (Eagle Eye pipeline 4.4.0 — paired sagittal context and focal
-attention)** — Four behavioral guards failed before the fix. They require the
+**2026-08-30 (Eagle Eye pipeline 4.4.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ paired sagittal context and focal
+attention)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Four behavioral guards failed before the fix. They require the
 context branch to select paired sagittal T2/T1 captures nearest the measured
 midline instead of sagittal/axial sweep endpoints; extract bounded general,
 regional, and level-specific `context_attention_foci`; preserve only allowlisted
@@ -1783,8 +1839,8 @@ file: **92 passed**; complete AI Imaging gate: **567 passed, 8 pre-existing
 xfailed**; default-build inclusion guard: **3 passed**; combined gate:
 **570 passed**. Live radiologist validation remains pending.
 
-**2026-08-30 (Eagle Eye pipeline 4.5.0 — patient laterality and same-lesion
-multiplanar morphology)** — Two prompt-contract guards failed before the fix.
+**2026-08-30 (Eagle Eye pipeline 4.5.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ patient laterality and same-lesion
+multiplanar morphology)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Two prompt-contract guards failed before the fix.
 They require both image readers to derive patient side from visible `R/L`
 markers or trusted DICOM patient coordinates, never screen position, and to
 return indeterminate laterality when orientation evidence is unavailable or
@@ -1796,7 +1852,7 @@ passed**; complete AI Imaging gate: **569 passed, 8 pre-existing xfailed**;
 default-build inclusion guard: **3 passed**; combined gate: **572 passed**.
 Live radiologist validation remains pending.
 
-**2026-08-31 (OPT-55 — level integrity, padding headroom, scorer 1.2.0)** —
+**2026-08-31 (OPT-55 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ level integrity, padding headroom, scorer 1.2.0)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 `test_eagle_eye_level_identity.py` passes **19** cases for uniform shift despite
 monotonicity, stable frame identity, invalid/missing/duplicate/overlapping maps,
 measured slab mismatch, malformed/truncated input, review-required persistence
@@ -1813,7 +1869,7 @@ tile contents; pixels fell to 11,253,504 but image capacity remains 8/8.
 No model request, default promotion, or clinical accuracy claim. See Eagle Eye
 stage-two document section 31; full Phase 0 and controlled E1/E2 remain pending.
 
-**2026-08-31 (OPT-55 — opt-in bilateral sagittal supplements; root scorer 1.1.0)** —
+**2026-08-31 (OPT-55 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ opt-in bilateral sagittal supplements; root scorer 1.1.0)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 `test_eagle_eye_parasagittal.py`: **18 passed**, covering LPS sampling under
 reversed/oblique geometry, short/invalid coverage, exact V3 image/caption
 preservation, screening-side independence, image/pixel/byte caps, optional
@@ -1828,7 +1884,7 @@ baseline images/captions, then added two supplements within unchanged caps.
 No model call, default promotion, or diagnostic improvement claim. Remaining
 Phase 0 scorer/reference defects are documented, not silently declared fixed.
 
-**2026-08-31 (OPT-55 — focused V2/V3 bounded axial-window coverage)** —
+**2026-08-31 (OPT-55 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ focused V2/V3 bounded axial-window coverage)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 `tests/code/ai_imaging/test_eagle_eye_focused_v2.py` adds **41 synthetic cases**
 covering short/long slabs, every anchor, both boundaries, interior windows,
 gap/orientation isolation, reversed source ordinals, unchanged shared sagittal
@@ -1842,8 +1898,8 @@ original artifacts or sagittal sampling. No model call or clinical accuracy
 claim. Manifest schema 1.3.0 records policy `same-slab-backfill-v1`; live
 source-build/radiologist validation remains pending.
 
-**2026-08-30 (Eagle Eye pipeline 4.6.0 — candidate-directed focused-v2 DICOM
-evidence)** — `tests/code/ai_imaging/test_eagle_eye_focused_v2.py` adds seven
+**2026-08-30 (Eagle Eye pipeline 4.6.0 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ candidate-directed focused-v2 DICOM
+evidence)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `tests/code/ai_imaging/test_eagle_eye_focused_v2.py` adds seven
 behavioral guards. They pin the versioned allowlisted focus plan; decisive-frame
 sanitization and level-map fallback; patient-LPS mapping from stored capture
 geometry into the immutable axial volume; DICOM-derived patient orientation;
@@ -1857,8 +1913,8 @@ both Legion Consult and Eagle Eye. Focused changed-boundary gate: **262 passed**
 complete AI Imaging gate: **576 passed, 8 pre-existing xfailed**. `layout`
 remains the runtime default pending paired radiologist validation.
 
-**2026-08-30 (Eagle Eye pipeline 4.6.1 — focused-v2 capture-frame
-authority)** — Four additional behavioral guards cover the live reversed-level
+**2026-08-30 (Eagle Eye pipeline 4.6.1 ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ focused-v2 capture-frame
+authority)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Four additional behavioral guards cover the live reversed-level
 map defect. They require raw inferior-to-superior DICOM order to remain distinct
 from original superior-to-inferior capture-frame identity, prevent adjacent
 focus ribbons from crossing independently angled slab boundaries, calculate the
@@ -1871,7 +1927,7 @@ tests with 8 pre-existing xfails**, default-build inclusion passed **3 tests**,
 and **458 plugin mirror pairs** matched. Live source-build model and radiologist
 validation remain pending.
 
-**2026-08-28 (Eagle Eye — Legion Consult foundation)** — New guard files:
+**2026-08-28 (Eagle Eye ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Legion Consult foundation)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ New guard files:
 `tests/code/ai_imaging/test_legion_consult_foundation.py` and
 `tests/code/ai_imaging/test_legion_consult_ui_contract.py` (**14 focused guards**).
 They protect the native/Legion function picker, MRI-only availability, mandatory
@@ -1882,12 +1938,12 @@ The UI gate also proves that disarming an unfinished ROI returns the coordinator
 to idle. No capture, provider dispatch, or model-analysis behavior is claimed
 by this foundation gate.
 
-**2026-08-29 (Eagle Eye — Legion Consult post-ROI completion)** —
+**2026-08-29 (Eagle Eye ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Legion Consult post-ROI completion)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 `tests/code/ai_imaging/test_legion_consult_analysis.py` adds 10 focused guards,
 with one additional retry-lifecycle guard in
 `tests/code/ai_imaging/test_legion_consult_ui_contract.py`.
 They pin the exact user-supplied Step 1 prompt fingerprint; Gemini screening and
-GPT-5.6 Sol verification routing; clipped ±5 focus slices; exact complete-stack
+GPT-5.6 Sol verification routing; clipped ط·آ¢ط¢آ±5 focus slices; exact complete-stack
 overview coverage; LPS-to-series projection; 3D-volume validation; anonymous,
 UID/path-free derived evidence and retry reconstruction; sequential transfer
 of the Step 1 answer into Step 2; the workflow transition from a persisted ROI
@@ -2032,7 +2088,7 @@ Counted directly, not from the dashboard:
 - **Regression catalog rows: 37**
 - **KPI registered keys: 42 across 13 workflows**
 
-These numbers come from `python tools/kpi_dashboard.py` and `pytest tests/code/echomind tests/code/system`. They are the long-term measurement surface — every PR that lands a fix should make the catalog and test counts grow together.
+These numbers come from `python tools/kpi_dashboard.py` and `pytest tests/code/echomind tests/code/system`. They are the long-term measurement surface ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ every PR that lands a fix should make the catalog and test counts grow together.
 
 ## Eagle Eye source-grounded correlated screening (2026-09-01)
 
@@ -2945,7 +3001,7 @@ MS picker follow-up: `test_picker_can_switch_to_2d_without_leaving_dialog` cover
 Eagle Eye numeric series ordering: `test_study_series_sort_is_numeric_not_protocol_priority` covers cross-protocol numeric order, missing/invalid values and preserved preferred metadata without a live database.
 
 
-## Attachment retry identity — 2026-09-27
+## Attachment retry identity ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 2026-09-27
 
 `code/network/test_attachment_retry_identity.py`: 9 synthetic cases for persistent
 identity, durable-manifest failure, corrupt identity preservation, capability
@@ -3083,3 +3139,194 @@ covered by the separate PACS Server suite.
 - `education/test_slide_thumbnails.py`: custom cover worker, automatic reset, document tiles, legacy schema migration and portable round trip.
 
 - `ui_services/test_advanced_search_paging.py`: OPT-24 bounded advanced pagination, complete filters, cooperative cancellation and visible partial failures.
+
+- `code/echomind/test_reception_report_conflict.py`: existing reception report consent before writes, changed-content revalidation, malformed-response rejection, empty markup, append/replace outgoing payloads, formatting preservation, and cancellation. See `docs/echomind/01-architecture.md`.
+
+
+## Standard MPR actual buffer order (2026-09-30)
+
+`code/mpr/test_mpr_buffer_geometry.py`: 125 synthetic cases cover decoder-order
+provenance, CT/MR axial/sagittal/coronal and 96 signed/oblique/order configurations,
+source renumbering, unchanged scalar/grid data and established camera rules,
+filters, disk/IPC/copies, invalid/mixed/irregular stacks, stale receipts and bounded
+legacy-cache rebuilds. Initial 7 failed/6 passed; affected final selection 463
+passed. Source clinical and installer validation are separate pending gates.
+
+
+### Assist cross-source follow-up (2026-09-30)
+
+`code/echomind/test_assist_followup.py`: original request association, source review,
+multiple selected messages in chronological order, current edits, recent memory
+limits, reset on history clear, busy protection, oversize rejection, exact retry
+snapshot and late-result isolation. Tests use synthetic Qt widgets without the
+clinical database. `builder/test_distribution_profiles.py` requires the new
+coordinator in edition payloads; shared-page mirror handoff remains pending.
+
+### EchoMind private two-sided history (2026-09-30)
+
+`code/echomind/test_remote_history.py` guards server transcript persistence,
+shared IDs, original client session context, thread-local isolation/reset,
+invalid case reference rejection, pre-submit storage failure, duplicate request
+protection and exclusion of provider exception details. All data is synthetic;
+SQLite files are under pytest temporary paths. GUI replay remains separate.
+
+### Secretary paired server planning (2026-09-30)
+
+`code/echomind/test_secretary_server.py` guards shared request IDs, server-only
+authorities, unknown module/action rejection, nonexecuting clarification, local
+confirmation, workflows, repair, strict clock/attempt bounds, duplicate requests,
+shared EchoMind admission and authentication before processing. Only synthetic
+data and temporary history databases are used.
+
+### Secretary client server boundary (2026-09-30)
+
+`code/echomind/test_secretary_remote_planner.py` guards company router, brain,
+parser, orchestrator and both repair paths, data-only paired transport, memory
+instruction stripping, rejected unsupported proposals, no provider fallback,
+personal user-prompt requirements, repaired-action confirmation and typed HTTP
+status, deferred GUI repair and worker continuation with bounded resumed attempts.
+Pure/mocked/AST cases use synthetic data and no live clinical database.
+Joint transport and separate GUI acceptance: `docs/echomind/SECRETARY_SERVER_CONTRACT_2026-09-30.md`.
+
+### EchoMind message receipt time (2026-09-30)
+
+`code/echomind/test_message_timestamps.py` checks stable receipt time after edits,
+exclusion from export content, historical/missing-time behavior and opt-in query
+compatibility with the existing four-field API. SQLite is in-memory and isolated
+from the application's database pool. See docs/echomind/01-architecture.md.
+
+- Secretary ordered list/open and checkbox verification: `tests/code/echomind/test_secretary_ordinal_open.py` (strict ordinal/source/study binding, stale-list rejection, confirmation, selection count and exact-study verification).
+
+
+### Secretary server model activation (2026-09-30)
+
+`tests/code/echomind/test_secretary_model_effort.py` exercises explicit company
+reasoning effort, gpt6 temperature compatibility, personal token-field mapping,
+legacy no-effort payload preservation and validated server-owned Secretary
+settings. Uses synthetic transport/config only, no live credentials or database.
+
+
+### MCP/Secretary lifecycle and SDK compatibility (2026-09-30)
+
+- `tests/code/agent_gateway/test_command_lifecycle.py`: queued timeout cancellation,
+  running-effect ambiguity, keyed retries, protocol negotiation and typed parameters.
+- `tests/code/echomind/test_execution_contract.py`: explicit success, unsupported
+  verification, state identity, permission failure, nonblocking search, replacement,
+  cancellation and actual asynchronous confirmation/session state transitions.
+- `tests/code/system/test_mcp_sdk_compatibility.py`: actual stdio initialize/tools-list
+  without application actions; optional AIPACS_MCP_COMPAT_PYTHON tests a second SDK.
+
+- `code/network/test_workflow_realtime.py`: bounded workflow mailbox/framing, v1 negotiation, actual TCP reconnect/burst and local assignment lifecycle preservation.
+- `code/ui_services/test_workflow_realtime_ui.py`: real Qt-cell deltas preserve selection/widgets and reject wrong patient or stale server/search/login context.
+- `tools/testing/workflow_wire_acceptance.py`: explicit opt-in two-receiver acceptance against the PACS checkout synthetic actual-server harness; no clinical DB/services.
+
+- `code/ai_imaging/test_calcification_yolox_targets.py`: isolated Torch research
+  guards for native pixel targets, rejection of unknown empty/invalid regions,
+  and explicit failure on nonfinite detections. Five pass on the Linux worker;
+  local collection skips when Torch is unavailable. No clinical runtime change.
+
+- `code/ai_imaging/test_deepmica_geometry.py`: isolated segmentation research
+  guards for native crop/flip restoration, invalid extent rejection, blank-input
+  unavailability and grouping bounds without dilation inflation. Five pass on
+  the Linux worker. These do not measure patient-level or punctum accuracy.
+
+- `tests/code/echomind/test_support_log_archive.py`: consented 24-hour raw ZIP time selection, bounds, manifest and frozen replay.
+
+- `code/echomind/test_support_issue_voice.py`: worker-only recording/transcription, temporary WAV cleanup, cancellation, editable text without automatic submission, and stale-account rejection. Synthetic audio/service only; live microphone acceptance is separate.
+
+
+- Breast research review quality and UI state: `code/ai_imaging/test_calcification_review_labels.py` and `code/ai_imaging/test_calcification_review_ui.py`; synthetic quality/point exclusion, notes-only progress, and unsafe-negative export blocking.
+
+
+- `code/system/test_native_faulthandler.py`: Windows first-chance exceptions capture the current thread only; other platforms retain all-thread capture. Synthetic subprocess COM events preserve diagnostics and process liveness while another thread changes frames (2026-10-03, OPT-21/OPT-60).
+
+- Secretary source-binding/Settings pipeline: `tests/code/echomind/test_secretary_pipeline_boundaries.py` covers schema-owned source, all typed non-source actions and all ten Settings sections through client/server validators, asynchronous execution and real offscreen Qt tab navigation. Native source acceptance remains separate.
+
+- Owner Settings examples: `tests/code/echomind/test_secretary_settings_examples.py` distinguishes local navigation handoffs from mutations, tests CT/MR changed=false receipts and local patient-cleanup confirmation/terminal receipts without deleting real data.
+
+- Typed Settings controls: `tests/code/echomind/test_settings_control_repository.py` isolates JSON/SQLite settings, validates both client/server contracts, confirmation and polling, checks exact C-ECHO status, clone identity/transport, preset parity, rollback, concurrent edit rejection and worker-thread terminal receipts. No clinical data or live configuration mutation.
+
+- AI panel controls: `tests/code/echomind/test_ai_settings_controls.py` tests safe snapshots, explicit Google selection, secret preservation, shared schemas/confirmation/polling, personal-key/prompt prerequisites, TLS-before-save, form receipt updates and preservation of zero temperature on reload. Uses temporary config and synthetic probes only.
+
+- Secretary Ask diagnostics: `tests/code/echomind/test_secretary_ask_diagnostics.py` covers shared read-only counts, worker-only aggregate logs, offscreen widget submission, fixed safe HTTP errors, visible failure propagation and bounded same-server retry.
+
+## Bone Age demographic fallback (2026-10-04)
+
+`tests/code/ai_imaging/test_bone_age_demographics.py` covers exact Reception identity,
+unknown/numeric sex, explicit physician input, cancel/stale context, worker submission
+ordering, server verification and source immutability. See the Breast/Bone local
+integration record; source GUI and Razi activation are separate pending gates.
+
+Packaging guard: `tests/code/builder/test_bone_age_demographic_payload.py` checks
+the shared Slicer reference-client dependency without shipping UI or model code.
+
+Bone Age PDF/reference guards: `tests/code/ai_imaging/test_bone_age_report.py`
+and `test_bone_age_report_ui.py` cover mean-centered Z-scores, normal-tail estimates,
+inclusive +/-2 SD limits, out-of-range abstention, nonfinite/sex/identity rejection,
+fractional date age, explicit unconfirmed previews, real two-page PDF writing,
+atomic publication failure, background generation, stale-case/result refusal,
+source series identity and Reception-only Jalali conversion with leap-day checks.
+The owning Breast/Bone module record and model/training review retain native and
+checkpoint-qualification limitations separately.
+
+- Patient workflow facts: `tests/code/echomind/test_patient_workflow_facts.py` checks absent/present/unknown voice evidence, author limits, date/modality summaries, preserved original ordinals, voice-change rejection, memory facts and server handbook. `tests/code/ui_services/test_workflow_realtime_ui.py` covers actual Qt snapshot binding and source invalidation.
+
+- `echomind/test_secretary_ui_observation.py`: source inventory/typed action separation, UI privacy, worker encoding, strict image receipt, actual server/MCP pixels.
+
+- `echomind/test_secretary_ui_scenarios.py`: synthetic natural-request specifications, real async settings bus/persistence/readback, actual offscreen search form, advanced query forwarding, Fast ToolController activation, known unsupported fields/backend rejection and custom-field discovery.
+
+- `echomind/test_live_secretary_ui_scenarios.py`: opt-in authenticated company-brain result-driven continuation with temporary persistence and real async CommandBus; never native/clinical mutation. First upstream failures retained in report, same-server retry 2 passed.
+
+- `tests/code/echomind/test_secretary_mode_scenarios.py`: dedicated Ask/Act/Guide/Help Ticket scenario contracts, executable guard references, and non-Act operational-proposal rejection.
+
+- `tests/code/echomind/test_secretary_guide_page_context.py`: source-traced Settings page descriptions, Guide widget-to-worker context, safe tab labels and worker-only partial Ask settings reports.
+
+
+### CD download-before-media continuation (2026-10-05)
+
+`code/cd_burner/test_download_before_media.py` covers mixed missing/local selection,
+all-study completion, failed/cancelled queue entries, timeout, late validation,
+unique instance/identity readiness, real Qt popup progress/cancel, approved option
+retention with one confirmation, and off-thread Home preflight. The guard and
+adjacent CD/package suite pass; source GUI and physical media acceptance are separate.
+
+### Default and verified legacy CD viewer launch (2026-10-05)
+
+`code/cd_burner/test_legacy_viewer_launch.py` covers artifact-bound launch mode,
+explicit root DICOMDIR arguments, default import-folder preservation, avoiding
+the incompatible compiled splash launcher, and unchanged synthetic file-set
+references with readable pixels. Actual viewer rendering is a separate gate.
+
+- `tests/code/echomind/test_secretary_sorted_list_binding.py`: real CommandBus/Secretary confirmation round trip after sorting, repeated sorting, additions/removals, source/voice/duplicate rejection and bounded receipt eviction.
+
+
+Saved brain history: test_brain_saved_results.py covers study isolation, reopened reports, foreign artifact rejection, session discovery and preserving active edits; workspace entry guards include the persistent results tab.
+
+- Three-node shared-center history and original media: `code/ai_imaging/test_case_realtime.py`, `test_case_realtime_http.py`, `test_pacs_case_resources.py` and `code/ui_services/test_patient_case_realtime.py` cover authorization, broadcast/reconnect, exact saved reads, staged client, red/selected styling, source/study isolation and teardown. `tools/testing/three_node_case_acceptance.py` exercises actual PACS sockets, Eagle HTTP and two clients with synthetic data. Live GUI is a separate gate.
+
+Saved brain UI follow-up: viewport-independent result dialog, repeated-open unsaved-edit retention, sticky errors and direct PDF action covered by test_eagle_eye_workspace_entry.py and test_brain_saved_results.py; 98 focused passes.
+
+Local brain sidebar indicator: tests/code/ui_services/test_patient_case_realtime.py tests worker delivery, exact-case freshness and navigation without inference.
+
+Manual review controls are now embedded: test_manual_brain_review.py guards Segment Editor layout ownership and absence of floating dialog/toolbar. Earlier reopen-popup guard is superseded.
+
+- Native Slicer correction UI build parity: `tests/code/ai_imaging/test_eagle_eye_brain_customer_paths.py::test_both_builders_ship_native_manual_correction_script` checks PyInstaller physical data and Nuitka OPTIONAL_DATA.
+
+- Alignment sidebar availability: `code/ui_services/test_patient_case_realtime.py` covers exact-study local companion discovery, changed PDF rejection, red availability and original report reopening without inference.
+
+- Complete AI availability and workflow coverage: `code/ui_services/test_patient_case_realtime.py` tests all remote module identifiers, legacy Bone Age/Breast receipts, Total Spine PDF integrity, local EchoMind report recovery, mixed histories and doctor/image GUI metadata. `test_case_realtime.py` guards same-center server availability for every module. Three-node wire acceptance additionally covers reporting doctor, DICOM image counts and original image attachments.
+
+### Encapsulated Pixel Data EOF compatibility (2026-10-06)
+
+Publication secret-token boundaries: `code/git/test_release_manager.py` and
+`code/echomind/test_credential_obfuscation.py` reject plaintext keys at ordinary
+delimiters without treating the suffix of a multitask research path as a key.
+Each scanner has ten ordinary/project detection cases and a false-positive
+regression; no file allowlist or scan-disable switch was added.
+
+`code/builder/test_dicom_eof_payload.py` requires explicit reader retention in
+PyInstaller and Nuitka, snapshot inclusion, and byte-identical viewer mirrors.
+Two spec guards failed before enrollment; all three now pass. Frozen artifact
+inventory and installed viewport checks are independent gates.
+
+`code/viewer/test_encapsulation_eof_compatibility.py` covers lossless synthetic RLE pixels with a missing sequence delimiter, truncated/invalid item rejection, offset-table and payload bounds, original preservation, full FAST/worker/legacy backend reads, Advanced GDCM comparison, import conversion and sync classification. See the VTK domains report execution receipt; decoder success is separate from actual viewport acceptance.

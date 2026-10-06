@@ -693,7 +693,7 @@ Study UID: {study_uid}
         each study ALSO fetch the server thumbnail list and merge in any series
         not already present on local disk — so series added on the server after
         first download become visible without a manual cache wipe. Default False
-        keeps the original local-first / server-only-when-empty behaviour."""
+        uses the same catalog/media contract as single-study Home and Patient Tab."""
         # Snapshot the current patient-selection request id. If the user clicks
         # a different patient while the (slow) multi-study fetch below is still
         # awaiting, this lets us drop the stale result instead of rendering one
@@ -737,24 +737,18 @@ Study UID: {study_uid}
             study_label = f"Study {index}"
             study_thumbs = []
 
-            # Prefer any existing local cache immediately (complete or partial).
-            cached = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
+            # A PNG inventory cannot define membership, including in grouped Local.
+            if _local_only:
+                cached = await asyncio.to_thread(self._build_local_series_thumbnail_payload, study_uid)
+                verified_catalog = True
+            else:
+                cached = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
+                cached, _, verified_catalog = self._reconcile_home_thumbnail_payload(study_uid, cached)
             for thumb in cached.get('thumbnails', []):
                 study_thumbs.append(dict(thumb, study_label=study_label, _study_order=index))
 
-            if _local_only and not study_thumbs:
-                local_payload = await asyncio.to_thread(
-                    self._build_local_series_thumbnail_payload, study_uid
-                )
-                for thumb in local_payload.get('thumbnails', []):
-                    thumb['study_label'] = study_label
-                    thumb['_study_order'] = index
-                    study_thumbs.append(thumb)
-
-            # Fetch server thumbnails when nothing is local (non-downloaded study)
-            # OR when a resync asked us to merge — so newly-added server series are
-            # revealed even though older series already exist on local disk.
-            if (not _local_only) and ((not study_thumbs) or force_server_merge):
+            expected = int(getattr(self, '_server_series_count_by_study', {}).get(study_uid, 0) or 0)
+            if (not _local_only) and (not verified_catalog or expected > len(study_thumbs) or force_server_merge):
                 def _fetch_in_background() -> dict | None:
                     host = server.get('host') or server.get('socket_host')
                     from modules.network.socket_config import get_socket_server_settings
@@ -774,7 +768,7 @@ Study UID: {study_uid}
                             'patient_name': data.get('patient_name') or patient_name,
                             'patient_id': data.get('patient_id') or patient_id,
                             'study_date': data.get('study_date') or '',
-                            'study_uid': data.get('study_instance_uid') or study_uid,
+                            'study_uid': study_uid,
                             'thumbnails': [],
                         }
                         for series in data.get('series_thumbnails') or []:
@@ -800,29 +794,12 @@ Study UID: {study_uid}
                 except Exception:
                     response = None
 
-                if response:
-                    # Merge mode: keep only series we are NOT already showing from
-                    # local disk, so existing series are never duplicated or
-                    # overwritten — only genuinely new server series are added.
-                    _have_numbers = {
-                        str(t.get('series_number') or '').strip()
-                        for t in study_thumbs
-                        if str(t.get('series_number') or '').strip()
-                    }
-                    if _have_numbers:
-                        response['thumbnails'] = [
-                            t for t in (response.get('thumbnails') or [])
-                            if str(t.get('series_number') or '').strip() not in _have_numbers
-                        ]
-                    if response.get('thumbnails'):
-                        response = self.save_thumbnail(response)
-                        for thumb in response.get('thumbnails', []):
-                            if not thumb.get('file_path'):
-                                continue
-                            thumb['study_uid'] = study_uid
-                            thumb['study_label'] = study_label
-                            thumb['_study_order'] = index
-                            study_thumbs.append(thumb)
+                if response and response.get('thumbnails'):
+                    response = self.save_thumbnail(response)
+                    response, _, _ = self._reconcile_home_thumbnail_payload(study_uid, response, publish=True)
+                    study_thumbs = [dict(thumb, study_uid=study_uid,
+                                         study_label=study_label, _study_order=index)
+                                    for thumb in response.get('thumbnails', ())]
 
             combined_thumbnails.extend(study_thumbs)
 
@@ -1030,10 +1007,9 @@ Study UID: {study_uid}
                 return
             
             # Import CD burn dialog
-            from modules.cd_burner.cd_burn_dialog import CDBurnDialog
-            
-            dialog = CDBurnDialog(selected_studies, self)
-            dialog.exec()
+            from modules.cd_burner.dialog_preflight import open_dialog
+
+            open_dialog(selected_studies, self)
             
         except ImportError as e:
             print(f"Error importing CD burn dialog: {str(e)}")

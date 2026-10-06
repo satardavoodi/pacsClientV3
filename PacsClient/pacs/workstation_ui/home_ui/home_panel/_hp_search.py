@@ -1813,6 +1813,57 @@ class _HPSearchMixin:
 
             self.dot_index = (self.dot_index + 1) % len(self.status_dots)
 
+    def _reconcile_home_thumbnail_payload(self, study_uid, payload, *, publish=False):
+        """Adapt the existing study-info snapshot to the shared catalog/media join.
+
+        Socket success publishes into the existing metadata cache, not a second
+        thumbnail catalog. Disk inventories can enrich that snapshot, never replace
+        its membership. This pure projection performs no I/O on the GUI thread.
+        """
+        from PacsClient.utils.series_identity import (
+            get_series_uid, reconcile_thumbnail_catalog,
+        )
+        from PacsClient.utils.patient_study_set import allocate_series_display_keys
+
+        uid = str(study_uid or '')
+        cache = getattr(self, '_series_info_cache', None)
+        if cache is None:
+            cache = self._series_info_cache = {}
+        snapshot = dict(cache.get(uid) or {})
+        known = [dict(row) for row in snapshot.get('series', ()) if isinstance(row, dict)
+                 and str(row.get('study_uid') or uid) == uid]
+        media = [dict(row) for row in (payload or {}).get('thumbnails', ())
+                 if isinstance(row, dict) and str(row.get('study_uid') or uid) == uid]
+        if publish:
+            # Thumbnail endpoints may return media for only part of the metadata
+            # catalog. Add discoveries, never use missing media as a deletion.
+            # Explicit metadata force-refresh still invalidates this snapshot.
+            identities = {get_series_uid(row) or ('number', str(row.get('series_number') or ''))
+                          for row in known}
+            for row in media:
+                identity = get_series_uid(row) or ('number', str(row.get('series_number') or ''))
+                if identity not in identities:
+                    known.append({**row, 'study_uid': uid})
+                    identities.add(identity)
+        if not known:
+            return {**(payload or {}), 'thumbnails': media}, 0, False
+        allocated = allocate_series_display_keys(
+            known, existing_records=[row for row in known if row.get('display_key')])
+        catalog = {str(row['display_key']): row for row in allocated}
+        entries, missing = reconcile_thumbnail_catalog(
+            catalog, socket_entries=media, study_uid=uid)
+        if publish:
+            # Metadata must not become an unbounded second image cache. Bytes
+            # live in ThumbnailStore's existing bounded LRU while PNGs publish.
+            media_fields = {'thumbnail_data', 'thumbnail_base64', 'thumbnailBase64',
+                            'thumbnailData', 'image_data', 'imageBase64'}
+            cache[uid] = {**snapshot, 'series': [
+                {key: value for key, value in row.items() if key not in media_fields}
+                for row in entries],
+                          '_thumbnail_catalog_verified': True}
+        return {**(payload or {}), 'thumbnails': entries}, missing, bool(
+            publish or snapshot.get('_thumbnail_catalog_verified') or missing == 0)
+
     async def show_patient_studies(self, patient_info):
         """Display patient studies asynchronously - Optimized for speed"""
         try:
@@ -1883,7 +1934,34 @@ class _HPSearchMixin:
                     self._log_open_trace(study_uid, 'right_panel_offline_cloud_display', thumbnail_count=len(thumbnails.get('thumbnails', [])))
                 return
 
-            # Fast path: if local thumbnails exist, always show them immediately.
+            # Local membership comes from the indexed catalog, never the PNG list.
+            if self.source_of_patient_load == SourceOfPatientLoad.DB:
+                if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'right_panel_cache_miss_local_mode')
+                local_series_payload = await asyncio.to_thread(
+                    self._build_local_series_thumbnail_payload, study_uid
+                )
+                if hasattr(self, '_is_active_patient_selection') and not self._is_active_patient_selection(patient_id, study_uid):
+                    return
+                local_series = local_series_payload.get('thumbnails', [])
+                if local_series:
+                    self.display_thumbnails(local_series, progressive=False)
+                    self._right_panel_render_study_uid = study_uid_str
+                    if hasattr(self, '_log_open_trace'):
+                        self._log_open_trace(
+                            study_uid,
+                            'right_panel_local_metadata_display',
+                            thumbnail_count=len(local_series),
+                        )
+                else:
+                    try:
+                        if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, 'count_label'):
+                            self.right_panel_widget.count_label.setText('0 series')
+                    except Exception:
+                        pass
+                return
+
+            # Server media is enriched against the shared catalog before display.
             # This keeps main-page thumbnails stable even when socket fetch is delayed or fails.
             if hasattr(self, '_log_open_trace'):
                 try:
@@ -1892,36 +1970,27 @@ class _HPSearchMixin:
                     pass
             local_payload = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
             _local_thumbs = len(local_payload.get('thumbnails', []) or [])
-            # Bugfix 44113 — when the server now reports MORE series than the local
-            # thumbnail cache holds, the fast-cache path would pin the stale (partial)
-            # thumbnails forever. Skip it ONCE this session and fall through to the
-            # server thumbnail fetch below (which pulls every series). The once-per-
-            # session marker lets the study settle back onto the fast cache afterwards
-            # and tolerates a benign server/series count mismatch.
+            missing_media, verified_catalog = 0, False
+            if self.source_of_patient_load == SourceOfPatientLoad.SERVER:
+                local_payload, missing_media, verified_catalog = self._reconcile_home_thumbnail_payload(
+                    study_uid, local_payload)
+            # PNG availability is not catalog membership. A previous request is
+            # not evidence that a later partial disk snapshot is complete.
             _server_series = 0
             _thumbs_grew = False
             try:
                 _server_series = int(getattr(self, '_server_series_count_by_study', {}).get(study_uid_str, 0) or 0)
-                if not hasattr(self, '_thumbs_server_refreshed_uids'):
-                    self._thumbs_server_refreshed_uids = set()
-                # Key the "already refreshed once" marker by the server's series COUNT,
-                # not just the study UID. Otherwise the first refresh pins the study
-                # forever and a later server-side growth (more series added) is never
-                # picked up on re-click — the stale partial cache is served indefinitely
-                # (the exact "thumbnails don't refresh when the server changed" symptom).
-                # With the count in the key, an unchanged study still hits the fast cache
-                # (same key → skip), but a grown study gets a fresh key → one refetch.
-                _refresh_key = f"{study_uid_str}@{_server_series}"
-                if study_uid_str and _refresh_key not in self._thumbs_server_refreshed_uids:
-                    if _server_series > 0 and _server_series > _local_thumbs:
-                        _thumbs_grew = True
-                        self._thumbs_server_refreshed_uids.add(_refresh_key)
+                _thumbs_grew = self.source_of_patient_load == SourceOfPatientLoad.SERVER and (
+                    _server_series > len(local_payload.get('thumbnails', ()))
+                    or not verified_catalog)
             except Exception:
                 _thumbs_grew = False
             if hasattr(self, '_log_open_trace'):
                 try:
                     self._log_open_trace(study_uid, 'right_panel_cache_gate',
                                          local_thumbs=_local_thumbs, server_series=_server_series,
+                                         catalog_rows=len(local_payload.get('thumbnails', ())),
+                                         missing_media=missing_media, verified_catalog=verified_catalog,
                                          grew=int(_thumbs_grew))
                 except Exception:
                     pass
@@ -1961,35 +2030,6 @@ class _HPSearchMixin:
                     )
                 return
 
-            # DB mode without thumbnail files: stop here to avoid unnecessary socket dependency.
-            # NOTE: Do not gate on check_study_complete(study_uid) here.
-            # A study may be marked complete while thumbnail cache is missing; in that case
-            # we still need to fetch thumbnails from the server.
-            if self.source_of_patient_load == SourceOfPatientLoad.DB:
-                if hasattr(self, '_log_open_trace'):
-                    self._log_open_trace(study_uid, 'right_panel_cache_miss_local_mode')
-                local_series_payload = await asyncio.to_thread(
-                    self._build_local_series_thumbnail_payload, study_uid
-                )
-                if hasattr(self, '_is_active_patient_selection') and not self._is_active_patient_selection(patient_id, study_uid):
-                    return
-                local_series = local_series_payload.get('thumbnails', [])
-                if local_series:
-                    self.display_thumbnails(local_series, progressive=False)
-                    self._right_panel_render_study_uid = study_uid_str
-                    if hasattr(self, '_log_open_trace'):
-                        self._log_open_trace(
-                            study_uid,
-                            'right_panel_local_metadata_display',
-                            thumbnail_count=len(local_series),
-                        )
-                else:
-                    try:
-                        if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, 'count_label'):
-                            self.right_panel_widget.count_label.setText('0 series')
-                    except Exception:
-                        pass
-                return
 
             # Server request only if not cached
             thumbnails = None
@@ -2193,6 +2233,8 @@ class _HPSearchMixin:
                 if thumbnails:
                     retry_block_until.pop(study_uid_str, None)
                     thumbnails = self.save_thumbnail(thumbnails)
+                    thumbnails, _, _ = self._reconcile_home_thumbnail_payload(
+                        study_uid, thumbnails, publish=True)
 
                     if thumbnails and 'thumbnails' in thumbnails:
                         self.save_series_info_to_database(study_uid, thumbnails['thumbnails'])
@@ -2202,6 +2244,7 @@ class _HPSearchMixin:
                             self._log_open_trace(study_uid, 'right_panel_socket_done', thumbnail_count=len(thumbnails['thumbnails']))
                 else:
                     fallback_payload = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
+                    fallback_payload, _, _ = self._reconcile_home_thumbnail_payload(study_uid, fallback_payload)
                     if fallback_payload.get('thumbnails'):
                         retry_block_until.pop(study_uid_str, None)
                         thumbnails = fallback_payload
@@ -2225,6 +2268,7 @@ class _HPSearchMixin:
                 )
 
                 fallback_payload = await asyncio.to_thread(self._build_cached_thumbnail_payload, study_uid)
+                fallback_payload, _, _ = self._reconcile_home_thumbnail_payload(study_uid, fallback_payload)
                 if fallback_payload.get('thumbnails'):
                     retry_block_until.pop(study_uid_str, None)
                     thumbnails = fallback_payload

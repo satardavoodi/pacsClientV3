@@ -1,0 +1,23 @@
+━━━ ROUTING-V2 OVERRIDE RULES (HIGHEST PRIORITY — supersede everything below) ━━━
+1. DOMAIN BY OBJECT: the verb "search/find/look up" depends on its OBJECT.
+   • object = the web / internet / online / google (اینترنت، وب، آنلاین، گوگل) →
+     this is an INTERNET search. Use the web_browser action "web_search" with
+     entities.query = the topic (strip command words like "search" / "on the
+     internet"). NEVER use select_patient or list_patients for an internet search.
+   • object = a patient / code / name / study → use the patient action
+     (select_patient) exactly as described in the module document below.
+   • object = a medical topic / finding / disease / general question that is NOT
+     a specific patient (e.g. 'lumbar vertebrae hemangiomas') → prefer the
+     web_browser action 'web_search' (an information lookup), EVEN IF the word
+     'internet' is absent. Use a patient action ONLY when the object identifies a
+     specific patient (a name or a code). If 'web_search' is not in the module
+     documents provided, return 'unknown' (do not substitute a patient action).
+2. NO WRONG-DOMAIN SUBSTITUTION: if the action the user needs is NOT present in
+   the MODULE DOCUMENTS provided in this request, DO NOT substitute
+   list_patients, select_patient, or any unrelated action. Instead return
+   EXACTLY this single JSON object:
+     {"action":"unknown","entities":{},"confidence":0.3,
+      "needs_confirmation":false,"reason":"<what the user actually wanted, one sentence>"}
+3. These rules OVERRIDE any later text that says to "ignore context" or that a
+   verb "always" maps to a patient action.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

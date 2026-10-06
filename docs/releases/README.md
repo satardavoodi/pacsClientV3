@@ -5,7 +5,9 @@ The operational procedures live in [`../../RELEASE.md`](../../RELEASE.md) and
 [`../../BUILD.md`](../../BUILD.md); files in this folder record scope and evidence.
 
 The current four-installer Standard Client request is recorded in
-[the v3.7.0 release record](VERSION_3.7.0_RELEASE.md). Eagle Eye Server is not
+[the v3.7.1 release record](VERSION_3.7.1_RELEASE.md). The earlier
+[v3.7.0 record](VERSION_3.7.0_RELEASE.md) is historical source publication;
+its interrupted Nuitka run does not establish a complete matrix. Eagle Eye Server is not
 part of this build. Earlier expanded Client/Server prerequisite work is recorded in
 [the September 28 safety record](deploy-record-client-server-2026-09-28.md).
 It is not a new installer, source-publication receipt or production approval.

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "experiment": "breast-calcification-region-v1",
+  "status": "research_pilot_complete_not_qualified",
+  "pilot_receipt": {
+    "optimizer_steps": 100,
+    "train_images": 32,
+    "cbis_validation_images": 8,
+    "digital_transfer_images": 24,
+    "native_patch_size": 1024,
+    "batch_size": 1,
+    "gradient_accumulation": 1,
+    "precision": "BF16; initial FP16 attempt stopped for nonfinite gradients",
+    "peak_vram_gib": 1.7654,
+    "checkpoint_sha256": "99dc214eb5ca90a68273ba34857589e25209e96e7741ccb4e086bdf5009bf095",
+    "evidence": "generated-files/eagle-eye/calcification-candidate-20261001/pilot-result.json and transfer-result.json",
+    "production_qualified": false
+  },
+  "target": {
+    "name": "CalcificationRegion",
+    "unit": "annotated region in one mammography image",
+    "individual_punctum_segmentation": false,
+    "microcalcification_subtype_mapping": "clinical review required; preserve original morphology labels",
+    "coannotated_mass_policy": "retain calcification target; independent labels",
+    "unknown_annotation_policy": "unknown is not negative"
+  },
+  "model": {
+    "baseline": "torchvision.fcos_resnet50_fpn",
+    "initialization": "strict owned generic FCOS checkpoint, separately copied candidate",
+    "clean_lineage_comparator": "new FCOS head with documented ImageNet-pretrained ResNet backbone; no unknown mammography training history",
+    "foreground_channels": 1,
+    "foreground_label_index": 0,
+    "alternative": "compare P2/high-resolution FPN after data baseline",
+    "inference_dependency_on_legacy_detector": false
+  },
+  "data": {
+    "cbis_manifest": "protected-data/cbis-calcification-v1.jsonl",
+    "vindr_manifest": "protected-data/calcification-image-targets-v2.jsonl",
+    "cbis_input": "converted JPEG 8-bit; research candidate pending quality/alignment review",
+    "vindr_input": "native DICOM preferred; pin identical training/inference transform",
+    "label_harmonization": "CBIS all annotated calcification regions and VinDr suspicious regions remain distinct",
+    "split_unit": "CBIS patient; VinDr study proxy until person linkage is verified",
+    "reserved_people": "union of original CBIS Mass and Calcification test people",
+    "quarantine_policy": "unresolved geometry or identity retained outside training",
+    "duplicate_policy": "derived views/crops/copies stay in the source-person partition",
+    "negative_review": "No Finding in VinDr does not prove absence of benign calcifications"
+  },
+  "training_experiments": [
+    {
+      "id": "C1",
+      "input": "native 1024x1024 patches; no resize to 512",
+      "batch_size_pilot": 1,
+      "gradient_accumulation": 4,
+      "optimizer": "AdamW",
+      "learning_rate_pilot": 0.00001,
+      "precision": "CUDA mixed precision after numerical smoke",
+      "start": "reviewed CBIS regions; all boxes intersecting a crop tracked",
+      "sampling": "positive / reviewed hard-negative / reviewed normal candidates 50/25/25",
+      "crop_boundary": "reject ambiguous partial annotations; never drop visible findings into negatives",
+      "early_stopping": "validation lesion sensitivity at fixed false-positive budget; not training loss alone",
+      "promotion": "none without complete-image evaluation and domain-transfer evidence"
+    },
+    {
+      "id": "C2",
+      "depends_on": "C1 baseline receipt",
+      "input": "native 1024x1024 patch branch plus whole-image context",
+      "purpose": "support large clusters and preserve micro-detail"
+    },
+    {
+      "id": "C3",
+      "depends_on": "CBIS baseline and label harmonization review",
+      "purpose": "fine-tune on VinDr suspicious regions; retain separate source evaluation"
+    }
+  ],
+  "evaluation": {
+    "selection": "full validation images, label-blind overlapping windows",
+    "primary": "lesion sensitivity at 0.5, 1 and 2 false-positive boxes per image",
+    "secondary": ["FROC", "precision-recall", "typed end-to-end matches", "latency", "peak VRAM"],
+    "strata": ["source", "morphology", "size", "density", "with/without mass"],
+    "threshold_fit": "validation/calibration only",
+    "confidence_intervals": "bootstrap by patient; study proxy explicitly marked where unavoidable",
+    "publisher_test": "VinDr previously inspected; do not claim untouched qualification",
+    "clinical_qualification": "independent digital-mammography data required"
+  },
+  "runtime_contract": {
+    "route": "authenticated Eagle Eye Server",
+    "request": "one Breast request invokes calcification and general-lesion branches",
+    "merge": "common original-image coordinates; calibrated label-specific merging",
+    "multi_label": "Mass and CalcificationRegion may coexist",
+    "unavailable": "explicit branch failure; never guessed No Finding",
+    "classifier_retraining": "separate morphology/context experiment after localization baseline",
+    "production_integration": "pending qualification; existing runtime unchanged"
+  }
+}

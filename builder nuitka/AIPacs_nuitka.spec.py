@@ -1,4 +1,4 @@
-"""AIPacs — Nuitka build specification (complete).
+"""AIPacs â€” Nuitka build specification (complete).
 
 This is the single source of truth for the *simple / monolithic* Nuitka build,
 driven by ``build_nuitka.py`` at the project root:
@@ -17,10 +17,10 @@ NOTE ON SEPARATION OF CONCERNS
 ------------------------------
 There are two Nuitka entry points in this repo, and they do NOT overlap:
 
-* ``build_nuitka.py`` + this spec  → the simple, monolithic standalone build
+* ``build_nuitka.py`` + this spec  â†’ the simple, monolithic standalone build
   (everything bundled into one ``dist`` tree). Best for a quick, reproducible,
   hard-to-reverse-engineer executable. This is what this file configures.
-* ``builder nuitka/build_nuitka_release.py`` → the staged, checkpointed release
+* ``builder nuitka/build_nuitka_release.py`` â†’ the staged, checkpointed release
   pipeline (Engine + external plugin packages + Inno Setup installer). It has
   its own inclusion logic and reads only ``LTO`` / ``ICON`` / ``ENTRY_POINT`` /
   ``OPTIONAL_DATA`` / ``NOFOLLOW_IMPORTS`` from this file.
@@ -66,7 +66,7 @@ ICON = "Qss/images/favicon.ico"
 # --------------------------------------------------------------------------- #
 # Nuitka plugins
 # --------------------------------------------------------------------------- #
-# The PySide6 plugin is mandatory — it bundles the Qt runtime, the platform
+# The PySide6 plugin is mandatory â€” it bundles the Qt runtime, the platform
 # plugins (windows/qwindows.dll), QML, and the shiboken bridge correctly.
 PLUGINS = [
     "pyside6",
@@ -78,7 +78,7 @@ PLUGINS = [
 # PySide6 is handled by build_nuitka.py directly; these are the extra packages
 # whose *data files* (fonts, resources) must ship or the app misbehaves.
 PACKAGE_DATA = [
-    "qtawesome",       # icon fonts — missing => blank toolbar icons
+    "qtawesome",       # icon fonts â€” missing => blank toolbar icons
     "Custom_Widgets",  # QSS/JSON theme assets used by the custom widgets
 ]
 
@@ -116,7 +116,7 @@ INCLUDE_PACKAGES = [
     # NOTE: do NOT blanket-include the whole `modules` package. It does a
     # recursive filesystem walk that sweeps in the 789 MB Advanced 3D Slicer
     # vendored CPython (build/python-install/Lib/test/...) and crashes Nuitka
-    # 4.0.8 (listcomp_2__.0_clone) — and --nofollow-import-to does NOT override
+    # 4.0.8 (listcomp_2__.0_clone) â€” and --nofollow-import-to does NOT override
     # that walk. Instead, Nuitka follows the modules actually imported from
     # main.py, and we force-include the specific dynamically-loaded subpackages
     # below (zeta_mpr, orthogonal, EchoMind). Add more here if a runtime
@@ -150,12 +150,14 @@ FORCED_IMPORTS = [
     "aipacs_runtime",
     "base64",
     "PacsClient.utils.data_paths",
+    "PacsClient.utils.dicom_reader",
     # Database
     "database",
     "database.core",
     "database.manager",
     # PySide6 essentials (the plugin covers the runtime; these guarantee the
     # Python bindings are compiled in even if only imported lazily)
+    "PySide6.QtTextToSpeech",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
@@ -203,7 +205,7 @@ FORCED_IMPORTS = [
     "pydicom.encoders",
     "pydicom.pixel_data_handlers",
     "pydicom.pixel_data_handlers.numpy_handler",
-    # Compressed-DICOM decode handlers (must all ship — see DIST_METADATA note)
+    # Compressed-DICOM decode handlers (must all ship â€” see DIST_METADATA note)
     "pydicom.pixel_data_handlers.pylibjpeg_handler",
     "pydicom.pixel_data_handlers.pillow_handler",
     "pydicom.pixel_data_handlers.rle_handler",
@@ -307,11 +309,11 @@ NOFOLLOW_IMPORTS = list(EXCLUDES)
 # (source_relative_to_project_root, destination_relative_to_exe). Only entries
 # that actually exist on disk are emitted (build_nuitka.py guards with is_dir/
 # is_file), so absent optional files are skipped cleanly.
-# SECURITY — build-time sanitization of centre-specific config (2026-07-09).
+# SECURITY â€” build-time sanitization of centre-specific config (2026-07-09).
 # The repo's config/ holds the DEVELOPER centre's real values (PACS host IPs, AE
 # titles, reception API URL, EchoMind api_key, Google OAuth client_secret), and
 # aipacs_runtime.seed_user_config_defaults() copies the BUNDLED config into every
-# client's roaming config on first run — so shipping config/ verbatim seeded the
+# client's roaming config on first run â€” so shipping config/ verbatim seeded the
 # dev centre's configuration (and secrets) into every client site. Package a
 # SANITIZED copy instead (application defaults kept, centre-specific values
 # emptied). The developer's own config/ is only READ, never modified. Mirrors the
@@ -332,7 +334,7 @@ def _sanitized_config_rel() -> str:
     leaks = scan_for_center_values(out)
     if leaks:
         raise SystemExit(
-            "[nuitka-spec] ABORT — centre-specific values would be packaged: %r" % (leaks,)
+            "[nuitka-spec] ABORT â€” centre-specific values would be packaged: %r" % (leaks,)
         )
     return _CLEAN_CONFIG_REL
 
@@ -341,7 +343,7 @@ DATA_DIRS = [
     ("PacsClient", "PacsClient"),
     ("Fonts", "Fonts"),
     ("Qss", "Qss"),          # icons + images live here
-    # NOT ("config", "config") — see _sanitized_config_rel() above.
+    # NOT ("config", "config") â€” see _sanitized_config_rel() above.
     (_sanitized_config_rel(), "config"),
     # EchoMind Secretary non-python data (catalog + prompts); without these the
     # frozen Secretary finds an EMPTY catalog and LLM-fallback commands fail.
@@ -356,9 +358,11 @@ DATA_DIRS = [
 # Single-file / optional data. build_nuitka.py places a file at
 # ``dest/basename`` (or at the exe root when dest == ".").
 OPTIONAL_DATA = [
+    # The external Slicer interpreter needs the physical correction UI script.
+    ("modules/ai_imaging/eagle_eye_brain/manual_slicer.py", "modules/ai_imaging/eagle_eye_brain"),
     ("modules/ai_imaging/eagle_eye_brain/slicer_worker.py", "modules/ai_imaging/eagle_eye_brain"),
     ("modules/EchoMind/secretary/module_map.yaml", "modules/EchoMind/secretary"),
-    # Software-OpenGL (Mesa) fallback DLLs — required on machines without a GPU
+    # Software-OpenGL (Mesa) fallback DLLs â€” required on machines without a GPU
     # OpenGL driver so VTK/Qt still render. Copied next to the exe.
     ("graphics_runtime/opengl32sw.dll", "."),
     ("graphics_runtime/osmesa.dll", "."),

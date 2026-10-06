@@ -15,7 +15,7 @@ import logging
 import os
 from typing import Any, Callable, Optional
 
-from .command_envelope import CommandPlan, CommandResult
+from .command_envelope import CommandPlan, CommandResult, validate_action_entities
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +28,7 @@ _PERMISSIONS_ENABLED = os.environ.get("AIPACS_AGENT_PERMISSIONS", "1").strip() !
 
 
 def _permission_decision(plan: "CommandPlan", state: dict):
-    """Best-effort permission decision for a dispatch.
-
-    Returns a ``permissions.Decision`` or ``None``. Returning ``None`` (also on
-    any internal error) means "do not gate" — the gate is a safety ADD-ON and
-    must never wedge a legitimate clinical action because of a bug in the policy
-    layer (fail-open on internal error; enforcement is opt-in via agent_mode).
-    """
+    """Permission errors stop scoped agent dispatch; legacy callers stay compatible."""
     try:
         from . import permissions
         return permissions.decide(
@@ -44,7 +38,12 @@ def _permission_decision(plan: "CommandPlan", state: dict):
             plan_needs_confirmation=bool(getattr(plan, "needs_confirmation", False)),
         )
     except Exception:
-        logger.exception("AdapterRegistry: permission check failed — allowing")
+        logger.exception("AdapterRegistry: permission check failed")
+        if state.get("agent_mode"):
+            from types import SimpleNamespace
+            return SimpleNamespace(allowed=False, requires_confirmation=False,
+                side_effect="unknown", mode=str(state["agent_mode"]),
+                reason="permission policy unavailable", error_code="POLICY_UNAVAILABLE")
         return None
 
 
@@ -142,6 +141,11 @@ class AdapterRegistry:
             )
 
         adapter_name, method = self._actions[plan.action]
+        try:
+            plan = plan.model_copy(update={"entities": validate_action_entities(plan.action, plan.entities)})
+        except ValueError:
+            return CommandResult(ok=False, action=plan.action, error_code="INVALID_ARGUMENTS",
+                                 message="Arguments do not match the action schema.")
 
         # ── Permission / side-effect / confirmation gate (P0 safety layer) ──
         # INERT for the legacy/unscoped caller (no ``state['agent_mode']`` →

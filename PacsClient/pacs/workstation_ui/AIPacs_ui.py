@@ -742,6 +742,16 @@ class ControlPanelWindow(object):
         # emits viewerConfigReady.
         _t = time.perf_counter()
         self.settings_widget = settings_ui.SettingsTabWidget()
+        from PacsClient.utils.assistant_settings_service import AssistantSettingsService
+        self.assistant_settings_service = AssistantSettingsService(
+            self.theme_manager,
+            lambda: getattr(getattr(self.settings_widget, 'viewer_config', None),
+                            'storage_cleanup_panel', None), parent=self.settings_widget)
+        self.home_widget.assistant_settings_host = self
+        self.assistant_settings_service.modalitiesChanged.connect(
+            self.home_widget.patient_search_widget.reload_modalities)
+        self.assistant_settings_service.aiPreferencesChanged.connect(
+            self.settings_widget.apply_assistant_ai_receipt)
         self.settings_widget.viewerConfigReady.connect(self._wire_modality_grid_config_signal)
         self.mainPages.addWidget(self.settings_widget)
         logger.warning(
@@ -1060,6 +1070,28 @@ class ControlPanelWindow(object):
 
     def _show_settings_server_page(self):
         self.mainPages.setCurrentIndex(1)
+
+    def open_assistant_settings(self, section):
+        self.mainPages.setCurrentWidget(self.settings_widget)
+        return self.settings_widget.open_assistant_section(section)
+
+    def prepare_personal_ai_configuration(self):
+        widget = self.settings_widget.echomind_settings
+        if widget is None:
+            return False
+        # Reveal local entry without changing backend_combo (which persists
+        # provider selection immediately). Saving/testing stays user-owned.
+        widget.openai_group.setVisible(True)
+        widget.prompt_group.setVisible(True)
+        widget.openai_api_key_input.setFocus()
+        from PySide6.QtWidgets import QScrollArea
+        parent = widget.openai_group.parent()
+        while parent is not None:
+            if isinstance(parent, QScrollArea):
+                parent.ensureWidgetVisible(widget.openai_group)
+                break
+            parent = parent.parent()
+        return True
 
     def open_data_analysis(self):
         """Open data analysis dashboard and refresh metrics.

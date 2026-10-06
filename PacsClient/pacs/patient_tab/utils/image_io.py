@@ -150,7 +150,8 @@ def _select_dominant_size_dicom_files(dicom_names):
 
 def _execute_series_reader(dicom_names, use_gdcm: bool = False):
     reader = sitk.ImageSeriesReader()
-    reader.MetaDataDictionaryArrayUpdateOff()
+    # Capture geometry from the exact decoded order, not a later directory sort.
+    reader.MetaDataDictionaryArrayUpdateOn()
     reader.SetFileNames([str(p) for p in dicom_names])
     if use_gdcm:
         try:
@@ -158,6 +159,8 @@ def _execute_series_reader(dicom_names, use_gdcm: bool = False):
         except Exception:
             pass
     image = reader.Execute()
+    from .mpr_stack_geometry import record_reader_geometry
+    record_reader_geometry(reader, image)
     del reader
     return image
 
@@ -2153,7 +2156,7 @@ def get_itk_image_fast_first(dicom_names):
 
         # برای سری‌های کوچک (کمتر از 10 فایل)، روش معمولی سریع‌تر است
         if len(dicom_names) < 10:
-            return reader.Execute()
+            return _execute_series_reader(dicom_names)
 
         # برای سری‌های بزرگ‌تر، همان مسیر استاندارد پایدار را استفاده می‌کنیم
         return get_itk_image(dicom_names)

@@ -195,7 +195,7 @@ def test_reference_ui_worker_routes_remotely_and_preserves_content(monkeypatch, 
         calls.append(text)
         return {'content': content, 'usage': {'total_tokens': 7}}
     namespace = dict(remote_route=True, remote_backend=SimpleNamespace(**{mode.lower(): request}),
-                     sent_text='Synthetic reference question')
+                     sent_text='Synthetic reference question', reference_text='Synthetic reference question')
     exec(compile(ast.Module(body=[worker], type_ignores=[]), '<worker>', 'exec'), namespace)
     result = namespace['work']()
     assert calls == ['Synthetic reference question']

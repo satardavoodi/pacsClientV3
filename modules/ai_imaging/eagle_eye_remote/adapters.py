@@ -25,7 +25,8 @@ def execute(request, records, output, cancel=None):
     if module in ('breast', 'bone-age'):
         from ..eagle_eye_engines.service import run
         result = run(module, [r['path'] for r in records], study, output,
-                     sex=params.get('sex'), threshold=params.get('threshold', .45), cancelled=cancel.is_set)
+                     sex=params.get('sex'), sex_provenance=params.get('sex_provenance'),
+                     threshold=params.get('threshold', .45), cancelled=cancel.is_set)
         result['artifact_directory'] = result['job_directory']
         if module == 'breast':
             from .artifacts import prepare_breast_tables

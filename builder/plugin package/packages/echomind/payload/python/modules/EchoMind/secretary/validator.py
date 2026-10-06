@@ -27,16 +27,47 @@ _ALLOWED_ACTIONS = {
     "select_and_download",
 }
 
-# ── CommandBus bridge (2026-06-06) ──────────────────────────────────────────
+# ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ CommandBus bridge (2026-06-06) ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬ط£آ¢أ¢â‚¬â€Œأ¢â€ڑآ¬
 # Actions executed by routing the plan to the app's CommandBus (bus_factory
 # adapters) instead of SecretaryExecutor's own handlers. These were previously
-# rejected here with ERR_INVALID_ACTION even though the bus implements them —
+# rejected here with ERR_INVALID_ACTION even though the bus implements them ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ
 # the voice assistant was hard-capped at the home-panel set. Entities for
 # these actions are validated leniently (an object with string keys); every
 # bus adapter performs its own typed validation and returns a recoverable
 # error envelope (e.g. MODULE_NOT_REGISTERED, MISSING_MODULE).
 # ``close_patient_tab`` is deliberately ABSENT (destructive; test-server only).
+from modules.ai_imaging.eagle_eye_remote.secretary.validation.settings_controls import SETTINGS_CONTROL_MODELS, SETTINGS_CONTROL_WRITES
 _BUS_ALLOWED_ACTIONS = {
+    'get_ai_settings',
+    'verify_eagle_eye_connection',
+    'set_voice_to_text_preferences',
+    'set_ai_proxy_preferences',
+    'set_personal_ai_preferences',
+    'set_eagle_eye_connection',
+    'get_settings_snapshot',
+    'verify_settings_server',
+    'clone_settings_server',
+    'remove_settings_modalities',
+    'set_settings_tool_style',
+    'set_settings_filter_parameter',
+    'advanced_search_patients', 'select_patients', 'selection_status', 'download_selection', 'download_selection_status', 'film_selection',
+    'media_drives', 'media_status', 'prepare_selection_media', 'write_selection_media', 'cancel_media',
+    "get_ui_control_catalog", "inspect_ui_controls", "capture_ui_context", "ui_context_status",
+    "get_control_capabilities",
+    "get_recent_function_results",
+    "collect_support_diagnostics", "support_operation_status", "get_visible_app_errors",
+    "open_support_issue", "support_issue_status", "prepare_help_ticket", "submit_help_ticket", "help_ticket_status", "get_loaded_study_summary", "get_tutorial_catalog", "show_tutorial",
+    "prepare_patient_comment", "sync_patient_comment", "patient_comment_status",
+    "prepare_patient_voice", "start_patient_voice", "pause_patient_voice",
+    "resume_patient_voice", "stop_patient_voice", "patient_voice_status", "send_patient_voice",
+    # Shared settings and study-scoped Eagle Eye actions (2026-10-01).
+    "open_settings", "get_settings_capabilities", "get_theme", "set_theme",
+    "diagnose_resources", "release_memory", "get_viewer_preferences", "set_viewer_preferences", "settings_operation_status", "request_storage_cleanup",
+    "configure_personal_ai", "configure_image_quality", "get_storage_cleanup_status",
+    "read_patients", "search_patients", "get_viewport_context", "capture_viewport",
+    "activate_tool", "measure_distance", "get_measurements",
+    "eagle_eye_open", "eagle_eye_series", "eagle_eye_select_series",
+    "eagle_eye_functions", "eagle_eye_run", "eagle_eye_status", "eagle_eye_inputs",
     # modules
     "open_module",
     "list_modules",
@@ -51,14 +82,14 @@ _BUS_ALLOWED_ACTIONS = {
     "check_download_status",
     "list_downloads",
     "download_statistics",
-    # viewer — read-only
+    # viewer ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ read-only
     "get_active_tab",
     "list_open_tabs",
     "get_thumbnails_data",
     "get_active_series",
     "get_multistudy_info",
     "get_series_info",
-    # viewer — safe writes (series/tab/slice navigation; nothing destructive)
+    # viewer ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ safe writes (series/tab/slice navigation; nothing destructive)
     "change_series",
     "query_viewport_state",
     "switch_tab",
@@ -69,14 +100,14 @@ _BUS_ALLOWED_ACTIONS = {
     "transcribe_voice",
     "generate_report",
     "send_report_to_pacs",
-    # Web Browser module (2026-06-11) — Google search / URL / navigation
+    # Web Browser module (2026-06-11) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Google search / URL / navigation
     "open_browser",
     "web_search",
     "open_url",
     "browser_back",
     "browser_forward",
     "refresh_page",
-    # Web Browser structured page tools (2026-06-27) — read / inspect / interact
+    # Web Browser structured page tools (2026-06-27) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ read / inspect / interact
     "browser_navigate",
     "browser_go_back",
     "browser_go_forward",
@@ -121,8 +152,17 @@ _ALLOWED_SOURCES = {"active_tab", "local", "server"}
 
 # Bus actions that must pass the Secretary confirmation turn ("yes") before
 # they execute. ``send_report_to_pacs`` additionally keeps the interactive
-# reception dialog inside the app — two human gates for a clinical send.
+# reception dialog inside the app ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ two human gates for a clinical send.
 _BUS_CONFIRM_REQUIRED_ACTIONS = {
+    'set_voice_to_text_preferences',
+    'set_ai_proxy_preferences',
+    'set_personal_ai_preferences',
+    'set_eagle_eye_connection',
+    'clone_settings_server',
+    'remove_settings_modalities',
+    'set_settings_tool_style',
+    'set_settings_filter_parameter',
+    'write_selection_media', 'download_selection', 'set_viewer_preferences', 'release_memory',
     "send_report_to_pacs",
 }
 
@@ -160,8 +200,8 @@ def validate_steps(steps: list) -> tuple[list, list]:
     return norm, errors
 
 _ALLOWED_ENTITY_KEYS_BY_ACTION: dict[str, set[str]] = {
-    "list_patients": {"source", "date", "modality", "patient_name", "patient_code"},
-    "open_patient": {"source", "patient_code", "resolved_patient"},
+    "list_patients": {"source", "date", "modality", "patient_name", "patient_code", "body_part", "age_min", "age_max", "date_from", "date_to", "patient_ids"},
+    "open_patient": {"source", "patient_code", "resolved_patient", "row_index", "list_id", "required_voice_presence"},
     "download_patient": {
         "source",
         "patient_code",
@@ -290,10 +330,50 @@ def validate_plan_semantics(plan: SecretaryActionPlan) -> list[ValidationError]:
 
     action = str(plan.get("action") or "").strip()
 
-    # CommandBus-bridged actions: lenient semantics — the action name must be
+    # CommandBus-bridged actions: lenient semantics ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the action name must be
     # known and entities must be an object; per-entity typing is the owning
     # adapter's job (each returns a typed, recoverable error envelope).
     if action in _BUS_ALLOWED_ACTIONS:
+        from modules.ai_imaging.eagle_eye_remote.secretary.validation.ui_controls import UI_CONTROL_MODELS
+        if action in UI_CONTROL_MODELS:
+            try:
+                UI_CONTROL_MODELS[action].model_validate(plan.get("entities") or {})
+            except ValueError:
+                return [ValidationError(code=ERR_INVALID_VALUE, field='entities', message='Invalid UI observation arguments.')]
+        settings_fields = {
+            'get_control_capabilities': set(),
+            'get_recent_function_results': set(),
+            'collect_support_diagnostics': {'include_windows_events'},
+            'open_support_issue': {'description'}, 'support_issue_status': set(),
+            'prepare_help_ticket': {'description'}, 'submit_help_ticket': set(), 'help_ticket_status': set(),
+            'get_ui_control_catalog': {'area','offset','limit'}, 'inspect_ui_controls': set(),
+            'capture_ui_context': set(), 'ui_context_status': {'snapshot_id'},
+            'get_loaded_study_summary': set(), 'get_tutorial_catalog': set(), 'show_tutorial': {'tutorial_id'},
+            'support_operation_status': {'operation_id'}, 'get_visible_app_errors': set(),
+            'prepare_patient_comment': {'study_uid', 'comment'},
+            'sync_patient_comment': {'draft_id'}, 'patient_comment_status': {'operation_id'},
+            'prepare_patient_voice': {'study_uid'},
+            **{name:{'recording_id'} for name in ('start_patient_voice', 'pause_patient_voice',
+                'resume_patient_voice', 'stop_patient_voice', 'patient_voice_status', 'send_patient_voice')},
+            'open_settings': {'section'}, 'get_settings_capabilities': set(),
+            'get_theme': set(), 'set_theme': {'theme'}, 'diagnose_resources': set(),
+            'release_memory': set(), 'get_viewer_preferences': set(), 'set_viewer_preferences': {'backend','gpu_boost'},
+            'settings_operation_status': {'operation_id'},
+            **{name:set(model.model_fields) for name,model in SETTINGS_CONTROL_MODELS.items()},
+            'request_storage_cleanup': {'category', 'strategy', 'value'}, 'get_storage_cleanup_status': set(), 'configure_personal_ai': set(),
+            'configure_image_quality': {'section'},
+        }
+        if action in SETTINGS_CONTROL_MODELS:
+            try:
+                SETTINGS_CONTROL_MODELS[action].model_validate(plan.get('entities') or {})
+            except Exception:
+                return [ValidationError(code=ERR_INVALID_ENTITY, field='entities',
+                    message='Invalid bounded settings arguments.')]
+        if action in settings_fields:
+            values = plan.get('entities') or {}
+            if set(values) - settings_fields[action]:
+                return [ValidationError(code=ERR_UNSUPPORTED_ENTITY, field='entities',
+                    message='Unsupported settings arguments. Credentials and paths must not enter command plans.')]
         for k in (plan.get("entities") or {}).keys() if isinstance(plan.get("entities"), dict) else []:
             if not isinstance(k, str):
                 errs.append(
@@ -397,7 +477,17 @@ def validate_plan_semantics(plan: SecretaryActionPlan) -> list[ValidationError]:
 
     # patient_code validation for open action
     if action == "open_patient":
-        if not isinstance(entities.get("resolved_patient"), dict):
+        if entities.get('required_voice_presence') is not None:
+            if entities['required_voice_presence'] not in ('present','absent') or 'row_index' not in entities:
+                errs.append(ValidationError(code=ERR_INVALID_VALUE, field='entities.required_voice_presence',
+                                            message='Voice-conditioned opening requires present/absent and a bound row.'))
+        if "row_index" in entities:
+            index = entities["row_index"]
+            if (type(index) is not int or not 1 <= index <= 10000
+                    or "patient_code" in entities or "resolved_patient" in entities):
+                errs.append(ValidationError(code=ERR_INVALID_VALUE, field="entities.row_index",
+                                            message="row_index must be an integer from 1 to 10000 and the only patient selector."))
+        elif not isinstance(entities.get("resolved_patient"), dict):
             code = str(entities.get("patient_code") or "").strip()
             if not code:
                 errs.append(
@@ -436,6 +526,10 @@ def validate_plan(plan: Any) -> tuple[SecretaryActionPlan | None, list[Validatio
         entities["source"] = str(entities.get("source") or "").strip().lower()
     normalized["entities"] = entities  # type: ignore[typeddict-item]
 
+    if normalized["action"] in {*SETTINGS_CONTROL_WRITES, "set_theme", "release_memory", "set_viewer_preferences", "request_storage_cleanup", "configure_personal_ai",
+                                 "sync_patient_comment", "send_patient_voice",
+                                 "eagle_eye_open", "eagle_eye_select_series", "eagle_eye_run", "eagle_eye_inputs"}:
+        normalized["needs_confirmation"] = True
     semantic_errors = validate_plan_semantics(normalized)
     if semantic_errors:
         return None, semantic_errors

@@ -141,3 +141,22 @@ def test_remote_url_and_git_errors_never_expose_embedded_credentials():
     assert displayed == "https://github.com/vahid-ino/ai-pacs"
     assert secret not in displayed
     assert secret not in manager._redacted_message(f"fatal: https://{secret}@github.com failed")
+
+
+def test_secret_scan_does_not_treat_multitask_directory_as_api_key(release_repo: Path):
+    (release_repo / "research.md").write_text(
+        "Protected run: P/multitask-typing-regularized-20261005\n", encoding="utf-8"
+    )
+    run_git(release_repo, "add", "research.md")
+    assert manager._secret_findings(release_repo) == []
+
+
+@pytest.mark.parametrize("prefix", ["", 'TOKEN = "', "key:", "key=", "/"])
+@pytest.mark.parametrize("project_key", [False, True])
+def test_secret_scan_retains_standalone_openai_key_detection(release_repo: Path, prefix, project_key):
+    token = "s" + "k-" + ("proj-" if project_key else "") + "A" * 40
+    (release_repo / "unsafe.txt").write_text(prefix + token + "\n", encoding="utf-8")
+    run_git(release_repo, "add", "unsafe.txt")
+    findings = manager._secret_findings(release_repo)
+    assert findings == [{"path": "unsafe.txt", "line": 1, "kind": "openai-api-key"}]
+    assert token not in json.dumps(findings)

@@ -90,11 +90,18 @@ def radiograph(module, image, cancel, *, region=None, model='isbi'):
     return bind_result(result, image, module)
 
 
-def study(module, study_uid, *, sex=None, threshold=.45, cancelled=lambda: False):
+def study(module, study_uid, *, sex=None, threshold=.45, cancelled=lambda: False, sex_provenance=None):
     from PacsClient.utils.data_paths import ATTACHMENTS_DIR
-    normalized_sex = {'m': 'M', 'male': 'M', '0': 'M', 'f': 'F', 'female': 'F', '1': 'F'}.get(str(sex or '').lower())
+    from .demographics import normalize
+    normalized_sex = normalize(sex)
     params = {'threshold': threshold} if module == 'breast' else {'sex': normalized_sex}
-    result = Client().analyze(module, study_uid, {}, params, ATTACHMENTS_DIR / study_uid,
+    if module == 'bone-age' and sex_provenance is not None:
+        params['sex_provenance'] = sex_provenance
+    client = Client()
+    if sex_provenance is not None and module == 'bone-age':
+        if client.json('/v1/capabilities').get('bone_age_demographic_confirmation') != 1:
+            raise ValueError('Update the Eagle Eye server to support Reception and physician sex confirmation.')
+    result = client.analyze(module, study_uid, {}, params, ATTACHMENTS_DIR / study_uid,
                               cancel=CancelFlag(cancelled))
     if module == 'breast':
         # Existing MG review widgets address CSV files relative to the study root.

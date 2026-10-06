@@ -90,7 +90,7 @@ class SecretaryPopup(QWidget):
             pass
         root.addWidget(self.inner, 1)
 
-        self.setMinimumWidth(330)
+        self.setMinimumWidth(0)
         self._apply_style()
 
     # ── styling (V2 tokens with safe fallback) ──────────────────────────
@@ -187,6 +187,7 @@ class SecretaryPopup(QWidget):
         if inst.isVisible():
             inst.request_close()
             return inst
+        inst._match_home_companion(main_window)
         inst._position_over(main_window)
         inst.show()
         inst.raise_()
@@ -195,6 +196,23 @@ class SecretaryPopup(QWidget):
         except Exception:
             pass
         return inst
+
+    def _match_home_companion(self, main_window: Optional[QWidget]) -> None:
+        """Use the actual Home companion size instead of the popup size hint."""
+        companions = main_window.findChildren(QWidget, "secretaryButtonWidget") if main_window is not None else []
+        home = next((item for item in companions if item is not self.inner
+                     and not getattr(item, "_in_global_popup", False)), None)
+        width, height = (home.width(), home.height()) if home is not None else (294, 240)
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, max(1, available.width() - 20))
+            height = min(height, max(1, available.height() - 50))
+        self.inner.setFixedSize(width, height)
+        margins = self.layout().contentsMargins()
+        self.setFixedSize(width + margins.left() + margins.right(),
+                          height + margins.top() + margins.bottom()
+                          + self._title_bar.sizeHint().height() + self.layout().spacing())
 
     def _position_over(self, main_window: Optional[QWidget]) -> None:
         """Lower-left of the main window (mirrors the home-page placement),

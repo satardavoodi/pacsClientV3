@@ -1,0 +1,56 @@
+[
+  {
+    "id": "ask_voice_counts",
+    "mode": "ask",
+    "persona": "Radiologist",
+    "request": "How many loaded MRI studies dated 2026-10-04 have a voice recording, and how many are verified without one?",
+    "expected_action": "get_loaded_study_summary",
+    "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_summary_counts_unknown_separately_and_never_claims_personal_authorship",
+    "execution_scope": "existing_guard_synthetic_not_native"
+  },
+  {
+    "id": "guide_report_indicator",
+    "mode": "guide",
+    "persona": "Radiologist",
+    "request": "How do I tell whether a patient report is completed? Explain the actual status icon.",
+    "expected_action": "get_tutorial_catalog",
+    "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_guide_explains_actual_report_and_voice_indicators",
+    "execution_scope": "existing_guard_synthetic_not_native"
+  },
+  {
+    "id": "act_first_without_voice",
+    "mode": "act",
+    "persona": "Radiologist",
+    "request": "Open the first study in my current list that is verified without a voice recording.",
+    "expected_action": "read_patients then bound open_patient",
+    "guard": "tests/code/echomind/test_patient_workflow_facts.py::test_act_opens_original_first_verified_absent_row_from_bound_receipt",
+    "execution_scope": "existing_guard_synthetic_not_native"
+  },
+  {
+    "id": "guide_open_patient",
+    "mode": "guide",
+    "persona": "Radiologist",
+    "request": "Teach me how to open a patient study and highlight the relevant list.",
+    "expected_action": "show_tutorial",
+    "guard": "tests/code/echomind/test_secretary_guidance.py::test_tutorial_highlight_requires_visible_target",
+    "execution_scope": "existing_guard_synthetic_not_native"
+  },
+  {
+    "id": "cleanup_confirmation",
+    "mode": "act",
+    "persona": "Radiologist",
+    "request": "Remove all local Patient Data Folder content, after showing the scope and obtaining local confirmation.",
+    "expected_action": "request_storage_cleanup",
+    "guard": "tests/code/echomind/test_secretary_settings_examples.py::test_patient_folder_cleanup_waits_for_local_confirmation_and_terminal_receipt",
+    "execution_scope": "existing_guard_synthetic_not_native"
+  },
+  {
+    "id": "new_memory",
+    "mode": "act",
+    "persona": "Radiologist",
+    "request": "Start a new conversation memory, then verify message cycles count 1 through 10 and roll over without mixing prior context.",
+    "expected_action": "existing_local_new_memory_control",
+    "guard": "tests/code/echomind/test_secretary_memory_cycles.py::test_cycles_rollover_new_and_independent_numbers",
+    "execution_scope": "existing_guard_synthetic_not_native"
+  }
+]

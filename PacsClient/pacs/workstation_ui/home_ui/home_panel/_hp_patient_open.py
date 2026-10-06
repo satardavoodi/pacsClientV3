@@ -1829,6 +1829,8 @@ class _HPPatientOpenMixin:
         Called from MainWindowWidget.closeEvent before the widget is destroyed.
         Shuts down the thread pool and cancels outstanding background tasks.
         """
+        if hasattr(self, 'workflow_realtime'):
+            self.workflow_realtime.close()
         # Shutdown thread pool
         if hasattr(self, 'thread_pool') and self.thread_pool is not None:
             self.thread_pool.shutdown(wait=False)

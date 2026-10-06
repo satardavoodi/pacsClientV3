@@ -3387,7 +3387,8 @@ class ToolbarManager:
             self._audio_counter_cache_count = int(count)
 
         mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
-        mic_btn.setCount(count)
+        server_count = self.patient_widget.property('serverVoiceCount')
+        mic_btn.setCount(max(count, server_count) if type(server_count) is int else count)
 
         # Update hamburger icon color: green when recordings exist, default gray when empty
         menu_btn = getattr(self, '_mic_menu_btn', None)
@@ -3560,6 +3561,11 @@ class ToolbarManager:
         return None
 
     def _show_audio_dropdown(self, button):
+        controller = getattr(self.patient_widget, '_case_realtime', None)
+        server_count = self.patient_widget.property('serverVoiceCount')
+        if controller and type(server_count) is int and server_count > 0:
+            if controller.open_resources('audio'):
+                return
         """Show dropdown menu for saved audio recordings"""
         print("[DEBUG] _show_audio_dropdown called!")
         study_uid = self._get_study_uid()
@@ -6274,13 +6280,35 @@ class ToolbarManager:
                 )
                 return None, {"source_backend": source_backend, "reason": blocked_reason}
 
+        from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import geometry_status
+        from modules.mpr.zeta_mpr._mpr_canonicalize import canonicalize_enabled
+        verify_geometry = canonicalize_enabled()
+        rebuild_geometry = False
+        if not needs_full_vtk_for_mpr and verify_geometry:
+            geometry = geometry_status(vtk_image_data)
+            if geometry == "missing":
+                # Pre-receipt caches have no evidence of actual pixel order.
+                # Rebuild once in the existing MPR loader, never infer from UI order.
+                needs_full_vtk_for_mpr = True
+                rebuild_geometry = True
+            elif geometry != "valid":
+                self._emit_mpr_launch_route(
+                    source_backend=source_backend, mpr_path=mpr_path,
+                    series_number=series_number, status="blocked", reason="invalid_buffer_geometry",
+                )
+                return None, {"source_backend": source_backend, "reason": "invalid_buffer_geometry"}
+
         if needs_full_vtk_for_mpr:
             # S4b-2: route the full-volume build through the shared VtkVolumeService — built ONCE per
             # (study_uid, series_uid) and reused across MPR/Dental opens (removes the
             # _load_full_vtk_for_mpr double-build). Flag AIPACS_VTK_VOLUME_CACHE off (default) → calls
             # _load_full_vtk_for_mpr directly = byte-identical; AIPACS_VTK_VOLUME_CACHE_SHADOW measures
             # without caching. Design: docs/plans/architecture/S4B_VTK_CACHE_ARCHITECTURE_2026-06-26.md.
+            built_fresh = False
+            full_vtk = None
             def _build_full_vtk():
+                nonlocal built_fresh
+                built_fresh = True
                 return self._load_full_vtk_for_mpr(
                     series_number=series_number,
                     preferred_series_path=source_series_path,
@@ -6289,13 +6317,17 @@ class ToolbarManager:
                 from PacsClient.utils.vtk_volume_service import (
                     build_or_get_mpr_volume, series_uid_from_meta, study_uid_from_meta,
                 )
-                full_vtk = build_or_get_mpr_volume(
+                full_vtk = None if rebuild_geometry else build_or_get_mpr_volume(
                     study_uid_from_meta(thumb_series_meta),
                     series_uid_from_meta(thumb_series_meta),
                     _build_full_vtk, source="mpr_full_rebuild", logger=logger,
                 )
             except Exception:
-                full_vtk = _build_full_vtk()      # never block MPR on the cache layer
+                if not built_fresh:
+                    full_vtk = _build_full_vtk()  # cache failure, not a failed decode retry
+            if not built_fresh and (rebuild_geometry or (verify_geometry and full_vtk is not None and geometry_status(full_vtk) == "missing")):
+                # Bypass a legacy cached artifact once; never retry in a loop.
+                full_vtk = _build_full_vtk()
             if full_vtk is None:
                 # Distinguish a multi-frame gate block (a classified, expected
                 # limitation) from a generic volume-load failure so the user gets
@@ -6314,6 +6346,12 @@ class ToolbarManager:
                     "reason": _reason_code,
                     "multiframe_reason": _mf_reason,
                 }
+            if verify_geometry and geometry_status(full_vtk) != "valid":
+                self._emit_mpr_launch_route(
+                    source_backend=source_backend, mpr_path=mpr_path,
+                    series_number=series_number, status="blocked", reason="invalid_buffer_geometry",
+                )
+                return None, {"source_backend": source_backend, "reason": "invalid_buffer_geometry"}
             self._emit_mpr_launch_route(
                 source_backend=source_backend,
                 mpr_path=mpr_path,
@@ -6334,6 +6372,12 @@ class ToolbarManager:
 
     @staticmethod
     def _mpr_route_block_message(reason):
+        if reason == "invalid_buffer_geometry":
+            return (
+                "MPR requires a consistent spatial image stack.\n\n"
+                "The decoded volume's slice geometry could not be verified. "
+                "Select a single spatial series and reload it. The 2D viewer remains available."
+            )
         if reason == "incomplete_source_volume":
             return (
                 "The full image volume is still loading.\n\n"

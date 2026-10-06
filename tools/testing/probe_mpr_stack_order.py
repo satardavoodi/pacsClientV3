@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import contextlib
+import io
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,11 +26,14 @@ sys.path.insert(0, str(ROOT))
 
 from modules.mpr.zeta_mpr import _mpr_canonicalize as canon
 from modules.mpr.zeta_mpr.mpr_viewer._mpr_orientation import _MprOrientationMixin
+from PacsClient.pacs.patient_tab.utils.image_io import get_itk_image
+from PacsClient.pacs.patient_tab.utils.utils import convert_itk2vtk
 
 
 def run_case(instance_sign: int, volume_sign: int) -> dict:
     with tempfile.TemporaryDirectory(prefix="mpr-synthetic-order-") as temporary:
         study_uid, series_uid = generate_uid(), generate_uid()
+        files = []
         for index in range(3):
             meta = FileMetaDataset()
             meta.TransferSyntaxUID = ExplicitVRLittleEndian
@@ -47,23 +52,21 @@ def run_case(instance_sign: int, volume_sign: int) -> dict:
             ds.InstanceNumber = index + 1
             ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
             ds.ImagePositionPatient = [0, 0, instance_sign * index * 2]
+            ds.PixelSpacing = [1, 1]
+            ds.Rows = ds.Columns = 3
+            ds.BitsAllocated = ds.BitsStored = 16
+            ds.HighBit = 15
+            ds.PixelRepresentation = ds.SamplesPerPixel = 1
+            ds.PhotometricInterpretation = "MONOCHROME2"
+            ds.PixelData = np.full((3, 3), instance_sign * index * 2, dtype=np.int16).tobytes()
             ds.save_as(path, write_like_original=False)
+            files.append(str(path))
 
         # Known volume order, independent of InstanceNumber. A production
         # loader may have reordered the files before handing this volume over.
-        volume = vtk.vtkImageData()
-        volume.SetDimensions(3, 3, 3)
-        volume.SetSpacing(1, 1, 2)
-        volume.AllocateScalars(vtk.VTK_SHORT, 1)
-        for k in range(3):
-            for j in range(3):
-                for i in range(3):
-                    volume.SetScalarComponentFromDouble(i, j, k, 0, volume_sign * k * 2)
-        direction = vtk.vtkDoubleArray()
-        direction.SetName("DirectionMatrix")
-        for value in np.diag([1.0, -1.0, 1.0, 1.0]).ravel():
-            direction.InsertNextValue(value)
-        volume.GetFieldData().AddArray(direction)
+        ordered_files = files if instance_sign == volume_sign else files[::-1]
+        with contextlib.redirect_stdout(io.StringIO()):
+            volume = convert_itk2vtk(get_itk_image(ordered_files))
 
         # Suppress the canonicalizer's diagnostic file writes, even though
         # these inputs are synthetic. Do not modify the actual application.

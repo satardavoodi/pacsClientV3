@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import uuid
+import tempfile
 
 from .contracts import BrainError
 
@@ -20,7 +21,8 @@ def prepare_review(result):
     root = Path(result['artifact_directory']) if review_assets else next((p for p in roots if (p / image_name).is_file() and source.is_file()), None)
     if root is None:
         raise BrainError('Original image and segmentation are required for manual correction.')
-    directory = root / 'manual-reviews' / uuid.uuid4().hex
+    from PacsClient.utils.data_paths import AI_DIR
+    directory = Path(AI_DIR) / 'eagle_eye' / 'manual-reviews' / uuid.uuid4().hex
     directory.mkdir(parents=True)
     shutil.copy2(review_assets.get('image', root / image_name), directory / 'image.nii.gz')
     shutil.copy2(source, directory / 'original.nii.gz')
@@ -29,9 +31,25 @@ def prepare_review(result):
     if not lesion:
         manifest['label_names'] = json.loads(Path(review_assets.get('names', root / 'label_names.json')).read_text(encoding='utf-8'))
     (directory / 'session.json').write_text(json.dumps(manifest, allow_nan=False), encoding='utf-8')
+    # CTK launcher splits --python-script paths containing spaces. Stage only
+    # application code; patient images remain in the private review directory.
+    script_source = Path(__file__).with_name('manual_slicer.py')
+    staged = Path(tempfile.mkdtemp(prefix='aipacs-manual-')) / 'manual_slicer.py'
+    shutil.copy2(script_source, staged)
+    script_path = str(staged)
+    if ' ' in script_path and os.name == 'nt':
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(script_path, buffer, len(buffer))
+        if 0 < length < len(buffer):
+            script_path = buffer.value
+    if ' ' in script_path:
+        raise BrainError('The Slicer launcher requires a temporary script path without spaces. Configure a space-free TEMP directory.')
     env = os.environ.copy(); env['AIPACS_MANUAL_REVIEW'] = str(directory)
-    subprocess.Popen([str(executable), '--no-splash', '--ignore-slicerrc', '--disable-settings',
-                      '--python-script', str(Path(__file__).with_name('manual_slicer.py'))], env=env)
+    with (directory / 'slicer-launch.log').open('wb') as log:
+        subprocess.Popen([str(executable), '--no-splash', '--ignore-slicerrc', '--disable-settings',
+                          '--launcher-ignore-user-additional-settings', '--python-script', script_path],
+                         env=env, stdout=log, stderr=subprocess.STDOUT)
     return str(directory)
 
 

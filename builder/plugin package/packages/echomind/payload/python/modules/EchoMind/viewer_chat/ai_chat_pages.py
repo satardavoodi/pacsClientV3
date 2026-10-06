@@ -1416,7 +1416,14 @@ class OneChatPage(QWidget):
         workspace_heading = QLabel(f'EchoMind  /  {self.page_mode}')
         workspace_heading.setStyleSheet(f'color: {mode_accent}; background: transparent; font-size: 15px; font-weight: 600; padding: 17px 22px 13px;')
         right.addWidget(workspace_heading)
-        right.addWidget(self.history, 1); right.addWidget(self.composer, 0)
+        right.addWidget(self.history, 1)
+        self._assist_context = None
+        if self.page_mode == 'Assist':
+            from .assist_context import AssistContext
+            self._assist_context = AssistContext(self.history, self.composer, self._send_with_mode,
+                                                lambda: self._busy_count > 0 or getattr(self, '_tr_in_flight', False))
+            right.addWidget(self._assist_context, 0)
+        right.addWidget(self.composer, 0)
         right_wrap = QWidget(); right_wrap.setLayout(right)
         right_wrap.setObjectName('echoConversationPanel')
         right_wrap.setStyleSheet(f"QWidget#echoConversationPanel {{ background-color: {conversation_background}; }}")
@@ -3979,12 +3986,13 @@ class OneChatPage(QWidget):
             mode = self._pending_retry.get("mode")
             text = self._pending_retry.get("text", "")
             images = self._pending_retry.get("images") or []
+            reference_snapshot = self._pending_retry.get('reference_text')
             bub = self._pending_retry.get("bubble")
             if bub:
                 bub.clear_retry()
             # reset so در _append_bubble دوباره bubble نگه‌داری شود
             self._pending_retry = {"mode": mode, "text": text, "images": images, "bubble": None}
-            self._send_with_mode(text, mode, retry_images=images)
+            self._send_with_mode(text, mode, retry_images=images, assist_context=reference_snapshot)
         except Exception:
             pass
 
@@ -4406,11 +4414,11 @@ class OneChatPage(QWidget):
             # 8) render bubbles
             self.history.clear()
             try:
-                rows = U.ai_fetch_messages_full(target_sid)
+                rows = U.ai_fetch_messages_full(target_sid, include_created_at=True)
             except Exception:
                 rows = []
 
-            for msg_id, who, html, origin in rows:
+            for msg_id, who, html, origin, created_at in rows:
                 if not html:
                     continue
                 is_user = who.strip().lower().startswith("you")
@@ -4420,7 +4428,7 @@ class OneChatPage(QWidget):
                 # Enable send_to_reception for all non-user messages that have content
                 on_send_reception = self._send_to_reception if (not is_user and html) else None
 
-                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None)
+                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None, created_at=created_at)
                 b._origin = origin 
                 try:
                     b._msg_id = int(msg_id)
@@ -4632,6 +4640,9 @@ class OneChatPage(QWidget):
         #
         # Return contract: {"ok": bool, "icon", "title", "text",
         #                   "propagate": (status, send_mode) | None}
+        report_choice = None
+        report_snapshot = None
+
         def _send_with_patient_id(target_patient_id: str) -> dict:
             patient_validated = False
             propagate_request = None
@@ -4660,11 +4671,15 @@ class OneChatPage(QWidget):
                     }
 
                 patient_validated = True
-                try:
-                    response_json = response.json()
-                    logger.info(f"[RECEPTION_SERVER]   patient_json_keys={list(response_json.keys()) if isinstance(response_json, dict) else type(response_json)}")
-                except Exception:
-                    pass
+                from PacsClient.utils.reception_report_merge import existing_report_html
+                existing_html = existing_report_html(response.json())
+                # No persistence until the clinician has chosen what to do.
+                # On confirmation this GET runs again; stale consent is rejected.
+                if (existing_html and report_choice not in ("append", "replace")) or (
+                    report_choice is not None and existing_html != report_snapshot
+                ):
+                    return {"ok": False, "needs_report_choice": True,
+                            "existing_html": existing_html}
             except Exception as e:
                 logger.error(f"[RECEPTION_SERVER] ❌ Patient validation failed: {e}")
                 return {
@@ -4748,6 +4763,10 @@ class OneChatPage(QWidget):
                                     f"[RECEPTION_SERVER] HTML normalization failed; sending raw: {exc}"
                                 )
                                 server_html = server_source
+
+                            if report_choice == "append" and existing_html:
+                                from PacsClient.utils.reception_report_merge import append_report_html
+                                server_html = append_report_html(existing_html, server_html)
 
                             payload = {
                                 "receptionId": reception_id,
@@ -4923,6 +4942,34 @@ class OneChatPage(QWidget):
             Runs on the GUI thread in both modes: as the `_run_async` success
             callback when threaded, and inline when the kill switch is set.
             """
+            nonlocal report_choice, report_snapshot
+            if isinstance(result, dict) and result.get("needs_report_choice"):
+                box = QMessageBox(self)
+                box.setWindowTitle("Existing Reception Report")
+                box.setIcon(QMessageBox.Icon.Question)
+                box.setText("This reception already has a report, or it changed while sending.\n"
+                            "Add this report to the existing report, or replace it?")
+                add = box.addButton("Add to Existing Report", QMessageBox.ButtonRole.AcceptRole)
+                replace = box.addButton("Replace Existing Report", QMessageBox.ButtonRole.DestructiveRole)
+                cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+                box.setDefaultButton(cancel)
+                box.setEscapeButton(cancel)
+                box.exec()
+                clicked = box.clickedButton()
+                if clicked not in (add, replace):
+                    _set_bubble_status("Cancelled", "", "#ffb366")
+                    return
+                report_choice = "append" if clicked == add else "replace"
+                report_snapshot = result["existing_html"]
+                _set_bubble_status("Sending…", "⏳", "#ffb366")
+                self._run_async(
+                    lambda: _send_with_patient_id(patient_id),
+                    _deliver_reception_result,
+                    lock_btn=getattr(bubble, "btnSendReception", None),
+                    typing="Checking and sending to reception…",
+                    cancel_text="Stopped waiting. Check reception before sending again.",
+                )
+                return
             if not isinstance(result, dict):
                 _set_bubble_status("Failed", "❌", "#ff6b6b")
                 return
@@ -5375,6 +5422,9 @@ class OneChatPage(QWidget):
         except Exception:
             pass
 
+        from modules.EchoMind import remote_backend
+        work = remote_backend.bind_history(
+            work, getattr(self, 'study_uid', None), getattr(self, 'current_session_id', None))
         worker = ApiWorker(work)
         self._workers = getattr(self, "_workers", [])
         self._workers.append(worker)
@@ -5626,7 +5676,7 @@ class OneChatPage(QWidget):
         # --- 7) ذخیره در DB ---
         try:
             U.ai_upsert_session(sid, None, self.study_uid)
-            msg_id = U.ai_append_message(sid, who, text, origin=origin)
+            msg_id = U.ai_append_message(sid, who, text, ts=b.created_at, origin=origin)
             b._msg_id = msg_id
             # ✅ persist report JSON separately (collections/corrections must not depend on UI bubbles)
             try:
@@ -6111,11 +6161,11 @@ class OneChatPage(QWidget):
         # 4.6) Render history from DB
         self.history.clear()
         try:
-            rows = U.ai_fetch_messages_full(sid)  # [(id, who, html, origin)]
+            rows = U.ai_fetch_messages_full(sid, include_created_at=True)  # [(id, who, html, origin)]
         except Exception:
             rows = []
 
-        for msg_id, who, html, origin in rows:
+        for msg_id, who, html, origin, created_at in rows:
             if not html:
                 continue
 
@@ -6132,6 +6182,7 @@ class OneChatPage(QWidget):
                 on_persian=on_persian,
                 on_send_reception=on_send_reception,
                 on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None,
+                created_at=created_at,
             )
             try:
                 b._msg_id = int(msg_id)
@@ -6643,6 +6694,7 @@ class OneChatPage(QWidget):
         mode: str,
         modality: str = None,
         retry_images: list[str] | None = None,
+        assist_context=None,
     ):
         """
         ارسال بر اساس مود انتخاب شده.
@@ -6674,7 +6726,20 @@ class OneChatPage(QWidget):
             return
 
         sent_text = (text or "").strip()
+        reference_text = sent_text
+        context = getattr(self, '_assist_context', None)
+        reference_generation = context.generation if context is not None else None
+        if context is not None and mode in ('Assistant', 'Search', 'Web Search'):
+            if self._busy_count > 0:
+                return
+            try:
+                reference_text = context.prepare(sent_text, assist_context)
+            except ValueError as exc:
+                self.controller.bubble('AI ChatBot', f'⚠️ {exc}')
+                return
         self._pending_retry = {"mode": mode, "text": sent_text, "images": images_b64, "bubble": None}
+        if context is not None and mode in ('Assistant', 'Search', 'Web Search'):
+            self._pending_retry['reference_text'] = reference_text
 
         # F8: the dictated text is patient content — log its SIZE, never its body.
         _log.debug(
@@ -6684,6 +6749,8 @@ class OneChatPage(QWidget):
 
         def _er_for(target_mode: str):
             def er(msg: str):
+                if context is not None and context.generation != reference_generation:
+                    return
                 # msg اینجا از _run_async قبلاً sanitize شده
                 if (msg or "").startswith("❌"):
                     self.controller.bubble("AI ChatBot", msg)
@@ -6837,9 +6904,11 @@ class OneChatPage(QWidget):
             self.composer.box.clear()
 
             def work():
-                return remote_backend.web_search(sent_text)
+                return remote_backend.web_search(reference_text)
 
             def ok_web_search(result):
+                if context is not None and context.generation != reference_generation:
+                    return
                 try:
                     html = remote_backend.render_web_search(result['content'])
                 except (ValueError, KeyError, TypeError, remote_backend.RemoteError):
@@ -6850,11 +6919,13 @@ class OneChatPage(QWidget):
                 self._bubble_origin_hint = 'assistant'
                 self.controller.bubble('AI ChatBot', html)
 
-            QTimer.singleShot(0, lambda: self._run_async(work, ok_web_search, _er_for('Web Search'), typing='Searching trusted radiology sources'))
+            self._run_async(work, ok_web_search, _er_for('Web Search'), typing='Searching trusted radiology sources')
             return
 
         # ---------- ASSISTANT ----------
         def ok_assistant(resp: dict):
+            if context is not None and context.generation != reference_generation:
+                return
             _dbg_response("ASSISTANT-parsed", None)
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
 
@@ -6892,11 +6963,11 @@ class OneChatPage(QWidget):
 
             def work():
                 if remote_route:
-                    result = remote_backend.assistant(sent_text)
+                    result = remote_backend.assistant(reference_text)
                     return {'assistant_output': result['content'], 'usage': result.get('usage', {})}
                 payload = {}
                 if sent_text:
-                    payload["text"] = sent_text
+                    payload["text"] = reference_text
                 if self.controller.session_id:
                     payload["session_id"] = self.controller.session_id
 
@@ -6906,12 +6977,13 @@ class OneChatPage(QWidget):
                 r.raise_for_status()
                 return r.json()
 
-            QTimer.singleShot(0, lambda: self._run_async(work, ok_assistant, _er_for("Assistant"),
-                                                         typing="Generating assistant output"))
+            self._run_async(work, ok_assistant, _er_for("Assistant"), typing="Generating assistant output")
             return
 
         # ---------- SEARCH ----------
         def ok_search(resp: dict):
+            if context is not None and context.generation != reference_generation:
+                return
             _dbg_response("SEARCH-parsed", None)
             self._log_irannobat_usage_from_resp(resp) 
             _clear_retry_if("Search")
@@ -6964,16 +7036,16 @@ class OneChatPage(QWidget):
 
             def work():
                 if remote_route:
-                    result = remote_backend.search(sent_text)
+                    result = remote_backend.search(reference_text)
                     return {'response': result['content'], 'usage': result.get('usage', {})}
-                payload = {"user_query": sent_text}
+                payload = {"user_query": reference_text}
                 _dbg_request("SEARCH", URL_SEARCH, payload)
                 r = echomind_http.post(URL_SEARCH, json=payload)
                 _dbg_response("SEARCH", r)
                 r.raise_for_status()
                 return r.json()
 
-            QTimer.singleShot(0, lambda: self._run_async(work, ok_search, _er_for("Search"), typing="Searching"))
+            self._run_async(work, ok_search, _er_for("Search"), typing="Searching")
             return
 
     # pretty printer

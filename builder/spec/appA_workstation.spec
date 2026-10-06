@@ -126,6 +126,7 @@ hiddenimports = load_hiddenimports(
         "database.core",
         "database.manager",
         "PacsClient.utils.data_paths",
+        "PacsClient.utils.dicom_reader",
         "PacsClient.utils.theme_manager",
         "modules.zeta_boost",
         # Early native graphics admission runs in a second copy of this frozen

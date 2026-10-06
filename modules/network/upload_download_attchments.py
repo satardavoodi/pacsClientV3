@@ -198,6 +198,7 @@ def upload_attachments_for_study(
         max_size_mb: Optional[int] = None,  # اگر مقدار بدهی، فایل‌های بزرگ‌تر را رد می‌کند
         stop_on_error: bool = False,
         verbose: bool = True,
+        selected_files: Optional[List[str]] = None,
         # attachments_uploaded: str = None
 ) -> Dict[str, Any]:
     """
@@ -249,6 +250,17 @@ def upload_attachments_for_study(
     # ✅ پیدا کردن همه فایل‌های موجود در پوشه
     path_study_attachments = ATTACHMENT_PATH / study_uid
     files = list_files_in_folder(path_study_attachments)
+    if selected_files is not None:
+        # Narrow assistant sends to a completed take; retain the legacy full
+        # study sync default. Reject paths outside this study's owned folder.
+        root = Path(path_study_attachments).resolve()
+        selected = set()
+        for value in selected_files:
+            candidate = Path(value)
+            if candidate.is_symlink() or candidate.resolve().parent != root:
+                raise ValueError('Invalid study attachment selection')
+            selected.add(str(candidate.resolve()))
+        files = [value for value in files if str(Path(value).resolve()) in selected]
     
     # ✅ فیلتر کردن فایل‌های آپلود‌شده (با مقایسه absolute path نرمال‌شده)
     files_to_upload = []

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
                                QMessageBox, QFileDialog, QCheckBox, QTextEdit, QFrame,
                                QRadioButton, QButtonGroup, QSpinBox, QScrollArea, QWidget,
                                QGridLayout)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 import qtawesome as qta
 from typing import List, Optional
@@ -63,8 +63,9 @@ CD_ICON_PATH = Path(__file__).parent / "assets" / "cd_icon.png"
 class CDBurnDialog(QDialog):
     """Dialog for burning DICOM studies to CD/DVD"""
 
-    def __init__(self, studies: List[dict], parent=None):
+    def __init__(self, studies: List[dict], parent=None, *, prepared=None):
         super().__init__(parent)
+        self._prepared = prepared
         self.studies = studies
         self.burn_manager = CDBurnManager()
         self.is_burning = False
@@ -84,12 +85,15 @@ class CDBurnDialog(QDialog):
         self.setup_ui()
         self.check_prerequisites()
         self.connect_signals()
+        self.finished.connect(self._on_dialog_finished)
         self._refresh_media_status()
 
     # ------------------------------------------------------------------ data --
 
     def _resolve_viewer_selection(self) -> dict:
         """Resolve which viewer to bundle (Settings mode: default vs custom)."""
+        if self._prepared is not None:
+            return self._prepared['viewer']
         try:
             return _get_light_viewer_widget().get_viewer_selection()
         except Exception as e:
@@ -98,6 +102,8 @@ class CDBurnDialog(QDialog):
 
     def _check_download_status(self):
         """Check which studies are downloaded and which are not"""
+        if getattr(self, '_prepared', None) is not None:
+            return self._prepared['downloaded'], self._prepared['missing']
         downloaded = []
         not_downloaded = []
 
@@ -173,8 +179,11 @@ class CDBurnDialog(QDialog):
                 continue
             series_rows = []
             try:
-                info = get_study_info_with_series(study_uid) or {}
-                series_rows = info.get('series') or []
+                if self._prepared is not None:
+                    series_rows = self._prepared['series'].get(study_uid, [])
+                else:
+                    info = get_study_info_with_series(study_uid) or {}
+                    series_rows = info.get('series') or []
             except Exception as e:
                 print(f"Could not load series for {study_uid}: {e}")
             title_bits = [
@@ -340,12 +349,13 @@ class CDBurnDialog(QDialog):
         if not_downloaded_count > 0:
             studies_info = QLabel(
                 f"{study_count} studies selected — ✓ {downloaded_count} ready, "
-                f"⚠ {not_downloaded_count} not downloaded (will be skipped)"
+                f"⚠ {not_downloaded_count} will be downloaded automatically"
             )
             studies_info.setStyleSheet("font-size: 12px; color: #f59e0b;")
         else:
             studies_info = QLabel(f"✓ {downloaded_count} studies ready for CD burning")
             studies_info.setStyleSheet("font-size: 12px; color: #48bb78;")
+        self.studies_info = studies_info
         studies_info.setWordWrap(True)
         studies_layout.addWidget(studies_info)
 
@@ -361,8 +371,10 @@ class CDBurnDialog(QDialog):
             study_list_label.setStyleSheet("font-size: 12px; color: #cbd5e0; padding: 2px;")
             studies_layout.addWidget(study_list_label)
 
-        self._size_estimate_mb = self.burn_manager.get_studies_size_estimate(self.downloaded_studies)
+        self._size_estimate_mb = (self._prepared['size_mb'] if self._prepared is not None
+                                 else self.burn_manager.get_studies_size_estimate(self.downloaded_studies))
         size_label = QLabel(f"Estimated DICOM size: {self._size_estimate_mb} MB")
+        self.size_label = size_label
         size_label.setStyleSheet("font-size: 12px; color: #a0aec0;")
         studies_layout.addWidget(size_label)
 
@@ -379,7 +391,7 @@ class CDBurnDialog(QDialog):
         center_group = QGroupBox("Imaging Center")
         center_layout = QFormLayout()
         center_layout.setSpacing(6)
-        saved_identity = load_center_identity()
+        saved_identity = self._prepared['identity'] if self._prepared is not None else load_center_identity()
         self.center_name_edit = QLineEdit(saved_identity.get("center_name", ""))
         self.center_name_edit.setPlaceholderText("e.g. Alizadeh Imaging Center")
         self.center_address_edit = QLineEdit(saved_identity.get("center_address", ""))
@@ -644,7 +656,7 @@ class CDBurnDialog(QDialog):
         self.drive_combo.blockSignals(True)
         self.drive_combo.clear()
         self.drive_combo.addItem("Select CD/DVD drive...", None)
-        drives = get_available_drives()
+        drives = self._prepared['drives'] if self._prepared is not None else get_available_drives()
         for drive in drives:
             drive_text = f"{drive['letter']} - {drive['name']}" if drive.get('letter') else drive['name']
             self.drive_combo.addItem(drive_text, drive['id'])
@@ -669,6 +681,35 @@ class CDBurnDialog(QDialog):
             self.include_attachments_cb.setToolTip("Adds patient attachments (documents, media) under ATTACHMENTS\\")
 
     def _on_refresh_clicked(self):
+        if self._prepared is not None:
+            if getattr(self, '_refresh_timer', None) is not None and self._refresh_timer.isActive():
+                return
+            from copy import deepcopy
+            from PacsClient.utils.support_diagnostics import OperationStore
+            from .dialog_preflight import prepare_dialog
+            self._refresh_store = OperationStore()
+            studies = deepcopy(self.studies)
+            receipt = self._refresh_store.start('cd_dialog_refresh', lambda: prepare_dialog(studies))
+            key = receipt['operation_id']
+            self.refresh_btn.setEnabled(False)
+            self._refresh_timer = QTimer(self)
+            def ready():
+                result = self._refresh_store.status(key)
+                if result['state'] == 'running':
+                    return
+                self._refresh_timer.stop()
+                self.refresh_btn.setEnabled(True)
+                if result['state'] == 'succeeded':
+                    self._prepared = result['data']
+                    self._size_estimate_mb = self._prepared['size_mb']
+                    self._populate_drives()
+                    self.check_prerequisites()
+                    self._refresh_media_status()
+                else:
+                    self.capacity_label.setText('Unable to refresh media. Please try again.')
+            self._refresh_timer.timeout.connect(ready)
+            self._refresh_timer.start(100)
+            return
         self._populate_drives()
         self.check_prerequisites()
         self._refresh_media_status()
@@ -690,7 +731,9 @@ class CDBurnDialog(QDialog):
         self.speed_combo.addItem("Auto (recommended)", None)
         if drive_id is not None:
             try:
-                for speed in self.burn_manager.get_write_speeds(drive_id):
+                speeds = (self._prepared['speeds'].get(drive_id, []) if self._prepared is not None
+                          else self.burn_manager.get_write_speeds(drive_id))
+                for speed in speeds:
                     self.speed_combo.addItem(speed["label"], speed["sectors_per_second"])
             except Exception:
                 pass
@@ -708,7 +751,8 @@ class CDBurnDialog(QDialog):
 
         info = {}
         try:
-            info = self.burn_manager.get_media_info(drive_id)
+            info = (self._prepared['media'].get(drive_id, {}) if self._prepared is not None
+                    else self.burn_manager.get_media_info(drive_id))
         except Exception:
             info = {}
 
@@ -717,7 +761,8 @@ class CDBurnDialog(QDialog):
         if viewer_path and self.include_viewer_cb.isChecked():
             try:
                 bundle_root = Path(viewer_path).parent
-                viewer_mb = sum(f.stat().st_size for f in bundle_root.rglob("*") if f.is_file()) / (1024 * 1024)
+                viewer_mb = (self._prepared['viewer_mb'] if self._prepared is not None
+                             else sum(f.stat().st_size for f in bundle_root.rglob("*") if f.is_file()) / (1024 * 1024))
                 required_mb += viewer_mb
             except Exception:
                 required_mb += 70  # conservative bundle estimate
@@ -796,7 +841,7 @@ class CDBurnDialog(QDialog):
         """Check if all prerequisites are met"""
         all_ok = True
 
-        if check_pydicom_available():
+        if self._prepared['pydicom'] if self._prepared is not None else check_pydicom_available():
             self.pydicom_status.setText("✓ DICOMDIR creation: Available")
             self.pydicom_status.setStyleSheet("color: #48bb78;")
         else:
@@ -804,14 +849,14 @@ class CDBurnDialog(QDialog):
             self.pydicom_status.setStyleSheet("color: #f56565;")
             all_ok = False
 
-        if check_imapi2_available():
+        if self._prepared['imapi'] if self._prepared is not None else check_imapi2_available():
             self.imapi_status.setText("✓ CD burning: Available")
             self.imapi_status.setStyleSheet("color: #48bb78;")
         else:
             self.imapi_status.setText("✗ CD burning: comtypes not installed or Windows only")
             self.imapi_status.setStyleSheet("color: #f56565;")
 
-        drives = get_available_drives()
+        drives = self._prepared['drives'] if self._prepared is not None else get_available_drives()
         if drives:
             self.drive_status.setText(f"✓ CD/DVD drives: {len(drives)} found")
             self.drive_status.setStyleSheet("color: #48bb78;")
@@ -831,53 +876,111 @@ class CDBurnDialog(QDialog):
 
     # ----------------------------------------------------------- auto download --
 
+    def _set_media_busy(self, busy):
+        self.burn_btn.setEnabled(not busy and self.drive_combo.currentData() is not None)
+        self.prepare_btn.setEnabled(not busy)
+        self.refresh_btn.setEnabled(not busy)
+        # Freeze the options approved before download; progress and Cancel stay live.
+        if busy:
+            self._media_control_states = []
+            for control in self.findChildren(QWidget):
+                if isinstance(control, (QLineEdit, QComboBox, QCheckBox, QRadioButton, QSpinBox)):
+                    self._media_control_states.append((control, control.isEnabled()))
+                    control.setEnabled(False)
+            picker = getattr(self, 'series_selection_widget', None)
+            if picker is not None:
+                self._media_control_states.append((picker, picker.isEnabled()))
+                picker.setEnabled(False)
+        else:
+            for control, enabled in getattr(self, '_media_control_states', []):
+                control.setEnabled(enabled)
+            self._media_control_states = []
+        self.cancel_btn.setText('Cancel Preparation' if busy else 'Close')
+
     def _start_auto_download(self, action: str, folder: str = None):
-        """Start automatic download of not downloaded studies via home_ui"""
-        if not self.not_downloaded_studies:
+        """Keep this dialog open and use the existing Home download authority."""
+        from copy import deepcopy
+        from .download_before_media import DownloadBeforeMedia
+        from .dialog_preflight import prepare_dialog
+        home = self.parent()
+        if not hasattr(home, '_on_download_requested'):
+            QMessageBox.warning(self, 'Download Unavailable', 'Open this dialog from the patient list to download missing studies.')
             return False
-
-        reply = QMessageBox.question(
-            self,
-            "Download Images",
-            f"{len(self.not_downloaded_studies)} studies are not downloaded yet.\n\n"
-            "Do you want to download them now?\n"
-            "After download completes, click CD Burn again.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
-
-        if reply != QMessageBox.Yes:
+        server = home.data_access_panel_widget.get_server_selected()
+        if not server or server.get('server_type') == 'offline_cloud':
+            QMessageBox.warning(self, 'Server Required', 'Select the source PACS server to download missing studies.')
             return False
-
+        manager = home._get_or_create_download_manager_tab()
+        if manager is None:
+            return False
+        missing = deepcopy(self.not_downloaded_studies)
+        uids = [str(s.get('study_uid') or '').strip() for s in missing]
+        if not all(uids):
+            QMessageBox.warning(self, 'Study Unavailable', 'A selected study has no download identity. Refresh the patient list.')
+            return False
+        studies = deepcopy(self.studies)
+        old_job = getattr(self, '_media_download', None)
+        if old_job is not None:
+            old_job.cancel()
+            old_job.deleteLater()
+        self._media_download = DownloadBeforeMedia(manager, uids, lambda: prepare_dialog(studies), self)
+        self._media_download.progress.connect(self._on_media_download_progress)
+        self._media_download.failed.connect(self._on_media_download_failed)
+        self._media_download.ready.connect(self._on_media_download_ready)
+        self._media_action = (action, folder)
+        self._set_media_busy(True)
+        self.stage_label.setText('Downloading')
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_message.setText('Starting download. Disc preparation will continue automatically.')
         try:
-            home_ui = self.parent()
-            if hasattr(home_ui, '_on_download_requested'):
-                home_ui._on_download_requested(self.not_downloaded_studies, set_current_tab=True)
+            # Reuse/reset existing terminal tasks through the current authority.
+            home._reset_stale_terminal_dm_state(manager, missing)
+            self._media_download.start()
+            home._on_download_requested(missing, set_current_tab=False)
+        except Exception:
+            self._on_media_download_failed('Unable to start the download. Please check the server connection.')
+            return False
+        return True
 
-                QMessageBox.information(
-                    self,
-                    "Download Started",
-                    f"Download of {len(self.not_downloaded_studies)} studies has started.\n\n"
-                    "After download completes, click CD Burn button again."
-                )
-                self.accept()
-                return True
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Error",
-                    "Unable to start download.\n"
-                    "Please download images from the patient list."
-                )
-                return False
+    def _on_media_download_progress(self, value, message):
+        self.progress_bar.setValue(value)
+        self.progress_message.setText(message)
 
-        except Exception as e:
-            print(f"Error starting auto download: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Error starting download: {str(e)}")
+    def _on_media_download_failed(self, message):
+        self._media_download.cancel()
+        self._set_media_busy(False)
+        self.stage_label.setText('Preparation stopped')
+        self.progress_message.setText(message)
 
-        return False
+    def _on_media_download_ready(self, prepared):
+        self._prepared = prepared
+        self.studies = prepared['studies']
+        self.downloaded_studies = prepared['downloaded']
+        self.not_downloaded_studies = prepared['missing']
+        self._size_estimate_mb = prepared['size_mb']
+        self.studies_info.setText(f'{len(self.downloaded_studies)} studies ready for CD burning')
+        self.size_label.setText(f"Estimated DICOM size: {self._size_estimate_mb} MB")
+        self._refresh_media_status()
+        action, folder = self._media_action
+        self._set_media_busy(False)
+        if action == 'burn':
+            self._execute_burn(confirmed=True)
+        else:
+            self._execute_prepare(folder)
+
+    def _on_dialog_finished(self, _result):
+        job = getattr(self, '_media_download', None)
+        if job is not None:
+            job.cancel()
+
+    def _cancel_media_preparation(self):
+        job = getattr(self, '_media_download', None)
+        if job is not None:
+            job.cancel()
+        self._set_media_busy(False)
+        self.stage_label.setText('Preparation cancelled')
+        self.progress_message.setText('Disc preparation cancelled. Shared downloads continue in the Download Manager.')
 
     # ------------------------------------------------------------------ burn --
 
@@ -886,17 +989,9 @@ class CDBurnDialog(QDialog):
         if self.is_burning:
             return
 
-        if len(self.downloaded_studies) == 0:
-            if len(self.not_downloaded_studies) > 0:
-                self._start_auto_download('burn')
-                return
-
-            QMessageBox.warning(
-                self,
-                "No Downloaded Studies",
-                "No downloaded studies found.\n\n"
-                "Please download the images first, then try CD burning again."
-            )
+        if not self.studies:
+            return
+        if getattr(self, '_media_download', None) is not None and self._media_download.active:
             return
 
         if self.drive_combo.currentData() is None:
@@ -906,48 +1001,65 @@ class CDBurnDialog(QDialog):
 
         self._execute_burn()
 
-    def _execute_burn(self):
+    def _execute_burn(self, *, confirmed=False):
         """Execute the actual burn operation"""
-        drive_id = self.drive_combo.currentData()
-        disc_label = self.disc_label_edit.text().strip()  # empty → auto label
-        options = self._build_options()
+        if confirmed:
+            request = self._approved_burn
+            drive_id, disc_label, options = request['drive'], request['label'], request['options']
+            light_viewer_path, viewer_display_name = request['viewer'], request['viewer_name']
+        else:
+            drive_id = self.drive_combo.currentData()
+            disc_label = self.disc_label_edit.text().strip()  # empty → auto label
+            options = self._build_options()
 
-        light_viewer_path = None
-        viewer_display_name = None
-        if self.include_viewer_cb.isChecked():
-            selection = self._resolve_viewer_selection()
-            light_viewer_path = selection.get('path')
-            viewer_display_name = selection.get('display_name')
+            light_viewer_path = None
+            viewer_display_name = None
+            if self.include_viewer_cb.isChecked():
+                selection = self._resolve_viewer_selection()
+                light_viewer_path = selection.get('path')
+                viewer_display_name = selection.get('display_name')
 
-        # Never silently produce a disc with no viewer.
-        if not self._confirm_viewer_available(light_viewer_path):
-            self.burn_btn.setEnabled(True)
-            self.prepare_btn.setEnabled(True)
-            self.cancel_btn.setText("Close")
-            return
+            # Never silently produce a disc with no viewer.
+            if not self._confirm_viewer_available(light_viewer_path):
+                self.burn_btn.setEnabled(True)
+                self.prepare_btn.setEnabled(True)
+                self.cancel_btn.setText("Close")
+                return
 
-        viewer_warning_text = ""
-        if light_viewer_path:
-            analysis = self.burn_manager.inspect_viewer_portability(light_viewer_path)
-            if analysis.get("warnings"):
-                viewer_warning_text = "\nViewer portability warnings:\n- " + "\n- ".join(analysis["warnings"])
+            viewer_warning_text = ""
+            if light_viewer_path:
+                analysis = (self._prepared['portability'] if self._prepared is not None
+                            else self.burn_manager.inspect_viewer_portability(light_viewer_path))
+                if analysis.get("warnings"):
+                    viewer_warning_text = "\nViewer portability warnings:\n- " + "\n- ".join(analysis["warnings"])
 
-        reply = QMessageBox.question(
-            self,
-            "Confirm Burn",
-            f"Ready to burn {len(self.downloaded_studies)} downloaded studies to CD/DVD.\n\n"
-            f"{self._options_summary(options, viewer_display_name if light_viewer_path else None)}\n\n"
-            f"{self._get_viewer_launch_summary(light_viewer_path)}\n"
-            f"{viewer_warning_text}\n"
-            "Make sure a blank CD/DVD is inserted and click Yes to continue.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        if not confirmed:
+            reply = QMessageBox.question(
+                self,
+                "Confirm Burn",
+                f"Download any missing files, then burn {len(self.studies)} selected studies to CD/DVD.\n\n"
+                f"{self._options_summary(options, viewer_display_name if light_viewer_path else None)}\n\n"
+                f"{self._get_viewer_launch_summary(light_viewer_path)}\n"
+                f"{viewer_warning_text}\n"
+                "Make sure a blank CD/DVD is inserted and click Yes to continue.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
 
-        if reply != QMessageBox.Yes:
-            self.burn_btn.setEnabled(True)
-            self.prepare_btn.setEnabled(True)
-            self.cancel_btn.setText("Close")
+            if reply != QMessageBox.Yes:
+                self.burn_btn.setEnabled(True)
+                self.prepare_btn.setEnabled(True)
+                self.cancel_btn.setText("Close")
+                return
+
+        if not confirmed:
+            self._approved_burn = {
+                'drive': drive_id, 'label': disc_label, 'options': options,
+                'viewer': light_viewer_path, 'viewer_name': viewer_display_name,
+                'series': self._current_series_selection(),
+            }
+        if self.not_downloaded_studies:
+            self._start_auto_download('burn')
             return
 
         self.is_burning = True
@@ -965,7 +1077,7 @@ class CDBurnDialog(QDialog):
             burn_to_disc=True,
             viewer_display_name=viewer_display_name,
             options=options,
-            series_selection=self._current_series_selection(),
+            series_selection=self._approved_burn['series'],
         )
 
     def prepare_folder(self):
@@ -973,17 +1085,7 @@ class CDBurnDialog(QDialog):
         if self.is_burning:
             return
 
-        if len(self.downloaded_studies) == 0:
-            if len(self.not_downloaded_studies) > 0:
-                self._start_auto_download('prepare')
-                return
-
-            QMessageBox.warning(
-                self,
-                "No Downloaded Studies",
-                "No downloaded studies found.\n\n"
-                "Please download the images first, then try preparing folder again."
-            )
+        if getattr(self, '_media_download', None) is not None and self._media_download.active:
             return
 
         folder = QFileDialog.getExistingDirectory(
@@ -996,7 +1098,10 @@ class CDBurnDialog(QDialog):
         if not folder:
             return
 
-        self._execute_prepare(folder)
+        if self.not_downloaded_studies:
+            self._start_auto_download('prepare', folder)
+        else:
+            self._execute_prepare(folder)
 
     def _execute_prepare(self, folder: str):
         """Execute the actual prepare folder operation"""
@@ -1024,7 +1129,8 @@ class CDBurnDialog(QDialog):
         self.log_output.append(f"[options]\n{self._options_summary(options, viewer_display_name)}")
 
         if light_viewer_path:
-            analysis = self.burn_manager.inspect_viewer_portability(light_viewer_path)
+            analysis = (self._prepared['portability'] if self._prepared is not None
+                            else self.burn_manager.inspect_viewer_portability(light_viewer_path))
             if analysis.get("warnings"):
                 self.log_output.append("[info] Viewer portability warnings:")
                 for warning in analysis["warnings"]:
@@ -1133,6 +1239,9 @@ class CDBurnDialog(QDialog):
 
     def cancel_or_close(self):
         """Cancel operation or close dialog"""
+        if getattr(self, '_media_download', None) is not None and self._media_download.active:
+            self._cancel_media_preparation()
+            return
         if self.is_burning:
             reply = QMessageBox.question(
                 self,
@@ -1153,6 +1262,9 @@ class CDBurnDialog(QDialog):
 
     def closeEvent(self, event):
         """Handle close event"""
+        job = getattr(self, '_media_download', None)
+        if job is not None:
+            job.cancel()
         if self.is_burning:
             reply = QMessageBox.question(
                 self,

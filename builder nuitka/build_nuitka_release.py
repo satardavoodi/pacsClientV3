@@ -855,6 +855,7 @@ def create_nuitka_command(
         nofollow = set()
     elif profile == "qt_shell":
         cmd.append("--enable-plugin=pyside6")
+        cmd.append("--include-qt-plugins=texttospeech")
         forced = {"base64"}
         include_packages = set()
         nofollow = set()
@@ -892,6 +893,7 @@ def create_nuitka_command(
         append_mesa_runtime_flags(cmd)
     elif profile == "full_core":
         cmd.append("--enable-plugin=pyside6")
+        cmd.append("--include-qt-plugins=texttospeech")
         # Keep optional plugin modules external while still allowing runtime
         # imports from external module packages.
         cmd.append("--no-deployment-flag=excluded-module-usage")
@@ -1391,7 +1393,7 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
 
 
 def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
-    # build_lite_viewer=True → always build a fresh portable viewer so the
+    # build_lite_viewer=True â†’ always build a fresh portable viewer so the
     # run_cd payload ships it (skip via AIPACS_SKIP_LITE_VIEWER_BUILD=1).
     include_slicer = True
     materialize_plugin_packages(

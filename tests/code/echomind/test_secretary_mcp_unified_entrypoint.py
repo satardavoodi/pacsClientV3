@@ -53,7 +53,7 @@ def _mcp_tool_names() -> set[str]:
 def test_voice_commands_enter_through_secretary_transcription_and_orchestrator():
     src = _read(SECRETARY_WIDGET)
     assert "self._stt_router.transcribe_files(" in src
-    assert "self._secretary_orchestrator.handle(payload)" in src
+    assert "await self._secretary_orchestrator.handle_async(payload)" in src
     assert '"Phase 2: Sending transcript + module catalog to GPT."' in src
 
 
@@ -88,7 +88,8 @@ def test_in_app_test_server_dispatches_mcp_requests_to_same_command_bus():
     assert "external transport for the CommandBus" in src
     assert "plan = CommandPlan(action=action, entities=dict(entities))" in src
     assert 'mode = str(req.get("mode") or "qa").strip() or "qa"' in src
-    assert 'result = bus.execute(plan, {"agent_mode": mode})' in src
+    assert 'result = bus.execute(plan, {"agent_mode": mode, "confirmed": confirmed})' in src
+    assert 'if type(confirmed) is not bool:' in src
 
 
 def test_unified_entrypoint_doc_records_the_architecture_rule():

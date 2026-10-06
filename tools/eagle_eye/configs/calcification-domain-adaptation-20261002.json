@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "status": "development_evaluated_not_qualified",
+  "target": "CalcificationRegion; not malignancy or individual punctum segmentation",
+  "foreground_label_index": 0,
+  "shared_geometry": "native 1024-pixel crops; complete-image overlapping evaluation; NMS 0.5; one-to-one IoU 0.5",
+  "expanded_cbis": {
+    "train_images": 128,
+    "validation_images": 32,
+    "validation_regions": 34,
+    "additional_updates": 384,
+    "learning_rate": 0.00001,
+    "checkpoint_interval": 128,
+    "retained_research_checkpoint": "research-step-384.pth",
+    "checkpoint_sha256": "d7977862035b1ae9f50416a3dbd76ba22ac033ab73afc066c0642c5d3b68056b"
+  },
+  "mixed_adaptation": {
+    "unique_training_images": 192,
+    "cbis_training_images": 128,
+    "digital_training_images": 64,
+    "digital_training_regions": 81,
+    "sampling": "alternating CBIS and VinDr; each VinDr record appears twice per sampler cycle",
+    "negative_training_images": 0,
+    "additional_updates": 512,
+    "learning_rate": 0.000003,
+    "checkpoint_interval": 256,
+    "digital_research_candidate": "research-step-256.pth",
+    "checkpoint_sha256": "21abbfda6830891a379f4115e7f3d97977bf2609a2e64b0610e93af63b1392e6",
+    "selection": "posthoc development tradeoff; earlier interval preserves more digital recall than final interval",
+    "domain_regression": "CBIS sensitivity decreased; not a universal replacement"
+  },
+  "qualification_gaps": [
+    "Small repeatedly inspected development cohorts",
+    "Unknown initial medical training lineage",
+    "VinDr study grouping is not verified patient grouping",
+    "CBIS all annotated calcification versus VinDr suspicious-region label mismatch",
+    "Unmatched proposals and No Finding controls do not establish clinical false-positive truth",
+    "Reviewed normal and hard-negative tissue labels are still unavailable",
+    "No independent digital qualification or clinical GUI acceptance"
+  ],
+  "review": {
+    "proposal_count": 48,
+    "status": "unreviewed_not_training_labels",
+    "required_negative_evidence": "explicit whole-crop absence of calcification, nonempty reviewer identity, validated export and grouping",
+    "destination": "Windows A100 protected-data/review-digital-20261002/review.html"
+  },
+  "production_changes": false
+}

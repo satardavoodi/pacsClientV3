@@ -318,7 +318,10 @@ STT_PROVIDER_GOOGLE = "v2t"          # Google Speech (local library, no endpoint
 STT_PROVIDER_OPENAI = "openai"       # OpenAI transcription (own base_url)
 STT_PROVIDER_CUSTOM = "custom"       # user-entered server
 
+STT_PROVIDER_AUTO = "auto"
+
 STT_PROVIDERS = (
+    STT_PROVIDER_AUTO,
     STT_PROVIDER_AIPACS_1,
     STT_PROVIDER_AIPACS_2,
     STT_PROVIDER_AIPACS_3,
@@ -354,7 +357,10 @@ def get_stt_provider() -> str:
     if explicit:
         return normalize_stt_provider(explicit)
     # Not configured yet -> derive from the legacy route (back-compat).
-    return normalize_stt_provider(settings.get("secretary_stt_provider"))
+    legacy = str(settings.get("secretary_stt_provider") or "").lower()
+    if legacy in ("v2t", "openai"):
+        return normalize_stt_provider(legacy)
+    return STT_PROVIDER_AUTO
 
 
 def get_stt_settings() -> Dict[str, Any]:

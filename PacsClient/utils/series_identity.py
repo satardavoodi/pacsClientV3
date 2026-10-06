@@ -18,6 +18,100 @@ from typing import Any, NamedTuple
 CLINICAL_HISTORY_SERIES_NUMBER = 100000
 
 
+def reconcile_thumbnail_catalog(catalog, *, cached_files=(), socket_entries=(), study_uid=''):
+    """Join thumbnail media onto the authoritative single-study catalog.
+
+    Series metadata decides which cards exist. PNG paths are optional media
+    for those cards and must never shrink the catalog. Identity matching is
+    UID-first; a raw SeriesNumber fallback is accepted only when unique.
+    """
+    from collections import Counter
+
+    catalog = {str(key): dict(row) for key, row in (catalog or {}).items()
+               if not study_uid or str(row.get('study_uid') or study_uid) == study_uid}
+    cached_paths = [PurePath(path) for path in cached_files or () if path]
+    cached_by_stem = {path.stem: str(path) for path in cached_paths}
+    socket_rows = [dict(row) for row in socket_entries or () if isinstance(row, dict)
+                   and (not study_uid or str(row.get('study_uid') or study_uid) == study_uid)]
+
+    if not catalog:
+        # Compatibility path for an early/legacy caller with no metadata.
+        rows = [row for row in socket_rows if row.get('file_path')]
+        if rows:
+            return rows, 0
+        return [
+            {
+                'display_key': path.stem,
+                'series_number': path.stem,
+                'file_path': str(path),
+            }
+            for path in cached_paths
+        ], 0
+
+    number_counts = Counter(
+        str(info.get('_orig_series_number') or get_series_number(info) or key)
+        for key, info in catalog.items()
+    )
+    socket_by_uid = {
+        get_series_uid(row): row for row in socket_rows if get_series_uid(row)
+    }
+    socket_by_number = {}
+    for row in socket_rows:
+        number = str(get_series_number(row) or '')
+        if number:
+            socket_by_number.setdefault(number, []).append(row)
+
+    entries = []
+    missing_media = 0
+    for display_key, catalog_info in catalog.items():
+        entry = dict(catalog_info or {})
+        display_key = str(display_key)
+        series_uid = get_series_uid(entry)
+        series_number = str(
+            entry.get('_orig_series_number') or get_series_number(entry) or display_key
+        )
+        media = socket_by_uid.get(series_uid) if series_uid else None
+        if media is None:
+            candidates = socket_by_number.get(series_number, ())
+            if (number_counts[series_number] == 1 and len(candidates) == 1
+                    and (not series_uid or not get_series_uid(candidates[0])
+                         or get_series_uid(candidates[0]) == series_uid)):
+                media = candidates[0]
+
+        if media is not None:
+            for field in (
+                'series_description', 'modality', 'protocol_name',
+                'body_part_examined', 'image_count', 'display_image_count',
+            ):
+                if media.get(field) not in (None, ''):
+                    entry[field] = media[field]
+
+        folder_key = str(entry.get('folder_key') or series_number)
+        file_path = str((media or {}).get('file_path') or entry.get('file_path') or '')
+        if not file_path:
+            for stem in (folder_key, display_key, series_number):
+                if stem == series_number and number_counts[series_number] != 1:
+                    continue
+                file_path = cached_by_stem.get(stem, '')
+                if file_path:
+                    break
+        for field in ('thumbnail_data', 'thumbnail_base64', 'thumbnailBase64',
+                      'thumbnailData', 'image_data', 'imageBase64'):
+            if (media or {}).get(field):
+                entry[field] = media[field]
+        if not file_path and not any(entry.get(field) for field in (
+                'thumbnail_data', 'thumbnail_base64', 'thumbnailBase64',
+                'thumbnailData', 'image_data', 'imageBase64')):
+            missing_media += 1
+
+        entry['display_key'] = display_key
+        entry['series_number'] = series_number
+        entry['file_path'] = file_path
+        entries.append(entry)
+
+    return entries, missing_media
+
+
 def _series_metadata(series: Mapping[str, Any] | None) -> Mapping[str, Any]:
     """Return the flat identity metadata used by presentation ordering."""
     if not isinstance(series, Mapping):

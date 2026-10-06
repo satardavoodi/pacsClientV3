@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import asyncio
 from typing import Any, Literal
 
 
@@ -78,12 +79,47 @@ class HomeWidgetAdapter:
             return
 
     def search(self, source: str, criteria: dict[str, Any], timeout_s: int = 45) -> None:
+        task = self.start_search(source, criteria)
+        if task is not None:
+            if not task.done():
+                raise RuntimeError("Search is pending; use search_async or poll read_patients.")
+            task.result()
+
+    async def search_async(self, source: str, criteria: dict[str, Any], timeout_s: float = 45) -> None:
+        task = self.start_search(source, criteria)
+        deadline = time.monotonic() + max(.001, float(timeout_s))
+        while task is not None and not task.done():
+            if getattr(self.home, "_search_task", None) is not task:
+                raise RuntimeError("Search was replaced; retry against the current patient list.")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Patient search did not finish in time.")
+            await asyncio.sleep(min(.05, max(0, deadline - time.monotonic())))
+        if task is not None:
+            if getattr(self.home, "_search_task", None) is not task:
+                raise RuntimeError("Search was replaced; no rows were accepted.")
+            if task.cancelled():
+                raise RuntimeError("The patient search was cancelled.")
+            task.result()
+
+    def start_search(self, source: str, criteria: dict[str, Any]):
         if not self.home:
             raise RuntimeError("Home widget is unavailable")
         src = (source or "server").lower().strip()
         if src in {"active_tab", "active", "current"}:
             src = self.get_active_source()
+        if src not in {"local", "server"}:
+            raise ValueError("Patient search requires a local or server source.")
         self._set_active_source(src)
+
+        if any(criteria.get(field) not in (None, '', []) for field in
+               ('body_part', 'age_min', 'age_max', 'patient_ids')):
+            query = dict(criteria)
+            query['modalities'] = [m.strip().upper() for m in
+                                   str(query.pop('modality', '')).split(',') if m.strip()]
+            if query.get('patient_id') and not query.get('patient_ids'):
+                query['patient_ids'] = [query.pop('patient_id')]
+            self.home._on_advanced_search_requested(query)
+            return getattr(self.home, '_search_task', None)
 
         payload = {
             "patient_id": str(criteria.get("patient_id") or ""),
@@ -95,27 +131,12 @@ class HomeWidgetAdapter:
         if modality:
             payload["modality"] = str(modality)
 
-        try:
-            self.home.patient_search_widget.set_search_data(payload)
-            self._set_modalities(str(modality or ""))
-        except Exception:
-            pass
+        self.home.patient_search_widget.set_search_data(payload)
+        self._set_modalities(str(modality or ""))
 
         self.home.patient_list_function_identifier(src)
 
-        task = getattr(self.home, "_search_task", None)
-        if task is None:
-            return
-
-        deadline = time.time() + max(1, int(timeout_s))
-        while not task.done() and time.time() < deadline:
-            try:
-                from PySide6.QtWidgets import QApplication
-
-                QApplication.processEvents()
-            except Exception:
-                pass
-            time.sleep(0.05)
+        return getattr(self.home, "_search_task", None)
 
     def list_rows(self) -> list[dict[str, Any]]:
         if not self.home:
@@ -139,7 +160,11 @@ class HomeWidgetAdapter:
                     "date": str(row.get("date") or row.get("study_date") or "").strip(),
                     "time": str(row.get("time") or row.get("study_time") or "").strip(),
                     "description": str(row.get("description") or row.get("study_description") or "").strip(),
-                    "report_status": str(row.get("report_status") or "pending").strip() or "pending",
+                    "report_status": str(row.get("report_status") or "unknown").strip() or "unknown",
+                    "voice_presence": row.get('voice_presence', 'unknown'),
+                    "voice_author_known": False,
+                    "workflow_scope": row.get('workflow_scope', 'primary_study_of_displayed_row'),
+                    "local_artifacts": row.get('local_artifacts', {}),
                     "images_count": str(row.get("images_count") or "").strip(),
                 }
             )
@@ -158,11 +183,11 @@ class HomeWidgetAdapter:
         """Rows from the last patient search (consumed by list_patients).
 
         Sources the per-row stashes the search path already maintains
-        (`_server_patient_meta_by_pid`, `_server_series_count_by_study` — see
+        (`_server_patient_meta_by_pid`, `_server_series_count_by_study` â€” see
         _hp_search._add_socket_patient_to_table). Read-only. Added 2026-06-04:
         list_patients probed read_patient_rows()/get_patient_rows()/
         patient_rows() and none existed, so it always returned zero rows.
-        NOTE: the meta stash accumulates across searches — callers filter by
+        NOTE: the meta stash accumulates across searches â€” callers filter by
         `modalities` when they need the latest search only.
         """
         home = self.home
@@ -271,9 +296,9 @@ class HomeWidgetAdapter:
             raise RuntimeError("Home widget is unavailable")
         self.home._on_download_requested(studies, set_current_tab=set_current_tab)
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Source-mode control
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def set_source_mode(self, source: str) -> bool:
         """Switch the active data-source tab (local / server / import)."""
@@ -296,11 +321,11 @@ class HomeWidgetAdapter:
         except Exception:
             return False
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Patient selection helpers
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    # Maps human-friendly column names → logical column index used by the table
+    # Maps human-friendly column names â†’ logical column index used by the table
     _SORT_COLUMN_MAP: dict[str, int] = {
         "date": 8,
         "study_date": 8,
@@ -413,9 +438,9 @@ class HomeWidgetAdapter:
         except Exception:
             return 0
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Font size
-    # ──────────────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def change_font_size(self, direction: str) -> bool:
         """Increase or decrease the patient-table font size.
@@ -423,8 +448,8 @@ class HomeWidgetAdapter:
         Parameters
         ----------
         direction : str
-            ``"increase"`` / ``"up"`` / ``"larger"`` → +2 pt
-            ``"decrease"`` / ``"down"`` / ``"smaller"`` → -2 pt
+            ``"increase"`` / ``"up"`` / ``"larger"`` â†’ +2 pt
+            ``"decrease"`` / ``"down"`` / ``"smaller"`` â†’ -2 pt
         """
         if not self.home:
             return False

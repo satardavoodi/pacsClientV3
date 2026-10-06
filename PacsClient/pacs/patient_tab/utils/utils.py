@@ -69,7 +69,8 @@ def _suppress_pydicom_unknown_encoding():
 def _safe_dcmread(path, **kwargs):
     # یک dcmread امن که هشدار charset را موقتاً خاموش می‌کند
     with _suppress_pydicom_unknown_encoding():
-        return pydicom.dcmread(str(path), force=True, **kwargs)
+        from PacsClient.utils.dicom_reader import read_dicom
+        return read_dicom(str(path), force=True, **kwargs)
 
 
 def _sanitize_specific_character_set(ds):
@@ -291,6 +292,11 @@ def convert_itk2vtk(itk_image: sitk.Image):
     # deep=False means VTK wraps the numpy buffer without copying. If Python
     # garbage-collects `arr`, VTK reads freed memory. This pin prevents that.
     vtk_image._numpy_backing_store = arr
+
+    # A separate build receipt preserves the signed decoder stack direction.
+    # Leave the historical DirectionMatrix and all pixels/grid values unchanged.
+    from .mpr_stack_geometry import copy_from_itk
+    copy_from_itk(itk_image, vtk_image)
     
     return vtk_image
 

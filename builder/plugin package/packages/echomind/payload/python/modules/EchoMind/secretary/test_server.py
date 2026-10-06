@@ -188,7 +188,11 @@ class TestControlServer:
         # audited as mode=qa. A client MAY request a narrower mode per request
         # (e.g. {"mode": "read_only"}) for safe read-only exploration.
         mode = str(req.get("mode") or "qa").strip() or "qa"
-        result = bus.execute(plan, {"agent_mode": mode})
+        confirmed = req.get('confirmed', False)
+        if type(confirmed) is not bool:
+            return _result_to_wire({'ok':False, 'action':action,
+                'error_code':'INVALID_ARGUMENTS', 'message':'Confirmation must be a boolean.'}, req_id)
+        result = bus.execute(plan, {"agent_mode": mode, "confirmed": confirmed})
         return _result_to_wire(result, req_id)
 
     def close(self) -> None:

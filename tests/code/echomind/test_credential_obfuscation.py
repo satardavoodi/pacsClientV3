@@ -25,10 +25,24 @@ from modules.EchoMind.credential_envelope import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEXT_SUFFIXES = {".json", ".md", ".py", ".txt", ".toml", ".yaml", ".yml"}
 PROVIDER_PATTERNS = (
-    re.compile(re.escape("s" + "k-") + r"[0-9A-Za-z_-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9_])" + re.escape("s" + "k-") + r"[0-9A-Za-z_-]{20,}"),
     re.compile(re.escape("AI" + "za") + r"[0-9A-Za-z_-]{20,}"),
 )
 ACCESS_CODE_PATTERN = re.compile(r"Ai[- ]?[Pp]acs/[A-Za-z0-9@#&*._-]{6,}")
+
+
+def test_provider_scan_does_not_match_multitask_research_path():
+    path = "P/multi" + "task-typing-regularized-20261005"
+    assert not any(pattern.search(path) for pattern in PROVIDER_PATTERNS)
+
+
+@pytest.mark.parametrize("prefix", ["", 'TOKEN = "', "key:", "key=", "/"])
+@pytest.mark.parametrize("project_key", [False, True])
+def test_provider_scan_retains_standalone_key_detection(prefix, project_key):
+    token = "s" + "k-" + ("proj-" if project_key else "") + "A" * 40
+    assert any(pattern.search(prefix + token) for pattern in PROVIDER_PATTERNS)
+
+
 PROTECTED_RUNTIME_PATHS = (
     "modules/EchoMind/api_manager.py",
     "modules/EchoMind/center_registry.py",

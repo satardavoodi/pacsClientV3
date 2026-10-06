@@ -49,7 +49,9 @@ DET_EVAL_SCORE_THR = 0.45
 AUX_EVAL_THR = 0.75
 TTA_HFLIP = True
 SWEEP_THRESHOLDS = [x / 100 for x in range(5, 51, 2)]
-MIN_BOX_AREA_FRAC = 0.002
+# Small calcification proposals must survive geometric postprocessing.
+# Confidence/NMS, rather than whole-breast area, determine candidate retention.
+MIN_BOX_AREA_FRAC = 0.0
 AGGREGATE_BY_STUDY = True
 STUDY_KEY_MODE = 'parent_dir'
 STUDY_VOTE_K = 2

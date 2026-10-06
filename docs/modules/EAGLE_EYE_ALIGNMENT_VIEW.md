@@ -1,5 +1,52 @@
 # Eagle Eye Alignment View
 
+## PDF recovery UX correction (2026-10-06)
+
+Implemented an explicit draft action, adjacent next-step guidance, source-scale
+restoration without landmark loss, and separately labeled previous-PDF access.
+Current edits still invalidate current review. Prior PDF snapshots remain usable
+only within the same loaded image session; image/series replacement clears them.
+Draft creation uses the existing authenticated server report route, without
+claiming acquisition or physician review. No local inference fallback was added.
+Original scale restoration restores source calibration status, not an invented
+patient-plane verification. Earlier downloaded reports are not automatically
+rediscovered across app restarts by this change.
+
+Three initial recovery guards failed before the correction. Four recovery guards
+and adjacent geometry/UI/PDF/reference/builder tests now total 41 passes, exit 0.
+Two existing server-side PDF renderer tests now explicitly mock routing so local
+synthetic renderer checks cannot depend on workstation server configuration.
+Synthetic widget layout was inspected. Standard Client and Eagle Eye Server use
+this shared UI source; alignment payload guards pass, but no installer was built.
+Mirror dry run found only unrelated EchoMind chat drift (1/512); it was preserved.
+The normal running source predates this patch; no hot reload/restart or clinical
+checkbox automation was performed. Live affected-workflow acceptance remains
+pending after human fresh source launch/login. Test-control was unavailable in
+this normal session; earlier native observation established the original symptom.
+
+## PDF action investigation (2026-10-06)
+
+User reported disabled Open PDF / Save PDF and an unavailable final-review checkbox.
+The latest downloaded Alignment correction artifact contained a readable three-page
+PDF. Native UI inspection confirmed disabled PDF actions, unchecked acquisition
+confirmation, a disabled review checkbox, and strongly unequal row/column spacing
+in the current edited state. No patient identifiers or measurements are recorded here.
+`_calibration_changed` -> `_recalculate` clears `report_result` and final review;
+`_refresh_controls` requires acquisition confirmation before enabling final review.
+Thus a valid earlier PDF can coexist with disabled actions for an edited image.
+A synthetic Qt probe confirmed PDF actions enabled after report completion and
+disabled after acquisition confirmation changes, while final review becomes enabled.
+This is not evidence of a server download failure. The exact user input that changed
+spacing was not observed. No clinical checkboxes or scale values were changed by
+the investigation, and no new clinical computation was submitted.
+
+The existing PDF was exposed directly as a recovery path. Proposed UX follow-up:
+make invalidation visible, provide access to explicitly labeled previous report
+revisions, and offer source-spacing restoration without discarding edited landmarks.
+Do not enable a stale report as if it reflected current coordinates/calibration.
+No runtime fix or fresh-build acceptance is claimed. Test-control socket was
+unavailable in this normal session; native read-only UI inspection succeeded.
+
 [Stitching handoff review](EAGLE_EYE_ALIGNMENT_STITCHING_HANDOFF.md) records the
 confirmed current export/input incompatibility and the proposed immutable derived
 image contract. The direct Stitching-to-Alignment bridge is not implemented.

@@ -65,6 +65,7 @@ class EagleEyeWorkspaceController(QObject):
         self._total_spine_dialog = None
         self._total_spine_widget = None
         self._analysis_sessions = {}
+        self._saved_brain_reviews = {}
         self._session_keys = {}
         self._source_ref = None
         self._source_identity = None
@@ -101,6 +102,9 @@ class EagleEyeWorkspaceController(QObject):
                     widget.teardown()
                 else:
                     widget._cancel.set()
+        for _, widget in self._saved_brain_reviews.values():
+            if isValid(widget):
+                widget._cancel.set()
 
     def bind_source(self, patient_widget, context):
         # Legion remains a source-owned Fast Viewer workflow. No VTK widget,
@@ -403,8 +407,44 @@ class EagleEyeWorkspaceController(QObject):
         else:
             self.window.refresh_ai_results()
 
-    def open_brain(self, *, control_inputs=None):
+    def open_saved_brain_result(self, result):
+        """Review an immutable result independently of the current input viewport."""
+        from .eagle_eye_brain.saved_results import _same_study
+        if not _same_study(result, self.window._study_uid):
+            raise ValueError('This result belongs to a different examination.')
+        key = str(result['artifact_directory'])
+        existing = self._saved_brain_reviews.get(key)
+        if existing and all(isValid(item) for item in existing):
+            dialog, widget = existing
+        else:
+            from .eagle_eye_brain.widget import BrainVolumetryWidget
+            from .eagle_eye_brain.lesion_widget import BrainLesionWidget
+            dialog = BackgroundAnalysisDialog(self.window)
+            dialog.setWindowTitle('Eagle Eye | Saved report and correction')
+            dialog.resize(900, 760)
+            layout = QVBoxLayout(dialog)
+            cls = BrainLesionWidget if result.get('analysis_type') == 'brain_lesions' else BrainVolumetryWidget
+            widget = cls(dialog, study_uid=self.window._study_uid)
+            scroll = QScrollArea(dialog)
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(widget)
+            layout.addWidget(scroll)
+            try:
+                widget.restore_saved_result(result)
+            except Exception:
+                dialog.deleteLater()
+                raise
+            dialog.bind_analysis(widget)
+            self._saved_brain_reviews[key] = (dialog, widget)
+        dialog.showNormal()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def open_brain(self, *, control_inputs=None, saved_result=None):
         """Keep the viewer on screen while the Brain tools live in an owned popup."""
+        ensure_history = getattr(self.window, 'ensure_saved_brain_results', None)
+        if callable(ensure_history):
+            ensure_history()
         self._select_analysis_session('brain')
         if self._brain_dialog is None:
             from .eagle_eye_brain.widget import BrainVolumetryWidget
@@ -427,6 +467,9 @@ class EagleEyeWorkspaceController(QObject):
         self._brain_dialog.show()
         self._brain_dialog.raise_()
         self._brain_dialog.activateWindow()
+        if saved_result is not None:
+            self._brain_widget.restore_saved_result(saved_result)
+            return
         if self._brain_widget._future is None and self._brain_widget._result is None:
             self._brain_widget.start_study_segmentation()
 
@@ -512,7 +555,10 @@ class EagleEyeWorkspaceController(QObject):
         else:
             dialog.setWindowTitle('Total Spine Alignment | Review results')
 
-    def open_lesions(self, *, control_inputs=None):
+    def open_lesions(self, *, control_inputs=None, saved_result=None):
+        ensure_history = getattr(self.window, 'ensure_saved_brain_results', None)
+        if callable(ensure_history):
+            ensure_history()
         self._select_analysis_session('lesion')
         if self._lesion_dialog is None:
             from .eagle_eye_brain.lesion_widget import BrainLesionWidget
@@ -533,6 +579,9 @@ class EagleEyeWorkspaceController(QObject):
         self._lesion_dialog.show()
         self._lesion_dialog.raise_()
         self._lesion_dialog.activateWindow()
+        if saved_result is not None:
+            self._lesion_widget.restore_saved_result(saved_result)
+            return
         if self._lesion_widget._future is None and self._lesion_widget._result is None:
             self._lesion_widget.start_study_segmentation()
 

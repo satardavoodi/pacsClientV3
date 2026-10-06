@@ -1,0 +1,2 @@
+# Official SDK only. Server imports support both maintained major versions.
+mcp>=1.27.2,<3

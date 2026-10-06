@@ -953,7 +953,7 @@ class EchoMindSettingsWidget(QWidget):
             self.openai_transcription_model_input,
             str(cfg.get("transcription_model") or "gpt-4o-transcribe"),
         )
-        self.openai_temperature_spin.setValue(float(cfg.get("temperature") or 0.2))
+        self.openai_temperature_spin.setValue(float(cfg.get("temperature", 0.2)))
         self.openai_max_tokens_spin.setValue(int(cfg.get("max_output_tokens") or 4096))
         self.openai_timeout_spin.setValue(int(cfg.get("timeout_seconds") or 60))
         reasoning = str(cfg.get("reasoning_effort") or "")
@@ -1080,6 +1080,42 @@ class EchoMindSettingsWidget(QWidget):
     # ── Voice to Text ────────────────────────────────────────────────────────
     def _current_stt_provider(self) -> str:
         return str(self.provider_combo.currentData() or "aipacs_2")
+
+    def apply_assistant_preferences(self, action, data):
+        """Apply verified scalar fields without reloading keys, prompts or files."""
+        if action == 'set_voice_to_text_preferences':
+            index = self.provider_combo.findData(data['provider'])
+            if index >= 0:
+                self.provider_combo.setCurrentIndex(index)
+            self.stt_timeout_input.setValue(data['timeout_seconds'])
+            self.stt_status.setText('Saved. New recordings use the selected Voice to Text service.')
+        elif action == 'set_ai_proxy_preferences':
+            proxy = data['proxy']
+            self.proxy_type_combo.setCurrentIndex(self.proxy_type_combo.findData(proxy['connection_type']))
+            self.proxy_port_combo.setCurrentIndex(self.proxy_port_combo.findData(proxy['proxy_port']))
+        elif action == 'set_personal_ai_preferences':
+            fields = {'temperature':'openai_temperature_spin','max_output_tokens':'openai_max_tokens_spin',
+                      'timeout_seconds':'openai_timeout_spin','reasoning_effort':'openai_reasoning_combo',
+                      'eagle_eye_model':'openai_eagle_diagnosis_input',
+                      'eagle_eye_screening_model':'openai_eagle_screening_input'}
+            for key, value in data['preferences'].items():
+                field = getattr(self, fields.get(key,'openai_'+key+'_input'), None)
+                if field is None:
+                    continue
+                if key == 'reasoning_effort':
+                    index = field.findData(value)
+                    if index < 0:
+                        field.addItem(str(value), userData=value)
+                        index = field.count()-1
+                    field.setCurrentIndex(index)
+                elif key in ('eagle_eye_model','eagle_eye_screening_model'):
+                    field.setText(str(value))
+                elif key.endswith('_model'):
+                    self._set_combo_value(field, str(value))
+                else:
+                    if key == 'max_output_tokens' and value > field.maximum():
+                        field.setMaximum(value)
+                    field.setValue(value)
 
     def _on_provider_changed(self, _index: int):
         # Selecting a provider only updates the FORM. It is persisted by

@@ -98,7 +98,12 @@ def _fmt_patient_list(patients: list[dict[str, Any]]) -> str:
             f"| Body:{p.get('body_part', '')} "
             f"| Date:{p.get('date', '')} "
             f"| Time:{p.get('time', '')} "
-            f"| Images:{images}"
+            f"| Images:{images} "
+            f"| Study:{p.get('study_uid', '')} "
+            f"| Row:{p.get('row_index', '')} | List:{p.get('list_id', '')} "
+            f"| Voice:{p.get('voice_presence', 'unknown')} "
+            f"| Report:{p.get('report_status', 'unknown')} "
+            f"| Voice author:unavailable"
         )
     return "\n".join(lines)
 
@@ -260,16 +265,9 @@ class EchoMindMemoryStore:
         Create a fresh memory file (triggered by the "New" button or by
         the automatic cycle-limit rollover).
 
-        The previous txt file is deleted from disk; its DB row is retained.
+        Previous files remain saved; only the new file supplies active context.
         """
-        # Delete old file from disk
-        try:
-            if self._filepath.exists():
-                self._filepath.unlink()
-        except Exception:
-            pass
-
-        self._memory_number += 1
+        self._memory_number = max(self._memory_number + 1, self._next_memory_number())
         self._cycle_count = 0
         self._filepath = _MEMORY_DIR / _make_filename(self._memory_number)
         self._current = {}

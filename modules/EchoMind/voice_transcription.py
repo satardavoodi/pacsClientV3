@@ -50,6 +50,7 @@ import requests  # noqa: F401  (kept: callers/tests reference the module symbol)
 from . import echomind_http
 from .settings_store import (
     STT_HTTP_PROVIDERS,
+    STT_PROVIDER_AUTO,
     STT_PROVIDER_AIPACS_1,
     STT_PROVIDER_AIPACS_2,
     STT_PROVIDER_AIPACS_3,
@@ -79,10 +80,11 @@ AIPACS_SERVER_3_MODEL = "gapgpt/whisper-1"
 
 #: (provider_id, display label) — the Settings combo renders exactly this.
 STT_PROVIDER_CHOICES = (
+    (STT_PROVIDER_AUTO, "Automatic: Google, Whisper, Company Servers"),
+    (STT_PROVIDER_GOOGLE, "Google Speech"),
     (STT_PROVIDER_AIPACS_1, "Company Server 1"),
     (STT_PROVIDER_AIPACS_2, "Company Server 2"),
     (STT_PROVIDER_AIPACS_3, "Company Server 3"),
-    (STT_PROVIDER_GOOGLE, "Google Speech"),
     (STT_PROVIDER_OPENAI, "OpenAI Transcription"),
     (STT_PROVIDER_CUSTOM, "Custom Server"),
 )
@@ -314,7 +316,28 @@ class VoiceTranscriptionService:
         timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         cfg = self._cfg()
-        provider = cfg.get("provider", STT_PROVIDER_AIPACS_2)
+        provider = cfg.get("provider", STT_PROVIDER_AUTO)
+        if provider == STT_PROVIDER_AUTO:
+            attempts = []
+            for candidate in (STT_PROVIDER_GOOGLE, STT_PROVIDER_AIPACS_3,
+                              STT_PROVIDER_AIPACS_1, STT_PROVIDER_AIPACS_2):
+                attempt_cfg = dict(cfg, provider=candidate)
+                log.info("[STT] automatic attempt provider=%s", candidate)
+                result = VoiceTranscriptionService(attempt_cfg).transcribe(
+                    paths, quality_mode=quality_mode,
+                    timeout=min(int(timeout or cfg.get("timeout_seconds") or DEFAULT_TIMEOUT_S), 45),
+                )
+                attempts.append({"provider": candidate, "ok": bool(result.get("ok"))})
+                if result.get("ok") and str(result.get("transcript") or "").strip():
+                    result["attempts"] = attempts
+                    return result
+                # Quality rejection is a completed recognition, not a routing failure.
+                if result.get("accepted") is False and result.get("transcript"):
+                    result["attempts"] = attempts
+                    return result
+            result["attempts"] = attempts
+            result["error"] = "Transcription failed on Google, Whisper and company servers. Please try again or select a provider in Settings."
+            return result
 
         if provider == STT_PROVIDER_GOOGLE:
             return self._delegate("v2t", paths, quality_mode, timeout, cfg)

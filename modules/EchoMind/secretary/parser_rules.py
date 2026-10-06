@@ -582,7 +582,11 @@ def is_chitchat(text: str) -> tuple[bool, str]:
     lang = _detect_script(text)
     for bucket, fa_terms, en_terms in _CHITCHAT_BUCKETS:
         all_terms = [t.lower() for t in (fa_terms + en_terms)]
-        if _has_any(norm, all_terms):
+        # Only complete conversational utterances may bypass server planning.
+        # Substrings such as "ty" inside "quantity" are not acknowledgements;
+        # greetings followed by an instruction must also reach the planner.
+        conversational = norm.strip(" .,!?:;\u061f\u060c\u061b")
+        if conversational in all_terms:
             reply = (
                 _CHITCHAT_REPLIES.get((bucket, lang))
                 or _CHITCHAT_REPLIES.get((bucket, "en"), "")

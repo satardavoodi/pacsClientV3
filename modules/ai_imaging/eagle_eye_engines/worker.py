@@ -19,7 +19,10 @@ def validate_stacker_schema(cache):
     """Do not invent the missing training-time feature construction contract."""
     expected = len(cache['used_kinds'])
     for estimator in cache['stackers'].values():
-        if getattr(estimator, 'n_features_in_', None) != expected:
+        width = getattr(estimator, 'n_features_in_', None)
+        imputer = cache.get('stack_imputer')
+        if width != expected and not (
+                width == expected + 5 and getattr(imputer, 'n_features_in_', None) == width):
             raise ValueError('Breast classifier weights and inference feature schema do not match.')
 
 

@@ -5,6 +5,12 @@ user-facing workflow actually calls.
 
 ---
 
+For the 2026-10-06 PACS/client/Eagle Eye broadcast and previous-result review, see
+[the three-node realtime contract](THREE_NODE_REALTIME_REVIEW_2026-10-06.md).
+The owner requires same-center authorized result sharing and Patient availability
+indicators. Source history/event/sidebar implementation and synthetic three-node
+acceptance are complete; fresh-source GUI and release artifact gates remain open.
+
 ## 1.1 Module map
 
 ```
@@ -240,3 +246,64 @@ deleting, weakening or softening it.
 | `AIPACS_TURBO_PROMPT_V2` | **on** | `=0` reverts to narrowing (CT) or the shared prompt |
 
 Both are read at call time, so they take effect on the next report.
+
+## Reception report conflict handling (2026-09-30)
+
+EchoMind previously validated the reception ID but unconditionally posted the new
+bubble as both content and findings to update-report, replacing earlier dictations.
+The send worker now inspects the authoritative reception record before any local
+write or POST. An existing report returns to the GUI for Add to Existing Report,
+Replace Existing Report, or Cancel (default/Escape). Append preserves the previous
+inline HTML and places the normalized new report after a separator. The local
+bubble snapshot remains the original individual dictation. Empty HTML wrappers
+are treated as empty; malformed responses fail closed. A confirmation triggers a
+fresh GET and renewed consent if content changed. Reception identity stays pinned
+to the initially confirmed ID throughout this flow.
+
+Implementation: modules/EchoMind/viewer_chat/ai_chat_pages.py and
+PacsClient/utils/reception_report_merge.py. Regression guard:
+tests/code/echomind/test_reception_report_conflict.py. Three behavioral guards
+failed before the fix (writes occurred without consent / invalid response), then
+passed. Focused send, persistence, HTML, workflow and status suite: 120 passed,
+1 xfailed, 5 xpassed, exit 0. The existing non-strict quarantines account for the
+xfail/xpasses; these are not new acceptance evidence. No live patient reports were
+sent. Test-control ping failed because the source app listener was unavailable;
+actual source GUI acceptance remains pending after human restart/login.
+
+The GET/POST API has no demonstrated atomic compare-and-swap contract. Revalidation
+protects changes during the prompt, but cannot guarantee exclusion of another
+workstation's write between the final GET and POST. Atomic multi-writer protection
+requires server support; do not claim that this client change provides it.
+
+Build handoff: the EchoMind plugin mirror was synchronized with the repository
+script; all 495 mirror pairs match. PacsClient is a core package in the PyInstaller
+and Nuitka inputs. The same GUI workflow applies to Standard/ARM Client and Eagle
+Eye Server GUI when EchoMind is installed; headless service is not this UI. No
+version bump, installer build or artifact validation was performed. Next candidate
+acceptance must exercise empty/add/replace/cancel with synthetic reports, preserve
+HTML formatting and verify server readback on each selected role/backend. Rollback
+is limited to these two runtime files and the corresponding EchoMind mirror, but
+restores the original overwrite behavior.
+
+Builder registry/profile guards: 26 passed, exit 0. This verifies build inputs only.
+
+### Message receipt timestamps (2026-09-30)
+
+MessageBubble displays a local Gregorian date and 24-hour minute time below the
+message box. The timestamp is outside report HTML, copy/export and Reception
+content. New bubbles capture receipt time once and persist that exact epoch in
+the existing ai_messages.created_at field. Editing or font changes preserve it.
+Both history-render paths request the stored timestamp through the opt-in
+include_created_at query option; other callers retain four-field tuples. Missing
+historical times display Time unavailable rather than a fabricated current time.
+No database migration or live data rewrite is required.
+
+Verification: 32 focused timestamp/Assist/performance checks passed, exit 0.
+New storage-query coverage executes the actual query function against in-memory
+synthetic SQLite without importing the application's clinical pool. Native GUI
+acceptance remains pending because the documented Test Control ping could not
+connect. A synthetic offscreen preview is not live acceptance. The widget mirror
+is synchronized; the shared ai_chat_pages.py mirror has pre-existing unrelated
+drift, so full parity and edition artifact acceptance remain pending. This UI
+applies wherever EchoMind chat is installed in Standard/ARM Client or Server GUI;
+no headless server inference or release build is changed.

@@ -1,0 +1,428 @@
+[
+  {
+    "id": "server_echo_two_ports",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Verify the configured Test Center using DICOM ports 105 and 104. Do not change its configuration.",
+    "action": "verify_settings_server",
+    "entities": {
+      "server_name": "Test Center",
+      "ports": [
+        105,
+        104
+      ]
+    },
+    "expected": "port_receipts"
+  },
+  {
+    "id": "server_clone",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Copy Test Center as Test Center 2, preserving its socket and reception endpoints.",
+    "action": "clone_settings_server",
+    "entities": {
+      "source_name": "Test Center",
+      "new_name": "Test Center 2"
+    },
+    "expected": "independent_clone"
+  },
+  {
+    "id": "persistent_modalities",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Settings Modality Grid, remove NM and XA. Keep MR and CT available for future searches.",
+    "action": "remove_settings_modalities",
+    "entities": {
+      "modalities": [
+        "NM",
+        "XA"
+      ]
+    },
+    "expected": "persist_grid"
+  },
+  {
+    "id": "reference_line_color",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, change the reference line color to #00FF80.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "reference_line",
+      "color": "#00FF80"
+    },
+    "expected": "tool_color"
+  },
+  {
+    "id": "reference_line_width",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, set reference line line width to 4.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "reference_line",
+      "line_width": 4.0
+    },
+    "expected": "tool_width"
+  },
+  {
+    "id": "ruler_color",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, change the ruler color to #00FF80.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "ruler",
+      "color": "#00FF80"
+    },
+    "expected": "tool_color"
+  },
+  {
+    "id": "ruler_width",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, set ruler line width to 4.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "ruler",
+      "line_width": 4.0
+    },
+    "expected": "tool_width"
+  },
+  {
+    "id": "arrow_color",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, change the arrow color to #00FF80.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "arrow",
+      "color": "#00FF80"
+    },
+    "expected": "tool_color"
+  },
+  {
+    "id": "arrow_width",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, set arrow line width to 4.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "arrow",
+      "line_width": 4.0
+    },
+    "expected": "tool_width"
+  },
+  {
+    "id": "angle_color",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, change the angle color to #00FF80.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "angle",
+      "color": "#00FF80"
+    },
+    "expected": "tool_color"
+  },
+  {
+    "id": "angle_width",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, set angle line width to 4.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "angle",
+      "line_width": 4.0
+    },
+    "expected": "tool_width"
+  },
+  {
+    "id": "polygon_color",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, change the polygon color to #00FF80.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "polygon",
+      "color": "#00FF80"
+    },
+    "expected": "tool_color"
+  },
+  {
+    "id": "polygon_width",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, set polygon line width to 4.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "polygon",
+      "line_width": 4.0
+    },
+    "expected": "tool_width"
+  },
+  {
+    "id": "rectangle_color",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, change the rectangle color to #00FF80.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "rectangle",
+      "color": "#00FF80"
+    },
+    "expected": "tool_color"
+  },
+  {
+    "id": "rectangle_width",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Tool Settings, set rectangle line width to 4.",
+    "action": "set_settings_tool_style",
+    "entities": {
+      "tool": "rectangle",
+      "line_width": 4.0
+    },
+    "expected": "tool_width"
+  },
+  {
+    "id": "ct_min_slices",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set CT min slices to 5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "CT",
+      "parameter": "min_slices",
+      "value": 5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "ct_enabled",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set CT enabled to False.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "CT",
+      "parameter": "enabled",
+      "value": false
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "ct_gaussian_smoothing_sigma",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set CT gaussian smoothing sigma to 1.5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "CT",
+      "parameter": "gaussian_smoothing.sigma",
+      "value": 1.5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "ct_gaussian_high_pass_sigma",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set CT gaussian high pass sigma to 1.5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "CT",
+      "parameter": "gaussian_high_pass.sigma",
+      "value": 1.5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "ct_laplacian_sharpening_alpha",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set CT laplacian sharpening alpha to 0.5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "CT",
+      "parameter": "laplacian_sharpening.alpha",
+      "value": 0.5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "mr_min_slices",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set MR min slices to 5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "MR",
+      "parameter": "min_slices",
+      "value": 5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "mr_enabled",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set MR enabled to False.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "MR",
+      "parameter": "enabled",
+      "value": false
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "mr_gaussian_smoothing_sigma",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set MR gaussian smoothing sigma to 1.5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "MR",
+      "parameter": "gaussian_smoothing.sigma",
+      "value": 1.5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "mr_gaussian_high_pass_sigma",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set MR gaussian high pass sigma to 1.5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "MR",
+      "parameter": "gaussian_high_pass.sigma",
+      "value": 1.5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "mr_laplacian_sharpening_alpha",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In Image Filter Settings, set MR laplacian sharpening alpha to 0.5.",
+    "action": "set_settings_filter_parameter",
+    "entities": {
+      "modality": "MR",
+      "parameter": "laplacian_sharpening.alpha",
+      "value": 0.5
+    },
+    "expected": "filter_persistence"
+  },
+  {
+    "id": "voice_v2t",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In AI Settings, select v2t as the voice transcription provider. Preserve my existing credentials.",
+    "action": "set_voice_to_text_preferences",
+    "entities": {
+      "provider": "v2t"
+    },
+    "expected": "voice_persistence"
+  },
+  {
+    "id": "voice_openai",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In AI Settings, select OpenAI Whisper as the voice transcription provider. Preserve my existing credentials.",
+    "action": "set_voice_to_text_preferences",
+    "entities": {
+      "provider": "openai"
+    },
+    "expected": "voice_persistence",
+    "preconditions": "User has entered own API key and explicitly defined prompt in local form; synthetic fixtures only."
+  },
+  {
+    "id": "voice_auto",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In AI Settings, select auto as the voice transcription provider. Preserve my existing credentials.",
+    "action": "set_voice_to_text_preferences",
+    "entities": {
+      "provider": "auto"
+    },
+    "expected": "voice_persistence"
+  },
+  {
+    "id": "proxy_direct",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In AI Settings, choose direct with the configured proxy port 2082.",
+    "action": "set_ai_proxy_preferences",
+    "entities": {
+      "connection_type": "direct",
+      "proxy_port": 2082
+    },
+    "expected": "proxy_persistence"
+  },
+  {
+    "id": "proxy_socks5",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "In AI Settings, choose socks5 with the configured proxy port 2082.",
+    "action": "set_ai_proxy_preferences",
+    "entities": {
+      "connection_type": "socks5",
+      "proxy_port": 2082
+    },
+    "expected": "proxy_persistence"
+  },
+  {
+    "id": "read_server",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Show the safe current server configuration.",
+    "action": "get_settings_snapshot",
+    "entities": {
+      "section": "server"
+    },
+    "expected": "safe_snapshot"
+  },
+  {
+    "id": "read_modality_grid",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Show the safe current modality grid configuration.",
+    "action": "get_settings_snapshot",
+    "entities": {
+      "section": "modality_grid"
+    },
+    "expected": "safe_snapshot"
+  },
+  {
+    "id": "read_tools",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Show the safe current tools configuration.",
+    "action": "get_settings_snapshot",
+    "entities": {
+      "section": "tools"
+    },
+    "expected": "safe_snapshot"
+  },
+  {
+    "id": "read_image_filter",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Show the safe current image filter configuration.",
+    "action": "get_settings_snapshot",
+    "entities": {
+      "section": "image_filter"
+    },
+    "expected": "safe_snapshot"
+  },
+  {
+    "id": "read_ai",
+    "persona": "Radiologist",
+    "mode": "act",
+    "request": "Show my AI settings without displaying passwords or tokens.",
+    "action": "get_ai_settings",
+    "entities": {},
+    "expected": "safe_snapshot"
+  }
+]

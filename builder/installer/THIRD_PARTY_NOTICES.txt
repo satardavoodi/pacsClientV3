@@ -1,5 +1,5 @@
 AI-PACS Third-Party Software Notice
-Release: 3.7.0
+Release: 3.7.1
 Notice revision: 2026-09-28
 
 AI-PACS includes third-party software. Copyright and license terms for those

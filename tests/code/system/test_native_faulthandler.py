@@ -10,13 +10,79 @@ from __future__ import annotations
 
 import faulthandler
 import sys
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from PacsClient.utils import native_fault_log as nfl  # noqa: E402
+
+
+@pytest.mark.parametrize("platform, expected", [("win32", False), ("linux", True)])
+def test_native_handler_does_not_walk_running_windows_threads(tmp_path, monkeypatch, platform, expected):
+    """Windows first-chance COM exceptions may arrive without the GIL."""
+    calls = []
+    monkeypatch.setenv("AIPACS_NATIVE_FAULT_LOG", "1")
+    monkeypatch.setattr(faulthandler, "enable", lambda **kwargs: calls.append(kwargs))
+    nfl.reset_for_tests()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sys, "platform", platform)
+            path = nfl.enable_native_fault_log(str(tmp_path))
+        assert path is not None
+        assert calls[0]["all_threads"] is expected
+        assert not calls[0]["file"].closed
+    finally:
+        if nfl._handle is not None:
+            nfl._handle.close()
+        nfl.reset_for_tests()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows first-chance exception boundary")
+def test_handled_com_exception_keeps_diagnostics_and_process_alive(tmp_path):
+    # No application, Qt, database, or patient data. ctypes releases the GIL
+    # while RaiseException invokes the native handler; a worker changes frames.
+    code = r'''
+import ctypes, faulthandler, sys, threading
+from PacsClient.utils import native_fault_log as nfl
+ctypes.windll.kernel32.SetErrorMode(3)
+stop = threading.Event()
+def work():
+    while not stop.is_set():
+        exec(compile("x=sum(range(20))", "<synthetic-worker>", "exec"), {})
+worker = threading.Thread(target=work, daemon=True)
+worker.start()
+try:
+    assert nfl.enable_native_fault_log(sys.argv[1])
+    for _ in range(20):
+        try:
+            ctypes.windll.kernel32.RaiseException(0x8001010d, 0, 0, None)
+        except OSError:
+            pass
+finally:
+    stop.set()
+    worker.join(5)
+    faulthandler.disable()
+    if nfl._handle:
+        nfl._handle.close()
+print("SURVIVED")
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path)], cwd=ROOT,
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "SURVIVED" in result.stdout
+    logs = list(tmp_path.glob("native_fault.*.log"))
+    assert len(logs) == 1
+    content = logs[0].read_text(encoding="utf-8")
+    assert "0x8001010d" in content
+    assert "Stack (most recent call first)" in content
+    assert "<synthetic-worker>" not in content
 
 
 def test_flag_off_disables_and_creates_nothing(tmp_path, monkeypatch):

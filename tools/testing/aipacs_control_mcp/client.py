@@ -53,12 +53,16 @@ class AipacsControlClient:
 
     # ── core ─────────────────────────────────────────────────────────
     def send(self, action: str, entities: Optional[dict] = None,
-             timeout_ms: int = 30000, mode: str = "") -> dict:
+             timeout_ms: int = 30000, mode: str = "", confirmed: bool = False) -> dict:
+        if type(confirmed) is not bool:
+            raise ValueError('Confirmation must be a boolean')
         req_id = self._next_id
         self._next_id += 1
         req = {"id": req_id, "action": action, "entities": entities or {}}
         if mode:
             req["mode"] = mode
+        if confirmed:
+            req['confirmed'] = True
         line = json.dumps(req, default=str).encode("utf-8") + b"\n"
         self._sock.write(line)
         self._sock.flush()

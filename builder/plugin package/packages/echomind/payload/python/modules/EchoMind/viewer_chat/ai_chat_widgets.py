@@ -7,6 +7,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 from .ai_chat_helpers import _set_icon, extract_plain_text_from_html, themed_message_box
+from datetime import datetime
 from dataclasses import dataclass
 from html import escape
 
@@ -214,6 +215,9 @@ class VoiceMessageBubble(QWidget):
 _RTL_ROOT_MARKER = "echo-rtl-root"
 
 
+_NEW_MESSAGE_TIME = object()
+
+
 class MessageBubble(QWidget):
     """
     Chat message bubble widget.
@@ -242,6 +246,7 @@ class MessageBubble(QWidget):
         on_persian: t.Callable[['MessageBubble'], None] | None = None,
         on_send_reception: t.Callable[['MessageBubble'], None] | None = None,
         on_medical_consult=None,
+        created_at=_NEW_MESSAGE_TIME,
     ):
         super().__init__(parent)
         self.who = who
@@ -491,6 +496,15 @@ class MessageBubble(QWidget):
         box_lay.addLayout(footer, 0)
         outer.addWidget(box, 0)
 
+        self.timestamp_label = QLabel(self)
+        self.timestamp_label.setObjectName('messageTimestamp')
+        self.timestamp_label.setTextFormat(Qt.PlainText)
+        self.timestamp_label.setLayoutDirection(Qt.LeftToRight)
+        self.timestamp_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.timestamp_label.setStyleSheet('color: #93a4b7; font-size: 11px; padding: 0 6px;')
+        outer.addWidget(self.timestamp_label, 0, Qt.AlignRight if self._is_user else Qt.AlignLeft)
+        self.set_created_at(int(time.time()) if created_at is _NEW_MESSAGE_TIME else created_at)
+
         # Base stylesheet
         self.setStyleSheet("""
             QLabel#who { color: #9eb4cc; font-size: 12px; font-weight: 600; padding-left: 6px; }
@@ -523,6 +537,20 @@ class MessageBubble(QWidget):
         self._schedule_reflow()
 
     # ----------------- Font size logic -----------------
+    def set_created_at(self, timestamp):
+        """Display local receipt time separately from report/copy/export content."""
+        try:
+            value = int(timestamp)
+            received = datetime.fromtimestamp(value).astimezone()
+        except (TypeError, ValueError, OverflowError, OSError):
+            self.created_at = None
+            self.timestamp_label.setText('Time unavailable')
+            self.timestamp_label.setToolTip('The original message time was not recorded.')
+        else:
+            self.created_at = value
+            self.timestamp_label.setText(received.strftime('%Y-%m-%d  %H:%M'))
+            self.timestamp_label.setToolTip(received.isoformat(timespec='seconds'))
+
     def _ensure_html_text(self, s: str) -> str:
         """Ensure we always render as safe HTML (QLabel is RichText)."""
         s = s or ""
@@ -1163,6 +1191,9 @@ class TypingBubble(QWidget):
     def stop(self): self._timer.stop()
 
 class ChatHistory(QWidget):
+    bubbleAdded = Signal(object)
+    conversationCleared = Signal()
+
     def __init__(self):
         super().__init__()
         root = QVBoxLayout(self)
@@ -1287,6 +1318,7 @@ class ChatHistory(QWidget):
         on_send_reception=None,
         force_right: bool | None = None,   # جدید: فقط برای موارد خاص مثل تصویر
         on_medical_consult=None,
+        created_at=_NEW_MESSAGE_TIME,
     ) -> MessageBubble:
         """
         - متن‌های معمولی: کاربر سمت راست، بات سمت چپ (مثل قبل)
@@ -1300,6 +1332,7 @@ class ChatHistory(QWidget):
             on_persian=on_persian,
             on_send_reception=on_send_reception,
             on_medical_consult=on_medical_consult,
+            created_at=created_at,
         )
 
         wrap = QWidget(self.container)
@@ -1324,6 +1357,7 @@ class ChatHistory(QWidget):
         self.vbox.addItem(self._tail_spacer)
 
         self._stick_to_bottom(wrap)
+        self.bubbleAdded.emit(bubble)
         return bubble
 
             
@@ -1368,6 +1402,7 @@ class ChatHistory(QWidget):
         """
         همه‌ی ویجت‌ها را پاک می‌کنیم ولی Spacer انتهایی را نگه می‌داریم.
         """
+        self.conversationCleared.emit()
         lead = getattr(self, "_lead_widget", None)
         for i in reversed(range(self.vbox.count())):
             it = self.vbox.itemAt(i)

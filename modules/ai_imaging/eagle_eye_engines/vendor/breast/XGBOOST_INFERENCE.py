@@ -5,6 +5,11 @@ import numpy as np
 import pandas as pd
 from joblib import load
 warnings.filterwarnings('ignore', category=UserWarning)
+
+try:
+    from .feature_contract import build_feature_matrix, build_stack_matrix, positive_probability
+except ImportError:
+    from feature_contract import build_feature_matrix, build_stack_matrix, positive_probability
 import os, sys, json, traceback, warnings
 from typing import Dict, List, Optional
 import numpy as np
@@ -20,13 +25,15 @@ class PlattCalibrator:
 
     def transform(self, X):
         X = np.asarray(X, dtype=np.float64)
+        if hasattr(self, 'logistic_model'):
+            return self.logistic_model.predict_proba(X.reshape(-1, 1))[:, 1]
         if hasattr(self, 'a_') and hasattr(self, 'b_') and (self.a_ is not None):
             X = np.clip(X, 1e-15, 1 - 1e-15)
             logit = np.log(X / (1 - X))
             return 1.0 / (1.0 + np.exp(self.a_ * logit + self.b_))
         if hasattr(self, 'predict'):
             return self.predict(X)
-        return X
+        raise ValueError('Unsupported saved breast calibrator state.')
 if '__main__' in sys.modules:
     setattr(sys.modules['__main__'], 'PlattCalibrator', PlattCalibrator)
 try:
@@ -87,6 +94,8 @@ def _load_models_to_cache(model_dir: str) -> None:
         _GLOBAL_CACHE['stackers'] = load(os.path.join(model_dir, 'stackers_per_label.joblib'))
         _GLOBAL_CACHE['calibrators'] = load(os.path.join(model_dir, 'calibrators_per_label.joblib'))
         _GLOBAL_CACHE['thresholds'] = np.load(os.path.join(model_dir, 'thresholds_STACKED.npy')).astype(np.float32)
+        imputer_path = os.path.join(model_dir, 'stack_imputer.joblib')
+        _GLOBAL_CACHE['stack_imputer'] = load(imputer_path) if os.path.isfile(imputer_path) else None
         for k in KINDS:
             mdl_path = os.path.join(model_dir, f'xgb_ovr_{k}.joblib')
             if os.path.isfile(mdl_path):
@@ -134,11 +143,7 @@ def _load_feature_list(md: str, name: str) -> Optional[List[str]]:
 
 def _build_X(df: pd.DataFrame, cols: List[str]) -> np.ndarray:
     try:
-        X = df.reindex(columns=cols, fill_value=np.nan).copy()
-        b = X.select_dtypes(include=['bool']).columns
-        if len(b):
-            X[b] = X[b].astype(np.float32)
-        return X.astype('float32').replace([np.inf, -np.inf], np.nan).values
+        return build_feature_matrix(df, cols)
     except Exception as e:
         raise RuntimeError(f'failed to build X for cols (n={len(cols)}): {e}')
 
@@ -155,7 +160,7 @@ def _predict_kind(models: List, X: np.ndarray) -> np.ndarray:
                     if sub_m is None:
                         continue
                     try:
-                        sub_preds.append(sub_m.predict_proba(X)[:, 1])
+                        sub_preds.append(positive_probability(sub_m, X))
                     except Exception as sub_e:
                         _log(f'[warn] model[{i}][{j}] predict_proba failed: {sub_e}')
                 if not sub_preds:
@@ -165,7 +170,7 @@ def _predict_kind(models: List, X: np.ndarray) -> np.ndarray:
                     p = np.mean(np.column_stack(sub_preds), axis=1)
                     probs.append(p.astype(np.float32, copy=False))
             else:
-                p = m.predict_proba(X)[:, 1]
+                p = positive_probability(m, X)
                 probs.append(p.astype(np.float32, copy=False))
         return np.column_stack(probs).astype(np.float32, copy=False)
     except Exception as e:
@@ -213,6 +218,8 @@ def main():
             _log(traceback.format_exc())
     if not P_by_kind:
         raise RuntimeError('No base predictions available (all KINDs failed or missing).')
+    if set(P_by_kind) != set(used_kinds):
+        raise RuntimeError('Incomplete breast base-model predictions.')
     P_final = np.zeros((N, C), dtype=np.float32)
     for c, lbl in enumerate(LABELS):
         try:
@@ -222,11 +229,13 @@ def main():
                     cols.append(P_by_kind[k][:, c])
             Xc = np.column_stack(cols) if cols else np.zeros((N, 0), dtype=np.float32)
             stk = stackers[lbl]
+            Xc = build_stack_matrix(Xc, getattr(stk, 'n_features_in_', None),
+                                    _GLOBAL_CACHE.get('stack_imputer'))
             if Xc.shape[1] == 0:
                 _log(f'[warn] no stack inputs for label={lbl}; using zeros')
                 Pc = np.zeros((N,), dtype=np.float32)
             else:
-                Pc = stk.predict_proba(Xc)[:, 1].astype(np.float32, copy=False)
+                Pc = positive_probability(stk, Xc)
             cal = calibrators.get(lbl, None)
             if cal is not None:
                 try:
@@ -238,6 +247,8 @@ def main():
             _log(f'[warn] stacking failed for label={lbl}: {e}')
             _log(traceback.format_exc())
             P_final[:, c] = np.full((N,), np.nan, dtype=np.float32)
+    if not np.isfinite(P_final).all() or np.any((P_final < 0) | (P_final > 1)):
+        raise RuntimeError('Invalid breast classification output; No Finding is not inferred.')
     Yhat = np.zeros((N, C), dtype=int)
     Yhat[:, 1] = (P_final[:, 1] >= thresholds[1]).astype(int)
     Yhat[:, 2] = (P_final[:, 2] >= thresholds[2]).astype(int)

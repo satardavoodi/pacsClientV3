@@ -96,8 +96,12 @@ def _post_chat(prompt: str, timeout: int = 45) -> Any:
     Send a raw prompt to the LLM via the EchoMind Settings gateway.
     Key is resolved automatically from Settings → modules.EchoMind.
     """
+    from .remote_planner import uses_server, personal_prompt, RemotePlanningError
+    if uses_server():
+        raise RemotePlanningError('Client-built company Secretary prompts cannot be sent. Use Eagle Eye planning.')
+    own_prompt = personal_prompt('secretary_action')
     return gapgpt_chat(
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{'role': 'system', 'content': own_prompt}, {"role": "user", "content": prompt}],
         model=get_secretary_llm_model(),
         timeout=timeout,
         reasoning_effort=get_secretary_reasoning_effort(),
@@ -136,20 +140,13 @@ def parse_command_llm_from_prompt(prompt: str, timeout: int = 45) -> SecretaryAc
 
 
 def parse_command_llm(text: str, language: str = "auto", timeout: int = 45) -> SecretaryActionPlan | None:
-    base = Path(__file__).resolve().parent
-    prompt_template = _load_text(base / "prompts" / "secretary_action_prompt.txt")
-    dynamic_context = build_prompt_context(language=language)
-
-    if not prompt_template:
-        return None
-
-    prompt = (
-        prompt_template.replace("{{LANGUAGE}}", language or "auto")
-        .replace("{{MODULE_MAP}}", dynamic_context)
-        .replace("{{USER_TEXT}}", text or "")
-    )
-    extra = str(get_prompt_settings().get("secretary_action") or "").strip() if get_llm_backend() == "openai" else ""
-    if extra:
-        prompt = f"{extra}\n\n{prompt}"
-    return parse_command_llm_from_prompt(prompt=prompt, timeout=timeout)
-
+    from . import remote_planner
+    if remote_planner.uses_server():
+        return remote_planner.request('plan', text, language=language, timeout=timeout)['plan']
+    own_prompt = remote_planner.personal_prompt('secretary_action')
+    data = json.dumps({'text': text, 'language': language,
+                       'available_actions': sorted(_ALLOWED_ACTIONS)}, ensure_ascii=False)
+    raw = gapgpt_chat(messages=[{'role':'system','content':own_prompt}, {'role':'user','content':data}],
+                      model=get_secretary_llm_model(), timeout=timeout,
+                      reasoning_effort=get_secretary_reasoning_effort())
+    return _raw_to_plan(raw)

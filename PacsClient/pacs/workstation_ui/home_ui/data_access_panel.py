@@ -21,15 +21,11 @@ import qtawesome as qta
 
 
 def _segment_rail_frame_stylesheet(theme: dict) -> str:
-    t = theme or {}
-    rail = t.get("panel_alt_bg", "#121a26")
-    border = t.get("border", "#64748b")
-    return f"""
-        QFrame#DataAccessSegmentRail {{
-            background-color: {rail};
-            border: 1px solid {border};
-            border-radius: 8px;
-        }}
+    return """
+        QFrame#DataAccessSegmentRail {
+            background-color: transparent;
+            border: none;
+        }
     """
 
 
@@ -115,6 +111,35 @@ def _rgba_glow(hex_color: str, alpha_top: float = 0.10, alpha_bottom: float = 0.
     )
 
 
+class _ContentSizedTabs(QTabWidget):
+    """Keep source switching stable while allowing wrapped content on resize."""
+
+    def _page_hint(self, minimum=False):
+        hint = QSize(0, 0)
+        for index in range(self.count()):
+            page = self.widget(index)
+            value = page.minimumSizeHint() if minimum else page.sizeHint()
+            hint = hint.expandedTo(value)
+        return hint + QSize(0, 6)
+
+    def sizeHint(self):
+        return self._page_hint()
+
+    def minimumSizeHint(self):
+        return self._page_hint(minimum=True)
+
+    def hasHeightForWidth(self):
+        return any(self.widget(i).hasHeightForWidth() for i in range(self.count()))
+
+    def heightForWidth(self, width):
+        heights = []
+        for index in range(self.count()):
+            page = self.widget(index)
+            height = page.heightForWidth(width)
+            heights.append(height if height >= 0 else page.sizeHint().height())
+        return max(heights, default=0) + 6
+
+
 class DataAccessPanelWidget(QWidget):
     def __init__(self, method_select_folder):
         super().__init__()
@@ -146,9 +171,10 @@ class DataAccessPanelWidget(QWidget):
     def setup_ui(self):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(8)
+        self.layout.setSpacing(4)
 
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(0)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
         # Custom segmented rail — Qt's native QTabBar renders poorly on Windows.
         self._segment_meta: list[tuple[str, str]] = []
@@ -156,16 +182,19 @@ class DataAccessPanelWidget(QWidget):
         self._segment_rail = QFrame()
         self._segment_rail.setObjectName("DataAccessSegmentRail")
         self._segment_rail_layout = QHBoxLayout(self._segment_rail)
-        self._segment_rail_layout.setContentsMargins(4, 4, 4, 4)
+        self._segment_rail_layout.setContentsMargins(0, 4, 0, 0)
+        self._segment_rail_layout.setAlignment(Qt.AlignVCenter)
         self._segment_rail_layout.setSpacing(3)
 
-        self.tabs = QTabWidget()
+        self.tabs = _ContentSizedTabs()
+        self.tabs.currentChanged.connect(lambda _: self.tabs.updateGeometry())
         self.tabs.setObjectName("DataAccessTabWidget")
+        self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.tabs.currentChanged.connect(self.on_tab_changed)
         self.tabs.tabBar().hide()
 
         self.layout.addWidget(self._segment_rail)
-        self.layout.addWidget(self.tabs, 1)
+        self.layout.addWidget(self.tabs)
 
     def _add_data_tab(self, widget: QWidget, label: str, icon_name: str) -> int:
         idx = self.tabs.addTab(widget, label)
@@ -232,7 +261,7 @@ class DataAccessPanelWidget(QWidget):
         """
         db_tab = QWidget()
         db_layout = QVBoxLayout()
-        db_layout.setContentsMargins(8, 8, 8, 8)
+        db_layout.setContentsMargins(8, 4, 8, 4)
         db_layout.setSpacing(6)
         
         # Local database info
@@ -289,10 +318,11 @@ class DataAccessPanelWidget(QWidget):
         refresh_button.setCursor(Qt.PointingHandCursor)
         self.refresh_local_button = refresh_button
         
+        db_layout.addSpacing(16)
         db_layout.addWidget(local_label)
         db_layout.addWidget(message_label)
         db_layout.addWidget(refresh_button)
-        db_layout.addStretch()
+        db_layout.addStretch(3)
         
         db_tab.setLayout(db_layout)
         self._add_data_tab(db_tab, "Local", "fa5s.database")
@@ -305,7 +335,7 @@ class DataAccessPanelWidget(QWidget):
         server_tab = QWidget()
         server_layout = QVBoxLayout()
         server_layout.setSpacing(6)
-        server_layout.setContentsMargins(8, 8, 8, 8)
+        server_layout.setContentsMargins(8, 4, 8, 4)
         
         # Server label
         server_label = QLabel()
@@ -343,10 +373,12 @@ class DataAccessPanelWidget(QWidget):
             }
         """)
         
+        # Redistribute existing free space without changing the panel size hint.
+        server_layout.addSpacing(16)
         server_layout.addWidget(server_label)
         server_layout.addWidget(self.server_combo)
         server_layout.addWidget(self.connection_status)
-        server_layout.addStretch()
+        server_layout.addStretch(3)
         
         server_tab.setLayout(server_layout)
         self._add_data_tab(server_tab, "Server", "fa5s.server")
@@ -469,7 +501,7 @@ class DataAccessPanelWidget(QWidget):
         """
         pc_tab = QWidget()
         pc_layout = QVBoxLayout(pc_tab)
-        pc_layout.setContentsMargins(8, 8, 8, 8)
+        pc_layout.setContentsMargins(8, 4, 8, 4)
         pc_layout.setSpacing(6)
         
         # Import label
@@ -529,10 +561,11 @@ class DataAccessPanelWidget(QWidget):
         """)
         self.folder_path_label.setWordWrap(True)
 
+        pc_layout.addSpacing(16)
         pc_layout.addWidget(import_label)
         pc_layout.addWidget(self.select_folder_btn)
         pc_layout.addWidget(self.folder_path_label)
-        pc_layout.addStretch()
+        pc_layout.addStretch(3)
 
         self._add_data_tab(pc_tab, "Import", "fa5s.folder-open")
 

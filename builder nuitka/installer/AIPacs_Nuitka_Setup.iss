@@ -40,20 +40,20 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Types]
 Name: "core"; Description: "Core workstation (viewer, download manager, education, stitching)"
-Name: "custom"; Description: "Custom — choose optional modules for this workstation"; Flags: iscustom
+Name: "custom"; Description: "Custom â€” choose optional modules for this workstation"; Flags: iscustom
 
 [Components]
 Name: "core"; Description: "Core platform (always required)"; Types: core custom; Flags: fixed
-Name: "optional"; Description: "Optional modules — copied now, activated on first launch"; Types: custom
+Name: "optional"; Description: "Optional modules â€” copied now, activated on first launch"; Types: custom
 #if AdvancedMprAvailable
-Name: "optional\advanced_mpr"; Description: "Advanced MPR — 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
+Name: "optional\advanced_mpr"; Description: "Advanced MPR â€” 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
 #endif
-Name: "optional\data_analysis"; Description: "Data Analysis — statistics and reporting dashboards"; Types: custom
-Name: "optional\printing"; Description: "Printing — medical film printing and DICOM export workflows"; Types: custom
-Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
-Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
-Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided reporting features"; Types: custom
-Name: "optional\consultation"; Description: "Online Consultation — cloud-based physician-to-physician case consultation"; Types: custom
+Name: "optional\data_analysis"; Description: "Data Analysis â€” statistics and reporting dashboards"; Types: custom
+Name: "optional\printing"; Description: "Printing â€” medical film printing and DICOM export workflows"; Types: custom
+Name: "optional\run_cd"; Description: "Run CD â€” portable DICOM media export and delivery"; Types: custom
+Name: "optional\web_browser"; Description: "Web Browser â€” embedded browser access inside the workstation"; Types: custom
+Name: "optional\echomind"; Description: "EchoMind â€” AI assistant and guided reporting features"; Types: custom
+Name: "optional\consultation"; Description: "Online Consultation â€” cloud-based physician-to-physician case consultation"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -69,6 +69,7 @@ Name: "{commonappdata}\AIPacs\config"; Permissions: users-modify
 Name: "{commonappdata}\AIPacs\module_packages"; Permissions: users-modify
 
 [Files]
+Source: "..\..\builder\installer\ensure_english_voice.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 ; Core bundle from Nuitka build
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -91,6 +92,7 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\setup\ensure_english_voice.ps1"""; StatusMsg: "Preparing English voice for Secretary EchoMind..."; Flags: runhidden waituntilterminated
 Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
@@ -521,7 +523,7 @@ begin
   if GpuAutoDetected then
     GpuHintLabel.Caption :=
       'A compatible GPU was detected on this workstation. ' +
-      'GPU acceleration is enabled by default — you can change this if needed. ' +
+      'GPU acceleration is enabled by default â€” you can change this if needed. ' +
       'AIPacs probes graphics support at startup and falls back automatically if the GPU is unavailable.'
   else
     GpuHintLabel.Caption :=

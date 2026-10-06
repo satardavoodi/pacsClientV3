@@ -15,8 +15,7 @@ Enables Python's ``faulthandler`` writing to
 its diagnostic stream without interleaving another process's native stacks. The
 historical shared ``native_fault.log`` is preserved read-only by this producer.
 Each future native fault leaves the
-Python stack of all threads (e.g. it would have pointed straight at
-``_create_axial_view`` on PC2).
+Python stack (the faulting thread on Windows, all threads elsewhere).
 
 Also provides :func:`hang_watchdog` (A0, 2026-08-23): a context manager that
 dumps every thread's stack when a section overruns, using faulthandler's NATIVE
@@ -110,7 +109,13 @@ def enable_native_fault_log(logs_dir=None) -> Optional[str]:
         pid = os.getpid()
         path = os.path.join(logs_dir, f"native_fault.{pid}.{uuid.uuid4().hex}.log")
         handle = open(path, "x", encoding="utf-8", errors="replace")
-        faulthandler.enable(file=handle, all_threads=True)
+        # Windows invokes this handler for first-chance COM exceptions even
+        # while Qt has released the GIL. Walking another running Python thread
+        # can dereference a retired frame/code object. The 2026-10-03 dumps
+        # resolve to faulthandler_exc_handler -> _Py_DumpTracebackThreads ->
+        # dump_frame -> PyCode_Addr2Line. Retain faulting-thread diagnostics
+        # without traversing concurrently changing foreign stacks.
+        faulthandler.enable(file=handle, all_threads=sys.platform != "win32")
         _handle = handle  # retain the native fd even if publishing its header fails
         handle.write(
             "\n=== session start {ts} pid={pid} frozen={frozen} exe={exe} ===\n".format(

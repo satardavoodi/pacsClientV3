@@ -314,12 +314,15 @@ def canonicalize_volume(
         #   +X/+Y/+Z to patient. -row/-col account for the viewer's input X-flip + VTK Y origin
         #   (calibrated against the known-correct axial); the third column is the ACTUAL
         #   slice-stacking direction (IPP order vs normal) = what the volume's +Z really is (the
-        #   metadata normal is NOT, when slices descend). Unknown IPP -> don't attach -> legacy
-        #   path (fail-safe). NOTE: the resample block below is intentionally unreachable.
-        slice_axis_lps = _read_dicom_slice_axis_sign(dicom_directory, normal)
+        #   metadata normal is NOT, when slices descend). Read the build-bound receipt;
+        #   never independently sort the directory. Standard/Curve admission rebuilds
+        #   missing receipts once and blocks invalid ones before reaching this function.
+        #   NOTE: the resample block below is intentionally unreachable.
+        from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import slice_axis_from_volume
+        slice_axis_lps = slice_axis_from_volume(vtk_image_data)
         if slice_axis_lps is None:
-            probe(f"RESULT: plane={plane} no IPP slice sign -> ZetaAnatA NOT attached (legacy path)")
-            logger.info("[ZETA_MPR_CANONICALIZE] plane=%s no IPP sign -> legacy path", plane)
+            probe(f"RESULT: plane={plane} no valid buffer geometry -> ZetaAnatA NOT attached")
+            logger.info("[ZETA_MPR_CANONICALIZE] plane=%s no valid buffer geometry", plane)
             return vtk_image_data
         A_cols = np.column_stack([
             -np.asarray(row, dtype=np.float64),

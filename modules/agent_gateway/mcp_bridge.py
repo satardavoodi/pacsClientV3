@@ -25,12 +25,17 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Callable, Dict, List, Optional
+from modules.EchoMind.secretary.command_envelope import action_entity_schema, validate_action_entities
+from modules.EchoMind.secretary.permissions import classify, READ_ONLY, DESTRUCTIVE
 
 logger = logging.getLogger(__name__)
 
 # Advertised protocol revision; clients negotiate against their own.
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "aipacs-agent-gateway"
+_OUTPUT_SCHEMA = {'type':'object', 'required':['ok'], 'properties':{
+    'ok':{'type':'boolean'}, 'action':{'type':'string'},
+    'error_code':{'type':['string','null']}, 'data':{}}, 'additionalProperties':True}
 
 # JSON-RPC error codes.
 ERR_PARSE = -32700
@@ -121,9 +126,8 @@ class McpBridge:
 
     # ── method impls ──────────────────────────────────────────────────
     def _initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        client_ver = str((params or {}).get("protocolVersion") or PROTOCOL_VERSION)
         return {
-            "protocolVersion": client_ver or PROTOCOL_VERSION,
+            "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {
                 "tools": {"listChanged": False},
                 "resources": {"listChanged": False, "subscribe": False},
@@ -153,10 +157,7 @@ class McpBridge:
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "entities": {
-                                "type": "object",
-                                "description": "Action arguments (entities).",
-                            },
+                            "entities": action_entity_schema(action),
                             "confirmed": {
                                 "type": "boolean",
                                 "description": (
@@ -165,9 +166,14 @@ class McpBridge:
                                     "requires confirmation."
                                 ),
                             },
+                            "operation_id": {"type": "string", "maxLength": 128,
+                                "description": "Unique operation key. Reuse only when retrying the identical command within five minutes."},
                         },
                         "additionalProperties": True,
                     },
+                    "outputSchema": _OUTPUT_SCHEMA,
+                    "annotations": {"readOnlyHint":classify(action)==READ_ONLY,
+                                    "destructiveHint":classify(action)==DESTRUCTIVE},
                 }
             )
         return tools
@@ -176,6 +182,8 @@ class McpBridge:
         name = str((params or {}).get("name") or "").strip()
         if not name:
             raise _McpError(ERR_INVALID_PARAMS, "tools/call requires 'name'")
+        if name not in self._list_actions():
+            raise _McpError(ERR_INVALID_PARAMS, "Unknown tool")
         arguments = (params or {}).get("arguments") or {}
         if not isinstance(arguments, dict):
             raise _McpError(ERR_INVALID_PARAMS, "'arguments' must be an object")
@@ -185,21 +193,42 @@ class McpBridge:
         if "entities" in arguments and isinstance(arguments.get("entities"), dict):
             entities = dict(arguments.get("entities") or {})
         else:
-            entities = {k: v for k, v in arguments.items() if k != "confirmed"}
-        confirmed = bool(arguments.get("confirmed"))
+            entities = {k: v for k, v in arguments.items() if k not in ("confirmed", "operation_id")}
+        confirmed = arguments.get("confirmed", False)
+        if type(confirmed) is not bool:
+            raise _McpError(ERR_INVALID_PARAMS, "'confirmed' must be a boolean")
+        try:
+            entities = validate_action_entities(name, entities)
+        except ValueError:
+            # Validation errors can include raw patient input; never echo it.
+            raise _McpError(ERR_INVALID_PARAMS, "Arguments do not match the action schema") from None
 
         result = self._execute(name, entities, confirmed=confirmed)
         if not isinstance(result, dict):
             result = {"ok": True, "action": name, "data": result}
+        if type(result.get('ok')) is not bool:
+            result = {'ok':False, 'action':name, 'error_code':'INVALID_EXECUTION_RESULT'}
 
         import json as _json
 
         is_error = not bool(result.get("ok", True))
+        image_block=None
+        if name=='ui_context_status' and not is_error:
+            payload=result.get('data') or {}
+            if payload.get('state')=='ready' and payload.get('ui_image'):
+                from modules.ai_imaging.eagle_eye_remote.secretary.ui_observation import UiImage,receipt
+                try:
+                    image=UiImage.model_validate(payload['ui_image'])
+                except ValueError:
+                    raise _McpError(ERR_INTERNAL,'Invalid UI image receipt') from None
+                image_block={'type':'image','mimeType':'image/png','data':image.image}
+                result=dict(result,data=dict(payload,ui_image=receipt(image)))
         return {
             "content": [
                 {"type": "text", "text": _json.dumps(result, default=str, ensure_ascii=False)}
-            ],
+            ]+([image_block] if image_block else []),
             "isError": is_error,
+            "structuredContent": result,
         }
 
     def _resources(self) -> List[Dict[str, Any]]:

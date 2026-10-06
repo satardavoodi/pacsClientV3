@@ -62,7 +62,8 @@ def test_every_edition_retains_current_echomind_report_renderers(tmp_path, editi
     for name in ("viewer_chat/ai_chat_pages.py", "viewer_chat/ai_chat_widgets.py",
                  "normal_templates.py", "reception_templates.py",
                  "viewer_chat/normal_template_dialog.py", "viewer_chat/reception_template_dialog.py",
-                 "viewer_chat/openai_reporter.py", "viewer_chat/ai_chat_viewer.py", "remote_backend.py"):
+                 "viewer_chat/openai_reporter.py", "viewer_chat/ai_chat_viewer.py", "remote_backend.py",
+                 "viewer_chat/assist_context.py"):
         canonical = root / "modules/EchoMind" / name
         mirror = root / "builder/plugin package/packages/echomind/payload/python/modules/EchoMind" / name
         expected[name] = canonical.read_bytes()

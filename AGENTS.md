@@ -22,7 +22,7 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 - Product: Windows desktop DICOM workstation built with Python, PySide6, VTK, SimpleITK,
   pydicom, SQLite, and packaged plugin payloads.
 - Source entry point: `main.py`.
-- Prepared source/build version: `3.7.0` in `pyproject.toml`, `main.py`, and release docs. The last published release remains `3.6.8` until the release gates and Git synchronization are complete.
+- Prepared source/build version: `3.7.1` in `pyproject.toml`, `main.py`, and release docs. The last published source is `3.7.0`; its two PyInstaller files completed, but the Nuitka build was interrupted. Do not describe that as a completed four-file matrix. The last verified complete receipt-backed Client matrix remains `3.6.8`.
 - Supported interpreter in this checkout: Python `3.13.5` from `.venv`.
 - The public AI-PACS website is a separate project. Read `WORKSPACE.md` before adding a
   website endpoint, shared identity/licensing work, Case-of-the-Day publishing, or ATI work.
@@ -47,6 +47,18 @@ item rather than creating a disconnected plan.
 
 ## Non-negotiable engineering rules
 
+- EchoMind routing authority (owner decision, 2026-09-30): all company-managed
+  EchoMind, EchoMind Secretary, Assist/research and Eagle Eye inference must use
+  the authenticated Eagle Eye Server. The server owns prompts, model selection,
+  credentials and upstream company/GapGPT calls. No new client-direct company
+  provider route or automatic provider fallback is permitted. The sole approved
+  direct external AI mode uses the user's own ChatGPT/OpenAI API credentials AND
+  the user's own explicitly defined prompt; it bypasses Eagle Eye for that request.
+  Server responses may be text, derived results or structured command proposals.
+  GUI, local CommandBus/MCP execution and existing permission/identity checks stay
+  client-owned. Do not execute arbitrary generated code. Apply this contract to
+  every future feature and migration; do not claim unmigrated legacy paths comply.
+  See `docs/echomind/EAGLE_EYE_SERVER_ROUTING_2026-09-30.md` for scope and current gaps.
 - Workstream ownership (user decision, 2026-09-16): Unify work owns shared identity,
   catalog/thumbnail presentation, download/file/state coordination and cache invalidation
   contracts, not viewer-specific decoding, filters, rendering or decoded-cache internals.
@@ -143,6 +155,20 @@ item rather than creating a disconnected plan.
   requirements. Do not claim a lint pass unless the tooling gap has first been resolved.
 - Live, build, slow, property, and clinical lanes are opt-in and require their documented
   prerequisites.
+
+## Breast AI research documentation (owner decision, 2026-10-05)
+
+For breast model, microcalcification, dataset, training or physician-review work, start
+with `docs/modules/BREAST_AI_DEVELOPMENT.md` and its experiment ledger. Update the
+current stage, results, rejected approaches, evidence and next action in the same
+session as the work. Preserve historical receipts and distinguish original Eagle Eye
+from research comparators, development results from independent tests, and physician
+acceptability from unchanged reference labels. Do not keep new decisions only in chat
+or external research folders. Keep patient data and private image coordinates outside
+the repository; document aggregate results and protected artifact locations only.
+Use `docs/modules/BREAST_AI_REPORTING_STANDARD.md` for each new training/evaluation
+record, following the radiology-model-development skill. Record missing evidence
+explicitly; reporting completeness is not clinical qualification.
 
 ## Security stop condition
 

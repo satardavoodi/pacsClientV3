@@ -1,4 +1,6 @@
 import copy
+import vtkmodules.all as vtk
+from PacsClient.pacs.patient_tab.utils.mpr_stack_geometry import attach_values
 
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar.toolbar_manager import ToolbarManager
 
@@ -11,12 +13,19 @@ class _PointData:
         return self._scalars
 
 
-class _VtkData:
+class _VtkData(vtk.vtkImageData):
     def __init__(self, scalars):
-        self._point_data = _PointData(scalars)
-
-    def GetPointData(self):
-        return self._point_data
+        super().__init__()
+        self.SetDimensions(2, 2, 3)
+        if scalars is not None:
+            self.AllocateScalars(vtk.VTK_SHORT, 1)
+        attach_values(self, [1, 1, 2, 2, 3, 1, 1, 1, 0, 0, 0,
+                             1, 0, 0, 0, 1, 0, 0, 0, 1] + [1] * 32)
+        direction = vtk.vtkDoubleArray()
+        direction.SetName("DirectionMatrix")
+        for value in (1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1):
+            direction.InsertNextValue(value)
+        self.GetFieldData().AddArray(direction)
 
 
 def _make_toolbar_stub():

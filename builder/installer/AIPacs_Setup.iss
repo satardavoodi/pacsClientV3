@@ -53,8 +53,8 @@
 #if DistributionEdition == "eagle-eye" && (!AdvancedMprRuntimeAvailable || !OfflineLumbarAvailable)
   #error Eagle Eye requires Slicer, the offline Python environment and model manifest.
 #endif
-; ── ARM64 plan §4 (2026-07-07): single-source arch variants ─────────────────
-; The arm64-native installer is AIPacs_Setup_arm64.iss — a thin wrapper that
+; â”€â”€ ARM64 plan آ§4 (2026-07-07): single-source arch variants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; The arm64-native installer is AIPacs_Setup_arm64.iss â€” a thin wrapper that
 ; sets ARM64_BUILD=1 and #includes this file. Everything arch-specific in here
 ; is conditional on ARM64_BUILD; without it this script compiles byte-identical
 ; to the historical x64 installer.
@@ -90,7 +90,7 @@ WizardStyle=modern
 ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=arm64
 #elif defined WOA_EMULATED_BUILD
-; WoA emulation SKU: the x64 payload, but the PACKAGE is ARM64-machines-only —
+; WoA emulation SKU: the x64 payload, but the PACKAGE is ARM64-machines-only â€”
 ; a plain x64 PC must use the classic x64 installer. Installs in x64-emulation
 ; mode ({autopf} = the x64 Program Files view), same AppId => upgrades any
 ; previous plain-x64 install on the same machine cleanly.
@@ -98,7 +98,7 @@ ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=x64compatible
 #else
 ; x64 package: x64compatible ALSO allows install on ARM64 hosts under x64
-; emulation (how PC2 got the x64 build) — InitializeSetup below points such
+; emulation (how PC2 got the x64 build) â€” InitializeSetup below points such
 ; machines at the dedicated WoA package.
 ArchitecturesInstallIn64BitMode=x64compatible
 #endif
@@ -125,7 +125,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Types]
 Name: "core"; Description: "Core workstation (viewer, download manager, education, stitching)"
-Name: "custom"; Description: "Custom — choose optional modules for this workstation"; Flags: iscustom
+Name: "custom"; Description: "Custom â€” choose optional modules for this workstation"; Flags: iscustom
 
 [Components]
 Name: "core"; Description: "Core platform (always required)"; Types: core custom; Flags: fixed
@@ -138,21 +138,21 @@ Name: "optional\advanced_mpr"; Description: "Advanced MPR (standard Slicer runti
 #endif
 #endif
 ; data_analysis added 2026-06-04: it is tier=optional in the runtime module
-; catalog / plugin registry but was staged under Components: core — the only
+; catalog / plugin registry but was staged under Components: core â€” the only
 ; optional module the installer did not expose (parity test
 ; tests/code/builder/test_plugin_package_registry.py caught it once unblocked).
-Name: "optional\data_analysis"; Description: "Data Analysis — statistics and reporting dashboards"; Types: custom
-Name: "optional\printing"; Description: "Printing — medical film printing and DICOM export workflows"; Types: custom
-Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
-Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
-Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided reporting features"; Types: custom
+Name: "optional\data_analysis"; Description: "Data Analysis â€” statistics and reporting dashboards"; Types: custom
+Name: "optional\printing"; Description: "Printing â€” medical film printing and DICOM export workflows"; Types: custom
+Name: "optional\run_cd"; Description: "Run CD â€” portable DICOM media export and delivery"; Types: custom
+Name: "optional\web_browser"; Description: "Web Browser â€” embedded browser access inside the workstation"; Types: custom
+Name: "optional\echomind"; Description: "EchoMind â€” AI assistant and guided reporting features"; Types: custom
 ; consultation added 2026-06-10 (ADR-0003): purchasable Online Consultation module
 ; (Drive-backed physician-to-physician second-opinion workflow inside Education).
-Name: "optional\consultation"; Description: "Online Consultation — cloud-based physician-to-physician case consultation"; Types: custom
+Name: "optional\consultation"; Description: "Online Consultation â€” cloud-based physician-to-physician case consultation"; Types: custom
 ; aipacs_chat added 2026-08-19: the manager console for the ai-pacs.com patient
-; consultation chat. A second client of the existing web backend — it needs the
+; consultation chat. A second client of the existing web backend â€” it needs the
 ; Identity module (core) for its Sanctum token and nothing else.
-Name: "optional\aipacs_chat"; Description: "AiPacs Chat — manager console for patient consultation conversations"; Types: custom
+Name: "optional\aipacs_chat"; Description: "AiPacs Chat â€” manager console for patient consultation conversations"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -169,6 +169,7 @@ Name: "{commonappdata}\AIPacs\config"; Permissions: users-modify
 Name: "{commonappdata}\AIPacs\module_packages"; Permissions: users-modify
 
 [Files]
+Source: "ensure_english_voice.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "EULA.txt"; DestDir: "{app}\Legal"; DestName: "AI-PACS-EULA.txt"; Components: core; Flags: ignoreversion
 Source: "THIRD_PARTY_NOTICES.txt"; DestDir: "{app}\Legal"; Components: core; Flags: ignoreversion
@@ -202,6 +203,7 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\setup\ensure_english_voice.ps1"""; StatusMsg: "Preparing English voice for Secretary EchoMind..."; Flags: runhidden waituntilterminated
 Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Messages]
@@ -646,7 +648,7 @@ begin
   if GpuAutoDetected then
     GpuHintLabel.Caption :=
       'A compatible GPU was detected on this workstation. ' +
-      'GPU acceleration is enabled by default — you can change this if needed. ' +
+      'GPU acceleration is enabled by default â€” you can change this if needed. ' +
       'AIPacs probes graphics support at startup and falls back automatically if the GPU is unavailable.'
   else
     GpuHintLabel.Caption :=
@@ -892,8 +894,8 @@ begin
 end;
 
 #ifdef WOA_EMULATED_BUILD
-// ── ARM64 emulation strategy (2026-07-07): this IS the sanctioned package for
-// Windows-on-ARM machines. Informative only — always continues; suppressible
+// â”€â”€ ARM64 emulation strategy (2026-07-07): this IS the sanctioned package for
+// Windows-on-ARM machines. Informative only â€” always continues; suppressible
 // for silent installs.
 function InitializeSetup(): Boolean;
 begin
@@ -905,10 +907,10 @@ begin
     mbInformation, MB_OK, IDOK);
 end;
 #elif !defined ARM64_BUILD
-// ── ARM64 plan §4 (2026-07-07): warn when the CLASSIC x64 package is being
+// â”€â”€ ARM64 plan آ§4 (2026-07-07): warn when the CLASSIC x64 package is being
 // installed on a Windows-on-ARM machine. x64compatible allows this (Prism
 // emulation), but the dedicated WoA package ("ARM64 emulated" SKU) is the
-// supported path there — it stamps the emulation runtime profile.
+// supported path there â€” it stamps the emulation runtime profile.
 // SuppressibleMsgBox keeps silent/automated installs working (/SUPPRESSMSGBOXES
 // defaults to Yes = continue).
 function InitializeSetup(): Boolean;
@@ -917,7 +919,7 @@ begin
   if IsArm64 then
     Result := SuppressibleMsgBox(
       'This computer uses Windows on ARM (ARM64), but this is the standard x64 package of AIPacs.' + #13#10 + #13#10 +
-      'A dedicated "AIPacs (ARM64 emulated)" package exists for ARM64 computers — it installs the same application configured for Windows-on-ARM (emulation profile, diagnostics). Please use that package if available.' + #13#10 + #13#10 +
+      'A dedicated "AIPacs (ARM64 emulated)" package exists for ARM64 computers â€” it installs the same application configured for Windows-on-ARM (emulation profile, diagnostics). Please use that package if available.' + #13#10 + #13#10 +
       'Continue installing the standard x64 package on this ARM64 computer?',
       mbConfirmation, MB_YESNO, IDYES) = IDYES;
 end;

@@ -22,6 +22,7 @@ Routes
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import threading
 import time
@@ -90,6 +91,9 @@ class GatewayCore:
         # Outstanding single-use pairing codes: code -> {"exp", "used"}.
         self._codes: Dict[str, Dict[str, Any]] = {}
         self._codes_lock = threading.RLock()
+        # Per-device explicit operation keys, bounded in-memory retry receipts.
+        self._operation_receipts = {}
+        self._operation_lock = threading.Lock()
 
     # ── config helpers ────────────────────────────────────────────────
     @property
@@ -279,6 +283,23 @@ class GatewayCore:
                 status=400,
             )
 
+        operation_key = str(headers.get("idempotency-key") or "").strip()
+        if isinstance(message, dict) and message.get("method") == "tools/call":
+            params = message.get("params")
+            arguments = params.get("arguments") if isinstance(params, dict) else None
+            if isinstance(arguments, dict) and "operation_id" in arguments:
+                argument_key = arguments["operation_id"]
+                if not isinstance(argument_key, str) or not argument_key.strip():
+                    return GatewayResponse.json({"error": "Invalid operation_id"}, status=400)
+                if operation_key and operation_key != argument_key.strip():
+                    return GatewayResponse.json({"error": "Conflicting operation keys"}, status=400)
+                operation_key = argument_key.strip()
+        if operation_key:
+            if (len(operation_key) > 128 or not isinstance(message, dict)
+                    or message.get("method") != "tools/call" or "id" not in message):
+                return GatewayResponse.json({"error": "Invalid idempotent command envelope"}, status=400)
+            return self._execute_once(device, operation_key, message, bridge)
+
         # JSON-RPC batch (list) or single object.
         if isinstance(message, list):
             responses = [r for r in (bridge.handle(m) for m in message) if r is not None]
@@ -287,6 +308,43 @@ class GatewayCore:
         if response is None:
             # A notification — 202 Accepted with no body, per streamable HTTP.
             return GatewayResponse(status=202, body=b"", content_type="application/json")
+        return GatewayResponse.json(response)
+
+    def _execute_once(self, device, key, message, bridge):
+        """Never repeat an operation while its five-minute receipt is retained."""
+        fingerprint = hashlib.sha256(json.dumps(
+            {k: v for k, v in message.items() if k != "id"},
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        identity = (device.get("device_id"), hashlib.sha256(key.encode()).hexdigest())
+        now = time.monotonic()
+        def rejected(code, text, status=409):
+            return GatewayResponse.json({"jsonrpc": "2.0", "id": message["id"],
+                "error": {"code": code, "message": text}}, status=status)
+        with self._operation_lock:
+            self._operation_receipts = {k: v for k, v in self._operation_receipts.items()
+                                        if v["expires"] is None or v["expires"] > now}
+            entry = self._operation_receipts.get(identity)
+            if entry is not None:
+                if entry["fingerprint"] != fingerprint:
+                    return rejected(-32002, "Operation key was already used for different arguments")
+                if entry["response"] is None:
+                    return rejected(-32003, "Operation already accepted; check its state before retrying")
+                response = json.loads(entry["response"])
+                response["id"] = message["id"]
+                return GatewayResponse.json(response)
+            if len(self._operation_receipts) >= 256:
+                return rejected(-32004, "Operation receipt capacity reached; retry later", 429)
+            entry = {"fingerprint": fingerprint, "response": None, "expires": None}
+            self._operation_receipts[identity] = entry
+        response = bridge.handle(message)
+        encoded = json.dumps(response, default=str, ensure_ascii=False).encode()
+        with self._operation_lock:
+            # Keep an uncertain in-flight receipt until this gateway restarts.
+            # Never imply that timeout has cancelled an already-started effect.
+            if b'EXECUTION_IN_PROGRESS' not in encoded:
+                entry["expires"] = time.monotonic() + 300
+            if len(encoded) <= 131072:
+                entry["response"] = encoded
         return GatewayResponse.json(response)
 
     # ── auth ──────────────────────────────────────────────────────────

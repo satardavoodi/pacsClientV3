@@ -126,7 +126,8 @@ def _secret_findings(repo: Path) -> list[dict[str, object]]:
     patterns = {
         "private-key": re.compile("-----BEGIN " + r"(?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
         "google-api-key": re.compile("AI" + r"za[0-9A-Za-z_-]{35}"),
-        "openai-api-key": re.compile("s" + r"k-(?:proj-)?[A-Za-z0-9_-]{20,}"),
+        # A standalone token, not the suffix of an identifier such as multitask.
+        "openai-api-key": re.compile(r"(?<![A-Za-z0-9_])" + "s" + r"k-(?:proj-)?[A-Za-z0-9_-]{20,}"),
         "github-token": re.compile("g" + r"h[pousr]_[A-Za-z0-9]{30,}"),
         "github-pat": re.compile("github_" + r"pat_[A-Za-z0-9_]{20,}"),
         "aws-access-key": re.compile("AK" + r"IA[0-9A-Z]{16}"),

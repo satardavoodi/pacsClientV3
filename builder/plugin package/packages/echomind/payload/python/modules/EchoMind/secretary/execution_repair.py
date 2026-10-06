@@ -22,6 +22,8 @@ from .validator import validate_plan
 
 # Error codes that are terminal (no LLM repair makes sense for them)
 _TERMINAL_CODES = {
+    "EXECUTION_IN_PROGRESS", "POLICY_UNAVAILABLE", "PERMISSION_DENIED",
+    "INVALID_LIST_CONTEXT", "SEARCH_FAILED",
     "NO_HOME_WIDGET",
     "UNSUPPORTED_ACTION",
     "SELECTION_REQUIRED",
@@ -70,6 +72,7 @@ def repair_plan_after_execution_failure(
     execution_result: SecretaryResult,
     attempt: int,
     max_attempts: int,
+    runtime_capabilities: dict | None = None,
 ) -> SecretaryActionPlan | None:
     """
     Ask the LLM to produce a corrected plan based on the execution error.
@@ -79,23 +82,28 @@ def repair_plan_after_execution_failure(
     error_code = str(execution_result.get("error_code") or "UNKNOWN")
     error_message = str(execution_result.get("message") or "Unknown error")
 
+    from . import remote_planner
+    if remote_planner.uses_server():
+        try:
+            fields = {'runtime_capabilities':runtime_capabilities} if runtime_capabilities is not None else {}
+            return remote_planner.request('repair', user_text, language=language, invalid_plan=failed_plan,
+                execution_error={'code':error_code,'message':error_message},
+                attempt=attempt, max_attempts=max_attempts, **fields)['plan']
+        except remote_planner.RemotePlanningError:
+            return None
+    own_prompt = remote_planner.personal_prompt('secretary_action')
+
     _ts = datetime.now().strftime("%H:%M:%S")
     sys.stderr.write(
         f"\n[EchoMind | Repair  ] {_ts} — execution repair (attempt {attempt}/{max_attempts})\n"
         f"  error_code : {error_code}\n"
-        f"  error_msg  : {error_message}\n"
+        f"  error_chars: {len(error_message)}\n"
     )
     sys.stderr.flush()
 
-    prompt = build_execution_repair_prompt(
-        user_text=user_text,
-        language=language,
-        failed_plan=failed_plan,
-        error_message=error_message,
-        error_code=error_code,
-        attempt=attempt,
-        max_attempts=max_attempts,
-    )
+    prompt = json.dumps({'text':user_text,'language':language,
+        'invalid_plan':failed_plan,'execution_error':{'code':error_code,'message':error_message},
+        'attempt':attempt,'max_attempts':max_attempts}, ensure_ascii=False)
 
     try:
         repaired = parse_command_llm_from_prompt(prompt=prompt)
@@ -120,7 +128,6 @@ def repair_plan_after_execution_failure(
     sys.stderr.write(
         f"[EchoMind | Repair  ] {_ts2} — repaired plan OK\n"
         f"  action  : {normalized.get('action')}\n"
-        f"  entities: {normalized.get('entities')}\n"
     )
     sys.stderr.flush()
     return normalized

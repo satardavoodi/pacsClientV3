@@ -187,6 +187,57 @@ class SettingsTabWidget(QTabWidget):
         self.server_settings.eagleEyeSettingsRequested.connect(self._open_eagle_eye_settings)
         return self.server_settings
 
+    def open_assistant_section(self, section):
+        """Resolve bounded section IDs through the existing lazy settings pages."""
+        routes = {
+            'server': ('Server Settings', None, None),
+            'viewer': ('Viewer Configuration', 'viewer_group', 'Viewer Configuration'),
+            'tools': ('Viewer Configuration', 'viewer_group', 'Tools Settings'),
+            'image_filter': ('Viewer Configuration', 'viewer_group', 'Image Filter'),
+            'storage': ('Viewer Configuration', 'viewer_group', 'Viewer Configuration'),
+            'echomind': ('AI', 'ai_group', 'EchoMind'),
+            'eagle_eye': ('AI', 'ai_group', 'Eagle Eye'),
+            'agent': ('AI', 'ai_group', 'Agent'),
+            'installation': ('Installation & Updates', None, None),
+            'education': ('Consultation & Education', None, None),
+        }
+        route = routes.get(section)
+        if route is None:
+            return False
+        label, group_attr, child_label = route
+        index = next((i for i in range(self.count()) if self.tabText(i) == label), None)
+        if index is None:
+            return False
+        self.setCurrentIndex(index)
+        self._ensure_tab_initialized(index)
+        if index in self._tab_creators:
+            return False
+        if group_attr:
+            group = getattr(self, group_attr, None)
+            if group is None:
+                return False
+            child = next((i for i in range(group.count()) if group.tabText(i) == child_label), None)
+            if child is None:
+                return False
+            group.setCurrentIndex(child)
+            group._initialize(child)
+            if child in group._builders:
+                return False
+        if section == 'storage':
+            panel = getattr(getattr(self, 'viewer_config', None), 'storage_cleanup_panel', None)
+            if panel is None:
+                return False
+            panel.setFocus()
+            # Ensure the reusable panel is visible inside its existing scroll host.
+            from PySide6.QtWidgets import QScrollArea
+            parent = panel.parent()
+            while parent is not None:
+                if isinstance(parent, QScrollArea):
+                    parent.ensureWidgetVisible(panel)
+                    break
+                parent = parent.parent()
+        return True
+
     def _create_viewer_group(self):
         pages = [('Viewer Configuration', self._create_viewer_config),
                  ('Tools Settings', self._create_tools_settings),
@@ -264,6 +315,20 @@ class SettingsTabWidget(QTabWidget):
 
         self.echomind_settings = EchoMindSettingsWidget()
         return self.echomind_settings
+
+    def apply_assistant_ai_receipt(self, receipt):
+        """Refresh only changed form fields from a worker receipt; no disk I/O."""
+        action, data = receipt['action'], receipt['data']
+        widget = self.echomind_settings
+        if widget is not None and action != 'set_eagle_eye_connection':
+            widget.apply_assistant_preferences(action, data)
+        if action == 'set_eagle_eye_connection' and self.eagle_eye_settings is not None:
+            self.eagle_eye_settings.url.setText(data['url'])
+            snapshot = self.eagle_eye_settings._snapshot
+            if snapshot is not None:
+                snapshot['value'] = {**snapshot['value'],'url':data['url']}
+                snapshot['revision'] = data['connection_revision']
+            self.eagle_eye_settings.status.setText('Connection saved and authenticated for new requests.')
 
     def apply_dark_theme(self):
         """

@@ -67,7 +67,7 @@
   {
     "path": "core/llm_client.py",
     "source_sha256": "340f160c1534d07282a1d3c9fab0009bcb0954b5702ee51a83e732b1387faf03",
-    "adapted_sha256": "01520cca478d7a424e27c9230f67bc2f434443350c037d70d44a6826dfcb3cb4"
+    "adapted_sha256": "095ce36960b856f177f4980d10271d1318679de210490c3f990411d4a1b86948"
   },
   {
     "path": "core/normal_templates.py",

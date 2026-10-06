@@ -1314,6 +1314,8 @@ class _HPSeriesMixin:
 
     def save_thumbnail(self, series_thumbnails: dict):
         import base64 as _b64
+        from PacsClient.utils.patient_study_set import resolve_series_folder_key
+        from modules.storage.thumbnail_store import ThumbnailStore
         study_uid = (
             series_thumbnails.get('study_uid')
             or series_thumbnails.get('study_instance_uid')
@@ -1330,6 +1332,18 @@ class _HPSeriesMixin:
         if not isinstance(all_series_data, list):
             series_thumbnails['thumbnails'] = []
             return series_thumbnails
+
+        known_rows = ((getattr(self, '_series_info_cache', {}) or {}).get(study_uid) or {}).get('series') or []
+        known_by_uid = {str(row.get('series_uid')): row for row in known_rows
+                        if isinstance(row, dict) and row.get('series_uid')
+                        and str(row.get('study_uid') or study_uid) == study_uid}
+        combined_rows = dict(known_by_uid)
+        for index, row in enumerate(all_series_data):
+            if isinstance(row, dict):
+                combined_rows[str(row.get('series_uid') or f'legacy-{index}')] = row
+        study_series = [(row.get('series_number') or row.get('SeriesNumber') or '',
+                         row.get('series_uid') or '', row.get('image_count') or 0)
+                        for row in combined_rows.values()]
 
         for i in range(len(all_series_data)):
             series = all_series_data[i]
@@ -1376,8 +1390,13 @@ class _HPSeriesMixin:
 
             file_path = None
             if thumb_bytes:
-                safe_file_name = str(series_number or series_uid or f'series_{i + 1}').strip()
+                safe_file_name = str(series.get('folder_key')
+                    or known_by_uid.get(str(series_uid), {}).get('folder_key')
+                    or resolve_series_folder_key(
+                    series_number, series_uid, study_series) or series_uid or f'series_{i + 1}').strip()
                 safe_file_name = safe_file_name.replace('\\', '_').replace('/', '_').replace(':', '_')
+                series['folder_key'] = safe_file_name
+                ThumbnailStore.instance().put(study_uid, safe_file_name, thumb_bytes)
                 file_path = save_thumbnail_with_bytes_async(study_uid, safe_file_name, thumb_bytes)
             elif series.get('thumbnail_path'):
                 file_path = str(series.get('thumbnail_path') or '')

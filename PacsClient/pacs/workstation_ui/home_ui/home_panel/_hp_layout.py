@@ -232,15 +232,18 @@ class _HPLayoutMixin:
             pass
         self.adaptive_layout_btn.clicked.connect(self.apply_adaptive_layout)
         adaptive_header_layout.addWidget(self.adaptive_layout_btn)
-        left_layout.addWidget(adaptive_header_widget)
+        # The adaptive action is mounted beside the table font controls.
+        adaptive_header_widget.hide()
 
         # server section
-        server_group = QGroupBox("Server Selection")
+        server_group = QGroupBox()
+        server_group.setAccessibleName("Server Selection")
         self.server_group = server_group
         server_group.setAlignment(Qt.AlignHCenter)
         server_layout = QVBoxLayout()
-        # server_layout.setContentsMargins(6, 12, 6, 6)
-        # server_layout.setSpacing(6)
+        server_layout.setContentsMargins(6, 4, 6, 6)
+        server_layout.setSpacing(4)
+        server_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
         self.data_access_panel_widget = DataAccessPanelWidget(select_folder)
         # Connect refresh button if it exists
@@ -261,8 +264,8 @@ class _HPLayoutMixin:
                 color: #f7fafc;
                 border: 1px solid #4a5568;
                 border-radius: 8px;
-                margin: 4px 0px;
-                padding-top: 10px;
+                margin: 0px;
+                padding-top: 0px;
                 background: #0f1419;
             
             }
@@ -339,6 +342,10 @@ class _HPLayoutMixin:
             _secretary_placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             _secretary_placeholder.setStyleSheet("background: transparent;")
             left_layout.addWidget(_secretary_placeholder, 1)
+
+        # Spare vertical space belongs below the controls, never inside search.
+        if self.secretary_button_widget is None:
+            left_layout.addStretch(1)
 
         # Auto-search with today's date when page loads
         # from PySide6.QtCore import QTimer
@@ -484,6 +491,9 @@ class _HPLayoutMixin:
         """Setup the center panel with Patient Table Component"""
         # Create Patient Table Component
         self.patient_table_widget = PatientTableWidget()
+        from ..compact_home_controls import mount_view_controls
+        mount_view_controls(self.patient_table_widget, self.adaptive_layout_btn)
+
 
         # Connect signals
         self.patient_table_widget.patientDoubleClicked.connect(self._on_patient_double_clicked)
@@ -679,8 +689,8 @@ class _HPLayoutMixin:
                     color: {t['text_primary']};
                     border: 1px solid {t['border']};
                     border-radius: 8px;
-                    margin: 4px 0px;
-                    padding-top: 10px;
+                    margin: 0px;
+                    padding-top: 0px;
                     background: {t['panel_bg']};
                 }}
                 QGroupBox::title {{

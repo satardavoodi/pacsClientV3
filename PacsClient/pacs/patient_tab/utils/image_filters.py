@@ -803,6 +803,11 @@ def apply_filters(
 
     #logger.info(f"Starting filter pipeline for {modality} ({nx}×{ny}×{nz})")
 
+    # Intensity-only filters create new ITK images and drop custom metadata.
+    # Preserve the build receipt; its original grid is revalidated by MPR.
+    from .mpr_stack_geometry import FIELD_NAME
+    _mpr_geometry = itk_image.GetMetaData(FIELD_NAME) if itk_image.HasMetaDataKey(FIELD_NAME) else None
+
     # Determine mild mode based on spacing (stable logic: meaningful for MR)
     spacing = itk_image.GetSpacing()
     max_spacing = max(spacing) if spacing else 0
@@ -1002,6 +1007,8 @@ def apply_filters(
         except Exception:
             pass
 
+    if _mpr_geometry is not None:
+        itk_image.SetMetaData(FIELD_NAME, _mpr_geometry)
     return itk_image
 
 def enhance_resolution(itk_image: sitk.Image, scale_factor: float = 1.5) -> sitk.Image:

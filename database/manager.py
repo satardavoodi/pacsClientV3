@@ -748,8 +748,8 @@ def ai_fetch_reports_for_study(study_uid, **kw):
     return _db_ai.ai_fetch_reports_for_study(study_uid, **kw)
 
 
-def ai_fetch_messages_full(sid: str):
-    return _db_ai.ai_fetch_messages_full(sid)
+def ai_fetch_messages_full(sid: str, *, include_created_at: bool = False):
+    return _db_ai.ai_fetch_messages_full(sid, include_created_at=include_created_at)
 
 
 def ai_count_messages_by_session():

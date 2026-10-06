@@ -137,6 +137,10 @@ class ModuleCommandAdapter:
                 message=f"{module} launcher crashed: {exc}",
                 error_code="MODULE_LAUNCH_FAILED",
             )
+        if window is None:
+            return CommandResult(ok=False, action=action,
+                                 error_code="MODULE_LAUNCH_FAILED",
+                                 message="Module launcher did not return a workspace.")
         return CommandResult(
             ok=True, action=action,
             message=f"Opened module {module}",

@@ -256,7 +256,7 @@ def test_brain_and_lumbar_share_mri_sidebar_classification():
 
 
 @pytest.mark.parametrize("mode", ["mammography", "bone_age", "lumbar_mri", "brain_mri"])
-def test_real_window_builds_imaging_and_lazy_tools_without_prompt(qapp, monkeypatch, mode):
+def test_real_window_builds_imaging_and_lazy_tools_without_prompt(qapp, monkeypatch, mode, tmp_path):
     from PySide6.QtCore import Signal
     from PySide6.QtWidgets import QWidget
     from modules.ai_imaging.ai_module_ui import ai_mainwindow as main
@@ -271,6 +271,8 @@ def test_real_window_builds_imaging_and_lazy_tools_without_prompt(qapp, monkeypa
         def refresh_mg_ai_results(self):
             return False
     monkeypatch.setattr(main, "ImagingToolsTab", Imaging)
+    from PacsClient.utils import data_paths
+    monkeypatch.setattr(data_paths, 'AI_DIR', tmp_path / 'private-ai')
     monkeypatch.setattr(main.AiMainWindow, "_sync_reception_patient_context", lambda self: None)
     calls = []
     monkeypatch.setattr(dialogs, "choose_eagle_eye_function", lambda *a, **kw: calls.append(kw["mode"]))
@@ -279,8 +281,10 @@ def test_real_window_builds_imaging_and_lazy_tools_without_prompt(qapp, monkeypa
     assert window.function_button.minimumWidth() >= 240
     assert window.function_button.minimumHeight() >= 52
     assert window.function_button.isEnabled()
-    assert [window.tab_widget.tabText(i) for i in range(window.tab_widget.count())] == [
-        "Imaging Tools", "Data Set", "Model Training", "Reception Data"]
+    expected = ["Imaging Tools", "Data Set", "Model Training", "Reception Data"]
+    if mode == 'brain_mri':
+        expected.append('Saved Brain Results')
+    assert [window.tab_widget.tabText(i) for i in range(window.tab_widget.count())] == expected
     window.imaging_tab.fully_loaded.emit()
     qapp.processEvents()
     assert window.function_button.isEnabled() and calls == []
@@ -403,3 +407,20 @@ def test_embedded_patient_navigation_hidden_without_deleting_controls(qapp):
     assert patient.btn_series.parentWidget() is patient.sidebar, "Keep inherited callback targets alive"
     patient.close()
     patient.deleteLater()
+
+
+def test_saved_review_does_not_require_viewport_or_replace_unsaved_edits(workspace, monkeypatch):
+    window, controller = workspace
+    def no_viewport():
+        raise RuntimeError('No active viewport for archived result')
+    monkeypatch.setattr(controller, 'selected_series_uid', no_viewport)
+    result = {'artifact_directory':'synthetic-result', 'analysis_study_uid':'synthetic-study',
+              'posterior_rows':[], 'pdf_available':False}
+    controller.open_saved_brain_result(result)
+    dialog, widget = next(iter(controller._saved_brain_reviews.values()))
+    assert dialog.isVisible() and widget._result['artifact_directory']=='synthetic-result'
+    widget._manual_session='unsaved'
+    dialog.hide()
+    controller.open_saved_brain_result(result)
+    assert dialog.isVisible() and widget._manual_session=='unsaved'
+    assert len(controller._saved_brain_reviews)==1

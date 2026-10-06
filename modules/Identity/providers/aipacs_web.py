@@ -469,6 +469,12 @@ class AipacsWebClient:
         self._session = session
 
     # -- plumbing ---------------------------------------------------------------
+    @property
+    def support_identity_binding(self) -> str:
+        """Opaque local credential binding for private outbox replay checks."""
+        import hashlib
+        return hashlib.sha256(self._token.encode('utf-8')).hexdigest()
+
     def _ensure_session(self):
         if self._session is None:
             import requests
@@ -478,12 +484,13 @@ class AipacsWebClient:
 
     def _request(self, method: str, path: str, *, json_body: dict | None = None,
                  params: dict | None = None, data=None, files=None,
-                 timeout: int | None = None) -> Any:
+                 timeout: int | None = None, allow_redirects: bool | None = None,
+                 _session_override=None) -> Any:
         from modules.Identity.thread_guard import assert_off_gui_thread
 
         assert_off_gui_thread(f"aipacs_web {method} {path}")
 
-        session = self._ensure_session()
+        session = _session_override if _session_override is not None else self._ensure_session()
         url = f"{self.base_url}{API_PREFIX}{path}"
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -499,6 +506,8 @@ class AipacsWebClient:
         # was — the multipart feature cannot change the shape of a call that
         # does not use it.
         extra: dict[str, Any] = {}
+        if allow_redirects is not None:
+            extra['allow_redirects'] = allow_redirects
         if files is not None:
             extra["files"] = files
         if data is not None:
@@ -532,7 +541,7 @@ class AipacsWebClient:
 
     def request_json(self, method: str, path: str, *, json_body: dict | None = None,
                      params=None, data=None, files=None,
-                     timeout: int | None = None) -> Any:
+                     timeout: int | None = None, allow_redirects: bool | None = None) -> Any:
         """The same request path, for modules that add their own endpoints.
 
         A public door onto ``_request`` so a module like AiPacs Chat can call
@@ -552,8 +561,20 @@ class AipacsWebClient:
         """
         return self._request(
             method, path, json_body=json_body, params=params,
-            data=data, files=files, timeout=timeout,
+            data=data, files=files, timeout=timeout, allow_redirects=allow_redirects,
         )
+
+    def request_support_json(self, path: str, json_body: dict, *, origin_ipv4: str, timeout: int = 30):
+        """Retry only support writes using the paired site's advertised TLS origin."""
+        import re
+        from modules.Identity.thread_guard import assert_off_gui_thread
+        from .support_origin import support_origin_session
+        assert_off_gui_thread('aipacs_web support origin upload')
+        if not re.fullmatch(r'/support/issues(?:/uploads/[a-f0-9-]{36}/(?:chunks/\d+|complete))?', path):
+            raise ValueError('Unsupported support origin action')
+        with support_origin_session(self._ensure_session(), self.base_url, origin_ipv4) as session:
+            return self._request('POST', path, json_body=json_body, timeout=timeout,
+                                 allow_redirects=False, _session_override=session)
 
     @staticmethod
     def _rows(data: Any) -> list[dict]:

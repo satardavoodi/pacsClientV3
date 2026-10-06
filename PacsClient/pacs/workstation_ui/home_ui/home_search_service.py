@@ -877,6 +877,7 @@ class HomeSearchService:
             else:
                 socket_port = get_socket_server_settings()['port']
             update_socket_server_settings(host=server['host'], port=int(socket_port))
+            _workflow_server_name = home.data_access_panel_widget.server_selected
 
             server_name = server.get('name', server['host'])
             home.show_loading("Socket Server Search",
@@ -1077,6 +1078,10 @@ class HomeSearchService:
                 self._clear_search_results(_my_search_gen)
                 home._update_connection_indicator_by_status('busy', 'Socket Connected - No patients found')
 
+            if hasattr(home, 'workflow_realtime'):
+                home.workflow_realtime.bind(server['host'], socket_port,
+                    _workflow_server_name, _my_search_gen)
+
             # OPT-24c: do NOT tear the shared service down after every search.
             # `socket_service` is a process-wide singleton whose SocketConnectionPool
             # holds up to 5 connections — but cleanup() -> disconnect_from_server() ->
@@ -1170,6 +1175,7 @@ class HomeSearchService:
             else:
                 socket_port = get_socket_server_settings()['port']
             update_socket_server_settings(host=server['host'], port=int(socket_port))
+            _workflow_server_name = home.data_access_panel_widget.server_selected
 
             # The search button already exposes Cancel. A tab-wide overlay
             # intercepts input for the entire multi-page request.
@@ -1276,6 +1282,10 @@ class HomeSearchService:
                                     f" Showing {total} matching results; this is not the complete result set.")
             if total:
                 home._sync_completed_reporting_physicians_after_search()
+
+            if hasattr(home, 'workflow_realtime'):
+                home.workflow_realtime.bind(server['host'], socket_port,
+                    _workflow_server_name, _my_search_gen)
 
         except asyncio.CancelledError:
             if home._search_generation == _my_search_gen:

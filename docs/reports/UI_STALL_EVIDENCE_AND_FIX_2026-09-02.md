@@ -1,5 +1,92 @@
 # UI Stall Evidence and Guarded Fixes — 2026-09-02
 
+## 2026-10-06 Home catalog/media convergence (OPT-58/60)
+
+**Confirmed symptom:** two Server Home selections received 14 and 17 socket rows,
+then a subsequent disk-cache pass replaced those lists with 2 and 1 rows about
+44 ms and 15 ms later. The once-per-study/count refresh marker treated a previous
+fetch as proof that a later PNG inventory was complete. This was a client
+membership regression, not missing server responses or VTK decode. Grouped Home
+had the same partial-PNG acceptance and additionally merged by raw SeriesNumber.
+
+**Correction and ownership:** move Patient Tab's catalog/media join into the existing
+pure `PacsClient.utils.series_identity.reconcile_thumbnail_catalog`. The tab keeps
+a thin adapter; single-study and grouped Home use that join via the existing
+study-info cache. Catalog rows own membership; disk paths and socket bytes only
+enrich them. Exact study/series identity is checked; number fallback is only for
+unambiguous, non-contradictory identities. A partial thumbnail response cannot
+remove known catalog rows. Authoritative metadata force-refresh retains its existing
+cache invalidation behavior. Single/grouped Local always use the existing worker
+catalog projection rather than treating PNG presence as complete membership.
+Group labels, offsets, selected-study order and per-study counters are unchanged.
+
+The obsolete once-per-count cache bypass is removed. Server media cache hits require
+catalog evidence; unknown membership or reported growth enters the existing worker
+request (no polling, second downloader or retry service). Catalog publication reuses
+`_series_info_cache`; it does not keep inline bytes there. Home's existing writer
+warms the existing bounded ThumbnailStore before asynchronous PNG publication.
+Home image preparation can consume that store only with an explicit study/folder
+key, never an ordinal. Folder names come from the existing canonical collision
+resolver, so same-number distinct-UID series cannot overwrite each other's PNG.
+Missing image media keeps a catalog card, not a fabricated clinical image.
+
+**Verification:** before the main fix, two synthetic production-method tests failed
+with 14->2 and 17->1; selection-retirement control passed. Additional fail-before
+tests exposed grouped Server/Local 6->2, single Local 3->1, duplicate-number PNG
+overwrite, and inability to read a pending publication from the shared store.
+An adversarial memory guard also rejected retaining inline payloads in the unbounded
+metadata cache; the final implementation strips them. The new guard file is
+`tests/code/ui_services/test_home_catalog_convergence.py`. It exercises both
+consumer adapters, exact identity, duplicates, document numbering, group boundaries,
+late selection, growth key stability and nonmutating projection. Expanded results
+are **189 passed**, exit 0, using direct pytest with `-p no:debugging --reruns 0`.
+The new file has 18 cases. The final selection also covers Patient Tab convergence,
+bounded sidebar, incremental identity, Local offline, Home projection/image preparation,
+grouped sorting, study sets, resync, study ownership and open-tab backfill. Six SWIG
+deprecation warnings remain. Changed-source compilation and scoped diff checks pass.
+The standalone candidate-packaging/profile selection is **65 passed / 3 failed**
+(exit 1), all three failures in the unrelated EchoMind renderer mirror guard.
+Partial socket writes additionally preserve known collision folder identities rather
+than recomputing them from the incomplete response; its fail-before guard passes.
+
+Dirty-source verification receipt (base HEAD `d8e2d917`; not a release candidate):
+
+| File | SHA256 |
+|---|---|
+| `series_identity.py` | `D5C7E563703A4AC57D73321F1AD2405509C603177D08292646334B33F57B6710` |
+| `_pw_thumbnails.py` | `EA6A74C6932A31B7F0CF6A38DF8267F92AD2F17228C79A3B1BDCC84D2CA12681` |
+| `thumbnail_image_source_service.py` | `6E4013860D171610D1E9D910A0D79A93C3604EEB39C7943D45D5EBAE490E10A7` |
+| `_hp_search.py` | `3645251D80976BE565437C16D762D8BE69A862FD0DE309D1942835475501CE1B` |
+| `_hp_series.py` | `7DCD762D2D68DBF7846711CBD48B055C8B7BC644BDE9967AAA96C609473B6E32` |
+| `_hp_modules.py` | `FEC68C1248EE1B5D1AB5F42FBD804BEC70E7CD28CE2BC4F2AD50D44B9AD2FF12` |
+
+**Acceptance limits:** no new source GUI pass. Existing control discovery exposed no
+aipacs-control tool; documented client ping failed with QLocalSocket Invalid name.
+The already-running source loaded before these edits. A human-authorized fresh
+source launch/sign-in is required before testing first click, repeat click during
+PNG publication, quick patient switches, grouped MR+DOC, repeated series numbers,
+Local offline and close/reopen. Observe exact expected/visible counts, stable
+positions, per-study identity, image arrival and GUI responsiveness. No post-fix
+live latency, universal server completeness, whole-Unify completion or installed
+acceptance is claimed. A failed network request cannot establish unknown membership.
+
+**Next-build handoff:** six existing core source files changed:
+`series_identity.py`, `_pw_thumbnails.py`, `_hp_search.py`, `_hp_series.py`,
+`_hp_modules.py`, `thumbnail_image_source_service.py`. No new runtime module,
+dependency, config flag, schema, renderer, decoder or VTK cache was introduced.
+Standard Client, ARM64-emulated Client and Eagle Eye Server share these files in
+both PyInstaller and Nuitka. No matched payload copies exist for these core paths.
+Global mirror verification found an unrelated EchoMind ai_chat_pages.py drift:
+511 of 512 pairs matched at the check; do not sync another workstream's unfinished
+source. The broader packaging/profile selection recorded three failures in that
+same EchoMind parity guard; source thumbnail tests are not an installer pass.
+Bind this slice to the next immutable candidate and test the scenarios on produced
+artifacts through the authorized release lane; no build/version change was made.
+
+Rollback is limited to these thumbnail hunks and their tests, preserving unrelated
+changes in `_hp_modules.py` and the dirty tree. No data migration or deletion.
+Reverting restores the known partial-cache membership bug.
+
 ## 2026-09-30 first-open patient scope omitted a document study (OPT-58/60)
 
 The current source run admitted one study at 12:06:12.831. Its socket thumbnail
@@ -4027,3 +4114,130 @@ No performance/zero-lag guarantee: a fresh live three-month query and measured
 UI heartbeat remain pending. No clinical workflow interrupted or app restarted.
 Both files are shared workstation build inputs; no mapped payload drift found.
 No build or installed-artifact acceptance performed.
+
+
+## 2026-09-30 Razi Eagle Eye MCP download handoff
+
+Source session: mammography eagle eye, Razi Developer acceptance on 2026-09-30. The existing application Test Control MCP ping/actions and patient search/select/open responded. A current PACS result was matched to the previously authorized study identity before opening; no identifiers or images are retained here.
+
+Confirmed boundary defect: `HomeCommandAdapter.download_patient` in `modules/EchoMind/secretary/adapters/home_command_adapter.py` only searches for legacy `download_patients`/`download_patient` port methods. The actual `HomeWidgetAdapter` exposes `download_studies(studies, set_current_tab=False)`. The live existing MCP action returned `ADAPTER_INCOMPLETE`. The Eagle Eye workspace opened but its series inventory stayed empty, so function/result-rendering acceptance was not claimed. The missing download bridge is confirmed; a causal link to every empty-workspace symptom is not yet established.
+
+Requested Unify/consumer owner check: bind the existing MCP download action to the authoritative visible/selected study contract and existing download coordinator, preserving exact multi-study identity, completion and cancellation semantics; add both-side regression coverage and source-GUI acceptance. Do not introduce an ID-only parallel coordinator or resolve people by names. No shared runtime patch, hot reload, flag change or mirror synchronization was made by the Eagle Eye workstream. Status: diagnosed port mismatch; owner implementation and verification pending.
+
+Source evidence/report: `../modules/eagle-eye-server-development/docs/PATH_ACCEPTANCE_2026-09-30.md`. API model inference passing does not close this GUI input boundary.
+
+## 2026-10-01 — OPT-28 / OPT-50: bounded live workflow columns
+
+Owner requested implementation in this client and delegated PACS source changes to
+`Prepare aipacs-server project` in `D:/pacs server INO`. This is workflow metadata
+presentation, not an advancement of the U0-U5 imaging/download state contract.
+
+Diagnosis: the request-oriented socket client intentionally skips broadcasts; no
+persistent subscribed consumer wired them to Home. Server subscriptions previously
+failed to filter general broadcasts and assignment targeting could fall back to all.
+The server owner implemented the authenticated v1 contract documented in its
+`docs/engineering/REALTIME_WORKFLOW_CONTRACT.md`; its source remains undeployed.
+
+Client implementation:
+- `modules/network/workflow_realtime.py`: dedicated authenticated event connection,
+  correlated v1 negotiation, bounded 1 MiB frames / five-second frame deadlines,
+  separate bounded snapshot requests, at most 100 visible UIDs, one-second burst
+  coalescing, 30-second reconciliation, heartbeat and jittered capped reconnect.
+  One receiver per Home; no shared download pool, DICOM, report content or audio
+  payload access. A 100-entry latest-value mailbox prevents a Qt signal backlog.
+- `home_ui/workflow_realtime.py`: 500 ms GUI drain of visible rows only; exact
+  StudyInstanceUID plus patient ID check, endpoint/search-generation/token binding,
+  stop on Local/server/search/logout change, nonblocking teardown, no full-table
+  refresh, reselection, sorting, disk/network access or viewer/editor mutation.
+  Report rendering reuses the established mapping with a precomputed local
+  assignment lifecycle overlay; server voice availability has a distinct indicator.
+- Home owns lifecycle and binds only after normal/advanced server search completion.
+  Existing table widgets and selected row are preserved. Scrolling brings newly
+  visible rows into the next snapshot. New-study discovery still needs Search;
+  profile notification inbox and open report editors are outside this slice.
+
+Evidence: five initial new guards failed before implementation (four missing
+transport primitives and missing Home wiring). Focused runtime/adjacent search
+selection: 68 passed, exit 0. Actual offscreen Qt cells verify unchanged row count,
+selection and widget identity, voice removal, wrong-patient rejection, and Local,
+server, search-generation and logout isolation. Dedicated transport uses real
+loopback TCP, including fragmented/oversized frames, old server negotiation,
+100-event burst coalescing and reconnect. No clinical DB is used by these tests.
+
+Cross-repository acceptance: server venv ran workstation
+`tools/testing/workflow_wire_acceptance.py --server-root <server checkout>` with
+actual server methods and two real workstation receivers. Assignment, report,
+voice arrival, 200-event burst, forced EOF/reconnect with voice removal, and a
+silently missed update recovered by 30-second reconciliation all passed, exit 0.
+The server owner reports 86 passing source guards, including synthetic auth,
+targeting, queue pressure, transfers, attachments and temporary-Mongo projection.
+These tests do not establish workstation soak performance or clinical GUI acceptance.
+
+Known separate gates: the documented source-control ping found no local listener;
+human fresh source launch/login plus two-client native acceptance remains pending.
+An adjacent existing `test_login_carries_the_user_identity_ids` fails in unchanged
+`modules/network/socket_client.py` (its file and test have no diff). Final combined
+runtime/builder run: 69 passed, 3 failed; all three are EchoMind renderer mirror
+parity in Standard/ARM/Eagle Eye profiles, unrelated to this change. Mirror dry-run
+and verification identify `modules/EchoMind/viewer_chat/ai_chat_pages.py` as the
+sole drift (497 pairs checked); do not sweep another active workstream's payload.
+
+Build applicability: core Home/network imports apply to Standard, ARM-emulated and
+Eagle Eye GUI on both backends. New helpers are ordinary statically imported core
+Python modules, not installable plugins or persisted config families. No own files
+have plugin mirrors. Full build-input/release gate is not green due to the unrelated
+mirror drift; no artifact build or installed acceptance is claimed. New PACS source
+must be promoted under its existing staged release procedure before live use.
+Rollback: `AIPACS_WORKFLOW_REALTIME=0` disables the client receiver; ordinary Search,
+manual Refresh and downloads retain their existing behavior. No schema/data migration.
+
+Final affected render/transport/Qt run: 44 passed, 1 explicitly deselected (the unchanged login-identity guard described above), exit 0. Changed sources pass py_compile and scoped diff checks. Server conversation finished with 86 passing tests and recorded the cross-repository acceptance.
+- Source SHA256: workflow_realtime.py = 524D4D22AD0E32A3408C503F3B4F2CDA87FE2D9A1B67A3436AD04BD5955CBA02
+- Source SHA256: workflow_realtime.py = 1F1B6521645143260858C63A9C637CCA88D79D87E6654EC90410D1B8FF2A5F8F
+
+### 2026-10-06: read-only responsiveness follow-up (OPT-21 / OPT-60)
+
+Bounded current-log window: October 6, 09:34 inclusive to 10:03 exclusive, as
+recorded in the source logs. There were 133 MAIN_THREAD_STALL timer gaps, 31 over
+500 ms and 16 over 1000 ms, maximum 10558.1 ms. This is not 133 demonstrated
+freezes: native OLE drag and nested modal event loops can delay this timer.
+Several 09:56:44-48 samples stop at thumbnail_manager.py:838 drag.exec; keep
+these separate from measured blocking handlers. No patient identities retained.
+
+Measured shared/UI costs: download table rebuilds at 09:46:57 and 09:47:01 took
+110.498 and 383.031 ms. Trace at 09:47:01 reaches _dm_details.py:607
+_update_series_widget through table reorder/selection/details rebuild. Queue
+scheduling sampled _get_cached_db_progress at rule_engine.py:114 around a
+4977.1-ms timer gap; this is a synchronous DB-read candidate, not a measured
+4977-ms database duration. Cold settings construction samples configuration
+os.stat via storage folder-map construction; first Secretary response samples
+QtTextToSpeech loading. Do not attribute their whole adjacent gap to one sample.
+
+Close GC has paired proof: deferred_close_gc took 665.6 ms at 09:34:42-43 and
+325.7 ms at 10:01:37. Scheduling the collect later did not make it nonblocking.
+Voice send samples _stop_stream / sounddevice close near a 1289.1-ms gap; retain
+as a candidate until device stop duration is measured. Shutdown also samples
+net_monitor.stop thread.join(timeout=1.0) on the GUI thread.
+
+Prior transfer-publication and CD fixes address other boundaries. No causal
+regression or long-uptime growth is demonstrated here. No runtime edits, tests,
+application restarts or live workflow manipulation were performed. Next guards:
+bounded/coalesced download details updates with selection retained; off-thread
+queue DB snapshot through its existing owner; separately measured audio stop and
+GC ownership. Viewer-owned measured filter and cold cleanup import evidence is
+handed off to the existing VTK domains report, without a competing viewer patch.
+
+### 2026-10-06: MR import classification handoff
+
+The latest black-viewport investigation found complete JPEG Lossless MR fragments
+with a missing end-of-sequence delimiter in the original export, unchanged by
+import. Full pydicom reads drop PixelData, producing misleading pixelless-stub
+warnings in sync_manifest; those warnings do not prove absent image bytes.
+Header stop-before-value detection and full-value decode must retain distinct
+contracts. See the existing VTK domains report's missing-encapsulation-delimiter
+receipt for original-copy comparison and in-memory pixel-equality probe. No shared
+classification or viewer code changed; a guarded owner correction remains pending.
+
+### 2026-10-06: MR reader contract implementation follow-up
+
+The authorized missing-delimiter fix now shares a bounded pure DICOM read contract across viewer reads, import decompression and small-file sync-stub verification. Existing header-only inventory continues detecting Pixel Data before its value. No parallel catalog, scheduler or cache introduced. The viewer owner receipt documents fail-before guards, local decoder equality, mirror parity and pending live gates. Runtime reader compatibility is verified; no global stability closure is claimed.

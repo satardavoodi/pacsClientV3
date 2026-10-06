@@ -324,7 +324,8 @@ def test_curve_preparation_matches_standard_on_worker_and_keeps_source(app, monk
     def slice_axis(*args):
         threads.append(threading.get_ident())
         return [0, 0, 1]
-    monkeypatch.setattr(canonical, '_read_dicom_slice_axis_sign', slice_axis)
+    from PacsClient.pacs.patient_tab.utils import mpr_stack_geometry
+    monkeypatch.setattr(mpr_stack_geometry, 'slice_axis_from_volume', slice_axis)
     expected = StandardMPRViewer.build_lr_flipped_volume(canonical.canonicalize_volume(source))
     threads.clear()
     path = Path('PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/toolbar_manager.py')

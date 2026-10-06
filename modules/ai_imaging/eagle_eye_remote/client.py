@@ -49,9 +49,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class ServerHTTPError(RuntimeError):
-    def __init__(self, status, message):
+    def __init__(self, status, message, *, error_code=None):
         super().__init__(message)
         self.status = status
+        self.error_code = error_code
 
 
 class Client:
@@ -87,9 +88,27 @@ class Client:
             return self.opener.open(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
             status = exc.code
+            error_code = None
+            if path == '/v1/secretary/plan':
+                # Only fixed server messages become safe codes; never export the
+                # response body, generated text, provider details or credentials.
+                messages = {
+                    'Secretary returned invalid JSON.':'SERVER_INVALID_JSON',
+                    'Secretary returned an invalid route.':'SERVER_ROUTE_INVALID',
+                    'Unsupported Secretary module.':'SERVER_ROUTE_INVALID',
+                    'Secretary answer mode returned an executable or unsupported response.':'SERVER_ANSWER_INVALID',
+                    'Invalid Secretary answer.':'SERVER_ANSWER_INVALID',
+                    'Secretary server could not complete planning.':'SERVER_UPSTREAM_FAILED',
+                }
+                try:
+                    data = json.loads(exc.read(4097))
+                    if isinstance(data, dict) and isinstance(data.get('error'), str):
+                        error_code = messages.get(data['error'])
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
             exc.close()
-            if path == '/v1/echomind/process':
-                raise ServerHTTPError(status, 'EchoMind server request failed.') from None
+            if path in ('/v1/echomind/process', '/v1/secretary/plan'):
+                raise ServerHTTPError(status, 'EchoMind server request failed.', error_code=error_code) from None
             if status == 429:
                 raise RuntimeError('The Eagle Eye server or this client has reached its job limit. Try again later.') from None
             if status == 409 and path == '/v1/jobs':
@@ -121,6 +140,81 @@ class Client:
                   'request': request, 'job_id': None}
         save_handle(path, handle)  # Before POST: a lost acknowledgement is reconcilable.
         return self._observe(handle, path, destination, cancel=cancel, progress=progress, timeout=timeout)
+
+    def case_snapshot(self, reference, *, offset=0):
+        from .contracts import case_reference
+        return self.json('/v1/cases/snapshot', {'case': case_reference(reference), 'offset': offset})
+
+    def case_events(self, reference, cursor):
+        with self.open('/v1/cases/events', {'case': reference, 'cursor': cursor}, timeout=25) as response:
+            raw = response.read(4097)
+        if len(raw) > 4096:
+            raise ValueError('Case event frame exceeds the limit.')
+        result = json.loads(raw)
+        if (not isinstance(result, dict) or set(result) != {'epoch', 'revision', 'changed'}
+                or not isinstance(result['epoch'], str) or len(result['epoch']) > 64
+                or type(result['revision']) is not int or result['revision'] < 0
+                or type(result['changed']) is not bool):
+            raise ValueError('Invalid case event frame.')
+        return result
+
+    def saved_text(self, reference, rid):
+        if not isinstance(rid, str) or str(uuid.UUID(rid)) != rid:
+            raise ValueError('Invalid saved response identifier.')
+        result = self.json('/v1/cases/text', {'case': reference, 'request_id': rid})
+        if result.get('request_id') != rid:
+            raise ValueError('Saved response identity changed.')
+        return result
+
+    def saved_analysis(self, reference, job_id, destination, *, cancel=None):
+        """Read an existing shared job; never submit, cancel or rerun inference."""
+        from .contracts import case_reference
+        import re
+        reference = case_reference(reference)
+        if not isinstance(job_id, str) or not re.fullmatch('[a-f0-9]{32}', job_id):
+            raise ValueError('Invalid saved analysis.')
+        body = {'case': reference, 'job_id': job_id}
+        metadata = self.json('/v1/cases/job', body)
+        state, request = metadata['state'], validate(metadata['request'])
+        if (state.get('job_id') != job_id or state.get('status') != 'succeeded'
+                or request['study_uid'] != reference['study_uid']
+                or state.get('study_uid') != request['study_uid']
+                or state.get('module') != request['module']):
+            raise ValueError('Saved analysis identity changed.')
+        parent = Path(destination).resolve()
+        parent.mkdir(parents=True, exist_ok=True)
+        temporary = parent / ('saved-download-' + uuid.uuid4().hex)
+        target = parent / ('saved-' + job_id + '-' + uuid.uuid4().hex)
+        temporary.mkdir()
+        try:
+            archive = temporary / 'artifacts.zip'
+            with self.open('/v1/cases/artifacts', body) as response, archive.open('wb') as output:
+                size = 0
+                while True:
+                    if cancel and cancel.is_set():
+                        raise RuntimeError('Saved result retrieval cancelled.')
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    size += len(block)
+                    if size > MAX_ARTIFACT_BYTES:
+                        raise ValueError('Saved artifacts exceed the limit.')
+                    output.write(block)
+            if size != state['artifact_bytes'] or digest(archive) != state['artifact_sha256']:
+                raise ValueError('Saved artifacts are incomplete or changed.')
+            result = unpack(archive, temporary / 'result', request)
+            if cancel and cancel.is_set():
+                raise RuntimeError('Saved result retrieval cancelled.')
+            (temporary / 'result').rename(target)
+            result = relocate(result, target)
+            result.update(artifact_directory=str(target), server_job_id=job_id,
+                          server_module=request['module'], study_uid=request['study_uid'], remote_analysis=True)
+            result['saved_files'] = [str(path) for path in target.rglob('*')
+                if path.is_file() and path.suffix.lower() in ('.pdf', '.png', '.jpg', '.csv')]
+            (target / 'result.json').write_text(json.dumps(result, allow_nan=False), encoding='utf-8')
+            return result
+        finally:
+            shutil.rmtree(temporary)
 
     def resume(self, handle_path, destination, *, cancel=None, progress=None, timeout=7500):
         path = Path(handle_path).resolve()
@@ -208,7 +302,8 @@ class Client:
                     raise RuntimeError('Analysis cancelled.')
                 (temporary / 'result').rename(target)
                 result = relocate(result, target)
-                result['artifact_directory'] = str(target)
+                result.update(artifact_directory=str(target), server_module=module,
+                              analysis_study_uid=study_uid)
                 (target / 'result.json').write_text(json.dumps(result, allow_nan=False), encoding='utf-8')
                 completed = True
                 return result

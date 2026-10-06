@@ -147,6 +147,20 @@ class PacsSource:
             if response is not None:
                 response.close()
 
+    def case_identity(self, study_uid):
+        from .contracts import uid
+        uid(study_uid)
+        endpoint = self.config['url'].rstrip('/') + '/api/ai-patient/by-study/' + study_uid
+        with self.get(endpoint) as response:
+            if len(response.content) > 2 * 1024**2:
+                raise ValueError('PACS case response exceeds the limit.')
+            data = response.json()
+        actual = str(data.get('study_info', {}).get('study_instance_uid', ''))
+        patient = str(data.get('patient_info', {}).get('patient_id', ''))
+        if actual != study_uid or not patient:
+            raise ValueError('PACS case identity is unavailable.')
+        return {'study_uid': actual, 'patient_id': patient}
+
     def storage_files(self, request):
         endpoint = self.config['url'].rstrip('/') + '/api/ai-patient/by-study/' + request['study_uid']
         with self.get(endpoint) as response:

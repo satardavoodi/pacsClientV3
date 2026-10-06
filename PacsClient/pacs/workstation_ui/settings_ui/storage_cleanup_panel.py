@@ -5,7 +5,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Dict
 
-from PySide6.QtCore import QCoreApplication, Signal, Qt, QThread, QObject, Slot
+from PySide6.QtCore import QCoreApplication, Signal, Qt, QThread, QObject, Slot, QTimer
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -403,6 +403,47 @@ class StorageCleanupPanelWidget(QWidget):
     def _on_clear_category_clicked(self, _checked=False, *, category: str):
         self._handle_cleanup_action(category)
 
+    def request_assistant_cleanup(self, category: str, *, strategy=None, value=None):
+        """Open the existing human confirmation without blocking MCP dispatch."""
+        if category not in ('cache', 'printing', 'patients'):
+            raise ValueError('Unsupported assistant cleanup category')
+        if (getattr(self, '_assistant_cleanup_pending', False)
+                or getattr(self, '_assistant_cleanup_owned', False) or self._cleanup_thread is not None):
+            return False
+        self._assistant_cleanup_pending = True
+        self._assistant_cleanup_owned = True
+        self._assistant_cleanup_state = {'state':'awaiting_local_confirmation', 'category':category}
+        def request():
+            try:
+                if category == 'patients':
+                    if strategy not in ('all', 'delete_oldest_count', 'older_than_days'):
+                        raise ValueError('Explicit patient cleanup strategy required')
+                    if strategy != 'all' and (type(value) is not int or value < 1):
+                        raise ValueError('Positive retention value required')
+                    if not self._can_start_destructive_cleanup(self):
+                        self._assistant_cleanup_state['state'] = 'cancelled_or_blocked'
+                        self._assistant_cleanup_owned = False
+                        return
+                    self._assistant_cleanup_state.update(state='preparing_preview', strategy=strategy, value=value)
+                    self._run_cleanup_job(self,
+                        partial(self.cleanup_manager.build_patient_cleanup_preview, strategy, value or 0),
+                        on_done=lambda parent, preview: self._confirm_patient_cleanup(parent, strategy, value or 0, preview),
+                        on_fail=self._on_category_cleanup_failed)
+                    return
+                started = self._handle_cleanup_action(category)
+                if started and self._assistant_cleanup_owned:
+                    self._assistant_cleanup_state['state'] = 'running'
+                elif not started:
+                    self._assistant_cleanup_state['state'] = 'cancelled_or_blocked'
+                    self._assistant_cleanup_owned = False
+            except Exception:
+                self._assistant_cleanup_state['state'] = 'failed'
+                self._assistant_cleanup_owned = False
+            finally:
+                self._assistant_cleanup_pending = False
+        QTimer.singleShot(0, self, request)
+        return True
+
     def _on_refresh_storage_info_clicked(self, _checked=False):
         self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
 
@@ -468,8 +509,16 @@ class StorageCleanupPanelWidget(QWidget):
             on_done=self._on_category_cleanup_finished,
             on_fail=self._on_category_cleanup_failed,
         )
+        return True
 
     def _on_category_cleanup_finished(self, parent, result) -> None:
+        if getattr(self, '_assistant_cleanup_owned', False):
+            self._assistant_cleanup_owned = False
+            self._assistant_cleanup_state.update(
+                state='succeeded' if (getattr(result, 'success', False) and not getattr(result, 'warnings', None)) else 'completed_with_warnings',
+                files_deleted=int(getattr(result, 'files_deleted', 0)),
+                folders_touched=int(getattr(result, 'folders_touched', 0)),
+                db_rows_affected=int(getattr(result, 'db_rows_affected', 0)))
         self._close_cleanup_progress()
         try:
             _warn = ""
@@ -498,6 +547,9 @@ class StorageCleanupPanelWidget(QWidget):
             _logger.exception("[STORAGE_PANEL] post-cleanup refresh failed")
 
     def _on_category_cleanup_failed(self, parent, message: str) -> None:
+        if getattr(self, '_assistant_cleanup_owned', False):
+            self._assistant_cleanup_owned = False
+            self._assistant_cleanup_state['state'] = 'failed'
         self._close_cleanup_progress()
         try:
             QMessageBox.critical(
@@ -874,8 +926,14 @@ class StorageCleanupPanelWidget(QWidget):
         self._close_cleanup_progress()
         selected = int(preview.get("selected_patients", 0))
         if selected <= 0:
+            if getattr(self, '_assistant_cleanup_owned', False):
+                self._assistant_cleanup_owned = False
+                self._assistant_cleanup_state.update(state='succeeded', files_deleted=0, db_rows_affected=0)
             QMessageBox.information(parent, "Nothing to Clean", self._patient_preview_text(preview))
             return
+        if getattr(self, '_assistant_cleanup_owned', False):
+            self._assistant_cleanup_state.update(state='awaiting_local_confirmation', selected_patients=selected,
+                estimated_bytes=int(preview.get('estimated_bytes', 0)))
         confirm = QMessageBox.question(
             parent,
             "Confirm Patient Cleanup",
@@ -884,10 +942,13 @@ class StorageCleanupPanelWidget(QWidget):
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
-        if confirm != QMessageBox.Yes:
+        if confirm != QMessageBox.Yes or not self._can_start_destructive_cleanup(parent):
+            if getattr(self, '_assistant_cleanup_owned', False):
+                self._assistant_cleanup_owned = False
+                self._assistant_cleanup_state['state'] = 'cancelled_or_blocked'
             return
-        if not self._can_start_destructive_cleanup(parent):
-            return
+        if getattr(self, '_assistant_cleanup_owned', False):
+            self._assistant_cleanup_state['state'] = 'running'
         job = (
             self.cleanup_manager.cleanup_patients_folder
             if strategy == "all"
@@ -902,7 +963,11 @@ class StorageCleanupPanelWidget(QWidget):
         # freeze. It now runs on a worker behind a modal busy dialog, so the app
         # stays responsive and the user can see that something is happening.
         # AIPACS_STORAGE_CLEANUP_OFFTHREAD=0 restores the blocking call.
-        self._run_cleanup_job(parent, job)
+        if getattr(self, '_assistant_cleanup_owned', False):
+            self._run_cleanup_job(parent, job, on_done=self._on_category_cleanup_finished,
+                                  on_fail=self._on_category_cleanup_failed)
+        else:
+            self._run_cleanup_job(parent, job)
 
     @staticmethod
     def _cleanup_offthread_enabled() -> bool:

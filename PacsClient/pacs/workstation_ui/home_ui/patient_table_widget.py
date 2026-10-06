@@ -1091,6 +1091,8 @@ class PatientTableWidget(QWidget):
     # column unhidden), and nothing reaches the right-hand corners because the
     # scrollbar owns them.
     #
+    # The header now uses RoundedHeaderClip for symmetric top-edge clipping.
+    # The investigation below describes the older QSS-only limitation.
     # So a QSS-only fix can round the top-LEFT and nothing else — an asymmetric
     # table, worse than the uniform square. Rounding this properly means
     # re-parenting `results_table` into a rounded container frame with the table
@@ -1101,6 +1103,8 @@ class PatientTableWidget(QWidget):
         """Setup the Patient Table UI"""
         # Enhanced table widget with checkbox column
         self.results_table = QTableWidget()
+        from .rounded_table_header import RoundedHeaderClip
+        self._rounded_header_clip = RoundedHeaderClip(self.results_table.horizontalHeader())
         self.results_table.setColumnCount(TOTAL_COLS)
         # 2026-05-29 user request: remove vertical separator lines between
         # data cells in patient rows. Header keeps vertical separators via
@@ -6634,7 +6638,7 @@ class PatientTableWidget(QWidget):
 
         return str(value or "").strip()
 
-    def _apply_report_status_display(self, report_label: QLabel, report_status: str, reporting_physician: str) -> None:
+    def _apply_report_status_display(self, report_label: QLabel, report_status: str, reporting_physician: str, *, workflow_assignment=None) -> None:
         status_icon_map = {
             'pending': 'fa5s.clock',
             'awaiting_physician_approval': 'fa5s.user-md',
@@ -6707,9 +6711,9 @@ class PatientTableWidget(QWidget):
         try:
             from modules.network.ino_assignment import is_enabled as _ino_assign_enabled
             _rid = str(getattr(report_label, 'reception_id', '') or '').strip()
-            if _ino_assign_enabled() and _rid:
+            if (workflow_assignment is not None or _ino_assign_enabled()) and _rid:
                 from modules.network import ino_assignment_models as _ino_m
-                _merged = self.assignment_display_for(_rid) or {}
+                _merged = workflow_assignment if workflow_assignment is not None else (self.assignment_display_for(_rid) or {})
                 # The SAME effective status the Assign icon paints.
                 _status = _ino_m.effective_assign_status(
                     str(_merged.get('status') or ''), report_status)
@@ -6725,9 +6729,12 @@ class PatientTableWidget(QWidget):
                             "font-size: 11px; font-weight: 600;"
                         )
                         try:
-                            from modules.network import ino_assignment_details as _ino_d
-                            _tip = _ino_d.format_tooltip(_ino_d.get_assignment_details(
-                                _rid, report_status=report_status, resolve_names=False))
+                            if workflow_assignment is not None:
+                                _tip = f"Assigned to: {_assignee}"
+                            else:
+                                from modules.network import ino_assignment_details as _ino_d
+                                _tip = _ino_d.format_tooltip(_ino_d.get_assignment_details(
+                                    _rid, report_status=report_status, resolve_names=False))
                         except Exception:
                             _tip = f"Assigned to: {_assignee}"
                         report_label.setToolTip(
@@ -7344,6 +7351,24 @@ class PatientTableWidget(QWidget):
         # download "doesn't start".
         if not data['study_uid'] and study_uids:
             data['study_uid'] = study_uids[0]
+        from PacsClient.utils.patient_workflow_facts import voice_fact, WORKFLOW_ROLE_OFFSET
+        snapshot = study_uid_item.data(Qt.UserRole + WORKFLOW_ROLE_OFFSET) if study_uid_item else None
+        binding = getattr(self.results_table, '_secretary_workflow_binding', None)
+        if not binding or not isinstance(snapshot, dict) or snapshot.get('binding') != binding:
+            snapshot = None
+        local = getattr(self, '_local_status_cache', {}).get(
+            (data['study_uid'], data['patient_id']), {})
+        # Read existing RAM evidence only; no filesystem or network work here.
+        flags = local.get('data') if time.time() - local.get('timestamp', 0) <= 15 else {}
+        data.update(voice_fact(snapshot, data['study_uid'], data['patient_id'], flags))
+        data['local_artifacts'] = {key: (flags or {}).get(key) if type((flags or {}).get(key)) is bool else None
+            for key in ('dicom', 'docs', 'voice', 'ai', 'case_of_day', 'printed')}
+        report_widget = self.results_table.cellWidget(row, COL['report'])
+        status = getattr(report_widget, 'report_status', None)
+        if not status:
+            status = getattr(self, '_report_status_cache', {}).get(data['study_uid'])
+        data['report_status'] = str(status or 'unknown')
+        data['workflow_scope'] = 'primary_study_of_displayed_row'
         return data if data['study_uid'] else None
 
     def _find_existing_patient_row(self, patient_id: str, patient_name: str):

@@ -14,6 +14,38 @@ def segment_labels(labels, lesion=False):
     return [1] if lesion else [int(value) for value in np.unique(labels) if value != 0]
 
 
+def install_review_controls(editor_widget, panel):
+    """Keep correction controls inside the native Segment Editor module panel."""
+    editor_widget.layout().insertWidget(0, panel)
+    panel.show()
+
+
+
+def import_segments(slicer, labels, segmentation, original, names, lesion=False):
+    """Import the shared labelmap once; retain sparse anatomical label values."""
+    expected = set(segment_labels(original, lesion))
+    if not original.any():
+        if lesion:
+            return {segmentation.GetSegmentation().AddEmptySegment('', 'Lesion candidates'): 1}
+        return {}
+    if not slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(labels, segmentation):
+        raise ValueError('Could not import the original segmentation.')
+    container = segmentation.GetSegmentation()
+    identities = {}
+    for segment_id in container.GetSegmentIDs():
+        segment = container.GetSegment(segment_id)
+        value = int(segment.GetLabelValue())
+        if value not in expected or value in identities.values():
+            raise ValueError('Imported segmentation label identity does not match the original.')
+        segment.SetName(names.get(str(value), 'Lesion candidates' if lesion else 'Label ' + str(value)))
+        identities[segment_id] = value
+    if lesion and not identities:
+        identities[container.AddEmptySegment('', 'Lesion candidates')] = 1
+    if set(identities.values()) != expected:
+        raise ValueError('Imported segmentation is missing original labels.')
+    return identities
+
+
 def main():
     import numpy as np
     import qt
@@ -26,35 +58,42 @@ def main():
     segmentation = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLSegmentationNode', 'Manual correction')
     segmentation.CreateDefaultDisplayNodes()
     segmentation.SetReferenceImageGeometryParameterFromVolumeNode(image)
-    identities = {}
-    for value in segment_labels(original, manifest.get('lesion', False)):
-        name = manifest.get('label_names', {}).get(str(int(value)), 'Lesion candidates' if manifest.get('lesion') else 'Label ' + str(int(value)))
-        segment_id = segmentation.GetSegmentation().AddEmptySegment('', name)
-        slicer.util.updateSegmentBinaryLabelmapFromArray(segment_array(original, value), segmentation, segment_id, image)
-        identities[segment_id] = int(value)
+    slicer.app.pauseRender()
+    modifying = segmentation.StartModify()
+    try:
+        identities = import_segments(slicer, labels, segmentation, original,
+                                     manifest.get('label_names', {}), manifest.get('lesion', False))
+    finally:
+        segmentation.EndModify(modifying)
+        slicer.app.resumeRender()
     slicer.mrmlScene.RemoveNode(labels)
     slicer.util.selectModule('SegmentEditor')
-    editor = slicer.modules.segmenteditor.widgetRepresentation().self().editor
+    editor_widget = slicer.modules.segmenteditor.widgetRepresentation()
+    editor = editor_widget.self().editor
     editor.setSegmentationNode(segmentation); editor.setSourceVolumeNode(image)
     slicer.util.setSliceViewerLayers(background=image)
-    panel = qt.QDialog(slicer.util.mainWindow())
-    panel.setWindowTitle('AI-PACS manual correction')
-    panel.setModal(False)
+    panel = qt.QWidget(editor_widget)
+    panel.setObjectName('AIPacsManualCorrectionPanel')
     layout = qt.QVBoxLayout(panel)
-    layout.addWidget(qt.QLabel('Edit existing segments. Save here, then recalculate in AI-PACS.'))
-    layout.addWidget(qt.QLabel('Select a segment and Paint, Erase or Draw. Hold the left mouse button to edit.\n'
-                              'The brush outline shows the area being changed. Use the slice controls to review other slices.'))
+    layout.setContentsMargins(4, 8, 4, 8)
+    layout.setSpacing(6)
+    title = qt.QLabel('AI-PACS | Segmentation correction')
+    title.setStyleSheet('font-weight: bold; color: #60a5fa;')
+    layout.addWidget(title)
+    hint = qt.QLabel('Select any segment below, edit its boundary, then save the correction.')
+    hint.setWordWrap(True)
+    layout.addWidget(hint)
     effects = qt.QHBoxLayout()
     for title in ('Paint', 'Erase', 'Draw'):
         effect_button = qt.QPushButton(title)
         effect_button.connect('clicked()', lambda checked=False, name=title: editor.setActiveEffectByName(name))
         effects.addWidget(effect_button)
     layout.addLayout(effects)
-    open_editor = qt.QPushButton('Open Segment Editor')
-    open_editor.connect('clicked()', lambda: slicer.util.selectModule('SegmentEditor'))
-    layout.addWidget(open_editor)
     button = qt.QPushButton('Save correction for AI-PACS')
     layout.addWidget(button)
+    status = qt.QLabel('Saved corrections can be applied on the server from AI-PACS.')
+    status.setWordWrap(True)
+    layout.addWidget(status)
     def save():
         try:
             if segmentation.GetSegmentation().GetNumberOfSegments() != len(identities):
@@ -72,11 +111,21 @@ def main():
             if not slicer.util.saveNode(node, str(directory / 'corrected.nii.gz')):
                 raise ValueError('Correction could not be saved.')
             slicer.mrmlScene.RemoveNode(node)
-            slicer.util.infoDisplay('Saved. Return to AI-PACS and click Recalculate corrected report.')
+            status.setText('Correction saved. Return to AI-PACS and click Apply mask on server '
+                           '(or Recalculate corrected report for a local analysis).')
         except Exception as exc:
-            slicer.util.errorDisplay(str(exc))
-    button.connect('clicked()', save)
-    panel.show()
+            status.setText('Correction was not saved: ' + str(exc))
+        finally:
+            button.setEnabled(True)
+            button.setText('Save correction for AI-PACS')
+    def request_save():
+        button.setEnabled(False)
+        button.setText('Saving correction...')
+        status.setText('Preparing the corrected labelmap. Please wait.')
+        button.repaint()
+        qt.QTimer.singleShot(0, save)
+    button.connect('clicked()', request_save)
+    install_review_controls(editor_widget, panel)
     slicer._aipacsManualReviewPanel = panel
 
 

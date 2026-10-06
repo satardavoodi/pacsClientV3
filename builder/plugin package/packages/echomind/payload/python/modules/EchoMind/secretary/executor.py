@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional
 from .adapters.home_widget_adapter import HomeWidgetAdapter
 from .contracts import SecretaryActionPlan, SecretaryResult
 from .resolver import compact_patient_row, resolve_patient_by_code
+from .workflow import ExecutionCall, drive_steps, drive_steps_async
 
 
 def _bus_bridge_enabled() -> bool:
@@ -20,19 +21,9 @@ def _bus_bridge_enabled() -> bool:
     )
 
 
-def _assistant_bus_mode() -> "str | None":
-    """Session mode to stamp on voice-assistant CommandBus calls, or ``None``.
-
-    Default OFF → ``None`` → no ``agent_mode`` is set, so the registry permission
-    gate (permissions.py) stays INERT for the voice path — byte-identical to
-    today. ``AIPACS_AGENT_ASSISTANT_MODE=1`` runs the voice assistant in
-    'assistant' mode: server-write actions require a confirm turn (reusing the
-    existing CONFIRM_REQUIRED machinery) and destructive actions are denied.
-    This is a BEHAVIOR CHANGE for the voice assistant — enable only after live
-    verification on the source build.
-    """
-    return "assistant" if os.environ.get(
-        "AIPACS_AGENT_ASSISTANT_MODE", "").strip() == "1" else None
+def _assistant_bus_mode() -> str:
+    """Company command execution always uses the local assistant policy."""
+    return "assistant"
 
 
 class SecretaryExecutor:
@@ -100,6 +91,11 @@ class SecretaryExecutor:
         return want in cur
 
     def _list_patients(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        return drive_steps(self._list_patients_steps(plan, state))
+
+    def _list_patients_steps(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+        # A failed replacement search must not leave an older ordinal target.
+        state.pop("last_list_source", None)
         if not self.adapter.is_available():
             return {
                 "ok": False,
@@ -115,6 +111,16 @@ class SecretaryExecutor:
             source = self.adapter.get_active_source()
         date_raw = str(entities.get("date") or "")
         date_from, date_to = self._normalize_date_filter(date_raw)
+        if entities.get("date_from") or entities.get("date_to"):
+            date_from = self._to_yyyymmdd(str(entities.get("date_from") or ""))
+            date_to = self._to_yyyymmdd(str(entities.get("date_to") or ""))
+            try:
+                datetime.strptime(date_from, "%Y%m%d")
+                datetime.strptime(date_to, "%Y%m%d")
+                if date_from > date_to:
+                    raise ValueError("reversed range")
+            except ValueError:
+                return {"ok": False, "action": "list_patients", "message": "Invalid search date range; no search was started.", "data": None, "error_code": "INVALID_DATE_RANGE"}
         modality_filter = str(entities.get("modality") or "").upper()
 
         criteria: dict[str, Any] = {}
@@ -125,7 +131,7 @@ class SecretaryExecutor:
             criteria["modality"] = modality_filter
 
         try:
-            self.adapter.search(source=source, criteria=criteria)
+            (yield ExecutionCall(self.adapter.search, getattr(self.adapter, "search_async", self.adapter.search), kwargs={"source": source, "criteria": criteria}))
         except Exception as exc:
             return {
                 "ok": False,
@@ -146,7 +152,8 @@ class SecretaryExecutor:
             if date_ok and modality_ok:
                 filtered.append(compact_patient_row(row))
 
-        state["last_list"] = filtered
+        state["last_list"] = deepcopy(filtered)
+        state["last_list_source"] = source
         return {
             "ok": True,
             "action": "list_patients",
@@ -155,7 +162,32 @@ class SecretaryExecutor:
             "error_code": None,
         }
 
-    def _resolve_open_candidate(self, entities: dict[str, Any]) -> dict[str, Any]:
+    def _resolve_open_candidate(self, entities: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        return drive_steps(self._resolve_open_candidate_steps(entities, state))
+
+    def _resolve_open_candidate_steps(self, entities: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        if "row_index" in entities:
+            index = entities["row_index"]
+            source = state.get("last_list_source")
+            requested_source = entities.get("source", "active_tab")
+            rows = state.get("last_list")
+            if (type(index) is not int or not 1 <= index <= 10000
+                    or "patient_code" in entities or "resolved_patient" in entities
+                    or not source or source != self.adapter.get_active_source()
+                    or requested_source not in (source, "active_tab", "active", "current", "")
+                    or not isinstance(rows, list) or index > len(rows)):
+                return {"status": "invalid_list_context", "matches": []}
+            row = compact_patient_row(rows[index - 1])
+            # Resolve by immutable study identity, never by a potentially re-sorted index.
+            if not row["patient_id"] or not row["study_uid"]:
+                return {"status": "invalid_list_context", "matches": []}
+            matches = [compact_patient_row(current) for current in self.adapter.list_rows()
+                       if str(current.get("patient_id") or "").strip() == row["patient_id"]
+                       and str(current.get("study_uid") or "").strip() == row["study_uid"]]
+            if len(matches) != 1:
+                return {"status": "invalid_list_context", "matches": []}
+            return {"status": "resolved", "matches": matches}
+
         candidate = entities.get("resolved_patient")
         if isinstance(candidate, dict):
             return {"status": "resolved", "matches": [compact_patient_row(candidate)]}
@@ -168,17 +200,17 @@ class SecretaryExecutor:
         res = resolve_patient_by_code(rows, code)
         if res["status"] == "not_found":
             try:
-                self.adapter.search(
-                    source=self.adapter.get_active_source(),
-                    criteria={"patient_id": code},
-                )
+                (yield ExecutionCall(self.adapter.search, getattr(self.adapter, "search_async", self.adapter.search), kwargs={"source": self.adapter.get_active_source(), "criteria": {"patient_id": code}}))
             except Exception:
-                pass
+                return {"status": "not_found", "matches": []}
             rows = self.adapter.list_rows()
             res = resolve_patient_by_code(rows, code)
         return res
 
     def _resolve_download_candidate(self, entities: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        return drive_steps(self._resolve_download_candidate_steps(entities, state))
+
+    def _resolve_download_candidate_steps(self, entities: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
         candidate = entities.get("resolved_patient")
         if isinstance(candidate, dict):
             return {"status": "resolved", "matches": [compact_patient_row(candidate)]}
@@ -188,12 +220,9 @@ class SecretaryExecutor:
             res = resolve_patient_by_code(self.adapter.list_rows(), code)
             if res["status"] == "not_found":
                 try:
-                    self.adapter.search(
-                        source=self.adapter.get_active_source(),
-                        criteria={"patient_id": code},
-                    )
+                    (yield ExecutionCall(self.adapter.search, getattr(self.adapter, "search_async", self.adapter.search), kwargs={"source": self.adapter.get_active_source(), "criteria": {"patient_id": code}}))
                 except Exception:
-                    pass
+                    return {"status": "not_found", "matches": []}
                 res = resolve_patient_by_code(self.adapter.list_rows(), code)
             return res
 
@@ -207,6 +236,9 @@ class SecretaryExecutor:
         return {"status": "not_found", "matches": []}
 
     def _open_patient(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool) -> SecretaryResult:
+        return drive_steps(self._open_patient_steps(plan, state, confirmed))
+
+    def _open_patient_steps(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool) -> SecretaryResult:
         if not self.adapter.is_available():
             return {
                 "ok": False,
@@ -216,10 +248,18 @@ class SecretaryExecutor:
                 "error_code": "NO_HOME_WIDGET",
             }
         entities = plan.get("entities", {})
-        resolved = self._resolve_open_candidate(entities)
+        if entities.get('list_id'):
+            result = self._try_command_bus(plan, state, confirmed=confirmed)
+            return result or {'ok': False, 'action': 'open_patient', 'data': None,
+                'error_code': 'CONTROL_UNAVAILABLE', 'message': 'The patient-opening control is unavailable.'}
+        resolved = (yield from self._resolve_open_candidate_steps(entities, state))
         status = resolved.get("status")
         matches = resolved.get("matches", [])
 
+        if status == "invalid_list_context":
+            return {"ok": False, "action": "open_patient", "data": None,
+                    "message": "List context is missing or changed. Refresh the patient list before opening a row.",
+                    "error_code": "INVALID_LIST_CONTEXT"}
         if status == "missing_code":
             return {
                 "ok": False,
@@ -270,6 +310,9 @@ class SecretaryExecutor:
         }
 
     def _download_patient(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool) -> SecretaryResult:
+        return drive_steps(self._download_patient_steps(plan, state, confirmed))
+
+    def _download_patient_steps(self, plan: SecretaryActionPlan, state: dict[str, Any], confirmed: bool) -> SecretaryResult:
         if not self.adapter.is_available():
             return {
                 "ok": False,
@@ -279,7 +322,7 @@ class SecretaryExecutor:
                 "error_code": "NO_HOME_WIDGET",
             }
         entities = plan.get("entities", {})
-        resolved = self._resolve_download_candidate(entities, state)
+        resolved = (yield from self._resolve_download_candidate_steps(entities, state))
         status = resolved.get("status")
         matches = resolved.get("matches", [])
 
@@ -320,13 +363,19 @@ class SecretaryExecutor:
         }
 
     def execute(self, plan: SecretaryActionPlan, state: dict[str, Any], *, confirmed: bool = False) -> SecretaryResult:
+        return drive_steps(self.execute_steps(plan, state, confirmed=confirmed))
+
+    async def execute_async(self, plan, state, *, confirmed=False):
+        return await drive_steps_async(self.execute_steps(plan, state, confirmed=confirmed))
+
+    def execute_steps(self, plan: SecretaryActionPlan, state: dict[str, Any], *, confirmed: bool = False) -> SecretaryResult:
         action = plan.get("action")
         if action == "list_patients":
-            return self._list_patients(plan, state)
+            return (yield from self._list_patients_steps(plan, state))
         if action == "open_patient":
-            return self._open_patient(plan, state, confirmed=confirmed)
+            return (yield from self._open_patient_steps(plan, state, confirmed=confirmed))
         if action == "download_patient":
-            return self._download_patient(plan, state, confirmed=confirmed)
+            return (yield from self._download_patient_steps(plan, state, confirmed=confirmed))
         if action == "set_source_mode":
             return self._set_source_mode(plan, state)
         if action == "import_dicom":
@@ -419,18 +468,11 @@ class SecretaryExecutor:
                 needs_confirmation=bool(plan.get("needs_confirmation")),
                 reason=str(plan.get("reason") or "secretary bus bridge"),
             )
-            # Per-call state for the bus: propagate the confirmation flag so the
-            # registry permission gate (permissions.py) can clear a
-            # CONFIRM_REQUIRED on the user's "yes" re-run, and stamp the
-            # assistant session mode only when explicitly enabled (default off →
-            # no agent_mode → gate inert, byte-identical to today). Adapters only
-            # READ state, so a shallow copy is safe and keeps these transient keys
-            # out of the cross-turn session state.
+            # Local assistant policy is authoritative; a proposal/session cannot
+            # promote itself to QA or unrestricted. Keep transient flags local.
             bus_state = dict(state or {})
             bus_state["confirmed"] = bool(confirmed)
-            _amode = _assistant_bus_mode()
-            if _amode and "agent_mode" not in bus_state:
-                bus_state["agent_mode"] = _amode
+            bus_state["agent_mode"] = _assistant_bus_mode()
             result = bus.execute(cmd_plan, bus_state)
         except Exception as exc:  # noqa: BLE001 — degrade to a typed error
             return {
@@ -500,6 +542,8 @@ class SecretaryExecutor:
             except (TypeError, ValueError):
                 n = 1
             count = self.adapter.select_top_n_rows(n)
+            if count <= 0:
+                return {"ok": False, "action": "select_patient", "message": "No patient rows were selected.", "data": {"selected_count": 0}, "error_code": "NOT_FOUND"}
             return {"ok": True, "action": "select_patient", "message": f"Selected top {count} patient row(s).", "data": {"selected_count": count}, "error_code": None}
         return {"ok": False, "action": "select_patient", "message": "Provide patient_code or limit entity.", "data": None, "error_code": "MISSING_CRITERIA"}
 

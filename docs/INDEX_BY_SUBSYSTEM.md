@@ -1,4 +1,63 @@
-# AI-PACS Documentation ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Index by Subsystem
+# AI-PACS Documentation ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ Index by Subsystem
+
+## Eagle Eye brain manual correction (2026-10-06)
+
+[Server development history](modules/eagle-eye-server-development/docs/HISTORY.md#2026-10-06-slicer-manual-review-launch-and-path-compatibility)
+records the client Slicer launch/path fixes, isolated review storage, automated
+guards and separate native-editor/export/server revision acceptance gates.
+
+## Home / Patient thumbnail catalog convergence (2026-10-06)
+
+Both Server consumers now use the shared pure catalog/media join; Local Home
+uses complete indexed membership. See the October 6 [thumbnail pipeline](pipelines/thumbnail-pipeline.md),
+[OPT-58/60 evidence receipt](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md)
+and `tests/code/ui_services/test_home_catalog_convergence.py`.
+Source GUI and installed acceptance are separate pending gates.
+
+## Alignment report recovery (2026-10-06)
+
+[Alignment implementation](modules/EAGLE_EYE_ALIGNMENT_VIEW.md) records explicit
+previous-PDF access after edits, draft creation, original-scale restoration and
+step-by-step report guidance, with code evidence and pending fresh-source GUI gate.
+
+## PACS Client and Eagle Eye realtime review (2026-10-06)
+
+[Three-node realtime source audit and implementation contract](echomind/THREE_NODE_REALTIME_REVIEW_2026-10-06.md)
+covers voice/report/status invalidations, shared-center AI history, Patient red
+availability indicators, exact previous-result retrieval, verified current tests
+and the source implementation receipt. Synthetic three-node acceptance passed;
+fresh-source GUI and release artifact gates remain open.
+
+## Private workstation support issues (2026-10-02)
+
+Private workstation support issues: see
+[Secretary issue-reporting source receipt](agent_control/SECRETARY_ISSUE_REPORTING_2026-10-02.md)
+for user review, safe log/native evidence, paired website receipt and pending
+source/server/production acceptance.
+
+## Breast calcification and classifier correction (2026-10-01)
+
+**Current Breast AI entry point (2026-10-05):**
+[Development state and stage gates](modules/BREAST_AI_DEVELOPMENT.md) and
+[experiment/decision ledger](modules/BREAST_AI_EXPERIMENT_LEDGER.md).
+These reconcile model lineage, earlier trials, current point-level results, physician
+miss review and the next action. Update them with every Breast AI research change;
+earlier dated reports retain their historical evidence.
+Training-specific documentation follows the
+[skill-aligned reporting contract](modules/BREAST_AI_REPORTING_STANDARD.md), with a
+[completed B19 run review](modules/breast-ai/B19_TRAINING_REVIEW_2026-10-05.md).
+
+Bone Age reports and training inventory (2026-10-04):
+`docs/modules/EAGLE_EYE_BREAST_BONE_LOCAL_2026-09-21.md` owns physician demographics,
+historical reference bands/Z-score/estimated percentiles, unsigned PDF generation
+and native acceptance. `docs/reports/BONE_AGE_MODEL_TRAINING_REVIEW_2026-10-04.md`
+records Windows/Linux checkpoint locations, hashes, aggregate RSNA annotations,
+development metrics and serving/training parity limits.
+
+`docs/modules/EAGLE_EYE_BREAST_BONE_LOCAL_2026-09-21.md` records recovered feature/
+calibration fixes, candidate runtime compatibility and diagnostic dataset ablations.
+Repeatable aggregate tools: `tools/eagle_eye/evaluate_breast_detector.py` and
+`tools/eagle_eye/evaluate_breast_classifier.py`. Clinical qualification remains separate.
 
 ## Server first-open patient scope (2026-09-30, OPT-58/60)
 
@@ -570,26 +629,26 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 - **[Eagle Eye service packaging parity](../builder/docs/EAGLE_EYE_SERVER_SERVICE_BUILD_PARITY.md)** - genuine pywin32 input gate, fresh-cache dependency refresh, installer lifecycle and separate frozen clean-host acceptance. Guard: `tests/code/builder/test_reused_asset_dependency_refresh.py`.
 
-- **[Eagle Eye Brain UI and maintenance](modules/EAGLE_EYE_BRAIN_UI_AND_MAINTENANCE.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ result card, anatomical PDF, background export and client acceptance boundaries.
+- **[Eagle Eye Brain UI and maintenance](modules/EAGLE_EYE_BRAIN_UI_AND_MAINTENANCE.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ result card, anatomical PDF, background export and client acceptance boundaries.
 
-- **[Eagle Eye development contract](modules/EAGLE_EYE_DEVELOPMENT_CONTRACT.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ common ownership and installer rules for Brain, Lumbar and future anatomy features.
+- **[Eagle Eye development contract](modules/EAGLE_EYE_DEVELOPMENT_CONTRACT.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ common ownership and installer rules for Brain, Lumbar and future anatomy features.
 
-- **[Eagle Eye Brain delivery](modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Brain/Lumbar ownership, portable assets, edition packaging and customer acceptance.
-- **[Eagle Eye Brain active reference](modules/EAGLE_EYE_BRAIN_REFERENCE_SETUP.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ volBrain-only policy, scientific source, interval calculation and retired adapters.
+- **[Eagle Eye Brain delivery](modules/EAGLE_EYE_BRAIN_CUSTOMER_DELIVERY.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ Brain/Lumbar ownership, portable assets, edition packaging and customer acceptance.
+- **[Eagle Eye Brain active reference](modules/EAGLE_EYE_BRAIN_REFERENCE_SETUP.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ volBrain-only policy, scientific source, interval calculation and retired adapters.
 
 - **[Release and build documentation hub](release-and-build/README.md)** - route to Git publication, role-selected Client and Server packaging, backend details, output ownership, and release evidence.
 - **[Canonical build and installer runbook](../BUILD.md)** - single human/AI entry point, safe fast lanes, official four-Client or two-Server isolated commands, exact output folders, expected sizes, content checks, recovery constraints, and release blockers.
-- **[3.6.6 build record](releases/VERSION_3.6.6_BUILD.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ current synchronized-source Python/Nuitka candidate, Standard/Eagle Eye/ARM-emulated editions, artifact identity and remaining installation gates.
-- **[3.6.5 local build matrix](releases/VERSION_3.6.5_BUILD.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ previous measured Python/Nuitka baseline and historical recovery evidence.
-- **[Pre-development system map (2026-08-27)](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ verified startup, subsystem connections, data/network boundaries, packaging flow, skills, MCPs, and the pre-code gate
-- **[Codex repository readiness (2026-08-27)](reports/CODEX_REPOSITORY_READINESS_2026-08-27.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ verified environment, test baseline, security blockers, and development order
-- **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ every stage report linked
-- **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ every fix + its guard test (56 rows)
-- **[Test inventory](../tests/INDEX_BY_GUARD.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ every guard test and what it protects
-- **[For future agents](for-future-agents/README.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ onboarding for AI agents working in this repo
-- **[Cloud decision ledger](for-future-agents/CLOUD_DECISION_LEDGER.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ PHI-safe, reconciled Cloud/recovery rationale with current-code status and superseded-material rules
-- **[UI stall evidence and guarded fixes (2026-09-02)](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ corrected log interpretation, guarded fixes, Rev 3 partial live verification, unresolved server-row scan and visit-persistence defects, download-completion evidence gate, and separate MPR workstream
-- **[Open findings (2026-08-16)](reports/OPEN_FINDINGS_2026-08-16.md)** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ diagnosed but deliberately NOT fixed. ط·آ¢ط¢آ§1 (pixel cache) has since been resolved; **ط·آ¢ط¢آ§2, the ~4-5.5 s MPR activation stall, is still open** and is the app's largest remaining freeze. Read it before touching MPR activation.
+- **[3.6.6 build record](releases/VERSION_3.6.6_BUILD.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ current synchronized-source Python/Nuitka candidate, Standard/Eagle Eye/ARM-emulated editions, artifact identity and remaining installation gates.
+- **[3.6.5 local build matrix](releases/VERSION_3.6.5_BUILD.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ previous measured Python/Nuitka baseline and historical recovery evidence.
+- **[Pre-development system map (2026-08-27)](architecture/PRE_DEVELOPMENT_SYSTEM_MAP_2026-08-27.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ verified startup, subsystem connections, data/network boundaries, packaging flow, skills, MCPs, and the pre-code gate
+- **[Codex repository readiness (2026-08-27)](reports/CODEX_REPOSITORY_READINESS_2026-08-27.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ verified environment, test baseline, security blockers, and development order
+- **[Audit overview (2026-05-28)](AUDIT_2026-05-28_OVERVIEW.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ every stage report linked
+- **[Regression catalog](plans/architecture/REGRESSION_CATALOG.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ every fix + its guard test (56 rows)
+- **[Test inventory](../tests/INDEX_BY_GUARD.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ every guard test and what it protects
+- **[For future agents](for-future-agents/README.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ onboarding for AI agents working in this repo
+- **[Cloud decision ledger](for-future-agents/CLOUD_DECISION_LEDGER.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ PHI-safe, reconciled Cloud/recovery rationale with current-code status and superseded-material rules
+- **[UI stall evidence and guarded fixes (2026-09-02)](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ corrected log interpretation, guarded fixes, Rev 3 partial live verification, unresolved server-row scan and visit-persistence defects, download-completion evidence gate, and separate MPR workstream
+- **[Open findings (2026-08-16)](reports/OPEN_FINDINGS_2026-08-16.md)** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ diagnosed but deliberately NOT fixed. ط·آ·ط¢آ¢ط·آ¢ط¢آ§1 (pixel cache) has since been resolved; **ط·آ·ط¢آ¢ط·آ¢ط¢آ§2, the ~4-5.5 s MPR activation stall, is still open** and is the app's largest remaining freeze. Read it before touching MPR activation.
 
 ---
 
@@ -654,11 +713,11 @@ the report or guard fixtures.
 - **Styling must be inline.** `prepare_report_html_for_server()` strips `<style>`, `<script>` and document chrome on upload, so a class or a stylesheet rule does not reach the server. Image sizing therefore lives on the `QTextImageFormat` (Qt emits `<img width= height=>` attributes), never in CSS.
 - **`<img>` must stay out of `_DIR_BLOCK_TAGS`.** If it is ever added, an embedded key image silently disappears from the copy the referring doctor opens while the author's copy still shows it.
 - **Report images travel as bytes, not paths.** The report is uploaded as one JSON field; a `file:///` src renders only on the machine that wrote it.
-- **Per-image size is capped** (~1000 px / JPEG q88, 1.5 MB hard ceiling). There is no per-report cap ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a report with many images can still grow past what the endpoint likes.
+- **Per-image size is capped** (~1000 px / JPEG q88, 1.5 MB hard ceiling). There is no per-report cap ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ a report with many images can still grow past what the endpoint likes.
 
 **Guard tests:**
-- `tests/code/reporting/test_report_image_insert.py` (47) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ insert, resize, and the full save/upload/reopen round-trip
-- `tests/code/reporting/test_server_report_html.py` (19) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the upload normaliser itself (RTL/LTR per block, inline-style preservation, idempotency)
+- `tests/code/reporting/test_report_image_insert.py` (47) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ insert, resize, and the full save/upload/reopen round-trip
+- `tests/code/reporting/test_server_report_html.py` (19) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the upload normaliser itself (RTL/LTR per block, inline-style preservation, idempotency)
 
 ### Viewer (multi-study, sidebar, drag-drop)
 
@@ -704,26 +763,26 @@ scope; right-panel action routing, lifecycle and source-live validation remain p
 | **[`reports/LARGE_IMPORT_QT_REENTRANCY_CRASH_2026-09-05.md`](reports/LARGE_IMPORT_QT_REENTRANCY_CRASH_2026-09-05.md)** | Large Local import native-crash evidence and guarded fix: keep per-file DICOM/SQLite registration on the managed worker boundary, keep viewport-tree construction atomic, and preserve DICOM bytes, codec/counting rules, identity, storage paths, and installed-build parity. |
 | **[`viewer/DICOM_FORMAT_COMPATIBILITY_OPERATING_GUIDE_2026-08-30.md`](viewer/DICOM_FORMAT_COMPATIBILITY_OPERATING_GUIDE_2026-08-30.md)** | **Read before diagnosing a new DICOM/IOD/codec/multiframe/waveform/ophthalmic compatibility case.** Separates preservation, classification, decoding, rendering, package parity, interoperability, and clinical verification. |
 | **[`reports/ENHANCED_MR_RAW_DATA_MULTIFRAME_2026-09-01.md`](reports/ENHANCED_MR_RAW_DATA_MULTIFRAME_2026-09-01.md)** | Enhanced MR series mixed with same-Series-UID Raw Data objects: order-independent pixel-payload classification, full frame expansion, and truthful exclusion of metadata-only objects from the Fast viewport while preserving them on disk. |
-| **[`reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md`](reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md)** | **Read before touching reference lines.** Two modes ship: single-source (default ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the ACTIVE viewport is the source and stays clean) and bidirectional all-pairs (`AIPACS_REFERENCE_LINES_ALL_PAIRS=1`). Explains why the source overlay must be *cleared*, not skipped. |
+| **[`reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md`](reports/REFERENCE_LINE_ACTIVE_VIEWPORT_2026-08-16.md)** | **Read before touching reference lines.** Two modes ship: single-source (default ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the ACTIVE viewport is the source and stays clean) and bidirectional all-pairs (`AIPACS_REFERENCE_LINES_ALL_PAIRS=1`). Explains why the source overlay must be *cleared*, not skipped. |
 | **[`reports/TEXT_ANNOTATION_INPUT_2026-08-18.md`](reports/TEXT_ANNOTATION_INPUT_2026-08-18.md)** | **Read before touching the annotation tools.** Why `ToolController` is Qt-free and how the Qt layer injects behaviour into it (`_pixel_data_fn`, `_pixel_spacing_fn`, `_text_prompt_fn`); why a tool press returning `False` is the "place nothing, stay armed" contract; why text annotations are single-line. |
 
 **MPR lifecycle invariant (2026-08-19):** `_MprLayoutMixin.cleanup()` is the
 only thing that releases an MPR viewer's volume, render windows and GPU
-texture ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ and **a `closeEvent` hook cannot be relied on to reach it.** Qt does
+texture ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ and **a `closeEvent` hook cannot be relied on to reach it.** Qt does
 not call `closeEvent` when a parent is destroyed or a widget is re-parented
 away, which is how patient-tab close and layout rebuilds leaked (14 opens vs
 6 teardowns across the logged sessions). Any code that drops, orphans or
 replaces a widget which may host an MPR must call
 `modules.mpr.zeta_mpr.mpr_viewer._mpr_lifecycle.release_mpr_children(widget,
-reason=...)` **before** `setParent(None)` / `deleteLater()` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ after that the
+reason=...)` **before** `setParent(None)` / `deleteLater()` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ after that the
 GL context is gone and `ReleaseGraphicsResources()` cannot free the VRAM.
 See [`reports/MPR_LIFECYCLE_RELEASE_2026-08-19.md`](reports/MPR_LIFECYCLE_RELEASE_2026-08-19.md).
 
 **Oblique-MPR camera invariant (2026-08-23):** *in oblique mode the camera does
-not select the displayed plane ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ an explicit `vtkPlane` on the mapper does.*
+not select the displayed plane ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ an explicit `vtkPlane` on the mapper does.*
 `_set_oblique_camera` runs `SliceFacesCameraOff()` + `SliceAtFocalPointOff()` and
 sets `plane.SetOrigin(self.current_position)` (the crosshair centre) +
-`plane.SetNormal(oblique_normal)`, **leaving the camera untouched** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ this is
+`plane.SetNormal(oblique_normal)`, **leaving the camera untouched** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ this is
 **v1.09.Fix-E**, and repositioning the camera is what it deliberately reverted,
 because it made the image pan under the cursor during rotation. **Do NOT "fix"
 the camera focal point onto the crosshair.** The displayed oblique plane passes
@@ -735,7 +794,7 @@ still measures the *camera's* plane, so its `focal_at_crosshair`,
 without anything being wrong. Until 2026-08-23 Fix-E was recorded only in a
 source docstring, and a stability review recommended reverting it. See
 [`plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md`](plans/architecture/MPR_GEOMETRY_CONSTRAINTS_BRIEF_2026-08-23.md)
-and `pipelines/mpr-geometry-pipeline.md` ط·آ¢ط¢آ§10.9, ط·آ¢ط¢آ§10g, ط·آ¢ط¢آ§10h.
+and `pipelines/mpr-geometry-pipeline.md` ط·آ·ط¢آ¢ط·آ¢ط¢آ§10.9, ط·آ·ط¢آ¢ط·آ¢ط¢آ§10g, ط·آ·ط¢آ¢ط·آ¢ط¢آ§10h.
 
 **Colour-decode invariant (2026-08-21):** any code path that reaches
 `ds.pixel_array` for display must call
@@ -743,7 +802,7 @@ and `pipelines/mpr-geometry-pipeline.md` ط·آ¢ط¢آ§10.9, ط·آ¢ط¢آ§1
 decode and `ybr_samples_to_rgb(ds, arr)` **after** it. Order is the mechanism,
 not a style choice: pydicom caches the decoded array, and for an uncompressed
 dataset that claims `YBR_FULL_422` while shipping full-rate samples it truncates
-the frame to two thirds and then resamples it, producing coloured static ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ this
+the frame to two thirds and then resamples it, producing coloured static ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ this
 cannot be repaired after the fact. Equally, multi-sample YBR data painted
 straight into `Format_RGB888` renders with a heavy cyan cast. Both corrections
 are needed; either alone leaves the image unreadable. See
@@ -761,7 +820,7 @@ seconds. Verdicts are now computed on a worker
 reads the cache and **never computes**. Storage cleanup runs on a `QThread`
 behind a busy dialog (`storage_cleanup_panel._CleanupWorker`). And
 `count_subfolders_with_dicom` uses an early-exit `os.scandir` walk instead of
-`Path.rglob('*')` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ measured **682.5 ms ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ 1.45 ms per study** cold, same verdict.
+`Path.rglob('*')` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ measured **682.5 ms ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ 1.45 ms per study** cold, same verdict.
 The 2026-09-02 live follow-up found the initial Server Search row path still
 calling that faster scanner synchronously. Its derived status fields were unused,
 so the residual call was removed; the existing generation-guarded Status worker
@@ -774,24 +833,24 @@ new mechanism. See
 
 **Hang-visibility invariant (2026-08-23):** *our stall probes cannot see a hang.
 Do not read their silence as health.* Both are blind, for different reasons.
-**F8 `[MAIN_THREAD_STALL]`** is a `QTimer` on the main thread ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it measures the
+**F8 `[MAIN_THREAD_STALL]`** is a `QTimer` on the main thread ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ it measures the
 gap when it *next fires*, so it only ever reports a stall that **ended**; a block
 that runs until the process is killed leaves no record at all. **F11
 `[MAIN_THREAD_STALL_TRACE]`** samples an in-progress block, but it is a **Python**
 thread and needs the GIL for a single bytecode, so it cannot run while the main
-thread sits inside a long C call ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `gc.collect()`, a VTK destructor, a driver
+thread sits inside a long C call ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ `gc.collect()`, a VTK destructor, a driver
 call. On 2026-08-23 a workstation hung for 17 s during a patient close
 (Windows `Application Hang 1002`) and the worst stall either probe recorded for
 that session was 1 188 ms. Therefore: **any GUI-thread section that can block in
 native code must be wrapped in
-`PacsClient.utils.native_fault_log.hang_watchdog(label)`** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it arms
+`PacsClient.utils.native_fault_log.hang_watchdog(label)`** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ it arms
 `faulthandler.dump_traceback_later`, whose timer runs on a **native** thread and
-fires while the GIL is held ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ **and must log a breadcrumb BEFORE it runs**, not
+fires while the GIL is held ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ **and must log a breadcrumb BEFORE it runs**, not
 only after, so a step the process dies inside is identifiable by having a start
 and no done (`_pw_lifecycle._close_step`). The watchdog keeps exactly one timer
 process-wide and is deliberately non-reentrant; arm it at the outermost point
 that matters. Related: the deferred patient-close `gc.collect()` was made
-*later* in 2026-06-27, not *shorter* ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it still runs on the GUI thread by design.
+*later* in 2026-06-27, not *shorter* ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ it still runs on the GUI thread by design.
 See
 [`plans/architecture/CLOSE_PATH_HANG_VISIBILITY_2026-08-23.md`](plans/architecture/CLOSE_PATH_HANG_VISIBILITY_2026-08-23.md).
 
@@ -800,107 +859,107 @@ streamer must never resolve a row's on-disk path on the GUI thread. Rows are
 resolved on a worker (`_resolve_display_paths`), and
 `load_progressive(..., ready=)` makes the streamer *wait* for that worker rather
 than fall back to an inline `stat`/`opendir`. The previous "the worker
-comfortably outruns the streamer" assumption held warm (4,500ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“6,000 rows/s vs
-800) and failed catastrophically during an import (~325 ms/row ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ a 13.0 s
+comfortably outruns the streamer" assumption held warm (4,500ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬ط¥â€œ6,000 rows/s vs
+800) and failed catastrophically during an import (~325 ms/row ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ a 13.0 s
 freeze). Anything that adds per-row work to the render path must be
 `ready`-gated or budgeted the same way.
 
 **Annotation-tool invariant:** `modules/viewer/tools/controller.py` must stay
-**Qt-free** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it holds the tool state machine and is imported by every headless
+**Qt-free** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ it holds the tool state machine and is imported by every headless
 tool test. Anything needing a widget (a dialog, a colour picker, a font) is
 INJECTED by `qt_viewer_bridge._init_tool_controller`, never imported here. A
 press handler returns `True` only when it actually placed or changed something;
 `False` means the caller must not repaint or deactivate the tool.
 
-**Reference-line invariant:** the active viewport draws **no** line, and its overlay is explicitly cleared when it becomes active ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ skipping it silently leaves a stale line and looks like the fix never landed.
+**Reference-line invariant:** the active viewport draws **no** line, and its overlay is explicitly cleared when it becomes active ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ skipping it silently leaves a stale line and looks like the fix never landed.
 
 **Guard tests:**
-- `tests/code/viewer/test_ybr_color_decode.py` (23) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a mislabelled `YBR_FULL_422` frame is corrected before decode and converted to RGB after it; genuinely subsampled, compressed, 16-bit, RGB and monochrome data are all left byte-identical
-- `tests/code/ui_services/test_list_stream_backpressure.py` (17) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the list streamer waits for the path resolver instead of touching the disk, loses no rows, respects a per-batch time budget, and still makes progress if the resolver dies
-- `tests/code/ui_services/test_gui_thread_disk_paths.py` (29) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ initial search rows never probe disk before paint, explicit caller state survives unchanged, download-badge refresh dispatches instead of walking, the DICOM scan never calls `rglob` yet returns the same verdict, and storage cleanup runs on a QThread
-- `tests/code/viewer/test_text_annotation_input.py` (25) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the Text tool asks what to write, cancel places nothing and leaves the tool armed, a bare controller keeps the legacy placeholder, and `controller.py` stays Qt-free
-- `tests/code/viewer/test_reference_line_active_viewport.py` (17) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the active viewport stays clean, the clean one follows the selection, and the env flag restores bidirectional
-- `tests/code/viewer/test_reference_lines_all_pairs.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the all-pairs engine itself (still fully covered; the flag default is pinned in both directions)
-- `tests/code/echomind/test_viewer_adapter.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 11 read-only adapter contract guards
+- `tests/code/viewer/test_ybr_color_decode.py` (23) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ a mislabelled `YBR_FULL_422` frame is corrected before decode and converted to RGB after it; genuinely subsampled, compressed, 16-bit, RGB and monochrome data are all left byte-identical
+- `tests/code/ui_services/test_list_stream_backpressure.py` (17) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the list streamer waits for the path resolver instead of touching the disk, loses no rows, respects a per-batch time budget, and still makes progress if the resolver dies
+- `tests/code/ui_services/test_gui_thread_disk_paths.py` (29) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ initial search rows never probe disk before paint, explicit caller state survives unchanged, download-badge refresh dispatches instead of walking, the DICOM scan never calls `rglob` yet returns the same verdict, and storage cleanup runs on a QThread
+- `tests/code/viewer/test_text_annotation_input.py` (25) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the Text tool asks what to write, cancel places nothing and leaves the tool armed, a bare controller keeps the legacy placeholder, and `controller.py` stays Qt-free
+- `tests/code/viewer/test_reference_line_active_viewport.py` (17) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the active viewport stays clean, the clean one follows the selection, and the env flag restores bidirectional
+- `tests/code/viewer/test_reference_lines_all_pairs.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the all-pairs engine itself (still fully covered; the flag default is pinned in both directions)
+- `tests/code/echomind/test_viewer_adapter.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ 11 read-only adapter contract guards
 - `tests/code/system/test_2026_05_27_regression_guards.py::test_change_series_signature_matches_base`
 
 ---
 
 ### Viewer cold-start cost (series load, pixel cache, import warm)
 
-**The recurring lesson in this area: the cost is almost never parsing or thread count ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it is FIRST TOUCH.** This machine runs two real-time AV engines, and cold/warm ratios of 7-100ط·آ£أ¢â‚¬â€‌ on the *same bytes* have been measured repeatedly. Benchmark warm vs cold before attributing a slow load to the code.
+**The recurring lesson in this area: the cost is almost never parsing or thread count ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ it is FIRST TOUCH.** This machine runs two real-time AV engines, and cold/warm ratios of 7-100ط·آ·ط¢آ£ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ on the *same bytes* have been measured repeatedly. Benchmark warm vs cold before attributing a slow load to the code.
 
 | Doc | What's in it |
 |---|---|
-| **[`reports/SERIES_HEADER_SCAN_COLD_LOAD_2026-08-08.md`](reports/SERIES_HEADER_SCAN_COLD_LOAD_2026-08-08.md)** | Patient 53417, ~15.7 s to get series 202 on screen. The switch-time probe was already header-only (`stop_before_pixels` + `specific_tags`): 40.5 ms/file cold vs 0.88 ms/file warm, and more threads cap at ~2.3ط·آ£أ¢â‚¬â€‌. Fix = a budgeted read-only pre-read at patient open (WU-1). Full per-file verification is unchanged. |
-| [`reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) | ط·آ¢ط¢آ§8 documents the async pixel-cache init and the `viewer-import-warm` thread running off the GUI thread in a live run, plus the 7.6ط·آ£أ¢â‚¬â€‌ cold/warm read on identical bytes. |
+| **[`reports/SERIES_HEADER_SCAN_COLD_LOAD_2026-08-08.md`](reports/SERIES_HEADER_SCAN_COLD_LOAD_2026-08-08.md)** | Patient 53417, ~15.7 s to get series 202 on screen. The switch-time probe was already header-only (`stop_before_pixels` + `specific_tags`): 40.5 ms/file cold vs 0.88 ms/file warm, and more threads cap at ~2.3ط·آ·ط¢آ£ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ. Fix = a budgeted read-only pre-read at patient open (WU-1). Full per-file verification is unchanged. |
+| [`reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) | ط·آ·ط¢آ¢ط·آ¢ط¢آ§8 documents the async pixel-cache init and the `viewer-import-warm` thread running off the GUI thread in a live run, plus the 7.6ط·آ·ط¢آ£ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ cold/warm read on identical bytes. |
 | **[`reports/PIXEL_CACHE_PERSISTENCE_2026-08-16.md`](reports/PIXEL_CACHE_PERSISTENCE_2026-08-16.md)** | The L2 pixel cache now **survives shutdown** (it never did before: 18 wipes / `0 entries` indexed, measured). `clear_on_exit()` vs `clear()`, why persistence is bounded, the 2 GB / PHI-at-rest trade, and the one residual risk (a reused SOP UID with different pixels). |
-| **[`reports/OPEN_FINDINGS_2026-08-16.md`](reports/OPEN_FINDINGS_2026-08-16.md)** | ط·آ¢ط¢آ§1 **resolved** (see above) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ kept as the record of how the decision was reached. ط·آ¢ط¢آ§2 still **OPEN**: MPR activation blocks the GUI thread ~4-5.5 s and the non-axial views are uninstrumented. |
+| **[`reports/OPEN_FINDINGS_2026-08-16.md`](reports/OPEN_FINDINGS_2026-08-16.md)** | ط·آ·ط¢آ¢ط·آ¢ط¢آ§1 **resolved** (see above) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ kept as the record of how the decision was reached. ط·آ·ط¢آ¢ط·آ¢ط¢آ§2 still **OPEN**: MPR activation blocks the GUI thread ~4-5.5 s and the non-axial views are uninstrumented. |
 
 **Invariants:**
 - `DiskPixelCache.initialize()` stays **synchronous** for every direct caller; only `get_disk_pixel_cache()` passes `background=True`. An unindexed lookup is simply a cache miss, which is why this is safe.
-- The index's **order is the LRU order** (`_evict_if_needed` pops the front). A background scan must re-sort by access time on merge, or the newest slices become the first evicted. This is also what makes persistence safe ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ without it the slice viewed last before closing would be first evicted next session.
+- The index's **order is the LRU order** (`_evict_if_needed` pops the front). A background scan must re-sort by access time on merge, or the newest slices become the first evicted. This is also what makes persistence safe ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ without it the slice viewed last before closing would be first evicted next session.
 - The shutdown path calls **`clear_on_exit()`, never `clear()`**. `clear()` must stay unconditional so an explicit user-initiated "clear cache" always clears; only the shutdown *policy* is configurable (`AIPACS_PIXEL_CACHE_CLEAR_ON_EXIT=1`).
-- The import warm creates **no Qt objects** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ it is pure imports on a daemon thread.
+- The import warm creates **no Qt objects** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ it is pure imports on a daemon thread.
 - FAST viewer mode must **never** instantiate VTK render windows. Anything added to warm or cache the MPR path must not be reachable from FAST.
 
 **Guard tests:**
-- `tests/code/viewer/test_series_file_warm.py` (18) — budget caps, global and Local-fact kill switches, blank-path refusal, no duplicate concurrent warm, indexed/legacy selection and shared positive-fact reuse
-- `tests/code/viewer/test_disk_pixel_cache_async_init.py` (10) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ incl. a threaded writer-vs-scan race and LRU order after merge
-- `tests/code/viewer/test_viewer_import_warm.py` (8) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ fails if the warm ever touches a Qt object, or if the windowing path stops using `np.percentile`
-- `tests/code/viewer/test_disk_pixel_cache_persistence.py` (20) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the cache survives shutdown, the kill switch really wipes, `clear()` stays unconditional, and eviction still bounds a persisted cache
+- `tests/code/viewer/test_series_file_warm.py` (18) â€” budget caps, global and Local-fact kill switches, blank-path refusal, no duplicate concurrent warm, indexed/legacy selection and shared positive-fact reuse
+- `tests/code/viewer/test_disk_pixel_cache_async_init.py` (10) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ incl. a threaded writer-vs-scan race and LRU order after merge
+- `tests/code/viewer/test_viewer_import_warm.py` (8) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ fails if the warm ever touches a Qt object, or if the windowing path stops using `np.percentile`
+- `tests/code/viewer/test_disk_pixel_cache_persistence.py` (20) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the cache survives shutdown, the kill switch really wipes, `clear()` stays unconditional, and eviction still bounds a persisted cache
 
 ---
 
 ### CPU contention & process priority (Windows)
 
-**The recurring lesson in this area: before optimising a path, check whether the main thread was RUNNING.** A stall sample that bottoms out in `run_forever` with nothing below it means the thread was inside the Qt event loop waiting to be scheduled ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ no amount of work removed from our handler changes that number.
+**The recurring lesson in this area: before optimising a path, check whether the main thread was RUNNING.** A stall sample that bottoms out in `run_forever` with nothing below it means the thread was inside the Qt event loop waiting to be scheduled ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ no amount of work removed from our handler changes that number.
 
 | Doc | What's in it |
 |---|---|
-| **[`reports/STACKING_LAG_55387_2026-08-23.md`](reports/STACKING_LAG_55387_2026-08-23.md)** | Patient 55387 stacking lag (pid 90364). The stacking path is exonerated by its own instrumentation ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ `frame_total_ms` median **1.6 ms**, disk/decode/cache waits **0.0 at median and p90** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ while `ui_lag_max_ms` is 300 ms per drag. The decisive pair is **`event_p95_ms` 84.5 ms vs `handler_p95_ms` 9.0 ms**, and **45 of 66** sampled stall stacks bottom out in `run_forever`. Root cause on our side: the `[CPU_BUDGET]` priority boost had **never applied** (ctypes pseudo-handle truncation ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ `ERROR_INVALID_HANDLE`, 19 launches / 19 failures). |
+| **[`reports/STACKING_LAG_55387_2026-08-23.md`](reports/STACKING_LAG_55387_2026-08-23.md)** | Patient 55387 stacking lag (pid 90364). The stacking path is exonerated by its own instrumentation ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ `frame_total_ms` median **1.6 ms**, disk/decode/cache waits **0.0 at median and p90** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ while `ui_lag_max_ms` is 300 ms per drag. The decisive pair is **`event_p95_ms` 84.5 ms vs `handler_p95_ms` 9.0 ms**, and **45 of 66** sampled stall stacks bottom out in `run_forever`. Root cause on our side: the `[CPU_BUDGET]` priority boost had **never applied** (ctypes pseudo-handle truncation ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ `ERROR_INVALID_HANDLE`, 19 launches / 19 failures). |
 
 **Invariants:**
-- `GetCurrentProcess()` returns the pseudo-handle `(HANDLE)-1` == `0xFFFFFFFFFFFFFFFF`. **Any ctypes call that passes a Win32 HANDLE must declare `restype`/`argtypes` as `c_void_p`**, and must declare them **BEFORE** the handle is taken ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a `restype` set after the call is a no-op. The default `c_int` silently truncates and the API fails with err 6. **There is a second, still-unfixed instance of this exact defect** at `modules/download_manager/workers/download_process_entry.py:149` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ see the open item below.
-- **The default priority class is build-type dependent** (2026-08-23, by owner request): frozen/installed build ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **HIGH** (deployed clinical workstation), source run ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ **ABOVE_NORMAL** (developer box also running an IDE/VM/compiler). Detected with `aipacs_runtime.is_frozen()`, never a bare `sys.frozen` check ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ that would report False on every Nuitka build, i.e. on exactly the machines the rule is for. `AIPACS_PRIORITY=normal|above_normal|high` overrides; `normal` is the kill switch.
-- An unrecognised `AIPACS_PRIORITY` must fall back to **the machine's own default**, never a hard-coded class ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ otherwise a typo silently demotes a clinical workstation.
+- `GetCurrentProcess()` returns the pseudo-handle `(HANDLE)-1` == `0xFFFFFFFFFFFFFFFF`. **Any ctypes call that passes a Win32 HANDLE must declare `restype`/`argtypes` as `c_void_p`**, and must declare them **BEFORE** the handle is taken ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ a `restype` set after the call is a no-op. The default `c_int` silently truncates and the API fails with err 6. **There is a second, still-unfixed instance of this exact defect** at `modules/download_manager/workers/download_process_entry.py:149` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ see the open item below.
+- **The default priority class is build-type dependent** (2026-08-23, by owner request): frozen/installed build ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ **HIGH** (deployed clinical workstation), source run ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ **ABOVE_NORMAL** (developer box also running an IDE/VM/compiler). Detected with `aipacs_runtime.is_frozen()`, never a bare `sys.frozen` check ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ that would report False on every Nuitka build, i.e. on exactly the machines the rule is for. `AIPACS_PRIORITY=normal|above_normal|high` overrides; `normal` is the kill switch.
+- An unrecognised `AIPACS_PRIORITY` must fall back to **the machine's own default**, never a hard-coded class ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ otherwise a typo silently demotes a clinical workstation.
 - A failing `is_frozen()` probe degrades to the **source** default. Never promote a machine to HIGH because a probe raised.
 
-**Open item ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the DM subprocess demotion has never applied.** `download_process_entry.py:149` calls `SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL)` with no `restype`/`argtypes` **and does not check the return**, so it has always silently failed. That demotion is the codebase's stated mitigation for "HIGH starves disk I/O", and the same file's v2.3.7 comment reasons from the premise "the viewer (ABOVE_NORMAL) blocks waiting on a lock held by an IDLE-scheduled thread" ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a premise that was false, because the viewer was at Normal too. **The intended priority separation has never existed at runtime.** Not fixed yet: the repo has MEASURED harm from widening this gap (`ui_lag_max` 412 ms vs 229 ms), and HIGH-vs-BELOW_NORMAL is wider still, so it needs its own measurement. Until then `high` is untested against heavy concurrent downloading.
+**Open item ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the DM subprocess demotion has never applied.** `download_process_entry.py:149` calls `SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL)` with no `restype`/`argtypes` **and does not check the return**, so it has always silently failed. That demotion is the codebase's stated mitigation for "HIGH starves disk I/O", and the same file's v2.3.7 comment reasons from the premise "the viewer (ABOVE_NORMAL) blocks waiting on a lock held by an IDLE-scheduled thread" ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ a premise that was false, because the viewer was at Normal too. **The intended priority separation has never existed at runtime.** Not fixed yet: the repo has MEASURED harm from widening this gap (`ui_lag_max` 412 ms vs 229 ms), and HIGH-vs-BELOW_NORMAL is wider still, so it needs its own measurement. Until then `high` is untested against heavy concurrent downloading.
 - **Never delete the `[CPU_BUDGET] SetPriorityClass failed (err=%d)` warning.** That line, ignored for months, is the only reason the defect was ever found.
 - The stall probe writes to **`viewer_diagnostics.log`, not `app.log`.** Searching only `app.log` returns ~2 lines per session and the wrong conclusion.
 - Logging is **not** a GUI-thread cost: `diagnostic_logging.py` routes every file handler behind a `QueueHandler`/`QueueListener`. Rule it out by reading that file, not by assuming.
 
 **Guard tests:**
-- `tests/code/system/test_cpu_budget_priority_boost.py` (13) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the three ctypes declarations, both ORDERING pins, the preserved diagnostics and kill switch, plus two behavioural Win32 probes that reproduce the truncation read-only via `GetPriorityClass`
+- `tests/code/system/test_cpu_budget_priority_boost.py` (13) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the three ctypes declarations, both ORDERING pins, the preserved diagnostics and kill switch, plus two behavioural Win32 probes that reproduce the truncation read-only via `GetPriorityClass`
 
 **Analysis scripts:** `tools/analysis/oneoff/stack_lag_55387{,_detail}_2026_08_23.py`, `stall_trace_frames_90364_2026_08_23.py`
 
 ---
 
-### Cardiac phase-contrast (flow) export ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ cvi42 compatibility
+### Cardiac phase-contrast (flow) export ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ cvi42 compatibility
 
 **The recurring lesson here: check what the OTHER tool actually does before blaming our side.** The leading hypothesis in this investigation was refuted by reading one DCMTK-produced DICOMDIR that cvi42 had already ingested.
 
 | Doc | What's in it |
 |---|---|
-| **[`reports/FLOW_CVI42_55241_2026-08-24.md`](reports/FLOW_CVI42_55241_2026-08-24.md)** | Patient 55241 (SIEMENS Amira, syngo MR E11), flow series **45ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“56** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ not 44ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“49. cvi42 will not quantify flow on our export. **Cause NOT found.** Everything measurable is correct: CSA blocks intact with `FlowVenc=150`, `ImageType` P/MAG markers, phase pixels 0ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ“4094 rescaling to ط·آ¢ط¢آ±4092, MAG/P sharing geometry and trigger times, 1,570 files with 1,570 distinct SOP UIDs, DICOMDIR fully resolving. Includes a **retraction** of the DICOMDIR hypothesis. |
+| **[`reports/FLOW_CVI42_55241_2026-08-24.md`](reports/FLOW_CVI42_55241_2026-08-24.md)** | Patient 55241 (SIEMENS Amira, syngo MR E11), flow series **45ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬ط¥â€œ56** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ not 44ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬ط¥â€œ49. cvi42 will not quantify flow on our export. **Cause NOT found.** Everything measurable is correct: CSA blocks intact with `FlowVenc=150`, `ImageType` P/MAG markers, phase pixels 0ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬ط¥â€œ4094 rescaling to ط·آ·ط¢آ¢ط·آ¢ط¢آ±4092, MAG/P sharing geometry and trigger times, 1,570 files with 1,570 distinct SOP UIDs, DICOMDIR fully resolving. Includes a **retraction** of the DICOMDIR hypothesis. |
 | **[`reports/FLOW_CVI42_SAME_STUDY_VM_COLLAPSE_2026-09-01.md`](reports/FLOW_CVI42_SAME_STUDY_VM_COLLAPSE_2026-09-01.md)** | **Same-study paired proof and guarded fix.** Server-served `ImageType` was a Python-list string with VM=1 in all 1,700 instances; 360/360 flow pixels and Siemens CSA blocks were intact. A single standard-VM normalization authority now protects socket ingestion and DICOMDIR/media export while preserving source files, UIDs, pixels, private elements, and transfer syntax. cvi42 live re-import remains pending. |
 
 **Invariants and facts established:**
-- Our CD export with anonymisation OFF and format "Original" is **pure passthrough** (`DicomPreparer.needs_processing` is False) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ exported files are byte-identical to stored ones. Do not look for export-stage damage in that configuration.
-- `modules/dicom_media/dicomdir.py` builds with `pydicom.fileset.FileSet`, so SERIES records carry `Modality, SeriesInstanceUID, SeriesNumber`. **A real DCMTK `dcmmkdir` DICOMDIR carries exactly the same three** (verified against `OFFIS_DCMTK_363` output in cvi42's own store) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ our DICOMDIR is NOT deficient, and `SeriesDescription` is not expected in a SERIES record.
+- Our CD export with anonymisation OFF and format "Original" is **pure passthrough** (`DicomPreparer.needs_processing` is False) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ exported files are byte-identical to stored ones. Do not look for export-stage damage in that configuration.
+- `modules/dicom_media/dicomdir.py` builds with `pydicom.fileset.FileSet`, so SERIES records carry `Modality, SeriesInstanceUID, SeriesNumber`. **A real DCMTK `dcmmkdir` DICOMDIR carries exactly the same three** (verified against `OFFIS_DCMTK_363` output in cvi42's own store) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ our DICOMDIR is NOT deficient, and `SeriesDescription` is not expected in a SERIES record.
 - Of 34 cvi42 study folders, **33 have no DICOMDIR and 1 does**. cvi42 ingests both shapes.
-- Files leaving our server are stamped `PACS_SERVER_1.0` / `1.2.826.0.1.3680043.8.498.1` (the pydicom UID root): **the server re-encodes rather than storing scanner bytes verbatim.** The only VR casualty found is `(0051,1014)` ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ `UN`, 12 bytes, in all 240 flow files.
+- Files leaving our server are stamped `PACS_SERVER_1.0` / `1.2.826.0.1.3680043.8.498.1` (the pydicom UID root): **the server re-encodes rather than storing scanner bytes verbatim.** The only VR casualty found is `(0051,1014)` ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ `UN`, 12 bytes, in all 240 flow files.
 - Siemens E11 emits a **three-series** flow triplet (M / MAG / P) with the VENC encoded in `SequenceName` as `*fl2d1_v150in`; XA20 emits a different private layout (`(0021,xxxx)` SDS/SDI/SDR) and `MFSPLIT` in ImageType. **Do not diff an E11 study against an XA20 study and read the delta as loss.**
 
-**Open ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ needed to close this:** the other PACS's export of **patient 55241 specifically**. A different patient on a different scanner generation cannot serve as a control.
+**Open ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ needed to close this:** the other PACS's export of **patient 55241 specifically**. A different patient on a different scanner generation cannot serve as a control.
 
 ---
 
-### Loading overlay / viewport spinner ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ teardown races
+### Loading overlay / viewport spinner ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ teardown races
 
-**The recurring lesson: `QApplication.processEvents()` is not ط£آ¢أ¢â€ڑآ¬ط¥â€œpaint nowط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’, it is ط£آ¢أ¢â€ڑآ¬ط¥â€œrun arbitrary queued work nowط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’.** The crashes in this area came from calling it inside a series switch or a partially constructed viewport layout.
+**The recurring lesson: `QApplication.processEvents()` is not ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ¥أ¢â‚¬إ“paint nowط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬ط¥â€™, it is ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ¥أ¢â‚¬إ“run arbitrary queued work nowط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬ط¥â€™.** The crashes in this area came from calling it inside a series switch or a partially constructed viewport layout.
 
 | Doc | What's in it |
 |---|---|
@@ -910,15 +969,15 @@ press handler returns `True` only when it actually placed or changed something;
 **Invariants:**
 - **Never call `processEvents()` to force a paint.** `widget.repaint()` paints synchronously without running the event loop. Kill switch `AIPACS_OVERLAY_SYNC_PAINT=0` keeps the old path for comparison only.
 - **Never call `processEvents()` between viewport creations.** QWidget/VTK construction stays on the GUI thread, but the layout mutation must remain atomic; optimize expensive preparation before construction.
-- **`switch_series` must never run re-entrantly** on one container. The flag clears in a `finally` that covers the early `return False` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ a stuck flag turns a crash into a permanently dead pane. `AIPACS_SWITCH_REENTRANCY_GUARD=0`.
+- **`switch_series` must never run re-entrantly** on one container. The flag clears in a `finally` that covers the early `return False` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ a stuck flag turns a crash into a permanently dead pane. `AIPACS_SWITCH_REENTRANCY_GUARD=0`.
 - The same-series no-op **cannot** be relied on to catch a duplicate switch: the first switch of the 08-26 crash carried an **empty `series_uid`**, so the identity comparison did not match.
-- **Anything that touches an anchor/overlay across a teardown must check liveness first**, and `shiboken6` being unimportable must degrade to **alive**, never to dead. Guards exist at three sites now: `hide_overlay._start_fade` (2026-06-05), `_hp_layout._hide/_show_loading_overlay` (2026-06-15), `AiPacsLoadingOverlay.__init__` (2026-08-26). **Fixing one site does not fix the race** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ that is the whole history of this file.
+- **Anything that touches an anchor/overlay across a teardown must check liveness first**, and `shiboken6` being unimportable must degrade to **alive**, never to dead. Guards exist at three sites now: `hide_overlay._start_fade` (2026-06-05), `_hp_layout._hide/_show_loading_overlay` (2026-06-15), `AiPacsLoadingOverlay.__init__` (2026-08-26). **Fixing one site does not fix the race** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ that is the whole history of this file.
 - Diagnostic gap: faulthandler dumps in `native_fault.log` carry **no pid**, so attribution is by stack content. Worth stamping.
 
 **Guard tests:**
-- `tests/code/system/test_overlay_reentrancy_crash.py` (13) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the cause, both defence-in-depth guards, and the prior-art anchor
-- `tests/code/system/test_import_registration_layout_crash_guard.py` (4) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ off-thread import registration, preserved index/bytes/identity, and atomic layout construction
-- `tests/code/test_loading_overlay_liveness_guard.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the 2026-06-05/06-15 fade guards
+- `tests/code/system/test_overlay_reentrancy_crash.py` (13) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the cause, both defence-in-depth guards, and the prior-art anchor
+- `tests/code/system/test_import_registration_layout_crash_guard.py` (4) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ off-thread import registration, preserved index/bytes/identity, and atomic layout construction
+- `tests/code/test_loading_overlay_liveness_guard.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the 2026-06-05/06-15 fade guards
 
 ---
 
@@ -940,19 +999,19 @@ fresh-source GUI/completion-proof gates remain open. UI and scheduling unchanged
 | Doc | What's in it |
 |---|---|
 | **[`pipelines/download-pipeline.md`](pipelines/download-pipeline.md)** | **Current transport authority.** Socket worker/process flow, immutable study/series identity, Overall Progress, resume/completion evidence, and Windows spawn ownership. |
-| **[`plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`](plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md)** | As-built review and fix plan; ط·آ¢ط¢آ§13 = applied vs outstanding; ط·آ¢ط¢آ§14 = patient-open stall; ط·آ¢ط¢آ§15 = socket/gRPC path map. |
+| **[`plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`](plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md)** | As-built review and fix plan; ط·آ·ط¢آ¢ط·آ¢ط¢آ§13 = applied vs outstanding; ط·آ·ط¢آ¢ط·آ¢ط¢آ§14 = patient-open stall; ط·آ·ط¢آ¢ط·آ¢ط¢آ§15 = socket/gRPC path map. |
 | [`AUDIT_STAGE_4_2026-05-28.md`](plans/architecture/AUDIT_STAGE_4_2026-05-28.md) | Live bulk-download audit (35 patients in 8 s). |
 | [`AUDIT_STAGE_4b_2026-05-28.md`](plans/architecture/AUDIT_STAGE_4b_2026-05-28.md) | DM controls (Pause / Cancel / Retry / Reset / priority dropdown). |
 
 **Guard tests (in `tests/code/system/test_2026_05_27_regression_guards.py`):**
-- `test_probe_uses_raw_send_request_not_helper` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ GetStudyInfo 6.8 s stall guard
+- `test_probe_uses_raw_send_request_not_helper` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ GetStudyInfo 6.8 s stall guard
 - `test_probe_lock_is_module_level`, `test_probe_lock_is_used_in_get_series_info_from_server`
 - `test_prefetch_uses_threadpool_executor`, `test_prefetch_has_no_sequential_loop`, `test_parallel_prefetch_is_faster_than_sequential`
-- `tests/code/download_manager/test_overall_progress_accumulator.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ study-level Overall Progress stays monotonic across series/IPC delay, uses SeriesInstanceUID for duplicate numbers, accepts the downloader's authoritative one-time study total when the queue payload count is unknown/stale, and accounts complete-on-disk series without GUI-thread I/O or viewer fan-out.
+- `tests/code/download_manager/test_overall_progress_accumulator.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ study-level Overall Progress stays monotonic across series/IPC delay, uses SeriesInstanceUID for duplicate numbers, accepts the downloader's authoritative one-time study total when the queue payload count is unknown/stale, and accounts complete-on-disk series without GUI-thread I/O or viewer fan-out.
 
 ---
 
-### Internal assignment (INO) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ server-state snapshot
+### Internal assignment (INO) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ server-state snapshot
 
 **The snapshot file is written under a process-global lock that the GUI thread also takes.** `get_state` is called per patient-list row while painting; anything that holds `_LOCK` for long freezes the worklist. Never add a per-row write to this store.
 
@@ -962,15 +1021,15 @@ fresh-source GUI/completion-proof gates remain open. UI and scheduling unchanged
 | [`reports/INTERNAL_ASSIGN_FALSE_ASSIGNED_REGRESSION_2026-07-15.md`](reports/INTERNAL_ASSIGN_FALSE_ASSIGNED_REGRESSION_2026-07-15.md) | Earlier assignment-state regression. |
 
 **Invariants:**
-- Writes are **batched**: `set_many()` for anything loop-shaped, `set_state()` only for a single user action. The write is O(all receptions), so a per-row write is O(Nط·آ¢ط¢آ²) over a refresh.
+- Writes are **batched**: `set_many()` for anything loop-shaped, `set_state()` only for a single user action. The write is O(all receptions), so a per-row write is O(Nط·آ·ط¢آ¢ط·آ¢ط¢آ²) over a refresh.
 - `_merge_and_save` must `_load` **inside the same lock acquisition** as the save, or a concurrent single write is silently rolled back.
-- `_load` must stay **lock-free** ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the writer already holds `_LOCK`, and `threading.Lock` is not reentrant.
+- `_load` must stay **lock-free** ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the writer already holds `_LOCK`, and `threading.Lock` is not reentrant.
 - `get_state` must **keep** taking `_LOCK` (the 2026-07-31 WinError-5 fix); the answer to contention is fewer writes, not an unlocked read.
 - A failed fetch must never wipe a known assignment.
 
 **Guard tests:**
-- `tests/code/network/test_ino_state_batch_write.py` (28) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ one write per batch, the two write paths cannot drift, the fsync gate, and the refresh contracts that must not change
-- `tests/code/network/test_ino_server_state_concurrency.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ the reader/writer `os.replace` failure and the per-writer temp name
+- `tests/code/network/test_ino_state_batch_write.py` (28) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ one write per batch, the two write paths cannot drift, the fsync gate, and the refresh contracts that must not change
+- `tests/code/network/test_ino_server_state_concurrency.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ the reader/writer `os.replace` failure and the per-writer temp name
 
 ---
 
@@ -995,24 +1054,24 @@ default-OFF warmup. `tests/code/web_browser/test_browser_launch_notice.py` has 1
 real-Qt guards; 160 adjacent passes plus a mirror guard are code evidence only.
 Native source GUI acceptance is pending; this does not eliminate the Qt block.
 
-**Read this before touching `modules/web_browser/prewarm.py`.** Four live freezes came out of this one file (~17 s 2026-07-23, 39.7 s 2026-08-05, 19 s 2026-08-07, **72 s 2026-08-16**) and the lesson took all four to learn: *when* the Chromium construct runs was never the problem ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ its **cost is unbounded and cannot be capped**, because Qt requires it on the GUI thread and the call is atomic. Do not "improve the scheduling" here again.
+**Read this before touching `modules/web_browser/prewarm.py`.** Four live freezes came out of this one file (~17 s 2026-07-23, 39.7 s 2026-08-05, 19 s 2026-08-07, **72 s 2026-08-16**) and the lesson took all four to learn: *when* the Chromium construct runs was never the problem ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ its **cost is unbounded and cannot be capped**, because Qt requires it on the GUI thread and the call is atomic. Do not "improve the scheduling" here again.
 
 | Doc | What's in it |
 |---|---|
 | **[`reports/FREEZE_72S_BROWSER_PREWARM_2026-08-16.md`](reports/FREEZE_72S_BROWSER_PREWARM_2026-08-16.md)** | **Start here.** The 72 s incident, why every scheduling guard behaved correctly, and why the answer was to make the pre-warm opt-in (IMP-4). |
-| [`reports/PREWARM_DBLCLICK_FREEZE_2026-08-07.md`](reports/PREWARM_DBLCLICK_FREEZE_2026-08-07.md) | The 19 s double-click freeze ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ the input-recency veto (IMP-3). Explains why `_finish_watch` must keep the input filter installed. |
-| [`reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) | Phase-by-phase cost of the engine boot (IMP-5): `defaultProfile()` is the 918 ms global init, `QWebEngineView()` is 0 ms. ط·آ¢ط¢آ§8 is the confirmed live run ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 208 ms GUI block, 884 ms total. Chromium flags are measured and are NOT a lever. |
+| [`reports/PREWARM_DBLCLICK_FREEZE_2026-08-07.md`](reports/PREWARM_DBLCLICK_FREEZE_2026-08-07.md) | The 19 s double-click freeze ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ the input-recency veto (IMP-3). Explains why `_finish_watch` must keep the input filter installed. |
+| [`reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md`](reports/WEBENGINE_WARMUP_EVALUATION_2026-08-16.md) | Phase-by-phase cost of the engine boot (IMP-5): `defaultProfile()` is the 918 ms global init, `QWebEngineView()` is 0 ms. ط·آ·ط¢آ¢ط·آ¢ط¢آ§8 is the confirmed live run ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ 208 ms GUI block, 884 ms total. Chromium flags are measured and are NOT a lever. |
 | [`reports/WEB_BROWSER_MODULE_FIXES_2026-06-27.md`](reports/WEB_BROWSER_MODULE_FIXES_2026-06-27.md) | Earlier module fixes. |
 
 **Invariants:**
 - The pre-warm is **opt-in**: `AIPACS_BROWSER_PREWARM=1` (a literal `"1"`), *and* the adaptive used-marker still gates on top.
-- Warm the **default profile**, never a throwaway `QWebEngineView` + `setUrl` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ same benefit, ~24 % less GUI block, no render process held to be discarded.
+- Warm the **default profile**, never a throwaway `QWebEngineView` + `setUrl` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ same benefit, ~24 % less GUI block, no render process held to be discarded.
 - The off-thread file warm is **name-scoped** (`_WARM_DLL_HINTS`), not a blanket DLL sweep, and stays budget-capped.
 
 **Guard tests:**
-- `tests/code/web_browser/test_prewarm_recency_veto.py` (13) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ input filter survives the warm; construct re-checks recency
-- `tests/code/web_browser/test_prewarm_idle_gate.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ default-profile warm + the DLL-name-scoped file warm
-- `tests/code/system/test_browser_prewarm_idle_gate.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ opt-in default, marker gate on top, only a literal `"1"` enables it
+- `tests/code/web_browser/test_prewarm_recency_veto.py` (13) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ input filter survives the warm; construct re-checks recency
+- `tests/code/web_browser/test_prewarm_idle_gate.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ default-profile warm + the DLL-name-scoped file warm
+- `tests/code/system/test_browser_prewarm_idle_gate.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ opt-in default, marker gate on top, only a literal `"1"` enables it
 - `tests/code/web_browser/test_prewarm_busy_veto.py`
 
 ---
@@ -1025,14 +1084,14 @@ Native source GUI acceptance is pending; this does not eliminate the Qt block.
 | [`design/DROPDOWN_SUBMENU_REVIEW.md`](design/DROPDOWN_SUBMENU_REVIEW.md) | Original dropdown/submenu review (rollout now complete). |
 | [`design/VIEWER_TOOLBAR_INTERACTION_REVIEW.md`](design/VIEWER_TOOLBAR_INTERACTION_REVIEW.md) | Toolbar hover / dropdown attach / menu layout review. |
 | **[`plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md`](plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md)** | Stack-drag main-thread stall fix: drag-pressure psutil sampler gated off by default (`AIPACS_FAST_STACK_PRESSURE`). Don't call psutil on the drag hot path. |
-| **[`reports/THUMBNAIL_STRIP_AND_ACTIVE_STATE_2026-08-09.md`](reports/THUMBNAIL_STRIP_AND_ACTIVE_STATE_2026-08-09.md)** | **Required reading before touching the series thumbnail card.** The download bar / red active line share one bottom strip; `QLayout.addWidget()` RE-PARENTS and moves a widget to the TOP of the sibling stack, which is what buried the bar. Also the Aط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢Bط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢A active-state bug and `set_active_series()` as the single entry point. |
-| [`reports/MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md`](reports/MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md) | The stray bar at the bottom of the main page ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ an empty Designer footer whose only visible output was its own chrome. Hidden, not deleted (`apply_theme` still styles it). Restore with `AIPACS_MAIN_FOOTER=1`. |
+| **[`reports/THUMBNAIL_STRIP_AND_ACTIVE_STATE_2026-08-09.md`](reports/THUMBNAIL_STRIP_AND_ACTIVE_STATE_2026-08-09.md)** | **Required reading before touching the series thumbnail card.** The download bar / red active line share one bottom strip; `QLayout.addWidget()` RE-PARENTS and moves a widget to the TOP of the sibling stack, which is what buried the bar. Also the Aط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢Bط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢A active-state bug and `set_active_series()` as the single entry point. |
+| [`reports/MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md`](reports/MAIN_FOOTER_BAR_REMOVAL_2026-08-10.md) | The stray bar at the bottom of the main page ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ an empty Designer footer whose only visible output was its own chrome. Hidden, not deleted (`apply_theme` still styles it). Restore with `AIPACS_MAIN_FOOTER=1`. |
 
 **Guard tests:**
-- `tests/code/test_v2_style_scaffold.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ pure-function QSS builder + gate guards
-- `tests/code/test_ui_variant_scaffold.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ flag resolution never raises
-- `tests/code/ui_services/test_thumbnail_active_state_and_strip.py` (20) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ **behavioural**, on real Qt widgets. A source-string pin cannot see a z-order bug; that is exactly how the buried download bar survived `test_thumbnail_panel_ui_fixes.py`.
-- `tests/code/ui_services/test_main_footer_bar_removed.py` (6) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ footer stays hidden, its widgets stay alive, and it fails loudly if anyone starts writing to its labels
+- `tests/code/test_v2_style_scaffold.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ pure-function QSS builder + gate guards
+- `tests/code/test_ui_variant_scaffold.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ flag resolution never raises
+- `tests/code/ui_services/test_thumbnail_active_state_and_strip.py` (20) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ **behavioural**, on real Qt widgets. A source-string pin cannot see a z-order bug; that is exactly how the buried download bar survived `test_thumbnail_panel_ui_fixes.py`.
+- `tests/code/ui_services/test_main_footer_bar_removed.py` (6) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ footer stays hidden, its widgets stay alive, and it fails loudly if anyone starts writing to its labels
 
 ---
 
@@ -1044,7 +1103,7 @@ Native source GUI acceptance is pending; this does not eliminate the Qt block.
 
 **Guard tests:**
 - `tests/code/system/test_hp_search_logging_guard.py` (5 guards)
-- `tests/code/ui_services/test_clear_table_crash_guard.py` (16 guards) ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ patient-table Qt/Shiboken ownership-safe clear/removal, producer interlock, and Local Server no-nested-event-loop contract
+- `tests/code/ui_services/test_clear_table_crash_guard.py` (16 guards) ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ patient-table Qt/Shiboken ownership-safe clear/removal, producer interlock, and Local Server no-nested-event-loop contract
 
 ---
 
@@ -1053,7 +1112,7 @@ Native source GUI acceptance is pending; this does not eliminate the Qt block.
 | Doc | What's in it |
 |---|---|
 | [`AUDIT_STAGE_3_2026-05-28.md`](plans/architecture/AUDIT_STAGE_3_2026-05-28.md) | Click-to-open audit, cross-patient isolation verification. |
-| [`AUDIT_STAGE_10_2026-05-28.md`](plans/architecture/AUDIT_STAGE_10_2026-05-28.md) | Print-rebind ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ debug-silencing fix (13 error paths now visible in `app.log`). |
+| [`AUDIT_STAGE_10_2026-05-28.md`](plans/architecture/AUDIT_STAGE_10_2026-05-28.md) | Print-rebind ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ debug-silencing fix (13 error paths now visible in `app.log`). |
 
 **Guard test:** `tests/code/system/test_hp_patient_open_logging_guard.py` (4 guards)
 
@@ -1065,7 +1124,7 @@ Native source GUI acceptance is pending; this does not eliminate the Qt block.
 |---|---|
 | **`COPILOT_REPORT_db_cleanup.md`** (top-level) | 2026-05-24 pollution cleanup record. Patch `PacsClient.utils.data_paths.DATABASE_FILE` for tests, NOT `database.core._DB_PATH`. |
 
-**Guard test:** `tests/code/database/conftest.py` (PRAGMA `database_list` invariant ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ loud-fail if a test connects to the live DB).
+**Guard test:** `tests/code/database/conftest.py` (PRAGMA `database_list` invariant ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ loud-fail if a test connects to the live DB).
 
 ---
 
@@ -1082,7 +1141,7 @@ mandatory weights, measured size baseline and remaining release gates.
 
 | Doc | What's in it |
 |---|---|
-| [`pipelines/eagle-eye-mri.md`](pipelines/eagle-eye-mri.md) | **Official primary Eagle Eye MRI architecture:** geometry ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ anatomical localization ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ task-specific normal/abnormal screening cards ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ diagnostic cards ط£آ¢أ¢â‚¬آ أ¢â‚¬â„¢ pathology classification; stable cross-stage contracts, fail-closed policy, central card registry, five lumbar screening templates, five lumbar diagnosis templates, and the Gate 1/Gate 1-to-2 rule that physical spacing is the primary grouping cue, labels secondary, and color tertiary. Start here for all MRI Eagle Eye work. |
+| [`pipelines/eagle-eye-mri.md`](pipelines/eagle-eye-mri.md) | **Official primary Eagle Eye MRI architecture:** geometry ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ anatomical localization ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ task-specific normal/abnormal screening cards ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ diagnostic cards ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬ط¢آ ط£آ¢أ¢â€ڑآ¬أ¢â€‍آ¢ pathology classification; stable cross-stage contracts, fail-closed policy, central card registry, five lumbar screening templates, five lumbar diagnosis templates, and the Gate 1/Gate 1-to-2 rule that physical spacing is the primary grouping cue, labels secondary, and color tertiary. Start here for all MRI Eagle Eye work. |
 | [`modules/ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md`](modules/ADVANCED_ANALYSIS_RESIDENT_RUNTIME.md) | OPT-56 hidden concurrent Slicer startup, same-process viewer reuse, isolated headless threshold/offline model jobs, authenticated API, lifecycle and artifact policies, synthetic timings, deleted-button launch and invisible-modal repairs, and remaining acceptance. |
 | [`modules/ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md`](modules/ADVANCED_ANALYSIS_OFFLINE_LUMBAR.md) | Implemented offline TotalSegmentator MR vertebral adapter, separate portable CPU environment, combined Advanced MPR installer staging, Python control surface, synthetic verification and release/clinical limitations. |
 | [`reports/OFFLINE_LUMBAR_IMPLEMENTATION_VERIFICATION_2026-08-31.md`](reports/OFFLINE_LUMBAR_IMPLEMENTATION_VERIFICATION_2026-08-31.md) | Real portable model and Slicer smoke test, empty synthetic-model output versus nonempty geometry fixture, installer guards, failed attempts, and outstanding customer/clinical acceptance. |
@@ -1142,7 +1201,7 @@ mandatory weights, measured size baseline and remaining release gates.
 
 **Guard tests:**
 - `tests/code/echomind/test_module_adapter.py`
-- `tests/code/echomind/test_module_catalog_coverage.py` (drift reporter ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ currently 4 / 15 wired = 27 %)
+- `tests/code/echomind/test_module_catalog_coverage.py` (drift reporter ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ currently 4 / 15 wired = 27 %)
 - `tests/code/echomind/test_bus_factory.py`
 
 ---
@@ -1173,9 +1232,9 @@ The current Home-click cutover needs real card input; a downstream `change_serie
 | [`../tools/testing/aipacs_control_mcp/README.md`](../tools/testing/aipacs_control_mcp/README.md) | `aipacs-control` setup, tool catalog, safety rules, and fidelity tiers. |
 
 **Guard tests:**
-- `tests/code/agent_gateway/` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ pairing, auth, TLS, relay, MCP, permission, lifecycle, and wiring
-- `tests/code/echomind/test_test_server.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ source-only QLocalServer gate and transport
-- `tests/code/echomind/test_command_bus_unit.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ shared command execution seam
+- `tests/code/agent_gateway/` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ pairing, auth, TLS, relay, MCP, permission, lifecycle, and wiring
+- `tests/code/echomind/test_test_server.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ source-only QLocalServer gate and transport
+- `tests/code/echomind/test_command_bus_unit.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ shared command execution seam
 
 ---
 
@@ -1211,14 +1270,14 @@ The current Home-click cutover needs real card input; a downstream `change_serie
 | Doc | What's in it |
 |---|---|
 | **[`tests/_kpi/README.md`](../tests/_kpi/README.md)** | How to add a new KPI, how the collector hooks the bus, how the reporter CLI works. |
-| [`plans/architecture/SCENARIO_KPIS_2026-05-28.md`](plans/architecture/SCENARIO_KPIS_2026-05-28.md) | KPI taxonomy ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ 42 keys across 13 workflows. |
+| [`plans/architecture/SCENARIO_KPIS_2026-05-28.md`](plans/architecture/SCENARIO_KPIS_2026-05-28.md) | KPI taxonomy ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ 42 keys across 13 workflows. |
 
 **Guard test:** `tests/code/system/test_kpi_schema.py` (registered-keys integrity).
 
 **Tools:**
-- `tools/kpi_dashboard.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ framework health snapshot (exit 0 / 1 / 2)
-- `tools/kpi_html_report.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ trend report from the JSONL sink
-- `tools/kpi_build_compare.py` ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ cross-build divergence detector
+- `tools/kpi_dashboard.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ framework health snapshot (exit 0 / 1 / 2)
+- `tools/kpi_html_report.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ trend report from the JSONL sink
+- `tools/kpi_build_compare.py` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ cross-build divergence detector
 
 ---
 
@@ -1238,8 +1297,8 @@ The current Home-click cutover needs real card input; a downstream `change_serie
 
 | Doc | What's in it |
 |---|---|
-| **[`plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md`](plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md)** | The full design ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ goals, taxonomy, test discipline, regression-catalog rules. |
-| [`tests/QUICKSTART.md`](../tests/QUICKSTART.md) | 5-minute onboarding ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ how to run, where to add tests, the hard rules. |
+| **[`plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md`](plans/architecture/TESTING_ARCHITECTURE_2026-05-28.md)** | The full design ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ goals, taxonomy, test discipline, regression-catalog rules. |
+| [`tests/QUICKSTART.md`](../tests/QUICKSTART.md) | 5-minute onboarding ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ how to run, where to add tests, the hard rules. |
 | [`AUDIT_2026-05-28_OVERVIEW.md`](AUDIT_2026-05-28_OVERVIEW.md) | What the audit produced and the cumulative numbers. |
 
 - Brain published volBrain offline interval default and source rights: `docs/modules/EAGLE_EYE_BRAIN_REFERENCE_SETUP.md`.
@@ -1645,3 +1704,80 @@ Guards: `tests/code/mpr/test_curve_mpr_tube_orbit.py` and existing CurveMPR suit
   Reader: PacsClient/utils/structured_report.py; UI: patient_ui/structured_report_view.py.
 
 - SR document thumbnail artwork: `PacsClient/pacs/patient_tab/utils/sr_thumbnail.py`, used by the shared Home/patient thumbnail manager.
+
+### EchoMind reception report conflicts (2026-09-30)
+
+See [EchoMind architecture](echomind/01-architecture.md), Reception report conflict
+handling, for the append/replace/cancel contract, regression evidence, API concurrency
+limit, packaging inclusion and pending source GUI acceptance.
+
+
+### Standard MPR decoded-stack direction (2026-09-30)
+
+Build-bound orientation receipt, old-cache admission and CT/MR regression matrix:
+`PacsClient/pacs/patient_tab/utils/mpr_stack_geometry.py`,
+`tests/code/mpr/test_mpr_buffer_geometry.py` and the September 30 implementation
+receipt in `reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md`.
+
+
+### Assist cross-source follow-up (2026-09-30)
+
+`modules/EchoMind/viewer_chat/assist_context.py` owns current-conversation message
+selection and quoted-text composition; `ai_chat_pages.py` retains existing worker
+routing. See [the server-routing record](echomind/EAGLE_EYE_SERVER_ROUTING_2026-09-30.md#assist-cross-source-review-and-selected-message-follow-ups-2026-09-30).
+
+### Secretary client / Eagle Eye planning (2026-09-30)
+
+`modules/EchoMind/secretary/remote_planner.py` owns bounded worker-only client
+planning transport and local proposal validation. CommandBus/MCP execution and
+permission remain client-owned. The paired endpoint owns company prompts and
+inference. See [the joint contract and acceptance receipts](echomind/SECRETARY_SERVER_CONTRACT_2026-09-30.md)
+and `tests/code/echomind/test_secretary_remote_planner.py`.
+
+
+### MCP/Secretary asynchronous execution (2026-09-30)
+
+The shared execution drivers live in `modules/EchoMind/secretary/workflow.py`;
+Secretary GUI uses `handle_async`, while Gateway dispatch remains a transport onto
+the same local adapters. Retry receipts, typed Home schemas and lifecycle evidence:
+[owning control review](reports/AGENT_CONTROL_ARCHITECTURE_REVIEW_2026-06-23.md#september-30-2026-mcp-execution-reliability-correction-opt-23).
+
+### Home realtime workflow columns (2026-10-01)
+
+Assign, Report and server-voice indicators use `modules/network/workflow_realtime.py`
+and `home_ui/workflow_realtime.py`. See the OPT-28/50 workflow receipt in
+[UI-stall evidence](reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md) for the negotiated
+server contract, boundedness, source tests, two-client synthetic acceptance and
+pending native GUI / deployment gates. This does not change imaging or download state.
+
+- Secretary Ask download diagnostics: `docs/agent_control/SECRETARY_ASK_DOWNLOAD_DIAGNOSTICS_2026-10-04.md` documents evidence limits, safe failures, retry boundaries and pending native GUI acceptance.
+
+## Bone Age missing demographics (2026-10-04)
+
+The worker, explicit physician dialog and server demographic contract are documented
+in `docs/modules/EAGLE_EYE_BREAST_BONE_LOCAL_2026-09-21.md`. Regression guard:
+`tests/code/ai_imaging/test_bone_age_demographics.py`. No general demographic editor
+or patient DICOM mutation is introduced.
+
+- Secretary patient workflow handbook: `docs/agent_control/SECRETARY_PATIENT_WORKFLOW_HANDBOOK_2026-10-04.md` maps Ask/Act/Guide to authoritative voice/report facts, actual UI indicators and scoped completion receipts; personal authorship, full daily population and matching server Act deployment remain explicit gaps.
+
+- Secretary UI controls and visual context: `docs/agent_control/SECRETARY_UI_CONTROL_CONTRACT_2026-10-04.md`; generated inventory: `docs/agent_control/SECRETARY_UI_SOURCE_INVENTORY.md`.
+
+- Secretary scenario audit and actual execution receipts: `docs/agent_control/SECRETARY_UI_SCENARIO_RESULTS_2026-10-04.md`; source-traced per-control drafts: `docs/agent_control/SECRETARY_UI_PER_CONTROL_SCENARIOS_2026-10-04.md`.
+
+- Secretary four-mode scenario suites and verification limits: `docs/agent_control/SECRETARY_MODE_SCENARIOS_2026-10-04.md`.
+
+- Expanded Secretary Guide/Ask scenarios and source limitations: `docs/agent_control/SECRETARY_GUIDE_ASK_EXPANSION_2026-10-04.md`.
+
+
+Saved Brain Results: modules/ai_imaging/eagle_eye_brain/saved_results.py and saved_results_widget.py provide worker-owned exact-study discovery and persistent Eagle Eye review access. See Eagle Eye server development HISTORY.md, October 6.
+
+Saved Brain Results follow-up: result-owned dialogs avoid current-viewport dependency; compact PDF and segmentation-review controls retain errors across refresh. See Eagle Eye HISTORY.md, October 6.
+
+Eagle Eye sidebar local result availability: case_ui.py consumes the worker-only saved_results inventory alongside server state. See Eagle Eye development HISTORY.md, October 6.
+
+Manual correction UI: native Segment Editor inline controls supersede the floating popup and toolbar; shared brain/lesion export contract is unchanged. See Eagle Eye HISTORY.md, October 6.
+
+### DICOM missing encapsulation delimiter compatibility (2026-10-06)
+
+Pure reader: `PacsClient/utils/dicom_reader.py`. Guard: `tests/code/viewer/test_encapsulation_eof_compatibility.py`. Diagnosis, safeguards, caller coverage and pending acceptance: `docs/reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md`, October 6 execution receipt. FAST and Advanced remain distinct execution domains.

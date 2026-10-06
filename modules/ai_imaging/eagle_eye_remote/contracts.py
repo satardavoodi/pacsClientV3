@@ -7,7 +7,7 @@ import re
 MODULES = ('breast', 'bone-age', 'brain', 'brain-lesions', 'lumbar', 'alignment', 'total-spine')
 MAX_REVIEW_REQUEST = 24 * 1024**2
 PARAMETERS = {
-    'breast': {'threshold'}, 'bone-age': {'sex'},
+    'breast': {'threshold'}, 'bone-age': {'sex', 'sex_provenance'},
     'brain': {'profile', 'reference_id', 'correction'},
     'brain-lesions': {'primary_disease', 'clinical_note', 'fazekas_overall', 'correction', 'acquisition_mode', 'contrast_roles_confirmed'},
     'lumbar': set(), 'alignment': {'correction'},
@@ -19,6 +19,15 @@ def uid(value):
     if not isinstance(value, str) or len(value) > 64 or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+', value):
         raise ValueError('A valid DICOM identity is required.')
     return value
+
+
+def case_reference(body):
+    if (not isinstance(body, dict) or set(body) != {'study_uid', 'patient_id'}
+            or not isinstance(body.get('patient_id'), str) or not body['patient_id']
+            or len(body['patient_id']) > 128 or any(ord(c) < 32 for c in body['patient_id'])):
+        raise ValueError('Invalid case reference.')
+    uid(body.get('study_uid'))
+    return dict(body)
 
 
 def validate(request):
@@ -81,6 +90,11 @@ def validate(request):
         validate_correction(params['correction'])
     if module == 'bone-age' and params.get('sex') not in (None, 'M', 'F', 'male', 'female'):
         raise ValueError('Invalid sex.')
+    if module == 'bone-age' and 'sex_provenance' in params:
+        from .demographics import validate_provenance
+        validate_provenance(params['sex_provenance'], request['study_uid'])
+        if params.get('sex') is None:
+            raise ValueError('Confirmed Bone Age sex is required.')
     if module == 'brain' and (params.get('profile', 'standard') not in ('standard', 'robust')
                               or params.get('reference_id', 'volbrain') != 'volbrain'):
         raise ValueError('Unsupported brain analysis profile.')

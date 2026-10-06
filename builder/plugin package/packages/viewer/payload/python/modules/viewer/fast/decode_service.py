@@ -166,7 +166,8 @@ def _decode_worker(
         ImplicitVRLittleEndian,
     )
 
-    ds = pydicom.dcmread(file_path, stop_before_pixels=False, force=True)
+    from PacsClient.utils.dicom_reader import read_dicom
+    ds = read_dicom(file_path, stop_before_pixels=False, force=True)
     tsuid = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
     if tsuid is None:
         file_meta = getattr(ds, "file_meta", None)

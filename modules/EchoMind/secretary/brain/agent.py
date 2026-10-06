@@ -92,6 +92,9 @@ _PHASE2_V2_PREFIX = (
 
 
 def _phase2_system_prompt() -> str:
+    from ..remote_planner import personal_prompt
+    if get_llm_backend() == 'openai':
+        return personal_prompt('secretary_action')
     from ..config import routing_v2_enabled
     base = _SYSTEM_PHASE2
     prefix = _PHASE2_V2_PREFIX if routing_v2_enabled() else ""
@@ -225,6 +228,19 @@ class AgentBrain:
             for progress reporting), pass it here to skip the Phase 1 LLM call.
         Returns None if no plan could be produced.
         """
+        from .. import remote_planner
+        if remote_planner.uses_server():
+            fields = {'memory_context': memory_context}
+            resolve_bus = getattr(self._executor, '_resolve_bus', None)
+            bus = resolve_bus() if callable(resolve_bus) else None
+            if bus is not None and callable(getattr(bus, 'capabilities', None)):
+                fields['runtime_capabilities'] = bus.capabilities()
+            if pre_routed is not None:
+                if pre_routed.is_empty:
+                    return None
+                fields['modules'] = pre_routed.modules
+            return remote_planner.request('plan', user_text, language=language, **fields)['plan']
+        remote_planner.personal_prompt('secretary_action')
         import datetime as _dt
         import sys as _sys
         def _elog(msg: str) -> None:
@@ -409,33 +425,17 @@ class AgentBrain:
         timeout: float = _TIMEOUT,
     ) -> SecretaryActionPlan | None:
         """Call the LLM with the module document(s) to produce an action plan."""
-        from datetime import date, timedelta
-        _today = date.today()
-        _date_context = (
-            f"TODAY'S DATE (authoritative — use this for ALL relative date expressions):\n"
-            f"  today     = {_today.isoformat()}  ({_today.strftime('%A')})\n"
-            f"  yesterday = {(_today - timedelta(days=1)).isoformat()}\n"
-            f"  2 days ago= {(_today - timedelta(days=2)).isoformat()}\n"
-            f"  3 days ago= {(_today - timedelta(days=3)).isoformat()}\n"
-            f"  this week = {(_today - timedelta(days=_today.weekday())).isoformat()} .. {_today.isoformat()}\n"
-            f"IMPORTANT: Never guess or use training-data dates. Always compute relative dates from today above."
-        )
-        _memory_section = (
-            f"{memory_context}\n\n"
-            if memory_context and memory_context.strip()
-            else ""
-        )
-        user_message = (
-            f"Language hint: {language or 'auto'}\n\n"
-            f"=== DATE CONTEXT ===\n"
-            f"{_date_context}\n\n"
-            f"{_memory_section}"
-            "=== MODULE DOCUMENTS (Document 2) ===\n"
-            f"{module_docs}\n\n"
-            "=== USER REQUEST ===\n"
-            f"{user_text}\n\n"
-            "Produce an executable JSON action plan following the output contract above."
-        )
+        from .. import remote_planner
+        if remote_planner.uses_server():
+            return remote_planner.request('plan', user_text, language=language,
+                                          memory_context=memory_context, timeout=timeout)['plan']
+        remote_planner.personal_prompt('secretary_action')
+        from datetime import datetime
+        from ..validator import _ALLOWED_ACTIONS, _BUS_ALLOWED_ACTIONS
+        user_message = json.dumps({'text': user_text, 'language': language,
+                                   'memory_context': remote_planner.memory_data(memory_context),
+                                   'client_time': datetime.now().astimezone().isoformat(),
+                                   'available_actions': sorted(_ALLOWED_ACTIONS | _BUS_ALLOWED_ACTIONS)}, ensure_ascii=False)
         resolved_model = get_secretary_llm_model()
         payload = {
             "model": resolved_model,
@@ -456,7 +456,7 @@ class AgentBrain:
                 pass
         _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM REQUEST (action planning)")
         _elog(f"  model      : {resolved_model}")
-        _elog(f"  user_text  : {user_text!r}")
+        _elog(f"  user_chars : {len(user_text)}")
         _elog(f"  docs_len   : {len(module_docs)} chars")
         try:
             raw = gapgpt_chat(
@@ -467,14 +467,13 @@ class AgentBrain:
                 timeout=int(timeout),
                 reasoning_effort=get_secretary_reasoning_effort(),
             )
-            log.debug("Phase 2 raw response: %r", raw[:400])
+            log.debug("Phase 2 response characters: %d", len(raw))
             _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM RESPONSE")
-            _elog(f"  raw        : {raw[:500]}")
+            _elog(f"  raw_chars  : {len(raw)}")
             parsed = _parse_action_plan(raw)
             parsed = _normalize_multistep(parsed)
             if parsed:
                 _elog(f"  action     : {parsed.get('action')}")
-                _elog(f"  entities   : {parsed.get('entities')}")
                 _elog(f"  confidence : {parsed.get('confidence')}")
             else:
                 _elog(f"  [Phase 3] WARNING: could not parse JSON from response")

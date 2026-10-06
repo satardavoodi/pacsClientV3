@@ -43,7 +43,7 @@ def _fn(src: str, name: str, cls: str | None = None) -> str:
     if cls is not None:
         scope = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == cls)
     for n in ast.walk(scope):
-        if isinstance(n, ast.FunctionDef) and n.name == name:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
             return ast.get_source_segment(src, n) or ""
     raise AssertionError("%s not found" % name)
 
@@ -92,9 +92,9 @@ def test_the_orb_dispatches_planning_to_a_worker():
 def test_execution_and_the_modal_dialog_stay_on_the_gui_thread():
     """`_secretary_execute_and_render` must be the GUI-thread half. If the
     confirm dialog ever moved onto a worker it would deadlock or crash."""
-    body = _fn(_read(*_ORB), "_secretary_execute_and_render", cls="SecretaryButtonWidget")
+    body = _fn(_read(*_ORB), "_secretary_execute_and_render_async", cls="SecretaryButtonWidget")
     assert "_show_secretary_confirm_dialog" in body
-    assert "handle(" in body
+    assert "await self._secretary_orchestrator.handle_async(" in body
 
 
 def test_the_whole_pipeline_holds_a_busy_lock():
@@ -110,8 +110,14 @@ def test_the_whole_pipeline_holds_a_busy_lock():
 
 def test_every_exit_path_releases_the_busy_lock():
     """A lock that leaks on an error path wedges the orb for the session."""
-    body = _code(_fn(_read(*_ORB), "_stop_recording_and_process", cls="SecretaryButtonWidget"))
-    # one release per early return after the lock is taken, plus the worker paths
+    source = _read(*_ORB)
+    recording = _code(_fn(source, "_stop_recording_and_process", cls="SecretaryButtonWidget"))
+    typed = _code(_fn(source, "submit_text_command", cls="SecretaryButtonWidget"))
+    # Voice and typed input now share the extracted post-transcription callback.
+    assert "self._secretary_transcript_ready(resp)" in recording
+    assert "self._secretary_transcript_ready(" in typed
+    assert "_finish_secretary_cycle()" in recording  # STT worker failure
+    body = _code(_fn(source, "_secretary_transcript_ready", cls="SecretaryButtonWidget"))
     assert body.count("_finish_secretary_cycle()") >= 3, (
         "not every early exit releases the pipeline lock — the orb will wedge"
     )
@@ -121,8 +127,74 @@ def test_progress_callback_marshals_with_a_context_object():
     """`progress_cb` is now invoked from the PLANNING thread. Two-arg
     `QTimer.singleShot(0, fn)` creates the timer on the calling thread, which
     has no event loop, so the stage label would never update."""
-    body = _code(_fn(_read(*_ORB), "_stop_recording_and_process", cls="SecretaryButtonWidget"))
+    body = _code(_fn(_read(*_ORB), "_secretary_transcript_ready", cls="SecretaryButtonWidget"))
     assert "_call_on_gui" in body, "the progress callback does not marshal safely"
+    helper = _code(_fn(_read(*_ORB), "_call_on_gui", cls="SecretaryButtonWidget"))
+    assert "QTimer.singleShot(0, self, fn)" in helper
+
+
+def _transcript_host():
+    """No Qt widgets, database, real recording or network for callback guards."""
+    from types import SimpleNamespace
+
+    statuses, workers, queued = [], [], []
+    host = SimpleNamespace(
+        _secretary_busy=True,
+        _secretary_session_id="synthetic",
+        _response_panel=None,
+        mode_selector=SimpleNamespace(currentData=lambda: "act", setEnabled=lambda _: None),
+        _set_thinking_status=statuses.append,
+        _post_log=lambda *_: None,
+        append_input=lambda _: None,
+        _ensure_secretary_runtime=lambda: True,
+        _run_worker=lambda *callbacks: workers.append(callbacks),
+        _call_on_gui=queued.append,
+        _secretary_orchestrator=SimpleNamespace(preplan=lambda _: False),
+    )
+    host._finish_secretary_cycle = lambda: setattr(host, "_secretary_busy", False)
+    return host, statuses, workers, queued
+
+
+@pytest.mark.parametrize("failure", ["stt", "credential", "runtime", "planning"])
+def test_extracted_transcript_failure_releases_pipeline_lock(monkeypatch, failure):
+    from PacsClient.pacs.workstation_ui.home_ui import secretary_button_widget as orb
+
+    monkeypatch.setattr(orb, "_secretary_async_enabled", lambda: True)
+    host, _, workers, _ = _transcript_host()
+    response = {"ok": True, "transcript": "Synthetic request.", "stt_req": {"route": "typed"}}
+    if failure == "stt":
+        response = {"ok": False, "error": "Synthetic failure."}
+    elif failure == "credential":
+        response["transcript"] = "s" + "k-" + "synthetic" * 4
+    elif failure == "runtime":
+        host._ensure_secretary_runtime = lambda: False
+    orb.SecretaryButtonWidget._secretary_transcript_ready(host, response)
+    if failure == "planning":
+        assert host._secretary_busy and len(workers) == 1
+        workers[0][2]("Synthetic planner failure.")
+    else:
+        assert not workers
+    assert not host._secretary_busy
+
+
+def test_planning_progress_is_queued_before_status_changes(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from PacsClient.pacs.workstation_ui.home_ui import secretary_button_widget as orb
+
+    monkeypatch.setattr(orb, "_secretary_async_enabled", lambda: True)
+    host, statuses, workers, queued = _transcript_host()
+    payloads = []
+    host._secretary_orchestrator.preplan = lambda payload: payloads.append(payload) or False
+    orb.SecretaryButtonWidget._secretary_transcript_ready(
+        host, {"ok": True, "transcript": "Synthetic request.", "stt_req": {"route": "typed"}}
+    )
+    with ThreadPoolExecutor(1) as worker:
+        worker.submit(workers[0][0]).result(timeout=2)
+        before = list(statuses)
+        worker.submit(payloads[0]["progress_cb"], "Synthetic progress").result(timeout=2)
+    assert statuses == before and len(queued) == 1
+    queued.pop()()
+    assert statuses[-1] == "Synthetic progress"
 
 
 # ── 2. panel open is not an N+1 ──────────────────────────────────────────────

@@ -56,6 +56,9 @@ _SYSTEM_PROMPT: str = _load_phase1_prompt()  # import-time default (flag off)
 
 
 def _system_prompt() -> str:
+    from ..remote_planner import personal_prompt
+    if get_llm_backend() == 'openai':
+        return personal_prompt('secretary_routing')
     base = _load_phase1_prompt()  # re-resolve so the routing-v2 flag is honored
     if get_llm_backend() != "openai":
         return base
@@ -113,7 +116,7 @@ def _parse_route_response(raw: str) -> tuple[list[str], str]:
         modules = [str(m) for m in modules if m]
         return modules, reason
     except json.JSONDecodeError:
-        log.warning("Phase 1: could not parse LLM response as JSON: %r", raw[:200])
+        log.warning("Phase 1: could not parse LLM response as JSON (%d characters)", len(raw))
         return [], ""
 
 
@@ -141,12 +144,21 @@ def route_request(
         .reason   — LLM's one-sentence explanation
         .raw_response — raw LLM reply (for debugging)
     """
+    from .. import remote_planner
+    if remote_planner.uses_server():
+        try:
+            result = remote_planner.request('route', user_text, language=language, timeout=timeout)
+            return RouteDecision(modules=result['route']['modules'], reason=result['route']['reason'])
+        except remote_planner.RemotePlanningError as exc:
+            return RouteDecision(modules=[], reason=f'server_error: {exc}')
+    remote_planner.personal_prompt('secretary_routing')
     catalog_text = load_catalog_text()
     if not catalog_text:
         log.error("Phase 1: catalog.yaml is empty or missing; cannot route.")
         return RouteDecision(modules=[], reason="catalog unavailable")
 
-    user_message = _build_phase1_prompt(user_text, language, catalog_text)
+    user_message = json.dumps({'text': user_text, 'language': language,
+                               'available_modules': list_available_module_ids()}, ensure_ascii=False)
 
     resolved_model = get_secretary_llm_model()
     payload = {
@@ -169,7 +181,7 @@ def route_request(
             pass
     _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM REQUEST (module routing)")
     _elog(f"  model      : {resolved_model}")
-    _elog(f"  user_text  : {user_text!r}")
+    _elog(f"  user_chars : {len(user_text)}")
     _elog(f"  prompt_len : {len(user_message)} chars")
 
     try:
@@ -189,7 +201,6 @@ def route_request(
     modules, reason = _parse_route_response(raw)
     log.debug("Phase 1 route decision: modules=%s reason=%r", modules, reason)
     _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — Phase 2 LLM RESPONSE")
-    _elog(f"  raw        : {raw[:300]}")
+    _elog(f"  raw_chars  : {len(raw)}")
     _elog(f"  modules    : {modules}")
-    _elog(f"  reason     : {reason}")
     return RouteDecision(modules=modules, reason=reason, raw_response=raw)
