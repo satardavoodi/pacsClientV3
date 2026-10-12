@@ -417,6 +417,8 @@ def chat_completion(
         raise LLMAPIError(f"Malformed response body: {exc}") from exc
 
     content = _extract_content_from_body(body)
+    from modules.ai_imaging.eagle_eye_remote.usage import record_tokens
+    record_tokens(body.get("usage"), resolved_model)
     usage = body.get("usage") or {}
 
     user_msg = next(

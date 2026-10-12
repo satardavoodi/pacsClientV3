@@ -351,14 +351,24 @@ def module_downloads_root() -> Path:
     return bundle_root() / "generated-files" / MODULE_PACKAGE_DOWNLOADS_DIRNAME
 
 
+def installed_state_namespace() -> Path:
+    """Select role storage; release/profile verification still authorizes execution."""
+    if is_frozen() and (install_root() / "eagle-eye-release.json").is_file():
+        return Path(APP_NAME) / "EagleEyeServer"
+    return Path(APP_NAME)
+
+
 def bundled_module_packages_search_roots() -> list[Path]:
+    if is_frozen() and (install_root() / "eagle-eye-release.json").is_file():
+        from modules.ai_imaging.eagle_eye_remote.installed_layout import selection
+        return [Path(item['root']) for item in selection(install_root())]
     roots: list[Path] = []
     candidates: list[Path] = []
     # Installer-deployed packages live in ProgramData (shared across users, writable without elevation)
     if is_frozen() and sys.platform == "win32":
         candidates.append(
             Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
-            / APP_NAME
+            / installed_state_namespace()
             / MODULE_PACKAGE_DOWNLOADS_DIRNAME
         )
     # Legacy / dev fallbacks
@@ -398,20 +408,20 @@ def _is_path_writable(path: Path) -> bool:
 
 def local_state_root() -> Path:
     if is_frozen() and sys.platform == "win32":
-        return _win_dir("LOCALAPPDATA", ("AppData", "Local")) / APP_NAME
+        return _win_dir("LOCALAPPDATA", ("AppData", "Local")) / installed_state_namespace()
     return install_root()
 
 
 def roaming_config_root() -> Path:
     if is_frozen() and sys.platform == "win32":
-        return _win_dir("APPDATA", ("AppData", "Roaming")) / APP_NAME / USER_CONFIG_DIRNAME
+        return _win_dir("APPDATA", ("AppData", "Roaming")) / installed_state_namespace() / USER_CONFIG_DIRNAME
     return bundled_config_root()
 
 
 def program_data_config_root() -> Path:
     """System-wide deployment config root — writable by installer, readable by all users."""
     if is_frozen() and sys.platform == "win32":
-        return Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / APP_NAME / USER_CONFIG_DIRNAME
+        return Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")) / installed_state_namespace() / USER_CONFIG_DIRNAME
     return bundled_config_root()
 
 

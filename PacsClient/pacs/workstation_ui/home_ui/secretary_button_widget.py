@@ -1025,12 +1025,28 @@ class SecretaryButtonWidget(QWidget):
             QMessageBox.information(self, 'Support issue', 'Sign in to the PACS workstation before reporting an issue.')
 
     def _prepare_help_ticket(self, transcript, recording=None):
+        if not self._ensure_secretary_runtime():
+            self._finish_secretary_cycle()
+            return
         self._set_thinking_status("Working: Preparing Help Ticket")
         self.mode_selector.setEnabled(False)
         def work():
             from modules.EchoMind.secretary.remote_planner import request
-            return request('plan', transcript, interaction_mode='help_ticket', question_context={'support_ticket_intents':1})
+            memory = self._secretary_orchestrator.memory_store
+            fields = {}
+            if memory is not None:
+                fields['conversation'] = memory.prepare_conversation('help_ticket')
+                fields['memory_context'] = memory.get_context_for_llm()
+            response = request('plan', transcript, interaction_mode='help_ticket',
+                               question_context={'support_ticket_intents':1}, **fields)
+            if memory is not None:
+                if response.get('conversation'):
+                    memory.update_conversation(response['conversation'])
+                memory.start_cycle(transcript)
+                memory.close_cycle()
+            return response
         def done(response):
+            self._refresh_memory_label()
             ticket = response['ticket']
             self._open_help_ticket(ticket['description'], recording, ticket['category'], ticket.get('operation','prepare'))
         def failed(message):
@@ -1228,6 +1244,7 @@ class SecretaryButtonWidget(QWidget):
             "}"
         )
         self.memory_new_btn.clicked.connect(self._on_new_memory)
+        self.memory_label.setTextFormat(Qt.PlainText)
         _mem_row.addWidget(self.memory_new_btn, 0)
 
         main_layout.addLayout(_mem_row)
@@ -1257,6 +1274,7 @@ class SecretaryButtonWidget(QWidget):
         self.log_box.viewport().installEventFilter(self)
         from .secretary_compact_ui import configure_compact_secretary
         configure_compact_secretary(self)
+        self.mode_selector.currentIndexChanged.connect(lambda: self._refresh_memory_label())
         self._set_thinking_status("Ready")
 
     def _set_log_box_text(self, text: str) -> None:
@@ -1456,6 +1474,9 @@ class SecretaryButtonWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def _set_thinking_status(self, stage: str) -> None:
+        native = getattr(self, '_native_secretary_runtime', None)
+        if native is not None:
+            native.record_stage(stage)
         stage = (stage or "").strip()
         self._thinking_stage = stage or "Ready"
         self._refresh_log_box()
@@ -1483,8 +1504,49 @@ class SecretaryButtonWidget(QWidget):
 
     # ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ Memory helpers ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط·آ£ط¢آ¢ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ط£آ¢أ¢â‚¬ع‘ط¢آ¬
 
+    def _open_session_files(self) -> None:
+        """Create the session folder on a worker, then open it in Explorer."""
+        if (getattr(self, '_native_secretary_service_quiesced', False)
+                or getattr(self, '_native_secretary_terminal_fenced', False)):
+            self._post_log('system', 'Secretary is temporarily paused for a server transition.')
+            return
+        from modules.EchoMind.secretary.remote_planner import uses_server
+        if not uses_server():
+            self._post_log('system', 'Session reference files require Eagle Eye Server mode.')
+            return
+        if self._secretary_busy or self._rec_running:
+            self._post_log('system', 'Finish the current command before opening session files.')
+            return
+        if not self._ensure_secretary_runtime():
+            return
+        mode = self.mode_selector.currentData() or 'act'
+        self.session_files_button.setEnabled(False)
+        self.memory_new_btn.setEnabled(False)
+        def work():
+            from modules.EchoMind.secretary.session_files import SessionFiles
+            memory = self._secretary_orchestrator.memory_store
+            conversation = memory.prepare_conversation(mode)
+            return str(SessionFiles().folder(conversation['id']))
+        def done(path):
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            self.session_files_button.setEnabled(True)
+            self.memory_new_btn.setEnabled(True)
+            self._refresh_memory_label()
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+                self._post_log('system', 'Could not open the session folder.')
+        def failed(_error):
+            self.session_files_button.setEnabled(True)
+            self.memory_new_btn.setEnabled(True)
+            self._post_log('system', 'Could not create the session folder. Check User Data access.')
+        self._run_worker(work, done, failed)
+
     def _on_new_memory(self) -> None:
         """Create a new memory file when the user clicks the 'New' button."""
+        if (getattr(self, '_native_secretary_service_quiesced', False)
+                or getattr(self, '_native_secretary_terminal_fenced', False)):
+            self._post_log('system', 'Secretary is temporarily paused for a server transition.')
+            return
         if self._secretary_busy or self.orb_button._active:
             self._post_log("system", "Finish the current command before starting a new conversation.")
             return
@@ -1495,18 +1557,32 @@ class SecretaryButtonWidget(QWidget):
             mem = getattr(self._secretary_orchestrator, "memory_store", None)
             if mem is not None:
                 mem.new_memory()
+                self._secretary_session_id = f"secretary-home-{uuid.uuid4().hex[:10]}"
                 self._refresh_memory_label()
         except Exception:
             pass
 
     def _refresh_memory_label(self) -> None:
         """Read the current (memory_number, cycle_count) and update the label."""
+        if getattr(self, '_native_secretary_initializing', False):
+            return
         try:
-            mem = getattr(getattr(self, "_secretary_orchestrator", None), "memory_store", None)
+            attribute = '_memory_store' if os.environ.get('AIPACS_EAGLE_EYE_ROLE') == 'server' else 'memory_store'
+            mem = getattr(getattr(self, "_secretary_orchestrator", None), attribute, None)
             if mem is None:
                 return
             num, cyc = mem.get_current_info()
-            self.memory_label.setText(f"Memory #{num} - Cycle {cyc}/10")
+            metadata = mem.get_conversation(self.mode_selector.currentData() or 'act')
+            native = getattr(self, '_native_secretary_runtime', None)
+            if native is not None:
+                native.capture_session()
+            title = metadata['title']
+            short_title = title if len(title) <= 30 else title[:27] + '...'
+            self.memory_label.setText(f"{metadata['mode'].replace('_', ' ').title()} | {short_title}\nMemory #{num} - Cycle {cyc}/10")
+            self.memory_label.setToolTip(
+                f"Conversation: {metadata['id']}\nMode: {metadata['mode']}\n"
+                f"Title: {title}\nTopic: {metadata['topic']}\n"
+                f"Goal: {metadata['goal']}\nContext: {metadata['summary']}")
         except Exception:
             pass
 
@@ -1611,6 +1687,9 @@ class SecretaryButtonWidget(QWidget):
         self._sync_popup_log_text()
 
     def append_input(self, text):
+        native = getattr(self, '_native_secretary_runtime', None)
+        if native is not None:
+            native.observe_input(text)
         self.append_log("user", text)
         self._append_stage_line(self._format_stage_line("Transcript", text))
 
@@ -1622,11 +1701,19 @@ class SecretaryButtonWidget(QWidget):
             self._response_panel.commandSubmitted.connect(self.submit_text_command)
         self._response_panel.set_muted(getattr(self, "_reply_muted", False))
         self._response_panel.set_response(text)
+        native = getattr(self, '_native_secretary_runtime', None)
+        if native is not None:
+            native.observe_output(text)
         self._response_panel.open_response()
         self.append_log("assistant", text)
         self._append_stage_line(self._format_stage_line("Result", text))
 
     def _on_active_changed(self, active):
+        if active and (getattr(self, '_native_secretary_service_quiesced', False)
+                       or getattr(self, '_native_secretary_terminal_fenced', False)):
+            self._set_active_silent(False)
+            self._post_log('system', 'Secretary is temporarily paused for a server transition.')
+            return
         if active:
             if self._response_panel is not None:
                 self._response_panel.stop()
@@ -1787,7 +1874,16 @@ class SecretaryButtonWidget(QWidget):
         worker.start()
 
     def _ensure_secretary_runtime(self) -> bool:
+        if getattr(self, '_native_secretary_initializing', False):
+            self._post_log('system', 'Secretary is preparing its conversation memory. Please try again shortly.')
+            return False
+        if (os.environ.get('AIPACS_EAGLE_EYE_ROLE') == 'server'
+                and getattr(getattr(self, '_secretary_orchestrator', None), '_memory_store', None) is None):
+            self._post_log('system', 'Secretary conversation memory is unavailable. Check the Server connection status.')
+            return False
+        from modules.ai_imaging.eagle_eye_remote.secretary_native_connector import schedule_widget
         if self._secretary_orchestrator is not None:
+            schedule_widget(self)
             return True
         try:
             self._secretary_orchestrator = create_secretary_orchestrator()
@@ -1797,6 +1893,7 @@ class SecretaryButtonWidget(QWidget):
             self._post_log("system", "Secretary engine is unavailable.")
             self._set_thinking_status("Ready")
             return False
+        schedule_widget(self)
         return True
 
     def _format_secretary_result_text(self, result: dict) -> str:
@@ -1918,6 +2015,10 @@ class SecretaryButtonWidget(QWidget):
         return True
 
     def _start_recording(self) -> None:
+        if (getattr(self, '_native_secretary_service_quiesced', False)
+                or getattr(self, '_native_secretary_terminal_fenced', False)):
+            self._post_log('system', 'Secretary is temporarily paused for a server transition.')
+            return
         if self._rec_running:
             return
         self._rec_running = True
@@ -2193,6 +2294,10 @@ class SecretaryButtonWidget(QWidget):
 
     def submit_text_command(self, text):
         """Typed input shares the post-transcription planning/execution path."""
+        if (getattr(self, '_native_secretary_service_quiesced', False)
+                or getattr(self, '_native_secretary_terminal_fenced', False)):
+            self._post_log('system', 'Secretary is temporarily paused for a server transition.')
+            return False
         from modules.EchoMind.secretary.credential_guard import contains_api_credential, LOCAL_ENTRY_MESSAGE
         text = str(text or "").strip()
         if not text or len(text) > 20000 or self._rec_running or self._secretary_busy:
@@ -2303,6 +2408,11 @@ class SecretaryButtonWidget(QWidget):
             "stt_fallback": bool(stt_settings.get("secretary_stt_fallback", True)),
             "progress_cb": _progress,
         }
+        native = getattr(self, '_native_secretary_runtime', None)
+        if native is not None and native.command and native.command['state'] == 'running':
+            preference = native.command.get('language_preference')
+            if preference is not None:
+                payload['language_preference'] = preference
         ui_capture=None
         panel=getattr(self,'_response_panel',None)
         include_screen=getattr(panel,'include_screen',None)
@@ -2380,8 +2490,13 @@ class SecretaryButtonWidget(QWidget):
 
     def _finish_secretary_cycle(self) -> None:
         """Release the pipeline lock. Safe to call more than once."""
+        native = getattr(self, '_native_secretary_runtime', None)
+        if native is not None:
+            native.finish()
         self._secretary_busy = False
         self.mode_selector.setEnabled(True)
+        if native is not None:
+            native.after_idle()
 
     def _schedule_execution_repair(self, payload: dict, result: dict) -> None:
         """Keep server repair off Qt; resume local execution with fresh permission."""
@@ -2397,6 +2512,7 @@ class SecretaryButtonWidget(QWidget):
         def work():
             return {'plan': repair_plan_after_execution_failure(
                 user_text=payload.get('text') or '', language=payload.get('language') or 'auto',
+                language_preference=payload.get('language_preference'),
                 failed_plan=request['failed_plan'], execution_result=failure,
                 attempt=attempt, max_attempts=self._secretary_orchestrator._MAX_EXECUTION_RETRIES,
                 runtime_capabilities=runtime_capabilities)}
@@ -2426,6 +2542,9 @@ class SecretaryButtonWidget(QWidget):
         tasks.add(task)
         def finished(done):
             tasks.discard(done)
+            native = getattr(self, '_native_secretary_runtime', None)
+            if native is not None:
+                native.after_idle()
             if not done.cancelled():
                 error = done.exception()
                 if error is not None:
@@ -2459,6 +2578,16 @@ class SecretaryButtonWidget(QWidget):
                 result = await self._secretary_orchestrator.handle_async(payload)
             else:
                 result = completed_result
+            if ((result or {}).get('ok') and (result or {}).get('action') == 'request_storage_cleanup'):
+                from modules.EchoMind.secretary.cleanup_receipt import wait_for_cleanup
+                from modules.EchoMind.secretary.session_log import SessionLog
+                bus = self._secretary_orchestrator.executor._resolve_bus()
+                result = await wait_for_cleanup(bus, result, progress=self._set_thinking_status)
+                # Persist only the final safe receipt, on a worker; do not replay the request.
+                import asyncio
+                receipt_log = SessionLog(user_text='Cleanup completion receipt')
+                receipt_log.add_result(result)
+                await asyncio.to_thread(receipt_log.close, result)
             if (result or {}).get('_execution_repair'):
                 self._schedule_execution_repair(payload, result)
                 return
@@ -2472,6 +2601,10 @@ class SecretaryButtonWidget(QWidget):
         # Triggered for: download, delete, structural server changes. All other
         # actions execute directly and never reach CONFIRM_REQUIRED.
         if (result or {}).get("error_code") == "CONFIRM_REQUIRED":
+            native = getattr(self, '_native_secretary_runtime', None)
+            if native is not None and native.defer_confirmation(payload, result or {}):
+                self._set_thinking_status("Awaiting Confirmation")
+                return
             self._set_thinking_status("Awaiting Confirmation")
             self._post_log("system", "Confirmation required ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ showing dialog.")
             confirmed = self._show_secretary_confirm_dialog(result or {})
@@ -2507,14 +2640,24 @@ class SecretaryButtonWidget(QWidget):
             _elog2(f"  data keys  : {list(data.keys())}")
 
         try:
-            self.append_output(self._format_secretary_result_text(result or {}))
+            rendered_text = self._format_secretary_result_text(result or {})
+            self.append_output(rendered_text)
             self._maybe_surface_home_result(result or {})
         finally:
+            native = getattr(self, '_native_secretary_runtime', None)
+            remote_request = bool(native is not None and native.command is not None
+                                  and native.command['state'] == 'running')
+            if native is not None:
+                native.record_result(result or {}, rendered_text=locals().get('rendered_text'))
             self._set_thinking_status("Done" if (result or {}).get("ok") else "Failed")
             self.set_ui_state("idle")
             self._finish_secretary_cycle()
             QTimer.singleShot(50, self._refresh_memory_label)
             if (result or {}).get("error_code") == "NEEDS_CLARIFICATION":
+                if remote_request:
+                    # Mobile receives the actual clarification text; native
+                    # modal choice adoption is not supported by this contract.
+                    return
                 from .secretary_clarification_dialog import question_from_result
                 question = question_from_result(result or {})
                 self._set_thinking_status("Awaiting answer")
@@ -2568,6 +2711,10 @@ class SecretaryButtonWidget(QWidget):
         Never `wait()` ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ that would freeze the GUI for the remaining read
         timeout, which is the whole thing the worker exists to avoid.
         """
+        from modules.ai_imaging.eagle_eye_remote.secretary_native_connector import close_widget
+        native = getattr(self, '_native_secretary_runtime', None)
+        idle_detach = native.prepare_idle_detach(str(uuid.uuid4())) if native is not None else None
+        close_widget(self, idle_detach=idle_detach)
         panel = getattr(self, "_response_panel", None)
         if panel is not None:
             panel.close()

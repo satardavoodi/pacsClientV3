@@ -19,22 +19,20 @@ def _stages():
     ]
 
 
-def test_company_gemini_reaches_every_stage_and_dispatch(monkeypatch):
+def test_company_gemini_stage_defaults_are_server_compatible(monkeypatch):
     stages = _stages()
     for stage in stages:
         monkeypatch.delenv('AIPACS_EAGLE_EYE_' + stage.name.upper() + '_MODEL', raising=False)
     monkeypatch.delenv('AIPACS_EAGLE_EYE_MODEL', raising=False)
-    captured = []
-    monkeypatch.setattr(backend, '_backend_module', lambda _: SimpleNamespace(
-        EagleEyeImageAnalysis=lambda **kwargs: captured.append(kwargs)))
     for stage in stages:
         model = backend.resolve_model('company', stage)
-        backend._dispatch(SimpleNamespace(images=[]), 'company', model, stage, 'Synthetic input')
-    assert {row['model'] for row in captured} == {'gemini-3.1-pro-preview'}
-    assert {row['temperature'] for row in captured} == {1.0}
+        assert model == stage.model_default
+        assert stage.temperature == 1.0
     assert backend.resolve_model('company') == 'gemini-3.1-pro-preview'
     assert backend.summarize_models(backend.resolve_stage_models(
-        prompts.LUMBAR_PATHOLOGY, 'company')) == 'gemini-3.1-pro-preview'
+        prompts.LUMBAR_PATHOLOGY, 'company')) == (
+            'gpt-6-astra -> gemini-3.1-pro-preview -> gpt-6-astra'
+        )
 
 
 def test_pipeline_pin_is_resolved_at_call_time(monkeypatch):

@@ -279,3 +279,28 @@ def test_coordinator_teardown_aborts_capture_and_detaches_analysis():
     assert coordinator._capture_controller is None
     assert coordinator._analysis_runner is None
     assert coordinator._result_panel is None
+
+
+def test_completed_lumbar_analysis_is_published_to_the_workspace_result_tab(tmp_path):
+    events = []
+
+    class Signal:
+        def emit(self, record, activate):
+            events.append((record, activate))
+
+    host = _Host()
+    host.lumbar_analysis_ready = Signal()
+    coordinator = EagleEyeWorkflowCoordinator(host)
+    coordinator._session_dir = tmp_path
+    record = AnalysisRecord(
+        STATE_COMPLETE,
+        tmp_path,
+        text="PATHOLOGICAL FINDINGS\n  Synthetic finding.",
+        document={"pipeline_version": "8.7.0"},
+    )
+    coordinator._refresh_result_button = lambda: None
+
+    coordinator._on_analysis_finished(record)
+
+    assert events == [(record, True)]
+    assert coordinator._result_panel is None

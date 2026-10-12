@@ -3,6 +3,41 @@ import pytest
 from modules.ai_imaging.eagle_eye_remote.demographics import prepare_review, validate_review
 
 
+@pytest.mark.parametrize('patient_key', ['patient_id', 'PatientID'])
+def test_viewer_metadata_identity_opens_review_before_submission(monkeypatch, patient_key):
+    """Exercise the actual controller callback without importing live controllers."""
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication, QWidget, QDialog
+    from modules.ai_imaging.eagle_eye_remote import demographics_ui as ui
+    app = QApplication.instance() or QApplication([])
+    tree = ast.parse(Path('modules/viewer/interactor_styles/ai_chat_interactorstyle.py').read_text(encoding='utf-8'))
+    controller = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'AIChatInteractorStyle')
+    start = next(n for n in controller.body if isinstance(n, ast.FunctionDef) and n.name == 'start_dx_process')
+    callback = next(n for n in start.body if isinstance(n, ast.FunctionDef) and n.name == 'current_identity')
+    viewer = SimpleNamespace(metadata_fixed={'study_uid': '1.2.3'}, metadata={patient_key: 'fixture'})
+    namespace = {'self': SimpleNamespace(image_viewer=viewer)}
+    exec(compile(ast.Module(body=[callback], type_ignores=[]), '<identity-callback>', 'exec'), namespace)
+    answers, opened = [], []
+    draft = dict(study_uid='1.2.3', patient_id='fixture', name='Synthetic Child', sex='F', chronological_age_months=120)
+    worker = SimpleNamespace(study_uid='1.2.3', metadata_context={'patient_id': 'fixture'},
+                             demographic_draft=draft, canceled=False,
+                             confirm_sex=answers.append, confirm_demographics=answers.append)
+    def complete(dialog):
+        opened.append(True)
+        dialog.confirmed = dict(draft, physician_confirmed=True)
+        return QDialog.Accepted
+    monkeypatch.setattr(ui.DemographicReviewDialog, 'exec', complete)
+    parent = QWidget()
+    ui.SexConfirmation(parent, worker, namespace['current_identity']).request()
+    assert opened == [True]
+    assert answers[0]['patient_id'] == 'fixture'
+    viewer.metadata[patient_key] = 'other'
+    assert namespace['current_identity']() == ('1.2.3', 'other')
+    parent.close()
+
+
 def test_reception_priority_and_age_at_imaging():
     context = dict(patient_id='fixture', patient_name='DICOM Child', patient_birth_date='20150101', study_date='20260930')
     payload = {'data': {'receptionId': 'fixture', 'patient': {'Name': 'Reception Child', 'Gender': 'F', 'BD': '2016-10-01'}}}

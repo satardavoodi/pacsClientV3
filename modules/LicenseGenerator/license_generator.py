@@ -1,418 +1,215 @@
-"""
-AIPacs License Generator
-Professional license management tool for administrators
-"""
+"""Company license generator; keys and issuance work stay off the GUI thread."""
+from pathlib import Path
 import sys
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QTextEdit, QSpinBox, QMessageBox,
-    QFrame
-)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QClipboard, QIcon, QKeyEvent
 
-from license_manager import LicenseManager
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFormLayout, QHBoxLayout,
+    QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget, QComboBox)
+
+from modules.LicenseGenerator.async_ui import LicenseOperation
+from modules.LicenseGenerator.code_files import read_code
+from modules.LicenseGenerator.signed_license import LicenseError, decode_request, decode_token, normalize
+from tools.licensing.issuer import load_issuer
+
+
+def inspect_response(store, request, product):
+    return load_issuer(store).inspect_request(request, expected_product=product)
+
+
+def issue_response(store, request, days, order, legacy_expiry, product):
+    issuer = load_issuer(store)
+    issuer.inspect_request(request, expected_product=product)
+    token = issuer.issue(request, days=days, order_id=order,
+                         approved_legacy_expiry=legacy_expiry or None)
+    return token, decode_token(token, issuer.trusted)
+
+
+def export_license(path, code, store):
+    destination, private = Path(path).resolve(), Path(store).resolve()
+    if destination in (private, private.with_suffix('.sqlite')) or destination.suffix.lower() != '.aiplic':
+        raise LicenseError('Save the response as an .aiplic file, separate from company private storage.')
+    destination.write_text(code, encoding='utf-8')
 
 
 class LicenseGeneratorWindow(QMainWindow):
-    """License Generator Main Window"""
-    
     def __init__(self):
         super().__init__()
-        self.license_manager = LicenseManager()
-        self.setup_ui()
-        
-    def setup_ui(self):
-        """Setup user interface"""
-        self.setWindowTitle("AIPacs License Generator - Admin Tool")
-        
-        # اندازه پنجره
-        self.setMinimumSize(900, 700)
-        self.resize(1000, 750)
-        
-        # Set LTR for English
-        self.setLayoutDirection(Qt.LeftToRight)
-        
-        # Central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Main layout
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(20)
-        main_layout.setContentsMargins(40, 30, 40, 30)
-        
-        # Title
-        title_label = QLabel("AIPacs License Generator")
-        title_font = QFont()
-        title_font.setPointSize(22)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title_label)
-        
-        subtitle = QLabel("Administrative License Management Tool")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle_font = QFont()
-        subtitle_font.setPointSize(11)
-        subtitle.setFont(subtitle_font)
-        main_layout.addWidget(subtitle)
-        
-        # Separator
-        line1 = QFrame()
-        line1.setFrameShape(QFrame.HLine)
-        line1.setFrameShadow(QFrame.Sunken)
-        main_layout.addWidget(line1)
-        
-        main_layout.addSpacing(10)
-        
-        # Customer Serial Section
-        serial_group = QVBoxLayout()
-        serial_group.setSpacing(8)
-        
-        serial_label = QLabel("Customer System Serial")
-        serial_font = QFont()
-        serial_font.setPointSize(12)
-        serial_font.setBold(True)
-        serial_label.setFont(serial_font)
-        serial_group.addWidget(serial_label)
-        
-        serial_help = QLabel("Enter the 32-character serial number received from customer")
-        serial_help_font = QFont()
-        serial_help_font.setPointSize(10)
-        serial_help.setFont(serial_help_font)
-        serial_group.addWidget(serial_help)
-        
-        self.serial_input = QLineEdit()
-        self.serial_input.setPlaceholderText("ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456")
-        self.serial_input.setStyleSheet("""
-            QLineEdit {
-                border: 2px solid #4a5568;
-                border-radius: 8px;
-                padding: 12px 15px;
-                font-size: 14px;
-                font-family: 'Courier New', monospace;
-                background-color: #2d3748;
-                color: #e2e8f0;
-                min-height: 20px;
-            }
-            QLineEdit:focus {
-                border: 2px solid #3b82f6;
-                background-color: #374151;
-            }
-            QLineEdit::placeholder {
-                color: #9ca3af;
-            }
-        """)
-        serial_group.addWidget(self.serial_input)
-        
-        main_layout.addLayout(serial_group)
-        main_layout.addSpacing(10)
-        
-        # Validity Duration Section
-        days_group = QVBoxLayout()
-        days_group.setSpacing(8)
+        self.setWindowTitle('AI-PACS Company License Issuer')
+        self.resize(780, 730)
+        self._inspected_code = ''
+        self.operation = LicenseOperation(self)
+        self.operation.completed.connect(self._completed)
+        self.operation.failed.connect(self._failed)
+        self.operation.busy_changed.connect(self._busy)
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(24, 24, 24, 24)
+        explanation = QLabel('Issue a signed activation or extension from a customer request. '
+                             'The private key stays in a Windows-protected company store outside the application. '
+                             'A unique paid order reference prevents duplicate credit.')
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        form = QFormLayout()
+        self.store = QLineEdit()
+        self.store.setPlaceholderText('Company DPAPI signing-store file')
+        self.store.setText(str(Path.home() / 'AppData/Local/AI-PACS Company Licensing/issuer-2026-10.key'))
+        choose = QPushButton('Choose Signing Store')
+        choose.clicked.connect(self._choose_store)
+        row = QHBoxLayout()
+        row.addWidget(self.store)
+        row.addWidget(choose)
+        form.addRow('Signing store', row)
+        self.order = QLineEdit()
+        self.order.setPlaceholderText('Unique company invoice or order reference')
+        form.addRow('Order reference', self.order)
+        self.product = QComboBox()
+        self.product.addItem('AI-PACS Client', 'client')
+        self.product.addItem('Eagle Eye Server', 'eagle-eye-server')
+        form.addRow('Purchased product', self.product)
+        self.days = QSpinBox()
+        self.days.setRange(1, 36500)
+        self.days.setValue(360)
+        form.addRow('Purchased additional days', self.days)
+        self.legacy_expiry = QLineEdit()
+        self.legacy_expiry.setPlaceholderText('YYYY-MM-DDTHH:MM:SSZ, verified against company records')
+        form.addRow('Approved legacy expiry (UTC)', self.legacy_expiry)
+        layout.addLayout(form)
+        note = QLabel('Legacy migration only: confirm the old expiry against company records. '
+                      'The old symmetric format alone is not reliable proof of a purchased entitlement. '
+                      'Leave this field empty for signed renewals or initial activation.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.request = QPlainTextEdit()
+        self.request.setPlaceholderText('Paste the AIR3 customer request.')
+        self.request.textChanged.connect(self._invalidate)
+        layout.addWidget(self.request)
+        import_button = QPushButton('Import Request File')
+        import_button.clicked.connect(self._import)
+        layout.addWidget(import_button)
+        self.details = QLabel('No request inspected.')
+        self.details.setWordWrap(True)
+        layout.addWidget(self.details)
+        self.inspect_button = QPushButton('Inspect Request')
+        self.inspect_button.clicked.connect(self._inspect)
+        layout.addWidget(self.inspect_button)
+        self.issue_button = QPushButton('Issue Signed License')
+        self.issue_button.clicked.connect(self._issue)
+        layout.addWidget(self.issue_button)
+        self.result = QPlainTextEdit()
+        self.result.setReadOnly(True)
+        self.result.setPlaceholderText('Signed company response')
+        layout.addWidget(self.result)
+        buttons = QHBoxLayout()
+        self.copy_button = QPushButton('Copy License')
+        self.copy_button.clicked.connect(lambda: QApplication.clipboard().setText(self.result.toPlainText()))
+        self.save_button = QPushButton('Save License File')
+        self.save_button.clicked.connect(self._save)
+        buttons.addWidget(self.copy_button)
+        buttons.addWidget(self.save_button)
+        layout.addLayout(buttons)
+        self.status = QLabel('Provision the company signing store and distribute its public root before issuing real licenses.')
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self._inputs = (self.store, self.order, self.days, self.product, self.legacy_expiry, self.request, choose, import_button)
+        for field in (self.store, self.order, self.legacy_expiry):
+            field.textChanged.connect(self._invalidate)
+        self.days.valueChanged.connect(self._invalidate)
+        self.product.currentIndexChanged.connect(self._invalidate)
+        self._busy(False)
 
-        days_label = QLabel("License Validity Period")
-        days_label.setFont(serial_font)
-        days_group.addWidget(days_label)
+    def _invalidate(self):
+        self._inspected_code = ''
+        self.result.clear()
+        self._busy(self.operation.future is not None)
 
-        days_layout = QHBoxLayout()
-        days_layout.setSpacing(10)
+    def _busy(self, busy):
+        for field in self._inputs:
+            field.setEnabled(not busy)
+        self.inspect_button.setEnabled(not busy)
+        self.issue_button.setEnabled(not busy and bool(self._inspected_code))
+        self.copy_button.setEnabled(not busy and bool(self.result.toPlainText()))
+        self.save_button.setEnabled(not busy and bool(self.result.toPlainText()))
 
-        self.days_spinbox = QSpinBox()
-        self.days_spinbox.setMinimum(1)
-        self.days_spinbox.setMaximum(3650)
-        self.days_spinbox.setValue(365)
-        self.days_spinbox.setSuffix(" days")
-        self.days_spinbox.setStyleSheet("""
-            QSpinBox {
-                border: 2px solid #4a5568;
-                border-radius: 8px;
-                padding: 10px 12px;
-                font-size: 14px;
-                background-color: #2d3748;
-                color: #e2e8f0;
-                min-width: 150px;
-                max-width: 180px;
-                min-height: 20px;
-            }
-            QSpinBox:focus {
-                border: 2px solid #3b82f6;
-                background-color: #374151;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                background-color: #374151;
-                border: none;
-                width: 25px;
-                border-radius: 4px;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background-color: #4a5568;
-            }
-        """)
+    def _choose_store(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose Company Signing Store', '', 'Protected stores (*.key);;All files (*)')
+        if path:
+            self.store.setText(path)
 
-        days_layout.addWidget(self.days_spinbox)
+    def _import(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Import Customer Request', '', 'AI-PACS requests (*.aipreq *.txt);;All files (*)')
+        if path:
+            self.operation.start('import', read_code, path)
 
-        # Preset buttons با اندازه مناسب
-        preset_30 = self._create_preset_button("30 Days", 30)
-        preset_90 = self._create_preset_button("90 Days", 90)
-        preset_180 = self._create_preset_button("180 Days", 180)
-        preset_365 = self._create_preset_button("1 Year", 365)
-        preset_730 = self._create_preset_button("2 Years", 730)
-
-        days_layout.addWidget(preset_30)
-        days_layout.addWidget(preset_90)
-        days_layout.addWidget(preset_180)
-        days_layout.addWidget(preset_365)
-        days_layout.addWidget(preset_730)
-        days_layout.addStretch()
-
-        days_group.addLayout(days_layout)
-        main_layout.addLayout(days_group)
-        main_layout.addSpacing(15)
-        
-        # Generate button
-        generate_btn = QPushButton("⚡ Generate License Key")
-        generate_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #10b981;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 15px 30px;
-                font-size: 16px;
-                font-weight: bold;
-                min-height: 20px;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-            QPushButton:pressed {
-                background-color: #047857;
-            }
-        """)
-        generate_btn.clicked.connect(self.generate_license)
-        main_layout.addWidget(generate_btn)
-        
-        main_layout.addSpacing(10)
-        
-        # Separator
-        line2 = QFrame()
-        line2.setFrameShape(QFrame.HLine)
-        line2.setFrameShadow(QFrame.Sunken)
-        main_layout.addWidget(line2)
-        
-        main_layout.addSpacing(10)
-        
-        # Result Section
-        result_label = QLabel("Generated License Key")
-        result_label.setFont(serial_font)
-        main_layout.addWidget(result_label)
-        
-        self.result_text = QTextEdit()
-        self.result_text.setReadOnly(True)
-        self.result_text.setMinimumHeight(100)
-        self.result_text.setMaximumHeight(120)
-        self.result_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #064e3b;
-                border: 2px solid #10b981;
-                border-radius: 8px;
-                padding: 15px;
-                font-family: 'Courier New', monospace;
-                font-size: 14px;
-                color: #10b981;
-                font-weight: bold;
-            }
-        """)
-        main_layout.addWidget(self.result_text)
-        
-        # Copy button
-        copy_btn = QPushButton("📋 Copy License Key")
-        copy_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 12px 25px;
-                font-size: 15px;
-                font-weight: bold;
-                min-height: 20px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-            QPushButton:pressed {
-                background-color: #1d4ed8;
-            }
-        """)
-        copy_btn.clicked.connect(self.copy_license)
-        main_layout.addWidget(copy_btn)
-        
-        # Stretch
-        main_layout.addStretch()
-        
-        # Warning info
-        info_text = QLabel(
-            "⚠️ Important: The generated license key is only valid for the system "
-            "with the serial number entered above."
-        )
-        info_text.setWordWrap(True)
-        info_text.setStyleSheet("""
-            QLabel {
-                background-color: #78350f;
-                border: 1px solid #f59e0b;
-                border-radius: 6px;
-                padding: 12px;
-                color: #fbbf24;
-                font-size: 11px;
-            }
-        """)
-        main_layout.addWidget(info_text)
-        
-        # Apply global dark theme
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #1a202c;
-            }
-            QLabel {
-                color: #e2e8f0;
-            }
-            QFrame[frameShape="4"] {
-                color: #4a5568;
-            }
-        """)
-        
-        central_widget.setLayout(main_layout)
-    
-    def _create_preset_button(self, text: str, days: int) -> QPushButton:
-        """Create preset duration button"""
-        btn = QPushButton(text)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #374151;
-                color: #e2e8f0;
-                border: 2px solid #4a5568;
-                border-radius: 6px;
-                padding: 10px 15px;
-                font-size: 13px;
-                font-weight: bold;
-                min-height: 20px;
-                min-width: 80px;
-                max-width: 100px;
-            }
-            QPushButton:hover {
-                background-color: #4a5568;
-                border-color: #6b7280;
-            }
-            QPushButton:pressed {
-                background-color: #1f2937;
-            }
-        """)
-        btn.clicked.connect(lambda: self.days_spinbox.setValue(days))
-        return btn
-
-    def generate_license(self):
-        """Generate license key"""
-        # Get serial
-        serial = self.serial_input.text().strip().replace('-', '').upper()
-        
-        if not serial:
-            QMessageBox.warning(
-                self,
-                "Error",
-                "Please enter the system serial number.",
-                QMessageBox.Ok
-            )
-            return
-        
-        if len(serial) != 32:
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"System serial must be 32 characters.\nCurrent length: {len(serial)} characters",
-                QMessageBox.Ok
-            )
-            return
-        
-        # Get number of days
-        days = self.days_spinbox.value()
-        
-        # Generate license
+    def _issue(self):
+        from modules.LicenseGenerator.signed_license import LicenseError
         try:
-            license_key = self.license_manager.generate_license_key(serial, days)
-            formatted_key = self.license_manager.format_license_key(license_key)
-            
-            # Validate
-            is_valid, message = self.license_manager.validate_license(license_key, serial)
-            
-            if is_valid:
-                self.result_text.setPlainText(formatted_key)
-                
-                QMessageBox.information(
-                    self,
-                    "Success",
-                    f"License key generated successfully!\n\n{message}",
-                    QMessageBox.Ok
-                )
-            else:
-                QMessageBox.critical(
-                    self,
-                    "Error",
-                    f"Error validating license:\n{message}",
-                    QMessageBox.Ok
-                )
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Error generating license:\n{str(e)}",
-                QMessageBox.Ok
-            )
-    
-    def copy_license(self):
-        """Copy license key to clipboard"""
-        license_text = self.result_text.toPlainText().strip()
-        
-        if not license_text:
-            QMessageBox.warning(
-                self,
-                "Error",
-                "Please generate a license key first.",
-                QMessageBox.Ok
-            )
+            request = decode_request(self.request.toPlainText())
+            self.details.setText(f"Product: {request['product']} | Request created (UTC): {request['created_at']}")
+            code = normalize(self.request.toPlainText())
+        except LicenseError as exc:
+            self.status.setText(str(exc))
             return
-        
-        clipboard = QApplication.clipboard()
-        clipboard.setText(license_text)
-        
-        QMessageBox.information(
-            self,
-            "Copied",
-            "License key has been copied to clipboard.\nYou can now send it to the customer.",
-            QMessageBox.Ok
-        )
+        if not self._inspected_code or self._inspected_code != code:
+            self.status.setText('Inspect the current request and verify the purchased product before issuing.')
+            return
+        self.result.clear()
+        self.status.setText('Verifying the request and recording signed issuance...')
+        self.operation.start('issue', issue_response, self.store.text().strip(), code,
+                             self.days.value(), self.order.text().strip(), self.legacy_expiry.text().strip(),
+                             self.product.currentData())
+
+    def _inspect(self):
+        self._inspected_code = ''
+        self.result.clear()
+        self.status.setText('Inspecting the request and checking the previous entitlement...')
+        self.operation.start('inspect', inspect_response, self.store.text().strip(),
+                             self.request.toPlainText(), self.product.currentData())
+
+    def _save(self):
+        path, _ = QFileDialog.getSaveFileName(self, 'Save Company License', 'license.aiplic', 'AI-PACS license (*.aiplic)')
+        if path:
+            self.operation.start('export', export_license, path, self.result.toPlainText(), self.store.text().strip())
+
+    def _completed(self, name, value):
+        if name == 'import':
+            self.request.setPlainText(value)
+            self.status.setText('Request imported. Verify the order details before issuing.')
+        elif name == 'inspect':
+            self._inspected_code = normalize(self.request.toPlainText())
+            self.details.setText(f"Product: {value['product']} | Previous expiry (UTC): {value['expires_at'] or 'Initial activation'}")
+            self.status.setText('Legacy proof checked. Confirm the expiry against company records before issuing.'
+                                if value['legacy'] else 'Previous signature verified. Check the paid order and additional days.'
+                                if not value['initial'] else 'Initial activation request. Check the purchased product and paid order.')
+        elif name == 'issue':
+            token, claim = value
+            self.result.setPlainText(token)
+            self.details.setText(f"Product: {claim['product']} | Added days: {claim['added_days']} | "
+                                 f"New expiry (UTC): {claim['expires_at']}")
+            self.status.setText('Signed response recorded. Send it to the customer. Reusing this order recovers the same response.')
+        elif name == 'export':
+            self.status.setText('Signed license file saved.')
+
+    def _failed(self, message):
+        self._inspected_code = ''
+        self.result.clear()
+        self.status.setText(message)
+
+    def closeEvent(self, event):
+        if self.operation.future is not None:
+            event.ignore()
+            self.status.setText('Wait for the current issuance or file operation to finish before closing.')
+        else:
+            super().closeEvent(event)
 
 
 def main():
-    """Main function"""
     app = QApplication(sys.argv)
-    
-    # Set application properties
-    app.setApplicationName("AIPacs License Generator")
-    app.setApplicationDisplayName("AIPacs License Generator")
-    app.setApplicationVersion("1.0.0")
-    
-    # Set font
-    app.setFont(QFont("Segoe UI", 10))
-    
     window = LicenseGeneratorWindow()
     window.show()
-    
-    sys.exit(app.exec())
+    return app.exec()
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    raise SystemExit(main())

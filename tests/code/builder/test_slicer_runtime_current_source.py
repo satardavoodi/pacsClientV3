@@ -39,6 +39,7 @@ def test_materialized_slicer_runtime_uses_current_startup_script(monkeypatch, tm
     source_script.parent.mkdir(parents=True)
     source_script.write_text("print('current interface')\n", encoding="utf-8")
     (source_script.parent / "presentation.py").write_text("TITLE = 'current'\n", encoding="utf-8")
+    (source_script.parent / "viewer_chrome.py").write_text("SHARED = True\n", encoding="utf-8")
     (source_script.parent / "unified_logging.py").write_text("ENABLED = True\n", encoding="utf-8")
     numeric_style = source_root / "Qss/numeric_controls.py"
     numeric_style.parent.mkdir(parents=True)
@@ -76,6 +77,7 @@ def test_materialized_slicer_runtime_uses_current_startup_script(monkeypatch, tm
     assert staged.read_bytes() == source_script.read_bytes()
     assert (package / "payload/python" / script_relative).read_bytes() == source_script.read_bytes()
     assert (package / "payload/python" / script_relative.parent / "presentation.py").is_file()
+    assert (package / "payload/python" / script_relative.parent / "viewer_chrome.py").read_bytes() == (source_script.parent / "viewer_chrome.py").read_bytes()
     assert (package / "payload/python/Qss/numeric_controls.py").is_file()
     expected_revision = hashlib.sha256(source_script.read_bytes()).hexdigest()
     manifest = (package / "module_package.json").read_text(encoding="utf-8")

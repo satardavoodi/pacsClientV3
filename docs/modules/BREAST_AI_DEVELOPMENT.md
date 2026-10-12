@@ -1,6 +1,6 @@
 # Breast AI development: current state and continuation guide
 
-Last reconciled: 2026-10-06 (Asia/Tehran). Owner: Breast AI / Eagle Eye model-development workstream.
+Last reconciled: 2026-10-07 (Asia/Tehran). Owner: Breast AI / Eagle Eye model-development workstream.
 
 **Start here for every Breast AI continuation.** This document owns the current research
 state, stage gates, decisions and next action. The [experiment ledger](BREAST_AI_EXPERIMENT_LEDGER.md)
@@ -9,6 +9,327 @@ experiments, not competing current plans. Update both documents in the same work
 as an experiment, physician review, data correction or decision.
 
 ## 1. Current state in plain language
+
+**October 10 B96 deployment incident:** The active `20261010-ordinary-human-r2`
+snapshot omitted the separate calcium payload binding. The latest Breast envelope
+reported `calcium_bundle_not_installed` while classification completed; this is
+an availability failure, not a negative finding or demonstrated model failure.
+The preserved B95 payload matches local: 445 sealed files, zero hash differences.
+Canonical eight-model Developer preflight and four fail-before guards now prevent
+silent omission. Controlled candidate integration, service activation and actual
+client/Server calcium acceptance are pending. See [B96](breast-ai/B96_CALCIUM_PAYLOAD_RUNTIME_INCIDENT_2026-10-10.md).
+
+**October 8 B95 performance continuation:** [B95](breast-ai/B95_PEAK_LATENCY_2026-10-08.md)
+accelerates physical candidate extraction while retaining B94 neural scheduling.
+B95 measured 193.8967 -> 139.4573 seconds (28.08% further reduction); all
+659511 intermediate peaks and 334 final support points/scores/filter results match.
+Accepted as Developer candidate; original weights and thresholds retained.
+No clinical activation; see B93 remaining gates.
+
+
+**October 8 separate viewer layers:** [B91](breast-ai/B91_SEPARATE_DISPLAY_LAYERS_2026-10-08.md)
+adds independent parenchymal and microcalcification controls in Breast source UI.
+Legacy FCOS calcium labels are filtered for display without deleting detections or
+rewriting human labels. The new native-point sink is identity-bound and unavailable
+until its dedicated result arrives. Thirty focused tests pass; live GUI and B90's
+authenticated calcium artifact connection remain pending, not a completed rollout.
+
+**October 8 dual-branch implementation:** [B90](breast-ai/B90_DUAL_BRANCH_INTEGRATION_2026-10-08.md)
+implements a research request that preserves FCOS/stacked classification and runs
+the frozen calcium localizer in a separate CPU process. Both actual models completed
+a synthetic parallel request; 11 integrity/geometry tests pass. No clinical client
+route or service activation yet. Native reproduction, CPU study budget and server
+artifact/display integration remain separate gates. This owner-requested integration
+proceeds alongside B82 data reconciliation; it does not authorize another training sweep.
+Native calcium CPU check: 205.781 seconds for 4096x3328; 621/622 reviewed output
+points reproduced. One score crossed the frozen cutoff under the new runtime;
+this is numerical portability evidence, not a new sensitivity estimate. CPU cost
+and that discrepancy remain blockers to claiming the requested clinical rollout.
+Both actual branches also passed a synthetic request on the Razi Developer candidate
+(35.747 seconds); 11 guards pass on both hosts. Declared 8,170-file source inventory
+and additive dependency archive match. Active r4 and the clinical client are unchanged.
+
+**October8 requested deployment:** [B89 promotion readiness](breast-ai/B89_PROMOTION_READINESS_2026-10-08.md)
+staged10 calcium research assets on local/Razi with matching hashes. Activation is
+BLOCKED: no production FPN adapter, missing worker dependencies, no complete CPU or
+client acceptance. Local synthetic helpers pass; tissue replacement not justified.
+Active Razi remains r4. Research readiness below is not production qualification.
+
+### Active decision map (owner consolidation, October 7)
+
+**Owner-approved output contract (October 7):** finding presence, finding type and
+malignancy assessment are separate outputs; calcium and parenchymal processing are
+separate paths. B83's technical follow-up specifies masked supervision, benign
+retention and a candidate-negative data ablation. Uncalibrated suspicion is not a
+clinical probability or BI-RADS. This contract is approved, not yet implemented as
+a qualified multi-output model; the data-readiness gate below still applies.
+
+This map is the operational entry point. B82 supplies the detailed rationale; the
+dated summaries below preserve history, not parallel instructions to start work.
+**Only active action: reconcile the reference and candidate dataset. No new fit
+is queued until its readiness record is complete.** Consolidation is complete as
+documentation; the data reconciliation itself is not yet complete.
+
+| Owner need | Current evidence | Missing evidence | Next permitted action |
+|---|---|---|---|
+| Describe a detected lesion as Mass, AD or asymmetry family | B72: macro-F1 at most49.06% among tested pipelines; minority recognition inadequate | Reliable exact-ROI references, rare-class support, actual detector-crop performance | Reconcile existing physician feedback and audit class coverage |
+| Avoid marking normal tissue while retaining real findings | B78:78.73% reference matching at0.20 with60.68 marks/normal image; B81 only small reduction | Reviewed detector false alarms and a task-matched presence verifier | Build study-grouped positive/normal/unknown candidate records |
+| Describe shape/margin and eventually assessment | B50 source attribute pretraining; no qualified target descriptor or BI-RADS output | Descriptor labels, view/context and separate assessment truth | Inventory available labels; do not infer BI-RADS from type alone |
+| Preserve useful calcium behavior | B25-B34 physician acceptance on eight exposed cases, including edge adjudication | Independent cohort and morphology qualification | Preserve candidate and feedback; do not retrain incidentally |
+| Serve with acceptable CPU latency | Some partial research timings exist | Full target-host study latency and resource budget | Measure only a retained complete candidate; do not extrapolate GPU timings |
+
+### Lessons that constrain future work
+
+**B83 commercial evidence review (October 7):**
+[Hologic, Siemens/Transpara, iCAD and Lunit](breast-ai/B83_COMMERCIAL_AI_REVIEW_2026-10-07.md)
+support staged detection/scoring and richer outcome-linked reference categories.
+Their cancer-screening and reader endpoints do not establish our exact lesion-typing
+accuracy. Preserve benign finding presence separately from suspicion; longitudinal
+priors remain data-dependent. No new fit or local performance result; B82 stage1
+reference reconciliation remains the only active action.
+
+| Tested route / records | What we learned | Disposition and reopening condition |
+|---|---|---|
+| Class weights/resampling, B38/B50 | Minority gains often cost Mass recall | Stop repeating recipes; reopen with changed supervision and a matched tradeoff test |
+| Calcium feature transfer into tissue typing, B41/B44 | Shared decoding saves work; shared classification gain was not established | Retain engineering reuse; no new calcium-feature fusion without distinct evidence |
+| Generic scalar/spatial features, B39/B57/B58 | Class distributions overlap; measured fusion gains were negligible | Archive tested recipes; reopen only for a specific reviewed failure mechanism |
+| Short encoder adaptations, B45/B64/B65/B69/B70 | Some class tradeoffs, overfitting or no reliable gain; not architecture ceilings | No arbitrary backbone sweep; require distinct representation and adequate training rationale |
+| Source shape/margin pretraining, B50/B62 | Already performed; not a new proposed solution | Retain as comparator; joint validated descriptor outputs would be a different task |
+| Calcium hard-negative/constrained scoring, B11/B17-B20 | Training negatives can fall while true held lesions are lost | Do not generalize training success; require identity retention on held groups |
+| Bilateral NCC and anatomy, B79-B81 | Geometry is reusable; similarity thresholds did not provide sufficient rejection | Stop hard-filter tuning; geometry may supply a later learned search prior |
+| Physician reviews, B26/B33/B55/B63 | Unmatched predictions can be real; partial exports can conflict | Preserve originals and review provenance; unresolved is not negative truth |
+| Publisher TEST, B71/B72/B76 | Useful comparisons but now exposed; endpoints are different | Keep results; never relabel the same cohort as fresh independent confirmation |
+
+### Ordered work queue and completion evidence
+
+[B88 targeted review](breast-ai/B88_TARGETED_REFERENCE_REVIEW_2026-10-07.md) is ready:
+24 native-source regions from24 studies, six per normal-score band plus six
+reference-overlapping low-score candidates.48 images and24 float crops retrieved.
+First layout inspection raised a reference concern in a publisher-normal region;
+no diagnosis or relabeling inferred. Physician region judgments are the next input.
+Do not treat the127 publisher-normal marks as adjudicated false positives or fit
+them as hard negatives before reference reconciliation.
+
+**Current continuation route after B87 (owner confirmed):** the score analysis
+supports the existing presence-verifier work; it is not a new threshold-tuning
+workstream. Stage1 is in progress. B86 completed technical box-to-source binding;
+clinical region scope, split/exposure reconciliation and reviewed negatives remain.
+
+1. Audit study/person and fitting exposure for the candidate pool and reviewed
+   positives. Preserve fitting-exposed cases for development, not confirmation.
+2. Stratify review by [0.40,0.45), [0.45,0.50) and >=0.50, including both true
+   findings and suspected normal mistakes. Keep all cases from a person together.
+   Reuse completed reviews; request only missing target-specific adjudication.
+3. Freeze references and comparison partitions, then run B84 E1 at equal budget.
+   Keep0.45 as an important threshold-only comparator, alongside0.40 and0.50;
+   it is not declared the optimal threshold or applied to production here.
+4. Measure whether the verifier retains useful lower-score findings while rejecting
+   normal marks, and whether it also fixes high-score false marks. Compare at matched
+   sensitivity and locked operating points; report all new misses and CPU cost.
+5. Continue detector-crop typing and separate/shared-head tests only with sufficient
+   region labels. Malignancy assessment requires linked outcomes; calcium remains
+   a separate retained branch throughout.
+
+B87 score bands serve sampling and error analysis. They must not become pathology
+labels, automatic-normal rules, BI-RADS or calibrated malignancy probabilities.
+The B82/B84 20% mark-reduction target is a research signal, not final product
+acceptance: reducing127 marks to roughly102 on83 normal images is still a substantial
+burden. Final acceptance needs an explicitly agreed operating point and independent
+evidence; no new numerical clinical target is inferred from this discussion.
+
+[B87 score-band replay](breast-ai/B87_SCORE_BAND_REPLAY_2026-10-07.md): on the same
+development cohort, thresholds0.50/0.45/0.40 yield12/16/20 matches out of34 and
+11/46/127 marks on83 publisher-normal images. Use bands for targeted review;
+compare later verifier with threshold-only controls. No production threshold change.
+
+[B86 scope and candidate replay](breast-ai/B86_SCOPE_AND_CANDIDATE_REPLAY_2026-10-07.md)
+verified24 reference-box/source-row bindings (documented rounding), all fitting
+exposed. Replayed B81 at0.4:20/34 matches,127 marks on83 publisher-normal images;
+saved127 provenance-bound candidate records for review, not automatic negatives.
+Next study/exposure audit and targeted unresolved review; E1 training not started.
+
+[B85 field-level audit](breast-ai/B85_REFERENCE_READINESS_AUDIT_2026-10-07.md)
+executed:24 stored cases,23 finished,23 dominant-appearance consensus records;
+17 have other export-field differences. Historical next action was technical ROI
+binding, completed in B86; semantic clinical scope and training eligibility remain
+unresolved. Follow the current continuation route above, not this historical step.
+
+[B84 controlled experiment protocol](breast-ai/B84_CONTROLLED_EXPERIMENT_PROTOCOL_2026-10-07.md)
+now defines readiness gaps, E0-E5 comparisons, equal-budget negative sampling,
+locked-threshold/paired uncertainty rules and CPU measurement. It operationalizes
+B82/B83; no manifest reconciliation, new harness or fit is completed by this record.
+Next remains the protected reference audit, then E0 and E1 after readiness.
+
+| Stage | Status | Deliverable required to advance |
+|---|---|---|
+| 0. Consolidate history and decisions | Completed documentation; B82 and this map | Source-linked lessons, retained/rejected routes and explicit unknowns |
+| 1. Reconcile data and references | IN PROGRESS; B85-B87 partial audits complete | Versioned protected manifest, merged review provenance, unresolved-field list, class/study/view/negative/unknown counts, source availability and exposure report |
+| 2. Targeted missing-label review | Pending stage1 | Reuse completed reviews; present only unresolved/new informative regions with full-view context; preserve benign versus normal distinction |
+| 3. Freeze benchmark and protocol | Pending stage2 | Study/person grouping, calibration partition, unexposed confirmation reserve, paired endpoints, numerical retention guardrails and compute cap |
+| 4. One controlled data/representation experiment | Not started | Same candidates and splits; local presence/type baseline, data ablation, eligible distinct representation only if available; per-class results and FROC |
+| 5. Continue or stop | Pending stage4 | B82 research gates plus uncertainty, lost-lesion review and whole-pipeline CPU cost; no promotion from one favorable metric |
+
+Every new experiment must state: which need it addresses; which existing result it
+builds on; what has materially changed; the fixed comparator/data/metric; and the
+stop rule. If those fields are missing, do not start it. Amend the active row after
+each result, including null/negative findings. Add a new report only when there is
+new substantive evidence or a distinct decision, not to restate the same plan.
+Do not pool unlike cohorts or multiply repeated seeds into independent subjects.
+Requests for clinician input must identify the exact unresolved reference question
+and preserve completed work. This map does not claim data or model completion.
+
+**B82 program reassessment controls next work (October 7):**
+[Data-first decision and stopping rules](breast-ai/B82_PROGRAM_REASSESSMENT_2026-10-07.md).
+Pause immediate fitting from B81. Neither adequate soft-tissue typing nor useful
+false-mark reduction is qualified; no technology ceiling established. Most typing
+cohorts lack normal-reference candidates; limited AD supervision and short pilots
+do not settle architecture capability. Reconcile existing physician feedback and
+actual detector hard negatives before one data-versus-representation experiment.
+Mammo-FM is a distinct domain-pretraining lead, but listed weights forbid industry
+evaluation without written permission and clinical use; no download or qualification.
+Do not repeat scalar-feature/NCC/short-backbone sweeps. Keep benign finding presence
+separate from cancer suspicion. New adjudicated data and an unexposed reserve are
+prerequisites to a credible next training decision.
+
+**B81 anatomy-aware bilateral pilot completed (October 7):**
+[Existing geometry development test](breast-ai/B81_ANATOMY_DEVELOPMENT_PILOT_2026-10-07.md).
+64 TRAIN studies/128 CC images,34 reference boxes,83 explicit normal images. Existing
+3D Cursor geometry reused: PNL+NCC retains the same20 matched lesions and reduces
+normal marks127->121 (4.72%); simple position comparison127->119 (6.30%). No added
+benefit from anatomical mapping established. Seven checks pass;126 automatic anchors,
+four high-NCC pairs visually inspected, no physician correspondence qualification.
+Stop hard NCC-filter tuning; retain geometry as search prior for a learned local versus
+bilateral verifier after larger TRAIN correspondence review. No production change.
+
+**B80 existing localization reuse selected (October 7):**
+[3D Cursor source audit](breast-ai/B80_EXISTING_LOCALIZATION_REUSE_2026-10-07.md).
+Existing nipple/chest-wall/PNL geometry and contralateral record matcher were not
+used in B79. Reuse pure components through a study-scoped offline adapter; extract
+opposite-side tissue even without a detected finding. GUI bilateral gate defaults
+off; installed Razi parity is unverified. Existing tests:50 passed,2 expected failures.
+No new clinical metrics. Next landmark/correspondence review on TRAIN/development,
+then local-only versus anatomy-aware verifier; no symmetry-based hard deletion.
+
+**B79 bilateral feasibility completed (October 7):**
+[Deterministic pairing screen](breast-ai/B79_BILATERAL_FEASIBILITY_2026-10-07.md).
+No fitting: same-view contralateral local NCC on B76 proposals at0.4. Cutoff0.85:
+normal marks3751->3631 (3.20%), matched lesions198->197/362. Cutoff0.9:26 fewer marks,
+matched count198 retained. Sham different-study control reduces marks only0.80% at0.85.
+Small exploratory signal, below20% engineering target; no deployment. Not the trained
+B78 verifier or CC/MLO test. Next TRAIN-only paired candidate manifest and anatomy-aware
+correspondence review before local versus bilateral reranker fitting.
+
+**B78 bilateral/multiview verifier priority (October 7):**
+[Evidence, code audit and experiment contract](breast-ai/B78_BILATERAL_MULTIVIEW_REVIEW_2026-10-07.md).
+All843 available studies have a unique standard four-view quartet. Existing pairing
+can use labels or first available ROIs; it is not a validated anatomical comparator.
+Threshold diagnostic:0.45->0.40 increases matching161->198/362 but normal marks
+1305->3751;0.20 matches285/362 with137005 marks. Prioritize label-blind bilateral and
+ipsilateral verifier ablations on TRAIN/development, retaining single-view fallback.
+No bilateral benefit measured locally yet; no TEST-based training or threshold adoption.
+
+**B77 prior detector challenge completed (October 7):**
+[YOLOX native-image results and external access audit](breast-ai/B77_PRIOR_DETECTOR_CHALLENGE_2026-10-07.md).
+75 calcification-positive/128 normal images,80 clusters. Adapted-BN prior YOLOX finds
+54/80 at0.01 but4405 normal marks versus Razi22/80 and67 marks. At0.1 YOLOX19/80
+with436 marks; other pilot0/80. No useful superiority established. Calcification-only
+matching differs from B76; do not compare these percentages with all-lesion44.48%.
+External YOLOv5 mass weights not obtained due Kaggle location denial. General-lesion
+external comparison remains open; next retained native calcium verifier evaluation.
+
+**B76 full-image replay completed (October 7):**
+[Results and run record](breast-ai/B76_FULL_IMAGE_DETECTION_REPLAY_2026-10-07.md).
+3372 images inferred, zero decode failures;5 invalid-reference images excluded from
+localization. Both original0.002 area filter and research removal:161/362 lesions
+matched (44.48%, IoU0.3);1081/2258 negative images marked (47.87%). Zero measured gain
+from filter removal. IoU0.5 recall29.83% warrants native geometry review. This is Razi
+source/weight GPU replay, not verified live CPU service. Dedicated calcium branch
+not included. Next review misses/box geometry then test frozen native calcium path.
+
+**B75 full-image detection benchmark selected (October 7):**
+[Dataset selection and verified inventory](breast-ai/B75_DETECTION_BENCHMARK_SELECTION_2026-10-07.md).
+VinDr TEST locally has3372 images/843 complete studies:295 boxed-positive images,
+2258 explicit BI-RADS1/No Finding negative candidates,819 unresolved/unboxed images.
+Available368 annotation rows need geometry/deduplication QC.628 TEST images unavailable.
+Primary next endpoint is class-agnostic full-image localization plus false marks,
+not reference-ROI typing. VinDr omits BI-RADS2 boxes; external INbreast candidate
+and CBIS complementary lesions do not remove exposure/access limitations. No inference
+in B75. Freeze scoped manifest after QC; keep production untouched.
+
+**B74 Razi source replay executed (October 7):**
+Owner clarified the primary endpoint as any-lesion detection regardless of type.
+Corrected legacy positive-head union covers263/272 supplied reference boxes (96.69%);
+this is not full-image detection recall. Research forced typing has no normal class.
+Direct class-agnostic localization comparison remains unmeasured in B72/B74.
+[Replay and corrected diagnostic](breast-ai/B74_RAZI_TEST_REPLAY_2026-10-07.md).
+The copied Razi worker rejects its loaded stackers:4 expected inputs versus9 saved.
+Classification unavailable for the272-ROI intended batch; no accuracy assigned and
+no live-request claim. Separate corrected legacy code matches all272 reference rows:
+Mass191/199 found but39/73 non-Mass overcalled; FA32/40 found;39 Mass/FA conflicts.
+These are precomputed-feature diagnostics, not deployed performance. No promotion.
+Next verify live response status and qualify an isolated full preprocessing replay.
+
+**B73 Razi comparison audit (October 7):**
+[Deployed comparator provenance](breast-ai/B73_RAZI_COMPARATOR_AUDIT_2026-10-07.md).
+All14 classifier assets in the October4 service revision match the local legacy
+assets, but classifier code differs from the corrected local implementation.
+Legacy labels lack distortion; B72 is not a Razi comparison. Research superiority
+over Razi remains unmeasured. Next reproduce the deployed path off-host with explicit
+classification failure accounting, then compare supported endpoints on common ROIs.
+No production changes or new accuracy measurement in this audit.
+
+**B72 publisher TEST evaluated (October 7):**
+[Six pipelines,18 checkpoints](breast-ai/B72_PUBLISHER_TEST_EVALUATION_2026-10-07.md).
+272 available reference ROIs/138studies,199Mass/18AD/55family;53missing-source rows
+explicitly excluded. TRAIN study/image/exact-file overlap checks pass; patient,
+historical Razi and broad pretraining independence unproven. B64 accuracy67.28%,
+EfficientNet68.26%, DINO56.25%; B50 transfer70.83% but AD7.41%. Weighted B50 macro49.06%
+is numerically highest, no clear paired macro superiority. No promotion or TEST tuning.
+This evaluation consumes the new benchmark; later tuning needs independent confirmation.
+
+**B71 owner priority: independent shared benchmark (October 7):**
+[Benchmark contract and provenance audit](breast-ai/B71_INDEPENDENT_BENCHMARK_CONTRACT_2026-10-07.md).
+Separate VinDr lesion typing from CBIS mass shape. Existing cohorts are development;
+publisher TEST is only a candidate until historical exposure, identity/duplicate and
+source audits pass. Original Razi training exposure remains a distinct unknown.
+Next freeze an eligible protected manifest before new test inference or tuning.
+No test run or new accuracy in B71; this supersedes immediate fitting plans below.
+
+**B70 ResNetV2 shape pilot completed (October 7):**
+[Paper audit and real fits](breast-ai/B70_RESNETV2_SHAPE_PILOT_2026-10-07.md).
+Independent Keras ResNet50V2 on1,005 single-shape CBIS regions/550groups, three
+grouped splits: accuracy38.83%, macro31.80%, training96.89%; majority30.16%.
+Exact reload passed; memory-capped interruption recovered with preserved receipts.
+Not a reproduction of the paper's three-model segmented-ROI ensemble or BI-RADS
+result. No promotion. Next audit segmentation/assessment label readiness before
+further descriptor architecture expansion; B69 typing findings remain separate.
+
+**B69 completed; no promotion (October 7):**
+Majority baseline clarification: always-Mass mean split accuracy76.42%, with zero
+AD/family recall; the reference70.00% alone is not evidence of strong typing.
+Accuracy clarification: mean development split correct-label accuracy is70.00% for
+the matched research reference and69.46% for EfficientNet; not original Razi accuracy.
+[EfficientNetV2-S actual training review](breast-ai/B69_EFFICIENTNET_TRAINING_REVIEW_2026-10-07.md).
+Three five-epoch fits on the matched1,147-ROI cohort completed with exact checkpoint
+replay. Macro-F1 50.80% vs50.87% control; Mass75.50 vs76.31, AD29.37 vs23.10,
+family52.47 vs58.13. Gate failed; all paired difference intervals include zero.
+Keep production and research reference unchanged. Next: controlled training-only
+class balance/reference audit, then conditional hard-example supervision, not another
+unstructured backbone or longer-epoch sweep. This supersedes B66-B68 next-fit wording.
+
+**B68 practical compatibility checked (October 6):**
+[Code/interface and CPU check](breast-ai/B68_ARCHITECTURE_COMPATIBILITY_2026-10-06.md).
+EfficientNetV2-S fits the existing paired ROI/context typing interface. Actual
+synthetic CPU forwards passed: 99.96 ms per pair versus ResNet18 40.68 ms on lina100,
+two threads, random weights; not Razi/end-to-end timing or accuracy evidence.
+Select it as first new training comparator, not proven winner. No new fitting.
+
+**B67 MONAI and staged-classifier review (October 6):**
+[Inventory and stage contract](breast-ai/B67_MONAI_AND_STAGED_CLASSIFICATION_2026-10-06.md).
+Official breast bundle classifies density A-D; it does not type lesions or assign
+lesion BI-RADS. No ready Mass/asymmetry/AD typing bundle identified in the inspected
+catalog. Keep B66 comparator first; test conditional descriptor/type experts only
+for incremental benefit with routing errors and CPU cost included. No new training.
 
 **B66 current decision: independent second-stage classifier (October 6):**
 [Literature and architecture review](breast-ai/B66_STANDALONE_ROI_CLASSIFIER_REVIEW_2026-10-06.md).
@@ -608,3 +929,60 @@ For every continuation, read this document and the ledger before choosing work. 
 This consolidation is documentation-only. Relative document links, evidence existence and
 aggregate values are checked; no runtime tests, live GUI pass, release or deployment are
 claimed by the documentation update.
+
+
+### 2026-10-08: Developer source/bundle reconciliation (no research-stage change)
+
+The retained original Eagle Eye Breast engine source was refreshed from canonical
+worker/vendor code, including the existing feature contract; current Breast
+weights were not replaced. Actual-model synthetic smoke passed with one synthetic
+input. Razi received an isolated candidate, preserving the active engine and
+rollback baseline. This is execution/packaging evidence, not a new clinical
+metric, physician acceptance or promotion of a research comparator. B82 reference
+reconciliation remains the research next action; no new fit or B-ID was created.
+Target qualification/activation is tracked by the Eagle Eye Developer report.
+
+
+### B92: Active classification runtime incident (2026-10-08)
+
+[Runtime incident evidence](breast-ai/B92_CLASSIFICATION_RUNTIME_INCIDENT_2026-10-08.md).
+Active r4 rejects four base inputs versus nine-feature stackers before classification;
+reproduced with its actual weights. Reconciled Developer schema passes. Latest
+retained four-image result is detection-only; screenshot/request identity is not
+independently linked. No active deployment or accuracy change. Next: controlled
+corrected-bundle qualification/activation and affected-workflow GUI verification.
+
+
+### B93: Dual result delivery (2026-10-08)
+
+[Server/client delivery](breast-ai/B93_DUAL_RESULT_DELIVERY_2026-10-08.md).
+Normal Breast adapter now starts FCOS and a sealed calcium candidate on the server;
+returned points persist by detection run and load asynchronously into the separate
+viewer layer. Explicit branch failures and cancellation preserve result meaning.
+43 focused tests and local synthetic model/transfer smoke passed. Clinical activation,
+live GUI and complete source parity remain distinct gates; no new accuracy claim.
+
+B93 final native evidence: four images completed both branches in 555.5265 seconds;
+four regions received four classification rows. Calcium support points totaled 334
+(not individual calcifications). Native artifact publish/checksum-unpack/run-bound
+reload passed. Final focused suite: 56 passed on both hosts; 517 mirror pairs match.
+Serving latency and source GUI/physician acceptance remain open; active r4 unchanged.
+
+
+### B94: CPU serving latency (2026-10-08, OPT-51)
+
+[Exact sparse scoring experiment](breast-ai/B94_CPU_LATENCY_2026-10-08.md).
+B93's tissue branch took approximately 56 seconds; calcium dominated its 555.5-second
+complete request. Retain all physical candidates but evaluate only their final-owner
+context tiles (191 instead of 520), with a bounded four-thread CPU budget. Calcium
+worker time decreased 544.265 -> 180.218 seconds (3.020x). All 334 final support points,
+scores and edge-removal counts match exactly on the same four-image replay. No new
+accuracy claim, changed threshold or new model. Full combined timing is recorded in
+B94 after completion; clinical activation/GUI gates remain those of B93.
+
+B94 complete same-case dual computation: **555.5265 -> 193.8967 seconds** (2.865x,
+65.10% reduction). Both branches completed; all 334 point coordinates, order,
+scores and edge-removal counts were identical. Accept as Developer performance
+candidate; no clinical rollout. 64 tests passed on each host, 517 mirror pairs
+match, 444-file calcium manifest matches. Remaining action is the existing B93
+source GUI/clinical-output and controlled activation acceptance, not more training.

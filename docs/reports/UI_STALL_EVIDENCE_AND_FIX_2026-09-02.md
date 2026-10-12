@@ -4241,3 +4241,313 @@ classification or viewer code changed; a guarded owner correction remains pendin
 ### 2026-10-06: MR reader contract implementation follow-up
 
 The authorized missing-delimiter fix now shares a bounded pure DICOM read contract across viewer reads, import decompression and small-file sync-stub verification. Existing header-only inventory continues detecting Pixel Data before its value. No parallel catalog, scheduler or cache introduced. The viewer owner receipt documents fail-before guards, local decoder equality, mirror parity and pending live gates. Runtime reader compatibility is verified; no global stability closure is claimed.
+
+
+### Education sidebar observability (2026-10-10)
+
+OPT-61: Installed-laptop evidence cannot distinguish reservation followed by cancellation/invalidation from executor/image/completeness stalls. New bounded CONTENT-DIAG records expose these boundaries without clinical identifiers. fix 1 reviewed the integration contract and reported no conflicting edits. This is instrumentation, not a proven rendering fix. See [contract and acceptance limits](EDUCATION_CONTENT_DIAGNOSTICS_2026-10-10.md).
+
+
+### Local DICOM load review, 2026-10-10 21:03-21:09 (read-only runtime investigation)
+
+Source: active local user_data/logs/app.log and viewer_diagnostics.log. Live logs
+were read without copying raw clinical records. Only allowlisted timing fields and
+code locations were aggregated. This window contains mixed user actions, not a
+controlled benchmark or ARM measurement; metrics with different correlation origins
+must not be added together. No runtime change or performance improvement is claimed.
+
+Nine completed sidebar traces (1-10 series) took 419.21-2245.10 ms. For five-series
+panels the observed totals were 680.50 and 728.67 ms; seven-series panels took
+799.27-1510.25 ms. Reservation cost was 1.67-16.28 ms. Maximum individual card
+application cost ranged 41.24-251.01 ms. The viewer first-visible diagnostic had
+16 records with maximum total 161.9 ms and maximum decode 37.1 ms; the wider
+series-switch phase summaries reached 686.5 ms total and 661.9 ms to first image.
+These are distinct instrumentation scopes. Main-thread stall diagnostics reached
+3415.6 ms; three render-drop records waited 2500 ms. Stall stack snapshots mostly
+ended in the main event loop, so attribution to card construction alone is unproven.
+One snapshot passed through _vc_load.py::_apply_loaded_series_data.
+
+Code inspection: thumbnail_batch_runner prepares each card in a worker, then waits
+for GUI admission before preparing the next. Metadata/image preparation and series
+completeness checking are offloaded, but serialized across cards. GUI admission calls
+_pw_panels.add_thumbnail_to_thumbnail_layout, create_thumbnail_widget and header/logo
+updates; layout activation also occurs for each card. Reservation is cheap in this
+sample. Prioritize profiling the card constructor/header sink and eliminating repeated
+layout work, preserving atomic geometry and drag identity. Then evaluate a bounded
+preparation pipeline (small queue, selected/visible series priority), not unbounded
+parallel decoding or synchronous filesystem checks. Keep identity, completeness,
+late-callback cancellation and multi-study invariants. Route viewer-specific frame/
+render work to its owner; do not merge execution domains.
+
+Next acceptance: deterministic synthetic guard for the measured authoritative seam,
+separate GUI apply time versus paint completion, fixed study/series count with warm
+and cold cache runs, rendered sidebar counts and actual drag/drop. A log admission
+count alone does not prove all cards were painted. No live workflow was driven in
+this investigation, no code edited, and no developer source activation performed.
+
+
+### OPT-58 / OPT-60 bounded sidebar preparation overlap (2026-10-10)
+
+Owner authorized implementation after the local 21:03-21:09 log review. Narrow
+runtime scope: thumbnail_batch_runner.py. A single worker producer prepares cards
+while the GUI admits the previous card. Queue size is two, with at most one worker
+result awaiting enqueue and one consumer-owned result. Original row order, complete
+inventory, authoritative identity revalidation, late metadata/readiness replay,
+visibility gate and retired-owner checks are retained. Producer cancellation is
+awaited on all terminal paths; an already-running detached executor read may finish
+but cannot admit a stale card. GUI QPixmap/widget creation remains on the GUI thread.
+The redundant outer grid.activate was removed: the existing atomic card admission
+method already activates layout before paint is enabled. Card visual composition,
+MIME/drag identity, viewer decode and native rendering domains are unchanged.
+
+Fail-before: new test_next_image_prepares_while_first_card_is_admitted failed when
+preparation could not overlap GUI admission. After: sidebar/lifecycle 43 passed.
+Expanded suite: 125 passed, 15 GUI-tier skips, one stale AST packaging guard failure.
+The packaging guard still searched the public wrapper rather than its existing
+_start_sidebar_build implementation; updated that target without weakening the
+async-finally comprehension check. Final packaging result recorded in receipt.
+
+Controlled synthetic comparison: ten real Qt cards, 15 ms simulated worker work
+and 15 ms simulated GUI work per card, five runs each. Before samples ms:
+454.19,447.31,475.19,504.24,510.74; median 475.19. After:
+442.79,364.60,360.80,318.35,338.91; median 360.80 (24.1% lower).
+This measures pipeline overlap under injected costs, not a field speedup or an
+actual DICOM decode benchmark. The earlier real-log baseline remains 419-2245 ms
+for 1-10 series with individual max_apply 41-251 ms. Current running source retains
+old imported code until a human-controlled restart. No comparable new runtime log
+exists yet, so before/after clinical improvement is pending.
+
+Source GUI control ping: unavailable, QLocalSocket invalid name. Actual mouse/OLE
+drag/drop, all-series rendered count, fresh same-case logs, ARM artifact acceptance
+and local/Razi Developer reconciliation remain pending. No installed executable,
+release build or active remote revision was modified. PacsClient runtime has no
+plugin mirror selected by the owned-path mirror dry run. Fix 1 coordination message
+sent under the owner's prior authorization; no concurrent edit was requested.
+
+
+### Fresh source field comparison, 2026-10-10 after 21:16
+
+A new source launch was observed after the runtime edit. Compared completed
+sidebar traces by the same private study identity and same series count; exported
+only aggregate timings. The last matching baseline trace (21:03-21:09) was used.
+Observed pairs: 10 cards 2245.10 -> 849.80 ms (62.1% lower); 7 cards
+1510.25 -> 649.87 ms (57.0% lower); another 7-card study first
+1256.55 -> 1361.36 ms (8.3% slower), then 802.68 ms (36.1% lower).
+All four new traces have applied == series_count. Individual max_apply values in
+those traces were 35.75-57.20 ms versus 61.80-229.00 ms in matching baselines.
+These are uncontrolled user navigation runs with cache/order and system-load
+variation, not causal benchmark percentages or proof of visually complete cards.
+No universal speedup is claimed; the slower first result must remain in the receipt.
+
+The user confirmed a source TestServer launch, but both the normal control client
+and a retained-QCoreApplication probe still failed to connect (invalid name).
+Live activity/log comparison is observed; automated GUI control, real mouse/OLE
+series drag and visual paint acceptance remain pending. No launch or restart was
+performed by the agent.
+
+
+### OPT-58 / OPT-60 overlapping thumbnail diagnostic phase isolation (2026-10-10)
+
+Full Developer review found that a worker could overwrite trace.phase while GUI
+card admission was running. A deterministic interleaving guard enters GUI admission,
+then releases the second worker into completeness, then raises a GUI OSError. Before:
+terminal was incorrectly completeness_worker. The worker now writes a separate local
+phase; worker failure transports that phase with its exception to the GUI consumer.
+Only GUI coroutines write trace.phase. GUI apply failures retain applying even while
+the detached next-card worker proceeds. Numeric error classification, privacy and
+single-terminal behavior are retained. Queue bounds, card inventory/order/identity,
+MIME/drag and decoding behavior are unchanged. No new optimization is included.
+
+Guard: test_overlapping_worker_cannot_relabel_gui_admission_failure in
+ tests/code/ui_services/test_content_lifecycle_diagnostics.py. It failed before the
+runtime correction. Focused receipt includes sidebar/lifecycle and packaging guards.
+Corrected owned runtime/test files are frozen in the protected phase-race handoff;
+root owns full canonical reconciliation/staging. No active Razi source was changed.
+Physical GUI and full Developer parity remain pending; do not infer activation.
+
+
+### 2026-10-11: source-session stalls and host-independent launch (OPT-21 / OPT-60)
+
+The 12:50:59 source session ended abruptly at 13:32:33 without a shutdown marker or launcher exit code. Windows Application 1000/1001/1002 reads returned no events in that interval. Host process-tree termination is consistent with the user's host-close report, not a proven native crash or a normal-exit acceptance. The retained COM exception was nonterminal; subsequent activity continued. The private sanitized session receipt is under user_data/test_reports/2026-10-11/final_exit_fix.
+
+Measured 202 stalls above 100 ms, 17 above 500 ms, eight above one second, maximum 2157.4 ms. Native folder dialogs appear in several sampled stacks and are not automatically application hangs. Seven completed full collections took 155.3, 212.3, 294.9, 330.7, 406.6, 520.6 and 759.8 ms. This proves an increasing synchronous GUI collection cost in this session, not a memory leak or its owning object. _pw_lifecycle now logs collection yield and generation allocation counters alongside the existing duration/watchdog, without changing reclamation or moving native destruction to a worker. Removing full collection or replacing it with young-generation-only collection remains unqualified pending cycle-yield and native-lifetime evidence.
+
+CustomTabManager.set_logo_active rebuilt an unchanged stylesheet and forced synchronous painting on every call. The bounded activation guard failed before correction; repeated states now do nothing, transitions only repolish the existing selector and queue update. Theme/setup still own stylesheet creation. Fast-specific duplicate VOI reads are recorded in docs/viewer/FAST_PIPELINE_DETAILED.md, not a shared-pipeline change.
+
+The diagnostic tee previously raised BrokenPipeError when its host stdout disappeared, abandoning the child drain and log. Its fail-before guard now passes: write the durable log first, retire only the disconnected console, continue draining and record ChildExitCode. This does not itself escape Windows inherited job ownership. tools/dev/start_source_detached.ps1 uses a manual, interactive-user, least-privilege Task Scheduler launch of the existing run_app.ps1; no triggers, credentials, retries, time limit, automatic restarts or service changes. -TestServer remains explicit opt-in. Duplicate source launch is refused; an unrelated reserved task is not overwritten. A synthetic scheduled sentinel completed with exit 7 after its submitting process exited; no real app was killed for this probe. Actual ChatGPT-close survival and normal source close remain separate GUI gates.
+
+Verification: final focused selection 58 passed, exit 0; expanded viewer/color selection 198 passed, five failed, three skipped, four xfailed and one xpassed. All five failures were reproduced with isolated HEAD lightweight_2d_pipeline source injection, without reverting the checkout. Six earlier overlay checks skipped because their real fixture was absent; synthetic checks passed. Owned Fast mirrors synchronized through scoped add_paths; all 530 pairs match. No release/artifact qualification claimed. The user has an active source session and requested to close it only after work; no restart/hot reload was attempted. Fresh detached launch, sign-in, patient/tab/VOI visual acceptance, GC yield lap and normal exit remain pending. Full local/Razi Developer reconciliation is blocked by concurrent R17 work; only an immutable scoped delta is staged.
+## 2026-10-11 fresh source session: exit acceptance and remaining pauses
+
+Human login completed in the detached Task Scheduler source session. The local
+Test Control Server answered ping and exposed 181 actions. After Education/MPR
+activity finished and Home was visible, native Alt+F4 exercised normal exit.
+The source process disappeared; child, run_app and scheduled-task result were
+all zero. Shutdown recorded instance-lock release and the final logging boundary.
+No Application events 1000/1001/1002 were found in the bounded session window.
+This is one successful normal-exit lap, not proof that every owner drained:
+the final lifecycle observation still reports owner completion as unverified.
+
+The session recorded 77 event-loop stalls above 100 ms, including startup and
+shutdown, with seven above one second. Maximum was 7234.9 ms during MPR opening.
+Repeated sampled stacks traversed toggle_zeta_mpr, volume-route resolution,
+imports, axial/coronal construction and crosshair registration. A separate
+deferred 3D construction sample reached 1861.7 ms. Education page creation and
+media presentation also remain sampled pause sites. Samples locate occupied
+paths; they do not assign the entire interval to the last sampled function.
+The VTK-domain report owns the MPR follow-up; no parallel renderer fix was added.
+
+Deferred full collections reclaimed 156, 1851 and 223 objects. Keep the observed
+yield when evaluating GC changes; removing collection solely from its duration
+would ignore demonstrated reclamation. PHI-free receipt:
+user_data/test_reports/2026-10-11/pause_fix/live_exit_receipt.json.
+Actual host-close survival was not exercised; detached service ancestry was
+verified. Complete Developer parity remains blocked by concurrent reconciliation.
+
+
+
+## Stability triage and lifetime corrections - 2026-10-11 (OPT-35 / OPT-60)
+
+The objective is prevention of crashes, invalid operations and unrecovered hangs.
+Normal execution time alone is not a defect. Field archives contain different
+versions and duplicate copies; Windows event exports end in August and cannot
+be correlated with October traces without matching process/session evidence.
+Private sanitized analysis: user_data/test_reports/2026-10-11/other_pc_audit/.
+
+| Incident | Evidence and owning boundary | State and next gate |
+|---|---|---|
+| LIFE-20261011-A | 21 archived deleted QtFastContainer exceptions reach toolbar toggle_ruler, directly or through angle/pan deactivation. A Python wrapper survives its native QWidget. Logging its representation already raises. | Reproduced with a real deleted QWidget; native validity checked before representation or dispatch. Code verified; fresh source tool-switch GUI acceptance pending. |
+| LIFE-20261011-B | Three archived empty-series IndexError traces reach Fast bridge settle -> end_fast_interaction -> render -> _clamp. A queued settle can outlive its bridge/series. | Empty-series failure reproduced. Bridge retires before cleanup and rejects retired/empty settle admission; valid final-frame rendering preserved. Code verified; fresh source series-switch/close GUI acceptance pending. |
+| NATIVE-DRAG | Newer archived native access violations include thumbnail mouseMoveEvent / drag.exec despite an existing protected-interaction latch. | Suspected native OLE/card lifetime issue, not diagnosed. Requires actual mouse drag and current-thread/native lifetime evidence; MCP drag_series does not cover this boundary. Owner: VTK domains review. |
+| NATIVE-ADVANCED | Windows reports separate Advanced companion access violations; faulting DLL alone does not identify source cause. | Open; correlate companion build, process/session and native dump before changing decoder/render logic. |
+| WEB-HANG | Local AppHang has a WebBrowser import/state-store sampled stack; no exclusive cause established. | Open; capture repeated GUI/thread observations in the same session. Do not attribute to MPR from elapsed time alone. |
+| RESOURCE | RADAR/resource observations do not prove a leak; deferred collection reclaimed objects. | Open; require repeated equivalent workloads, retained-owner evidence and recovery baseline before changing GC or caches. |
+| DOWNLOAD | Connection/download errors are distinct from terminal application faults. | Classify transport, queue state and UI subscription separately; establish current reproducer before changing retries. |
+
+Both lifetime fixes preserve execution domains and existing authoritative owners.
+The Fast bridge is recreated per series; its retirement latch prevents an old
+bridge from touching even a subsequently nonempty pipeline. _clamp still rejects
+an invalid empty series; no fabricated frame or broad exception suppression was
+added. The toolbar declines only an absent/deleted target. No timing policy,
+provider route, geometry, rendering algorithm or cache ownership was changed.
+
+Verification: 79 passed, 36 deselected, direct pytest exit 0 across the two new
+regression guards and adjacent interaction, ruler, stale recovery and protected
+interaction suites. The decisive fail-before cases raised the same deleted-native
+RuntimeError and empty-series IndexError as the field traces. Additional queued
+Qt timer and cleanup-reentrancy guards pass. Viewer payload mirror synchronized.
+Fresh source GUI, complete Developer reconciliation and installed Standard/Server
+candidate acceptance remain pending; these results do not prove all native crashes
+resolved and are not a release/build handoff.
+
+### Maintenance intake and closure discipline
+
+Track each symptom independently with a stable incident ID, affected version,
+owner and pipeline boundary, expected behavior, evidence, competing hypotheses,
+reproducer, severity, next observation and verification state. Keep patient data
+and raw host logs private. Classify correctness/lifecycle, resource retention,
+performance-only, UX and environment/transport separately; multiple causes can
+produce the same visible pause.
+
+Advance Reported -> Reproduced -> Diagnosed -> Guarded -> Code verified -> Live
+verified -> Artifact verified only when that gate has evidence. A source match
+requires the actual failing thread/callback and ownership transition, not merely
+a DLL name or a long duration. Repair the authoritative lifecycle boundary rather
+than adding a parallel path or blanket exception handling. Each runtime correction
+needs a fail-before behavioral guard, minimal scoped implementation, adjacent
+checks, source GUI acceptance and tracked mirror/build inclusion for both roles.
+Unproven hypotheses stay in the table with a falsifiable next step. Continue the
+existing QUALITY_AND_VALIDATION_ROADMAP_2026-07-14.md; do not create another backlog.
+
+
+## Structured UX stability reproduction protocol - 2026-10-11
+
+Scope: OPT-35 / OPT-60 field suspects. This is a native interaction test plan,
+not an automated test receipt or a speed benchmark. Status: READY TO EXECUTE;
+current local control ping failed (listener unavailable), so no scenario below
+has live acceptance from this planning session.
+
+### Preflight and evidence boundary
+
+Use one fresh, reviewed source instance outside clinical work, explicit TestServer
+opt-in, human sign-in and Home ready. Probe existing control ping, list_actions
+and snapshot_resources; record source revision/content hashes and main/companion
+PIDs privately. Do not use the installed executable, automated authentication,
+forced termination, server failure injection or a second app instance. The owner
+closes the current app normally before an authorized detached launch.
+
+Use a synthetic or approved nonclinical fixture with two studies and distinguishable
+series A/B, one single-frame and one multiframe series. Record actual authoritative
+identity privately; use aliases only in durable reports. Import is optional and
+must use an isolated approved test source. Never infer identity from display name.
+
+Before each scenario, record timestamp, PID, companion PID if applicable, state
+and native-log byte offsets using the existing external NativeFaultWindow. Include
+both historical native_fault.log and session-scoped native_fault.*.log. Use existing
+MCP assert_health/resource probes before and after, but do not mistake transport
+success for rendered-output acceptance. Capture relevant GUI locally only, redact
+before sharing. Read application/session and Windows events over the exact window;
+deduplicate WER repetitions and distinguish native diagnostics from terminal faults.
+Do not collect or upload patient images, reports or credentials.
+
+### Controlled interaction matrix
+
+Run the baseline once, then five boundary repetitions per variant. If clean, run
+20 cycles of the same bounded workload; stop at the first failure. Keep cold first
+open and warm repeats separate. Repetition counts are coverage, not proof of the
+absence of a rare race. Do not deliberately flood events or act on disabled UI.
+
+| ID / boundary | Baseline | Boundary variants with actual GUI input | Observable invariant / causal discriminator |
+|---|---|---|---|
+| UX-STAB-01 native thumbnail drag | Mouse-drag A into an empty Fast viewport, release, verify image and exact identity. Repeat for Advanced. | Hold over target, leave/re-enter, release; cancel with Escape; drop outside then perform valid drop; resize normally before the next drag. Test actual OLE path, never substitute drag_series. | Before drop, existing image/identity stays intact; placeholder stays centered with opaque background; cancel restores usable UI. After accepted drop, exact target identity/image appears. A downstream switch pass with native drag failure narrows the input/OLE boundary; it does not prove root cause. |
+| UX-STAB-02 Fast owner retirement | Scroll A, release, wait for final image/annotations, select ruler then angle/pan. | Scroll/release then immediately switch to B; repeat by closing the patient tab through normal controls; reopen a fixture, switch tools after the normal series transition. | No deleted-native RuntimeError, empty-series IndexError, old-series image/annotations or stale tool target. Final displayed identity belongs to B. Correlate settle callbacks and target retirement; do not manufacture live native deletion. |
+| UX-STAB-03 Advanced/MPR lifecycle | Open valid spatial stack in Advanced; open Standard MPR; wait for readiness and navigate slices. | Close MPR through available controls during preparation, reopen and complete; change source series only when the UI permits it; close patient after MPR closes. Test multiframe 2D separately from unsupported MPR geometry. | No callback into a closed view, orphan companion, missing restored viewport or unexpected process loss. Distinguish main and companion failure; record current-thread stack if available. Do not transfer a Fast pass to Advanced/MPR. |
+| UX-STAB-04 browser first-open/return | Open Web once from Home, observe initialization, return to Home and reopen. | One additional ordinary click during visible initialization; close browser through available UI, reopen; navigate back to Home after ready. | One browser owner, clear progress/disabled state, recovery and usable Home. Persistent unresponsiveness or AppHang is a failure; a recovered cold initialization delay is recorded, not automatically failed. Compare import/state-store evidence within the same PID. |
+| UX-STAB-05 Education rebuild retirement | Open Library, wait for cards/covers, filter and search, clear them; repeat My Courses/Case of the Day as available. | Change filter twice while cards are still arriving; switch tab and return before covers finish; resize normally during loading. | Stable loading surface, no intermediate jumping/blank final grid, no stale covers/results from the prior filter, no deleted-object access; correct final filter and usable controls. Separate cosmetic UX observations from lifecycle exceptions. |
+| UX-STAB-06 download queue ownership | Download one approved test study using the existing test target; verify queue, progress and actual completion. | Hide/show manager during progress; navigate Home/patient and return; repeat after other scenarios in the same session. Pause/resume only the test task if supported. | Same task appears once, progress and completion agree with authoritative files/state; no duplicate task or stale empty queue. Do not download a clinical batch or induce a server outage. |
+
+### Resource and long-session branch
+
+After short-cycle acceptance, repeat the identical open/use/close sequence in three
+blocks with an idle recovery interval. Sample existing resources at the same points
+(after open, after close and after idle), including child processes and handles if
+the existing probe supports them. Growing memory alone does not prove a leak:
+require retained ownership or unreleased handles/children across equivalent blocks.
+A warm cache plateau is distinct from monotonically retained state. No new GC,
+cache eviction, retry or timing changes are authorized by a resource graph alone.
+A short lap cannot close a problem reported only after hours of use; record that
+long-session coverage remains open and schedule an attended nonclinical lap.
+
+### Failure capture, narrowing and stop rule
+
+On unexpected process exit, lost input recovery, wrong identity/image, new native
+fault or lifecycle exception: stop the sequence and preserve the exact last input,
+scenario/variant/repetition, before/after state and same-session evidence. Do not
+restart automatically, kill the app, repeat crashes or continue to other scenarios
+on a damaged session. An unavailable control channel is INCONCLUSIVE until direct
+GUI/process evidence distinguishes a control issue from an app hang. Never convert
+missing logs/probes into zero errors. User/system interference also makes the lap
+inconclusive rather than a product pass/fail.
+
+Reproduce the smallest failing variant on a fresh authorized session. Compare one
+factor at a time: Fast vs Advanced, native drag vs downstream selection, cancel vs
+release, open vs closed owner, cold vs warm. Map the transition to its owning source
+and retirement/identity contract. Only then implement a minimal correction with a
+behavioral fail-before guard. Native access violation attribution requires the
+faulting current thread/native evidence; the first background stack or faulting DLL
+alone is insufficient. Do not add blanket exception suppression.
+
+### Per-scenario receipt and closure
+
+Record privately: scenario/version, fixture alias, source hashes, role, process and
+session IDs, input method, baseline/variant, repetition count, observed state,
+error/health deltas, rendered identity checks, recovery, resource observations,
+Windows event correlation, result PASS/FAIL/INCONCLUSIVE/NOT RUN and next step.
+A pass requires actual input plus visible correct output and attributable health
+checks; an accepted command is insufficient. Timing is contextual unless the UI
+fails to recover; visual jumping is a separate UX finding.
+
+Pending here: all six live scenarios, attended long-session branch, complete
+Developer reconciliation, and exact Standard Client / Eagle Eye Server artifact
+acceptance. Existing automated lifetime guards (79 passed) are independent evidence.
+No installed stability or native crash closure is claimed by this plan.

@@ -25,10 +25,10 @@ from pathlib import Path
 # Make the LicenseGenerator package importable regardless of CWD.
 _HERE = Path(__file__).resolve()
 _ROOT = _HERE.parents[2]
-sys.path.insert(0, str(_ROOT / "modules" / "LicenseGenerator"))
+sys.path.insert(0, str(_ROOT))
 
-import license_manager as lm  # noqa: E402
-from license_manager import LicenseManager  # noqa: E402
+from modules.LicenseGenerator import license_manager as lm  # noqa: E402
+from modules.LicenseGenerator.renewal import create_manager  # noqa: E402
 
 
 def _mask(v, keep=6):
@@ -42,7 +42,7 @@ def collect() -> dict:
     node = uuid.getnode()
     mac = ":".join(("%012X" % node)[i:i + 2] for i in range(0, 12, 2))
     comps = lm.collect_fingerprint_components()
-    mgr = LicenseManager()
+    mgr = create_manager()
 
     lic_exists = mgr.license_path.exists()
     lic_valid = None
@@ -67,7 +67,7 @@ def collect() -> dict:
         "stable_id": lm._hash_id(lm._derive_stable_raw(comps)) if lm._derive_stable_raw(comps) else None,
         "legacy_id": lm._hash_id(lm._read_legacy_node_raw()),
         "cached_id": lm._read_cached_machine_id(),
-        "effective_key1": mgr.get_hardware_id(log=False),
+        "effective_key1": mgr.get_hardware_id(),
         # license state
         "license_path": str(mgr.license_path),
         "license_file_exists": lic_exists,

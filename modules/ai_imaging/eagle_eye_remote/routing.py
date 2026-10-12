@@ -78,14 +78,14 @@ def lesions(t1, flair, study, t1_uid, flair_uid, output, *, cancel=None, progres
                             output, cancel=cancel, progress=progress)
 
 
-def radiograph(module, image, cancel, *, region=None, model='isbi'):
+def radiograph(module, image, cancel, *, region=None, model='isbi', progress=None):
     from PacsClient.utils.data_paths import AI_DIR
     identity = image['identity']
     ref = {k: identity[k] for k in ('series_uid', 'sop_uid')}
     ref['expected_count'] = 1
     params = {} if module == 'alignment' else {'region': list(region), 'projection': 'coronal', 'model': model}
     result = Client().analyze(module, identity['study_uid'], {'primary': ref}, params,
-                              Path(AI_DIR) / 'eagle_eye', cancel=cancel)
+                              Path(AI_DIR) / 'eagle_eye', cancel=cancel, progress=progress)
     from .radiograph_binding import bind_result
     return bind_result(result, image, module)
 
@@ -114,10 +114,12 @@ def study(module, study_uid, *, sex=None, threshold=.45, cancelled=lambda: False
                 shutil.copyfile(source, temporary)
                 temporary.replace(target)
                 result[key] = str(target)
+        from .breast_results import save_calcium
+        save_calcium(result, study_uid)
     return result
 
 
-def alignment_correction(image, points, provenance, notes, reviewed, cancel=None):
+def alignment_correction(image, points, provenance, notes, reviewed, cancel=None, progress=None):
     from PacsClient.utils.data_paths import AI_DIR
     from .radiograph_binding import bind_result
     parent = provenance.get('server_job_id')
@@ -135,14 +137,14 @@ def alignment_correction(image, points, provenance, notes, reviewed, cancel=None
     if 'alignment' not in client.json('/v1/capabilities').get('correction_modules', []):
         raise ValueError('This server does not support Alignment corrections. Update the Eagle Eye server.')
     result = client.analyze('alignment', identity['study_uid'], {'primary': ref},
-                           {'correction': correction}, Path(AI_DIR)/'eagle_eye', cancel=cancel)
+                           {'correction': correction}, Path(AI_DIR)/'eagle_eye', cancel=cancel, progress=progress)
     return bind_result(result, image, 'alignment')
 
 
-def resume_alignment_correction(image, handle_path, cancel=None):
+def resume_alignment_correction(image, handle_path, cancel=None, progress=None):
     from PacsClient.utils.data_paths import AI_DIR
     from .radiograph_binding import bind_result
-    result = Client().resume(handle_path, Path(AI_DIR)/'eagle_eye', cancel=cancel)
+    result = Client().resume(handle_path, Path(AI_DIR)/'eagle_eye', cancel=cancel, progress=progress)
     return bind_result(result, image, 'alignment')
 
 

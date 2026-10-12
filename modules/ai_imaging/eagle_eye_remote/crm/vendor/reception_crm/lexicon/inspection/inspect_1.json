@@ -1,0 +1,8495 @@
+{
+ "databases": {
+  "ClinicWebsite": {
+   "MedicalDetails": 0,
+   "MedicalParms": 0,
+   "reportprintsettings": 5,
+   "ReferrerPhysician": 6001,
+   "cashDeskAnalysis": 0,
+   "iolcalculations": 0,
+   "NoneNID": 20503,
+   "PregnancyMedications": 0,
+   "patients": 47719,
+   "Payments": 0,
+   "ReceptionAttachments": 3730,
+   "worklist_items": 49,
+   "odontograms": 0,
+   "catalogitems": 0,
+   "ClinicReferring": 0,
+   "inoAdmin": 1,
+   "receptionStatus": 0,
+   "chatrooms": 89,
+   "PendingPatient": 24679,
+   "PregnancyUltrasounds": 0,
+   "PatientDiseaseRecords": 0,
+   "patientcallingsettings": 1,
+   "aiChatLogs": 0,
+   "CostType": 0,
+   "WarehouseProducts": 20,
+   "users": 8,
+   "formBuilder": 10,
+   "workListDevices": 4,
+   "SampleReport": 270,
+   "pregnancies": 2,
+   "TaminDeliverPrescription": 0,
+   "receptionRefunds": 7,
+   "series": 196134,
+   "FetalWeightCalculations": 13,
+   "SendMessagePattern": 0,
+   "PatientsAttachments": 0,
+   "WarehouseTransactions": 40742,
+   "glassprescriptions": 0,
+   "Shift": 0,
+   "PatientAdmission": 0,
+   "RadiologyGlossary": 0,
+   "PatternMount": 0,
+   "PregnancyCalendarItems": 0,
+   "receptionsTag": 4,
+   "Roles": 15,
+   "studies": 50316,
+   "ServicesGroupInfo": 34,
+   "medicalservices": 0,
+   "PregnancyCareTemplate": 12,
+   "receiptLayouts": 1,
+   "Permisions": 131,
+   "PACSConfigurations": 1,
+   "dentallabs": 0,
+   "receiptsettings": 1,
+   "Modality": 7,
+   "PregnancyRecordAudits": 0,
+   "printreportlayouts": 1,
+   "customerclubpointlogs": 44,
+   "settings": 1,
+   "patientqueues": 24396,
+   "CustomReportTemplate": 0,
+   "system_settings": 10,
+   "ClinicDepartment": 0,
+   "system.views": 1,
+   "transactions": 133729,
+   "contactlensprescriptions": 0,
+   "ServicesInfo": 519,
+   "eventseries": 0,
+   "PatientNameChangeLogs": 46,
+   "events": 0,
+   "SmsPattern": 0,
+   "Cost": 0,
+   "PregnancyScreenings": 0,
+   "CashDeskKart": 5,
+   "PregnancyLabResults": 0,
+   "aiTrainingProgress": 0,
+   "pettycashtransactions": 211,
+   "Centers": 0,
+   "document_attachments": 3394,
+   "Personnel": 26,
+   "ClinicsUsers": 0,
+   "cashdeskanalysischecklistitems": 7,
+   "DiseaseCol": 0,
+   "aiKnowledge": 45,
+   "SubModality": 0,
+   "wallets": 45087,
+   "Dicom": 0,
+   "servicereminderfollowups": 0,
+   "Rooms": 14,
+   "RobotQuestion": 0,
+   "PrenatalVisits": 0,
+   "patientmedicalhistories": 31,
+   "TaminPrescription": 0,
+   "dentallaborders": 0,
+   "aiSettings": 1,
+   "counters": 1,
+   "devices": 1,
+   "customerclubsettings": 1,
+   "InsuranceSetting": 2,
+   "PatientReceptionForm": 28,
+   "instances": 6315644,
+   "user_sessions": 5236,
+   "chatmessages": 481,
+   "AdminUsers": 45,
+   "dentaltreatmentplans": 0,
+   "UserProfile": 52026,
+   "receptions": 54359,
+   "aiTrainingCourses": 0,
+   "pettycashaccounts": 6,
+   "eyeexams": 0,
+   "ReportLogs": 266971,
+   "SupplementaryInsurances": 4,
+   "ClinicReception": 0,
+   "CenterParamsSelection": 0,
+   "Clinics": 0,
+   "captures": 143,
+   "windows": 0,
+   "cashdeskanalysischecklists": 41,
+   "DicomSendSettings": 1,
+   "PatientNote": 0,
+   "patients_with_study_count": 47719
+  },
+  "DicomDB": {
+   "RoutingRules": 0
+  },
+  "RadiologyDB": {
+   "Roles": 0,
+   "WarehouseProducts": 0,
+   "SubModality": 0,
+   "PatientNote": 0,
+   "ReceptionAttachments": 0,
+   "settings": 0,
+   "ReferrerPhysician": 0,
+   "Permisions": 0,
+   "UserProfile": 0,
+   "receptions": 0,
+   "wallets": 0,
+   "Modality": 0,
+   "AdminUsers": 0,
+   "CashDeskKart": 0,
+   "transactions": 0
+  }
+ },
+ "reception_fields": {
+  "Date": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "1405/06/01",
+     205
+    ],
+    [
+     "1405/05/31",
+     195
+    ]
+   ]
+  },
+  "ReceptionID": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "RequestID": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 397,
+   "values_top": [
+    [
+     "1787478166760-o7kp16mqiho-74nb7x64wv",
+     2
+    ],
+    [
+     "1787471134381-ofzv9m37g7q-0p7ex5gt411c",
+     2
+    ],
+    [
+     "1787387292755-ist4opangc-1u5v93yj5d",
+     2
+    ],
+    [
+     "1787504754917-finkr6djv37-ak8pcgwub1q",
+     1
+    ],
+    [
+     "1787504671189-28ibtegz5xf-gg4xiqcf7k7",
+     1
+    ],
+    [
+     "1787504350997-p9kywhy95lq-au9x6k9pk58",
+     1
+    ]
+   ]
+  },
+  "Time": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 396,
+   "values_top": [
+    [
+     "13:08:51",
+     2
+    ],
+    [
+     "11:20:15",
+     2
+    ],
+    [
+     "11:11:39",
+     2
+    ],
+    [
+     "11:54:19",
+     2
+    ],
+    [
+     "20:31:59",
+     1
+    ],
+    [
+     "20:30:35",
+     1
+    ]
+   ]
+  },
+  "__v": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 4,
+   "values": [
+    [
+     "0",
+     333
+    ],
+    [
+     "1",
+     58
+    ],
+    [
+     "2",
+     8
+    ],
+    [
+     "3",
+     1
+    ]
+   ]
+  },
+  "_id": {
+   "count": 400,
+   "types": {
+    "ObjectId": 400
+   },
+   "distinct_sampled": 400,
+   "values_top": [
+    [
+     "6a8b2787540b05a4f5a71f18",
+     1
+    ],
+    [
+     "6a8b2733540b05a4f5a71cc8",
+     1
+    ],
+    [
+     "6a8b25f3540b05a4f5a71601",
+     1
+    ],
+    [
+     "6a8b240b540b05a4f5a70fd7",
+     1
+    ],
+    [
+     "6a8b21f6540b05a4f5a6f897",
+     1
+    ],
+    [
+     "6a8b1fdd540b05a4f5a6f047",
+     1
+    ]
+   ]
+  },
+  "armyInsuranceTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 7,
+   "values": [
+    [
+     "0",
+     394
+    ],
+    [
+     "6910000",
+     1
+    ],
+    [
+     "31140000",
+     1
+    ],
+    [
+     "23600000",
+     1
+    ],
+    [
+     "25430000",
+     1
+    ],
+    [
+     "31730000",
+     1
+    ],
+    [
+     "12360000",
+     1
+    ]
+   ]
+  },
+  "cashDeskDiscount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 7,
+   "values": [
+    [
+     "0",
+     392
+    ],
+    [
+     "9920000",
+     2
+    ],
+    [
+     "2050000",
+     2
+    ],
+    [
+     "1610000",
+     1
+    ],
+    [
+     "320000",
+     1
+    ],
+    [
+     "14140000",
+     1
+    ],
+    [
+     "14410000",
+     1
+    ]
+   ]
+  },
+  "createdAt": {
+   "count": 400,
+   "types": {
+    "datetime": 400
+   },
+   "distinct_sampled": 400,
+   "values_top": [
+    [
+     "2026-08-23 17:01:59.116000",
+     1
+    ],
+    [
+     "2026-08-23 17:00:35.377000",
+     1
+    ],
+    [
+     "2026-08-23 16:55:15.200000",
+     1
+    ],
+    [
+     "2026-08-23 16:47:07.602000",
+     1
+    ],
+    [
+     "2026-08-23 16:38:14.653000",
+     1
+    ],
+    [
+     "2026-08-23 16:29:17.627000",
+     1
+    ]
+   ]
+  },
+  "customerClubDiscount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "deleted": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     400
+    ]
+   ]
+  },
+  "discountTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "fundDiscount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "imagingWorkflow": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "imagingWorkflow.imagingItems": {
+   "count": 400,
+   "types": {
+    "array": 400
+   },
+   "distinct_sampled": 0
+  },
+  "imagingWorkflow.pacsComment": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.pacsComment.text": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.pacsComment.updatedAt": {
+   "count": 400,
+   "types": {
+    "null": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.pacsComment.updatedBy": {
+   "count": 400,
+   "types": {
+    "null": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.pacsListManagement": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "imagingWorkflow.pacsListManagement.hidden": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     400
+    ]
+   ]
+  },
+  "imagingWorkflow.pacsListManagement.hiddenAt": {
+   "count": 17,
+   "types": {
+    "null": 17
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     17
+    ]
+   ]
+  },
+  "imagingWorkflow.pacsListManagement.hiddenBy": {
+   "count": 17,
+   "types": {
+    "null": 17
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     17
+    ]
+   ]
+  },
+  "imagingWorkflow.pacsListManagement.priority": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "9999",
+     395
+    ],
+    [
+     "1",
+     5
+    ]
+   ]
+  },
+  "imagingWorkflow.pacsListManagement.priorityChangedAt": {
+   "count": 5,
+   "types": {
+    "string": 5
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "2026-08-23T06:30:16.811Z",
+     1
+    ],
+    [
+     "2026-08-23T05:49:40.657Z",
+     1
+    ],
+    [
+     "2026-08-23T06:39:17.378Z",
+     1
+    ],
+    [
+     "2026-08-22T08:48:51.877Z",
+     1
+    ],
+    [
+     "2026-08-22T08:26:24.334Z",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.pacsListManagement.priorityChangedBy": {
+   "count": 5,
+   "types": {
+    "ObjectId": 5
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "6880d5217e4719ba0d054e0a",
+     3
+    ],
+    [
+     "6880cb267e4719ba0d054de4",
+     2
+    ]
+   ]
+  },
+  "imagingWorkflow.report": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.physicianApproved": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.physicianApprovedAt": {
+   "count": 400,
+   "types": {
+    "null": 215,
+    "string": 185
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.physicianApprovedBy": {
+   "count": 400,
+   "types": {
+    "null": 216,
+    "ObjectId": 184
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.secretaryApproved": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.secretaryApprovedAt": {
+   "count": 400,
+   "types": {
+    "null": 215,
+    "string": 185
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.secretaryApprovedBy": {
+   "count": 400,
+   "types": {
+    "null": 216,
+    "ObjectId": 184
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvedBy": {
+   "count": 400,
+   "types": {
+    "null": 324,
+    "ObjectId": 76
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.content": {
+   "count": 400,
+   "types": {
+    "null": 210,
+    "string": 190
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.date": {
+   "count": 400,
+   "types": {
+    "null": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.findings": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.count": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.hasAttachments": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.lastFileFormat": {
+   "count": 400,
+   "types": {
+    "null": 394,
+    "string": 6
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.lastFileName": {
+   "count": 400,
+   "types": {
+    "null": 394,
+    "string": 6
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.lastFileSize": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.lastSyncAt": {
+   "count": 400,
+   "types": {
+    "null": 394,
+    "string": 6
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.studyUid": {
+   "count": 400,
+   "types": {
+    "null": 394,
+    "string": 6
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.uploadedAt": {
+   "count": 400,
+   "types": {
+    "null": 394,
+    "string": 6
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsAttachments.uploadedBy": {
+   "count": 400,
+   "types": {
+    "null": 394,
+    "string": 6
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.count": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.hasVoice": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.lastFileFormat": {
+   "count": 400,
+   "types": {
+    "null": 361,
+    "string": 39
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.lastFileName": {
+   "count": 400,
+   "types": {
+    "null": 361,
+    "string": 39
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.lastFileSize": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.lastSyncAt": {
+   "count": 400,
+   "types": {
+    "null": 361,
+    "string": 39
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.studyUid": {
+   "count": 400,
+   "types": {
+    "null": 361,
+    "string": 39
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.uploadedAt": {
+   "count": 400,
+   "types": {
+    "null": 361,
+    "string": 39
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.uploadedBy": {
+   "count": 400,
+   "types": {
+    "null": 361,
+    "string": 39
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.printPages": {
+   "count": 400,
+   "types": {
+    "null": 211,
+    "object": 189
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.printPages.generatedAt": {
+   "count": 189,
+   "types": {
+    "string": 189
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.printPages.pages": {
+   "count": 189,
+   "types": {
+    "array": 189
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.printPages.signature": {
+   "count": 189,
+   "types": {
+    "string": 189
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.printPages.version": {
+   "count": 189,
+   "types": {
+    "number": 189
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.radiologist": {
+   "count": 400,
+   "types": {
+    "null": 192,
+    "ObjectId": 208
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.reportDate": {
+   "count": 400,
+   "types": {
+    "null": 192,
+    "string": 208
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.risAttachmentsCount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.risAttachmentsHasAny": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.risAttachmentsLastSyncAt": {
+   "count": 400,
+   "types": {
+    "string": 126,
+    "null": 274
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.status": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.typist": {
+   "count": 400,
+   "types": {
+    "null": 211,
+    "ObjectId": 189
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.updatedAt": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 400,
+   "values_top": [
+    [
+     "2026-08-23T17:01:59.113Z",
+     1
+    ],
+    [
+     "2026-08-23T17:00:35.375Z",
+     1
+    ],
+    [
+     "2026-08-23T16:55:15.198Z",
+     1
+    ],
+    [
+     "2026-08-23T16:47:07.600Z",
+     1
+    ],
+    [
+     "2026-08-23T17:09:28.573Z",
+     1
+    ],
+    [
+     "2026-08-23T17:15:51.416Z",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.workflowStatus": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "waiting_appointment",
+     400
+    ]
+   ]
+  },
+  "insuranceProcessing": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "insuranceProcessing.completedAt": {
+   "count": 201,
+   "types": {
+    "datetime": 201
+   },
+   "distinct_sampled": 199,
+   "values_top": [
+    [
+     "2026-08-22 06:54:22.987000",
+     2
+    ],
+    [
+     "2026-08-22 06:42:04.584000",
+     2
+    ],
+    [
+     "2026-08-23 16:38:16.373000",
+     1
+    ],
+    [
+     "2026-08-23 16:22:20.083000",
+     1
+    ],
+    [
+     "2026-08-23 16:10:10.589000",
+     1
+    ],
+    [
+     "2026-08-23 16:07:53.068000",
+     1
+    ]
+   ]
+  },
+  "insuranceProcessing.errors": {
+   "count": 400,
+   "types": {
+    "array": 400
+   },
+   "distinct_sampled": 9,
+   "values": [
+    [
+     "همه گروه‌ها (بیمه تامین) با خطا مواجه شد",
+     34
+    ],
+    [
+     "نوع بیمه پشتیبانی نمی‌شود: 4",
+     28
+    ],
+    [
+     "Request failed with status code 503",
+     7
+    ],
+    [
+     "همه گروه‌ها با خطا مواجه شدند: Request f",
+     2
+    ],
+    [
+     "Token در پاسخ یافت نشد",
+     2
+    ],
+    [
+     "همه گروه‌ها با خطا مواجه شدند: خطا در پر",
+     2
+    ],
+    [
+     "1 گروه با خطا مواجه شد",
+     1
+    ],
+    [
+     "عدم دریافت session بیمه سلامت",
+     1
+    ],
+    [
+     "connect ETIMEDOUT 10.19.171.18:443",
+     1
+    ]
+   ]
+  },
+  "insuranceProcessing.processedServices": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "0",
+     228
+    ],
+    [
+     "1",
+     134
+    ],
+    [
+     "2",
+     31
+    ],
+    [
+     "3",
+     6
+    ],
+    [
+     "4",
+     1
+    ]
+   ]
+  },
+  "insuranceProcessing.startedAt": {
+   "count": 201,
+   "types": {
+    "datetime": 201
+   },
+   "distinct_sampled": 201,
+   "values_top": [
+    [
+     "2026-08-23 16:38:15.453000",
+     1
+    ],
+    [
+     "2026-08-23 16:22:19.622000",
+     1
+    ],
+    [
+     "2026-08-23 16:10:09.974000",
+     1
+    ],
+    [
+     "2026-08-23 16:07:52.172000",
+     1
+    ],
+    [
+     "2026-08-23 15:52:13.721000",
+     1
+    ],
+    [
+     "2026-08-23 15:50:48.381000",
+     1
+    ]
+   ]
+  },
+  "insuranceProcessing.status": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "not_started",
+     199
+    ],
+    [
+     "completed",
+     113
+    ],
+    [
+     "failed",
+     88
+    ]
+   ]
+  },
+  "insuranceProcessing.totalServices": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "0",
+     227
+    ],
+    [
+     "1",
+     134
+    ],
+    [
+     "2",
+     32
+    ],
+    [
+     "3",
+     6
+    ],
+    [
+     "4",
+     1
+    ]
+   ]
+  },
+  "insuranceSource": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 4,
+   "values": [
+    [
+     "none",
+     194
+    ],
+    [
+     "online",
+     160
+    ],
+    [
+     "manual",
+     43
+    ],
+    [
+     "mixed",
+     3
+    ]
+   ]
+  },
+  "insuranceType": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "2",
+     186
+    ],
+    [
+     "4",
+     178
+    ],
+    [
+     "1",
+     32
+    ],
+    [
+     "0",
+     3
+    ],
+    [
+     "3",
+     1
+    ]
+   ]
+  },
+  "inventoryConsumption": {
+   "count": 400,
+   "types": {
+    "array": 400
+   },
+   "distinct_sampled": 0
+  },
+  "inventoryConsumption[]._id": {
+   "count": 384,
+   "types": {
+    "ObjectId": 384
+   },
+   "distinct_sampled": 384,
+   "values_top": [
+    [
+     "6a8b2787540b05a4f5a71f19",
+     1
+    ],
+    [
+     "6a8b2787540b05a4f5a71f1a",
+     1
+    ],
+    [
+     "6a8b2733540b05a4f5a71cc9",
+     1
+    ],
+    [
+     "6a8b25f3540b05a4f5a71602",
+     1
+    ],
+    [
+     "6a8b25f3540b05a4f5a71603",
+     1
+    ],
+    [
+     "6a8b240b540b05a4f5a70fd8",
+     1
+    ]
+   ]
+  },
+  "inventoryConsumption[].consumedBy": {
+   "count": 384,
+   "types": {
+    "ObjectId": 384
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "6a79b91b1d8a192af945bed0",
+     98
+    ],
+    [
+     "687f83f30bd7a390fbd09449",
+     78
+    ],
+    [
+     "687fc2e747d74a8766e0235a",
+     72
+    ],
+    [
+     "687f7af50bd7a390fbd0939d",
+     69
+    ],
+    [
+     "6a5f133c5edc89036e5fcead",
+     27
+    ],
+    [
+     "694d6d967ff7e8a4bffbc039",
+     24
+    ],
+    [
+     "687f80550bd7a390fbd0940b",
+     13
+    ],
+    [
+     "687fc4d747d74a8766e02395",
+     3
+    ]
+   ]
+  },
+  "inventoryConsumption[].consumptionDate": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "1405/06/01",
+     197
+    ],
+    [
+     "1405/05/31",
+     187
+    ]
+   ]
+  },
+  "inventoryConsumption[].consumptionReason": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "inventoryConsumption[].consumptionTime": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "distinct_sampled": 260,
+   "values_top": [
+    [
+     "12:20:15",
+     3
+    ],
+    [
+     "10:23:10",
+     3
+    ],
+    [
+     "13:05:50",
+     3
+    ],
+    [
+     "21:31:59",
+     2
+    ],
+    [
+     "21:25:15",
+     2
+    ],
+    [
+     "20:49:00",
+     2
+    ]
+   ]
+  },
+  "inventoryConsumption[].notes": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "inventoryConsumption[].productCode": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "distinct_sampled": 7,
+   "values": [
+    [
+     "8888",
+     165
+    ],
+    [
+     "001",
+     121
+    ],
+    [
+     "100000",
+     72
+    ],
+    [
+     "002",
+     21
+    ],
+    [
+     "1202",
+     2
+    ],
+    [
+     "007",
+     2
+    ],
+    [
+     "003",
+     1
+    ]
+   ]
+  },
+  "inventoryConsumption[].productId": {
+   "count": 384,
+   "types": {
+    "ObjectId": 384
+   },
+   "distinct_sampled": 7,
+   "values": [
+    [
+     "69db62ce3efdeba6fec8783f",
+     165
+    ],
+    [
+     "688df76cd574cb796598f441",
+     121
+    ],
+    [
+     "69f9cd050a312dcf38190037",
+     72
+    ],
+    [
+     "6890d7926f0ee4f0fd360a2f",
+     21
+    ],
+    [
+     "689b3cddbe32750dac1720c8",
+     2
+    ],
+    [
+     "68918c396f0ee4f0fd360bbf",
+     2
+    ],
+    [
+     "6891842b6f0ee4f0fd360b9d",
+     1
+    ]
+   ]
+  },
+  "inventoryConsumption[].productName": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "inventoryConsumption[].quantity": {
+   "count": 384,
+   "types": {
+    "number": 384
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "1",
+     302
+    ],
+    [
+     "2",
+     59
+    ],
+    [
+     "3",
+     13
+    ],
+    [
+     "4",
+     8
+    ],
+    [
+     "5",
+     2
+    ]
+   ]
+  },
+  "inventoryConsumption[].totalPrice": {
+   "count": 384,
+   "types": {
+    "number": 384
+   },
+   "distinct_sampled": 9,
+   "values": [
+    [
+     "1000000",
+     218
+    ],
+    [
+     "500000",
+     65
+    ],
+    [
+     "2000000",
+     53
+    ],
+    [
+     "600000",
+     21
+    ],
+    [
+     "3000000",
+     12
+    ],
+    [
+     "4000000",
+     8
+    ],
+    [
+     "1500000",
+     3
+    ],
+    [
+     "5000000",
+     2
+    ],
+    [
+     "300000",
+     2
+    ]
+   ]
+  },
+  "inventoryConsumption[].unitName": {
+   "count": 384,
+   "types": {
+    "string": 384
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "inventoryConsumption[].unitPrice": {
+   "count": 384,
+   "types": {
+    "number": 384
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "1000000",
+     287
+    ],
+    [
+     "500000",
+     72
+    ],
+    [
+     "600000",
+     21
+    ],
+    [
+     "300000",
+     2
+    ],
+    [
+     "1500000",
+     2
+    ]
+   ]
+  },
+  "inventoryTotalAmount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 11,
+   "values": [
+    [
+     "0",
+     141
+    ],
+    [
+     "2000000",
+     65
+    ],
+    [
+     "500000",
+     64
+    ],
+    [
+     "3000000",
+     43
+    ],
+    [
+     "1000000",
+     40
+    ],
+    [
+     "600000",
+     19
+    ],
+    [
+     "4000000",
+     12
+    ],
+    [
+     "5000000",
+     8
+    ],
+    [
+     "1500000",
+     4
+    ],
+    [
+     "6000000",
+     2
+    ],
+    [
+     "1900000",
+     2
+    ]
+   ]
+  },
+  "isEmergency": {
+   "count": 8,
+   "types": {
+    "bool": 8
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "True",
+     5
+    ],
+    [
+     "False",
+     3
+    ]
+   ]
+  },
+  "lastSyncedAt": {
+   "count": 8,
+   "types": {
+    "datetime": 8
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "2026-08-23 13:12:28.152000",
+     1
+    ],
+    [
+     "2026-08-23 13:17:58.709000",
+     1
+    ],
+    [
+     "2026-08-23 20:12:35.318000",
+     1
+    ],
+    [
+     "2026-08-23 20:12:41.133000",
+     1
+    ],
+    [
+     "2026-08-23 13:11:10.959000",
+     1
+    ],
+    [
+     "2026-08-23 20:12:41.143000",
+     1
+    ],
+    [
+     "2026-08-23 20:12:41.148000",
+     1
+    ],
+    [
+     "2026-08-23 20:12:41.154000",
+     1
+    ]
+   ]
+  },
+  "manualSupplementaryInsurance": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "manualSupplementaryInsurance.amount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "manualSupplementaryInsurance.enabled": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     400
+    ]
+   ]
+  },
+  "marcoPACS": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "marcoPACS.imagesImported": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     400
+    ]
+   ]
+  },
+  "medicalHistory": {
+   "count": 5,
+   "types": {
+    "object": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistory.Addiction": {
+   "count": 5,
+   "types": {
+    "array": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistory.Disease": {
+   "count": 5,
+   "types": {
+    "array": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistory.DrugAllergy": {
+   "count": 5,
+   "types": {
+    "array": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistory.Family": {
+   "count": 5,
+   "types": {
+    "array": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistory.FoodAllergy": {
+   "count": 5,
+   "types": {
+    "array": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistory.Surgery": {
+   "count": 5,
+   "types": {
+    "array": 5
+   },
+   "distinct_sampled": 0
+  },
+  "medicalHistorySyncedAt": {
+   "count": 5,
+   "types": {
+    "datetime": 5
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "2026-08-23 18:33:15.293000",
+     1
+    ],
+    [
+     "2026-08-23 17:52:07.901000",
+     1
+    ],
+    [
+     "2026-08-23 18:41:37.629000",
+     1
+    ],
+    [
+     "2026-08-23 14:55:27.851000",
+     1
+    ],
+    [
+     "2026-08-23 14:32:44",
+     1
+    ]
+   ]
+  },
+  "modality": {
+   "count": 400,
+   "types": {
+    "string": 392,
+    "object": 8
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "3",
+     153
+    ],
+    [
+     "2",
+     121
+    ],
+    [
+     "4",
+     76
+    ],
+    [
+     "1",
+     40
+    ],
+    [
+     "5",
+     2
+    ]
+   ]
+  },
+  "modality.FullName": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "modality.Icon": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "ultrasiund.png",
+     5
+    ],
+    [
+     "ct.png",
+     2
+    ],
+    [
+     "MRI2.png",
+     1
+    ]
+   ]
+  },
+  "modality.Modality": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "US",
+     5
+    ],
+    [
+     "CT",
+     2
+    ],
+    [
+     "MR",
+     1
+    ]
+   ]
+  },
+  "modality.PerFullName": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "modality._id": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "3",
+     5
+    ],
+    [
+     "1",
+     2
+    ],
+    [
+     "2",
+     1
+    ]
+   ]
+  },
+  "nationalCode": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "pacsPriority": {
+   "count": 8,
+   "types": {
+    "number": 8
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "1",
+     5
+    ],
+    [
+     "9999",
+     3
+    ]
+   ]
+  },
+  "paidAmount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 131,
+   "values_top": [
+    [
+     "0",
+     66
+    ],
+    [
+     "38330000",
+     27
+    ],
+    [
+     "14410000",
+     20
+    ],
+    [
+     "8330000",
+     19
+    ],
+    [
+     "17660000",
+     18
+    ],
+    [
+     "32420000",
+     16
+    ]
+   ]
+  },
+  "patient": {
+   "count": 400,
+   "types": {
+    "ObjectId": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "patientName": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "patientNameSnapshot": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "patientTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta": {
+   "count": 47,
+   "types": {
+    "object": 47
+   },
+   "distinct_sampled": 0
+  },
+  "receptionMeta.appointment": {
+   "count": 8,
+   "types": {
+    "object": 8
+   },
+   "distinct_sampled": 0
+  },
+  "receptionMeta.appointment.completedAt": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.appointment.duration": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.appointment.endTime": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.appointment.persianDate": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "1405/06/01",
+     4
+    ],
+    [
+     "1405/05/31",
+     4
+    ]
+   ]
+  },
+  "receptionMeta.appointment.room": {
+   "count": 8,
+   "types": {
+    "object": 8
+   },
+   "distinct_sampled": 0
+  },
+  "receptionMeta.appointment.room._id": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "6880706147d74a8766e02527",
+     5
+    ],
+    [
+     "687e4c0e0bd7a390fbd0914e",
+     2
+    ],
+    [
+     "687e4c0e0bd7a390fbd0913e",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.appointment.room.name": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.appointment.room.roomNumber": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "1B",
+     5
+    ],
+    [
+     "1A",
+     2
+    ],
+    [
+     "P",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.appointment.scheduledAt": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.appointment.shift": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.appointment.shiftName": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.appointment.startTime": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.appointment.timeSlot": {
+   "count": 8,
+   "types": {
+    "null": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     8
+    ]
+   ]
+  },
+  "receptionMeta.attachmentsCount": {
+   "count": 47,
+   "types": {
+    "number": 47
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "0",
+     40
+    ],
+    [
+     "1",
+     7
+    ]
+   ]
+  },
+  "receptionMeta.date": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "1405/06/01",
+     4
+    ],
+    [
+     "1405/05/31",
+     4
+    ]
+   ]
+  },
+  "receptionMeta.insuranceType": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "4",
+     4
+    ],
+    [
+     "2",
+     4
+    ]
+   ]
+  },
+  "receptionMeta.pacsComment": {
+   "count": 8,
+   "types": {
+    "object": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.pacsComment.text": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.referrerPhysician": {
+   "count": 8,
+   "types": {
+    "object": 8
+   },
+   "distinct_sampled": 0
+  },
+  "receptionMeta.referrerPhysician.Address": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.referrerPhysician.Expertise": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.referrerPhysician.FullName": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.referrerPhysician.MSID": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "119298",
+     1
+    ],
+    [
+     "26886",
+     1
+    ],
+    [
+     "109896",
+     1
+    ],
+    [
+     "50703",
+     1
+    ],
+    [
+     "0",
+     1
+    ],
+    [
+     "160202",
+     1
+    ],
+    [
+     "160504",
+     1
+    ],
+    [
+     "4849",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.referrerPhysician.Tel": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.referrerPhysician._id": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "68999930388aeb95fbfaef8f",
+     1
+    ],
+    [
+     "6897371e9db3e839857e6f7f",
+     1
+    ],
+    [
+     "690aec8a74fc9dd3905b6f85",
+     1
+    ],
+    [
+     "68a0339eafb9a46d457236aa",
+     1
+    ],
+    [
+     "68dbcb919cca4b6b40eecfc2",
+     1
+    ],
+    [
+     "69e8670b6c856c1999a10bd7",
+     1
+    ],
+    [
+     "694bb82c29ae134fb6cac836",
+     1
+    ],
+    [
+     "695f6f4a8b237d022aeac5a1",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.registeredBy": {
+   "count": 8,
+   "types": {
+    "object": 8
+   },
+   "distinct_sampled": 0
+  },
+  "receptionMeta.registeredBy.FullName": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.registeredBy.NickName": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "receptionMeta.registeredBy.User": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 6,
+   "values": [
+    [
+     "elnaz",
+     3
+    ],
+    [
+     "Donya",
+     1
+    ],
+    [
+     "gholipour",
+     1
+    ],
+    [
+     "ahmadi",
+     1
+    ],
+    [
+     "satar",
+     1
+    ],
+    [
+     "hooman2",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.registeredBy._id": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 6,
+   "values": [
+    [
+     "6a79b91b1d8a192af945bed0",
+     3
+    ],
+    [
+     "687fc2e747d74a8766e0235a",
+     1
+    ],
+    [
+     "687f80550bd7a390fbd0940b",
+     1
+    ],
+    [
+     "694bf5421f51ddd04dfda299",
+     1
+    ],
+    [
+     "687e4a3a0bd7a390fbd090fd",
+     1
+    ],
+    [
+     "687f7af50bd7a390fbd0939d",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.time": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "16:28:28",
+     1
+    ],
+    [
+     "10:23:31",
+     1
+    ],
+    [
+     "08:10:47",
+     1
+    ],
+    [
+     "08:07:51",
+     1
+    ],
+    [
+     "14:59:40",
+     1
+    ],
+    [
+     "13:45:14",
+     1
+    ],
+    [
+     "12:17:22",
+     1
+    ],
+    [
+     "11:25:47",
+     1
+    ]
+   ]
+  },
+  "receptionMeta.voiceCount": {
+   "count": 47,
+   "types": {
+    "number": 47
+   },
+   "distinct_sampled": 4,
+   "values": [
+    [
+     "1",
+     37
+    ],
+    [
+     "0",
+     8
+    ],
+    [
+     "2",
+     1
+    ],
+    [
+     "3",
+     1
+    ]
+   ]
+  },
+  "referrerPhysician": {
+   "count": 400,
+   "types": {
+    "ObjectId": 400
+   },
+   "distinct_sampled": 197,
+   "values_top": [
+    [
+     "6880b7927e4719ba0d054d98",
+     50
+    ],
+    [
+     "688486d3dbfd8dca0f58198f",
+     28
+    ],
+    [
+     "694a5e5e839ed711aceaf9cd",
+     25
+    ],
+    [
+     "688a522153e70f5ca5fc969a",
+     11
+    ],
+    [
+     "68905ccec5c6cd641888799c",
+     9
+    ],
+    [
+     "6897371e9db3e839857e6f7f",
+     7
+    ]
+   ]
+  },
+  "registeredBy": {
+   "count": 400,
+   "types": {
+    "ObjectId": 400
+   },
+   "distinct_sampled": 10,
+   "values": [
+    [
+     "6a79b91b1d8a192af945bed0",
+     117
+    ],
+    [
+     "687f7af50bd7a390fbd0939d",
+     86
+    ],
+    [
+     "687fc2e747d74a8766e0235a",
+     69
+    ],
+    [
+     "687f83f30bd7a390fbd09449",
+     63
+    ],
+    [
+     "694d6d967ff7e8a4bffbc039",
+     25
+    ],
+    [
+     "6a5f133c5edc89036e5fcead",
+     19
+    ],
+    [
+     "687f80550bd7a390fbd0940b",
+     15
+    ],
+    [
+     "687fc4d747d74a8766e02395",
+     4
+    ],
+    [
+     "694bf5421f51ddd04dfda299",
+     1
+    ],
+    [
+     "687e4a3a0bd7a390fbd090fd",
+     1
+    ]
+   ]
+  },
+  "reportStatus": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "returned": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     400
+    ]
+   ]
+  },
+  "risPatientId": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "risUpdatedAt": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "2026-08-23T13:12:06.918Z",
+     1
+    ],
+    [
+     "2026-08-23T10:39:57.269Z",
+     1
+    ],
+    [
+     "2026-08-23T20:10:28.224Z",
+     1
+    ],
+    [
+     "2026-08-23T20:10:29.633Z",
+     1
+    ],
+    [
+     "2026-08-22T11:29:40.385Z",
+     1
+    ],
+    [
+     "2026-08-23T20:10:29.643Z",
+     1
+    ],
+    [
+     "2026-08-23T20:10:29.649Z",
+     1
+    ],
+    [
+     "2026-08-23T20:10:29.654Z",
+     1
+    ]
+   ]
+  },
+  "salamatInsurance": {
+   "count": 386,
+   "types": {
+    "object": 386
+   },
+   "distinct_sampled": 0
+  },
+  "salamatInsurance.approvedAmount": {
+   "count": 386,
+   "types": {
+    "number": 386
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     386
+    ]
+   ]
+  },
+  "salamatInsurance.citizenSession": {
+   "count": 13,
+   "types": {
+    "string": 13
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "salamatInsurance.deliveryCheckCode": {
+   "count": 13,
+   "types": {
+    "string": 13
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "4603c86aa6fe2b095cea2ab514fd4ac1c1f0df3b1eeaafe46cdc25d08634",
+     13
+    ]
+   ]
+  },
+  "salamatInsurance.error": {
+   "count": 18,
+   "types": {
+    "null": 13,
+    "string": 5
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "salamatInsurance.insuranceShare": {
+   "count": 386,
+   "types": {
+    "number": 386
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     386
+    ]
+   ]
+  },
+  "salamatInsurance.patientShare": {
+   "count": 386,
+   "types": {
+    "number": 386
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "salamatInsurance.processed": {
+   "count": 386,
+   "types": {
+    "bool": 386
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "False",
+     373
+    ],
+    [
+     "True",
+     13
+    ]
+   ]
+  },
+  "salamatInsurance.processedAt": {
+   "count": 18,
+   "types": {
+    "datetime": 18
+   },
+   "distinct_sampled": 18,
+   "values": [
+    [
+     "2026-08-23 14:15:30.838000",
+     1
+    ],
+    [
+     "2026-08-23 12:43:11.930000",
+     1
+    ],
+    [
+     "2026-08-23 11:02:55.856000",
+     1
+    ],
+    [
+     "2026-08-23 10:49:21.577000",
+     1
+    ],
+    [
+     "2026-08-23 08:50:27.710000",
+     1
+    ],
+    [
+     "2026-08-23 07:55:57.275000",
+     1
+    ],
+    [
+     "2026-08-23 07:34:05.627000",
+     1
+    ],
+    [
+     "2026-08-23 07:33:36.873000",
+     1
+    ],
+    [
+     "2026-08-23 04:58:00.016000",
+     1
+    ],
+    [
+     "2026-08-22 13:58:16.881000",
+     1
+    ],
+    [
+     "2026-08-22 10:09:30.629000",
+     1
+    ],
+    [
+     "2026-08-22 09:57:12.052000",
+     1
+    ],
+    [
+     "2026-08-22 08:33:02.588000",
+     1
+    ],
+    [
+     "2026-08-22 06:59:18.840000",
+     1
+    ],
+    [
+     "2026-08-22 06:57:53.356000",
+     1
+    ],
+    [
+     "2026-08-22 06:54:31.270000",
+     1
+    ],
+    [
+     "2026-08-22 06:45:11.260000",
+     1
+    ],
+    [
+     "2026-08-22 06:38:59.094000",
+     1
+    ]
+   ]
+  },
+  "salamatInsurance.processedGroups": {
+   "count": 386,
+   "types": {
+    "number": 386
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "0",
+     373
+    ],
+    [
+     "1",
+     13
+    ]
+   ]
+  },
+  "salamatInsurance.resCode": {
+   "count": 13,
+   "types": {
+    "number": 13
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "1",
+     13
+    ]
+   ]
+  },
+  "salamatInsurance.resMessage": {
+   "count": 13,
+   "types": {
+    "string": 13
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "salamatInsurance.retryCount": {
+   "count": 386,
+   "types": {
+    "number": 386
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "0",
+     381
+    ],
+    [
+     "1",
+     5
+    ]
+   ]
+  },
+  "salamatInsurance.samadCode": {
+   "count": 13,
+   "types": {
+    "string": 13
+   },
+   "distinct_sampled": 13,
+   "values": [
+    [
+     "2456234212978419",
+     1
+    ],
+    [
+     "6303926801030425",
+     1
+    ],
+    [
+     "0006723867331118",
+     1
+    ],
+    [
+     "2898626500531193",
+     1
+    ],
+    [
+     "5644321480934600",
+     1
+    ],
+    [
+     "2192222212035181",
+     1
+    ],
+    [
+     "8962827192231192",
+     1
+    ],
+    [
+     "0106922461035122",
+     1
+    ],
+    [
+     "6425529487731185",
+     1
+    ],
+    [
+     "2401827581238563",
+     1
+    ],
+    [
+     "9461227010939526",
+     1
+    ],
+    [
+     "2683527573137267",
+     1
+    ],
+    [
+     "0196922491035163",
+     1
+    ]
+   ]
+  },
+  "salamatInsurance.session": {
+   "count": 13,
+   "types": {
+    "string": 13
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "salamatInsurance.status": {
+   "count": 386,
+   "types": {
+    "string": 386
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "pending",
+     368
+    ],
+    [
+     "success",
+     13
+    ],
+    [
+     "failed",
+     5
+    ]
+   ]
+  },
+  "salamatInsurance.successfulGroups": {
+   "count": 386,
+   "types": {
+    "number": 386
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "0",
+     373
+    ],
+    [
+     "1",
+     13
+    ]
+   ]
+  },
+  "salamatInsuranceTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 14,
+   "values": [
+    [
+     "0",
+     379
+    ],
+    [
+     "5910000",
+     6
+    ],
+    [
+     "3250000",
+     4
+    ],
+    [
+     "12850000",
+     1
+    ],
+    [
+     "1290000",
+     1
+    ],
+    [
+     "1730000",
+     1
+    ],
+    [
+     "2110000",
+     1
+    ],
+    [
+     "1610000",
+     1
+    ],
+    [
+     "7900000",
+     1
+    ],
+    [
+     "2960000",
+     1
+    ],
+    [
+     "5860000",
+     1
+    ],
+    [
+     "5160000",
+     1
+    ],
+    [
+     "20080000",
+     1
+    ],
+    [
+     "5360000",
+     1
+    ]
+   ]
+  },
+  "selectedSupplementaryInsurance": {
+   "count": 400,
+   "types": {
+    "null": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     400
+    ]
+   ]
+  },
+  "services": {
+   "count": 400,
+   "types": {
+    "array": 400
+   },
+   "distinct_sampled": 0
+  },
+  "services[].Army": {
+   "count": 480,
+   "types": {
+    "bool": 480
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "False",
+     473
+    ],
+    [
+     "True",
+     7
+    ]
+   ]
+  },
+  "services[].Group": {
+   "count": 463,
+   "types": {
+    "ObjectId": 453,
+    "string": 10
+   },
+   "distinct_sampled": 20,
+   "values": [
+    [
+     "69c25b4f9aa3dbee2d0c6b72",
+     116
+    ],
+    [
+     "69c25b089aa3dbee2d0c6aad",
+     82
+    ],
+    [
+     "69c25ac99aa3dbee2d0c6a57",
+     48
+    ],
+    [
+     "69c25bab9aa3dbee2d0c6bba",
+     36
+    ],
+    [
+     "69c25ac99aa3dbee2d0c6a5f",
+     32
+    ],
+    [
+     "69c25b4f9aa3dbee2d0c6b86",
+     31
+    ],
+    [
+     "69c25ac99aa3dbee2d0c6a48",
+     25
+    ],
+    [
+     "69c25b4e9aa3dbee2d0c6b52",
+     24
+    ],
+    [
+     "69c25ac99aa3dbee2d0c6a4f",
+     14
+    ],
+    [
+     "69c25ac99aa3dbee2d0c6a5b",
+     12
+    ],
+    [
+     "69c25aca9aa3dbee2d0c6a79",
+     8
+    ],
+    [
+     "69c25bab9aa3dbee2d0c6c8c",
+     8
+    ],
+    [
+     "69c25b089aa3dbee2d0c6afd",
+     8
+    ],
+    [
+     "69c25bab9aa3dbee2d0c6bfe",
+     4
+    ],
+    [
+     "69c25b4f9aa3dbee2d0c6b93",
+     4
+    ],
+    [
+     "69c25ac99aa3dbee2d0c6a64",
+     3
+    ],
+    [
+     "69c25b309aa3dbee2d0c6b47",
+     2
+    ],
+    [
+     "69c25b4f9aa3dbee2d0c6b8d",
+     2
+    ],
+    [
+     "69c25b4f9aa3dbee2d0c6ba0",
+     2
+    ],
+    [
+     "69c25aca9aa3dbee2d0c6a8a",
+     2
+    ]
+   ]
+  },
+  "services[].Modality": {
+   "count": 480,
+   "types": {
+    "string": 480
+   },
+   "distinct_sampled": 5,
+   "values": [
+    [
+     "3",
+     187
+    ],
+    [
+     "2",
+     152
+    ],
+    [
+     "4",
+     91
+    ],
+    [
+     "1",
+     48
+    ],
+    [
+     "5",
+     2
+    ]
+   ]
+  },
+  "services[].PrivateTariff": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 64,
+   "values_top": [
+    [
+     "36330000",
+     128
+    ],
+    [
+     "17660000",
+     55
+    ],
+    [
+     "7830000",
+     24
+    ],
+    [
+     "11610000",
+     24
+    ],
+    [
+     "11670000",
+     18
+    ],
+    [
+     "9280000",
+     18
+    ]
+   ]
+  },
+  "services[].Qty": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "1",
+     467
+    ],
+    [
+     "2",
+     13
+    ]
+   ]
+  },
+  "services[].SA": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 57,
+   "values_top": [
+    [
+     "25430000",
+     111
+    ],
+    [
+     "0",
+     90
+    ],
+    [
+     "12360000",
+     46
+    ],
+    [
+     "5480000",
+     24
+    ],
+    [
+     "8120000",
+     21
+    ],
+    [
+     "8160000",
+     14
+    ]
+   ]
+  },
+  "services[].ST": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 65,
+   "values_top": [
+    [
+     "5910000",
+     115
+    ],
+    [
+     "3250000",
+     47
+    ],
+    [
+     "0",
+     45
+    ],
+    [
+     "1340000",
+     24
+    ],
+    [
+     "2090000",
+     24
+    ],
+    [
+     "1290000",
+     18
+    ]
+   ]
+  },
+  "services[].Salamat": {
+   "count": 480,
+   "types": {
+    "bool": 480
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "False",
+     452
+    ],
+    [
+     "True",
+     28
+    ]
+   ]
+  },
+  "services[].Service": {
+   "count": 480,
+   "types": {
+    "string": 480
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "services[].ServiceGroup": {
+   "count": 455,
+   "types": {
+    "string": 455
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "services[].SupplementaryInsurance": {
+   "count": 480,
+   "types": {
+    "bool": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     480
+    ]
+   ]
+  },
+  "services[].Tamin": {
+   "count": 480,
+   "types": {
+    "bool": 480
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "False",
+     255
+    ],
+    [
+     "True",
+     225
+    ]
+   ]
+  },
+  "services[]._id": {
+   "count": 480,
+   "types": {
+    "string": 480
+   },
+   "distinct_sampled": 148,
+   "values_top": [
+    [
+     "704020",
+     33
+    ],
+    [
+     "701626",
+     32
+    ],
+    [
+     "024558-901",
+     23
+    ],
+    [
+     "701715",
+     21
+    ],
+    [
+     "700085",
+     19
+    ],
+    [
+     "704045",
+     17
+    ]
+   ]
+  },
+  "services[].arteshOrgAmount": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].arteshPatientAmount": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "services[].eprsC_ID": {
+   "count": 173,
+   "types": {
+    "number": 173
+   },
+   "distinct_sampled": 138,
+   "values_top": [
+    [
+     "13207004391.0",
+     3
+    ],
+    [
+     "13192852657.0",
+     3
+    ],
+    [
+     "13204968586.0",
+     3
+    ],
+    [
+     "13134495315.0",
+     3
+    ],
+    [
+     "13100230619.0",
+     3
+    ],
+    [
+     "13189902587.0",
+     3
+    ]
+   ]
+  },
+  "services[].insuranceShare": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].insuranceSource": {
+   "count": 480,
+   "types": {
+    "string": 480
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "none",
+     215
+    ],
+    [
+     "online",
+     190
+    ],
+    [
+     "manual",
+     75
+    ]
+   ]
+  },
+  "services[].org": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 65,
+   "values_top": [
+    [
+     "5910000",
+     128
+    ],
+    [
+     "3250000",
+     53
+    ],
+    [
+     "1340000",
+     24
+    ],
+    [
+     "2090000",
+     24
+    ],
+    [
+     "1290000",
+     20
+    ],
+    [
+     "2110000",
+     17
+    ]
+   ]
+  },
+  "services[].personnelIds": {
+   "count": 480,
+   "types": {
+    "array": 480
+   },
+   "distinct_sampled": 0
+  },
+  "services[].salamatApprovedAmount": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].salamatCheckCode": {
+   "count": 17,
+   "types": {
+    "string": 17
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "9565c3d16e30b52ba304a12f2423d32b8194bc07135a40f1054472ddbd11",
+     17
+    ]
+   ]
+  },
+  "services[].salamatDeliveryCheckCode": {
+   "count": 14,
+   "types": {
+    "string": 14
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "4603c86aa6fe2b095cea2ab514fd4ac1c1f0df3b1eeaafe46cdc25d08634",
+     14
+    ]
+   ]
+  },
+  "services[].salamatInsuranceShare": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].salamatPatientShare": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "services[].salamatPrintCode": {
+   "count": 17,
+   "types": {
+    "string": 17
+   },
+   "distinct_sampled": 14,
+   "values": [
+    [
+     "63863",
+     2
+    ],
+    [
+     "23606",
+     2
+    ],
+    [
+     "23165",
+     2
+    ],
+    [
+     "17156",
+     1
+    ],
+    [
+     "23005",
+     1
+    ],
+    [
+     "13600",
+     1
+    ],
+    [
+     "93092",
+     1
+    ],
+    [
+     "03842",
+     1
+    ],
+    [
+     "83198",
+     1
+    ],
+    [
+     "53100",
+     1
+    ],
+    [
+     "93966",
+     1
+    ],
+    [
+     "83829",
+     1
+    ],
+    [
+     "63800",
+     1
+    ],
+    [
+     "63994",
+     1
+    ]
+   ]
+  },
+  "services[].salamatSamadCode": {
+   "count": 17,
+   "types": {
+    "string": 17
+   },
+   "distinct_sampled": 14,
+   "values": [
+    [
+     "4263724085633461",
+     2
+    ],
+    [
+     "0106922461035122",
+     2
+    ],
+    [
+     "9461227010939526",
+     2
+    ],
+    [
+     "2456234212978419",
+     1
+    ],
+    [
+     "6303926801030425",
+     1
+    ],
+    [
+     "0006723867331118",
+     1
+    ],
+    [
+     "2898626500531193",
+     1
+    ],
+    [
+     "5644321480934600",
+     1
+    ],
+    [
+     "2192222212035181",
+     1
+    ],
+    [
+     "6509426518631153",
+     1
+    ],
+    [
+     "8962827192231192",
+     1
+    ],
+    [
+     "6425529487731185",
+     1
+    ],
+    [
+     "2401827581238563",
+     1
+    ],
+    [
+     "0196922491035163",
+     1
+    ]
+   ]
+  },
+  "services[].supplementaryAtiehCommission": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].supplementaryCoveragePercentage": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].supplementaryCoveredAmount": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].supplementaryDeductible": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].supplementaryInsuranceId": {
+   "count": 67,
+   "types": {
+    "null": 67
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     67
+    ]
+   ]
+  },
+  "services[].supplementaryMaxCoverage": {
+   "count": 67,
+   "types": {
+    "null": 67
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "None",
+     67
+    ]
+   ]
+  },
+  "services[].taminApprovedAmount": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 46,
+   "values_top": [
+    [
+     "0",
+     339
+    ],
+    [
+     "5910000",
+     21
+    ],
+    [
+     "3250000",
+     16
+    ],
+    [
+     "11820000",
+     14
+    ],
+    [
+     "2110000",
+     6
+    ],
+    [
+     "6150000",
+     6
+    ]
+   ]
+  },
+  "services[].taminEprsC_ID": {
+   "count": 151,
+   "types": {
+    "number": 146,
+    "null": 5
+   },
+   "distinct_sampled": 118,
+   "values_top": [
+    [
+     "None",
+     5
+    ],
+    [
+     "13192852657.0",
+     3
+    ],
+    [
+     "13204968586.0",
+     3
+    ],
+    [
+     "13134495315.0",
+     3
+    ],
+    [
+     "13100230619.0",
+     3
+    ],
+    [
+     "12953023730.0",
+     3
+    ]
+   ]
+  },
+  "services[].taminInsuranceShare": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     480
+    ]
+   ]
+  },
+  "services[].taminPatientShare": {
+   "count": 480,
+   "types": {
+    "number": 480
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "services[].taminRegisterId": {
+   "count": 151,
+   "types": {
+    "string": 146,
+    "null": 5
+   },
+   "distinct_sampled": 118,
+   "values_top": [
+    [
+     "None",
+     5
+    ],
+    [
+     "556867551",
+     3
+    ],
+    [
+     "556849381",
+     3
+    ],
+    [
+     "556844780",
+     3
+    ],
+    [
+     "556634270",
+     3
+    ],
+    [
+     "556582473",
+     3
+    ]
+   ]
+  },
+  "settled": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "True",
+     335
+    ],
+    [
+     "False",
+     65
+    ]
+   ]
+  },
+  "supplementaryAtiehCommissionTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "supplementaryInsurance": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "supplementaryInsurance.applied": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     400
+    ]
+   ]
+  },
+  "supplementaryInsurance.totalAtiehCommission": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "supplementaryInsurance.totalCoverage": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "supplementaryInsurance.totalDeductible": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "supplementaryInsuranceTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "syncFingerprint": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "f0d23c33be990bfa49a8237bfacb8686",
+     1
+    ],
+    [
+     "3bf33d00cdb139c3ff7aa36b537657e2",
+     1
+    ],
+    [
+     "fa9769634f32e47610fcc49187613eaa",
+     1
+    ],
+    [
+     "14086a6d4c3e27b9694ecfa271ce2590",
+     1
+    ],
+    [
+     "10617c2729613c87c3d0658901928993",
+     1
+    ],
+    [
+     "b296dd957efbd690733228f4aa730229",
+     1
+    ],
+    [
+     "a771a1d5ece184b837dfdec2aa848e4b",
+     1
+    ],
+    [
+     "1a0ceb3ec6c486d74dfd9660c1166781",
+     1
+    ]
+   ]
+  },
+  "tags": {
+   "count": 400,
+   "types": {
+    "array": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "6963314c5edcfc17d9b00dd6",
+     170
+    ]
+   ]
+  },
+  "taminInsurance": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "taminInsurance.approvedAmount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "taminInsurance.eprsC_ID": {
+   "count": 3,
+   "types": {
+    "number": 3
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "12987822057.0",
+     1
+    ],
+    [
+     "12953023730.0",
+     1
+    ],
+    [
+     "12953023803.0",
+     1
+    ]
+   ]
+  },
+  "taminInsurance.error": {
+   "count": 199,
+   "types": {
+    "null": 112,
+    "string": 87
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "taminInsurance.insuranceShare": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "taminInsurance.patientShare": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "taminInsurance.prescInfo": {
+   "count": 400,
+   "types": {
+    "object": 400
+   },
+   "distinct_sampled": 0
+  },
+  "taminInsurance.prescInfo.diagnoseCode": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "1",
+     400
+    ]
+   ]
+  },
+  "taminInsurance.prescInfo.diagnoseComment": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "taminInsurance.prescInfo.grpCode": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "-4",
+     400
+    ]
+   ]
+  },
+  "taminInsurance.prescriptionId": {
+   "count": 123,
+   "types": {
+    "string": 123
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "taminInsurance.processed": {
+   "count": 400,
+   "types": {
+    "bool": 400
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "False",
+     279
+    ],
+    [
+     "True",
+     121
+    ]
+   ]
+  },
+  "taminInsurance.processedAt": {
+   "count": 199,
+   "types": {
+    "datetime": 199
+   },
+   "distinct_sampled": 197,
+   "values_top": [
+    [
+     "2026-08-22 06:54:22.987000",
+     2
+    ],
+    [
+     "2026-08-22 06:42:04.584000",
+     2
+    ],
+    [
+     "2026-08-23 16:38:17.089000",
+     1
+    ],
+    [
+     "2026-08-23 16:22:20.088000",
+     1
+    ],
+    [
+     "2026-08-23 16:10:11.267000",
+     1
+    ],
+    [
+     "2026-08-23 16:07:53.759000",
+     1
+    ]
+   ]
+  },
+  "taminInsurance.processedGroups": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "0",
+     280
+    ],
+    [
+     "1",
+     119
+    ],
+    [
+     "2",
+     1
+    ]
+   ]
+  },
+  "taminInsurance.registerId": {
+   "count": 123,
+   "types": {
+    "string": 123
+   },
+   "distinct_sampled": 123,
+   "values_top": [
+    [
+     "556925648",
+     1
+    ],
+    [
+     "556921317",
+     1
+    ],
+    [
+     "556920904",
+     1
+    ],
+    [
+     "556917311",
+     1
+    ],
+    [
+     "556917107",
+     1
+    ],
+    [
+     "556913177",
+     1
+    ]
+   ]
+  },
+  "taminInsurance.retrievedAt": {
+   "count": 3,
+   "types": {
+    "datetime": 3
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "2026-08-22 07:23:09.841000",
+     1
+    ],
+    [
+     "2026-08-22 08:03:40.134000",
+     1
+    ],
+    [
+     "2026-08-22 08:03:54.424000",
+     1
+    ]
+   ]
+  },
+  "taminInsurance.retrievedBy": {
+   "count": 3,
+   "types": {
+    "ObjectId": 3
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "687f83f30bd7a390fbd09449",
+     3
+    ]
+   ]
+  },
+  "taminInsurance.retryCount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "0",
+     306
+    ],
+    [
+     "1",
+     80
+    ],
+    [
+     "2",
+     14
+    ]
+   ]
+  },
+  "taminInsurance.status": {
+   "count": 400,
+   "types": {
+    "string": 400
+   },
+   "distinct_sampled": 3,
+   "values": [
+    [
+     "pending",
+     201
+    ],
+    [
+     "success",
+     112
+    ],
+    [
+     "failed",
+     87
+    ]
+   ]
+  },
+  "taminInsurance.statusCode": {
+   "count": 123,
+   "types": {
+    "number": 123
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "200",
+     123
+    ]
+   ]
+  },
+  "taminInsurance.successfulGroups": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 2,
+   "values": [
+    [
+     "0",
+     280
+    ],
+    [
+     "1",
+     120
+    ]
+   ]
+  },
+  "taminInsurance.token": {
+   "count": 120,
+   "types": {
+    "string": 120
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVfbmFtZSI6IjA",
+     120
+    ]
+   ]
+  },
+  "taminInsuranceTotal": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 70,
+   "values_top": [
+    [
+     "0",
+     225
+    ],
+    [
+     "5910000",
+     28
+    ],
+    [
+     "3250000",
+     21
+    ],
+    [
+     "11820000",
+     9
+    ],
+    [
+     "2110000",
+     8
+    ],
+    [
+     "1290000",
+     7
+    ]
+   ]
+  },
+  "totalAmount": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 108,
+   "values_top": [
+    [
+     "38330000",
+     54
+    ],
+    [
+     "17660000",
+     47
+    ],
+    [
+     "39330000",
+     31
+    ],
+    [
+     "8330000",
+     24
+    ],
+    [
+     "11610000",
+     15
+    ],
+    [
+     "12270000",
+     13
+    ]
+   ]
+  },
+  "totalDuration": {
+   "count": 400,
+   "types": {
+    "number": 400
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "0",
+     400
+    ]
+   ]
+  },
+  "updateHistory": {
+   "count": 400,
+   "types": {
+    "array": 400
+   },
+   "distinct_sampled": 0
+  },
+  "updateHistory[].User": {
+   "count": 147,
+   "types": {
+    "ObjectId": 147
+   },
+   "distinct_sampled": 8,
+   "values": [
+    [
+     "6a79b91b1d8a192af945bed0",
+     72
+    ],
+    [
+     "687f7af50bd7a390fbd0939d",
+     36
+    ],
+    [
+     "687fc2e747d74a8766e0235a",
+     15
+    ],
+    [
+     "694d6d967ff7e8a4bffbc039",
+     6
+    ],
+    [
+     "6a5f133c5edc89036e5fcead",
+     6
+    ],
+    [
+     "687f83f30bd7a390fbd09449",
+     6
+    ],
+    [
+     "694bf5421f51ddd04dfda299",
+     3
+    ],
+    [
+     "687f80550bd7a390fbd0940b",
+     3
+    ]
+   ]
+  },
+  "updateHistory[]._id": {
+   "count": 147,
+   "types": {
+    "ObjectId": 147
+   },
+   "distinct_sampled": 147,
+   "values_top": [
+    [
+     "6a8b104f540b05a4f5a67e96",
+     1
+    ],
+    [
+     "6a8b104f540b05a4f5a67e97",
+     1
+    ],
+    [
+     "6a8b104f540b05a4f5a67e98",
+     1
+    ],
+    [
+     "6a8b0798540b05a4f5a621a5",
+     1
+    ],
+    [
+     "6a8b0798540b05a4f5a621a6",
+     1
+    ],
+    [
+     "6a8b0798540b05a4f5a621a7",
+     1
+    ]
+   ]
+  },
+  "updateHistory[].date": {
+   "count": 147,
+   "types": {
+    "string": 147
+   },
+   "distinct_sampled": 50,
+   "values_top": [
+    [
+     "1405/06/01 19:52:55",
+     3
+    ],
+    [
+     "1405/06/01 19:15:44",
+     3
+    ],
+    [
+     "1405/06/01 19:07:01",
+     3
+    ],
+    [
+     "1405/06/01 18:46:06",
+     3
+    ],
+    [
+     "1405/06/01 18:36:41",
+     3
+    ],
+    [
+     "1405/06/01 18:27:59",
+     3
+    ]
+   ]
+  },
+  "updateHistory[].field": {
+   "count": 147,
+   "types": {
+    "string": 147
+   },
+   "distinct_sampled": 9,
+   "values": [
+    [
+     "services",
+     49
+    ],
+    [
+     "referrerPhysician",
+     49
+    ],
+    [
+     "taminInsuranceTotal",
+     14
+    ],
+    [
+     "inventoryConsumption",
+     12
+    ],
+    [
+     "manualSupplementaryInsurance",
+     10
+    ],
+    [
+     "tags",
+     5
+    ],
+    [
+     "cashDeskDiscount",
+     4
+    ],
+    [
+     "totalAmount",
+     3
+    ],
+    [
+     "armyInsuranceTotal",
+     1
+    ]
+   ]
+  },
+  "updateHistory[].newValue": {
+   "count": 147,
+   "types": {
+    "string": 147
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "updateHistory[].oldValue": {
+   "count": 147,
+   "types": {
+    "string": 147
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "updatedAt": {
+   "count": 400,
+   "types": {
+    "datetime": 400
+   },
+   "distinct_sampled": 400,
+   "values_top": [
+    [
+     "2026-08-23 20:11:39.661000",
+     1
+    ],
+    [
+     "2026-08-23 17:00:35.377000",
+     1
+    ],
+    [
+     "2026-08-23 16:55:15.200000",
+     1
+    ],
+    [
+     "2026-08-23 16:47:37.412000",
+     1
+    ],
+    [
+     "2026-08-23 17:09:28.573000",
+     1
+    ],
+    [
+     "2026-08-23 17:15:51.416000",
+     1
+    ]
+   ]
+  },
+  "workflowStatus": {
+   "count": 8,
+   "types": {
+    "string": 8
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "waiting_appointment",
+     8
+    ]
+   ]
+  }
+ },
+ "reception_sample_size": 400,
+ "indexes": {
+  "receptions": [
+   {
+    "name": "_id_",
+    "key": [
+     [
+      "_id",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "ReceptionID_1",
+    "key": [
+     [
+      "ReceptionID",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "Date_1_deleted_1",
+    "key": [
+     [
+      "Date",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "Date_1_deleted_1_modality_1",
+    "key": [
+     [
+      "Date",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "modality",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "Date_1_deleted_1_settled_1",
+    "key": [
+     [
+      "Date",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "settled",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "patient_1_deleted_1",
+    "key": [
+     [
+      "patient",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "registeredBy_1_Date_1",
+    "key": [
+     [
+      "registeredBy",
+      1
+     ],
+     [
+      "Date",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "referrerPhysician_1_Date_1",
+    "key": [
+     [
+      "referrerPhysician",
+      1
+     ],
+     [
+      "Date",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "deleted_1_ReceptionID_-1",
+    "key": [
+     [
+      "deleted",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "deleted_1_Date_1_ReceptionID_-1",
+    "key": [
+     [
+      "deleted",
+      1
+     ],
+     [
+      "Date",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "imagingWorkflow.report.status_1_deleted_1_ReceptionID_-1",
+    "key": [
+     [
+      "imagingWorkflow.report.status",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "imagingWorkflow.report.radiologist_1_deleted_1_ReceptionID_-1",
+    "key": [
+     [
+      "imagingWorkflow.report.radiologist",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "imagingWorkflow.workflowStatus_1_deleted_1",
+    "key": [
+     [
+      "imagingWorkflow.workflowStatus",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "imagingWorkflow.report.pacsVoice.hasVoice_1_deleted_1_ReceptionID_-1",
+    "key": [
+     [
+      "imagingWorkflow.report.pacsVoice.hasVoice",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "Date_1_returned_1",
+    "key": [
+     [
+      "Date",
+      1
+     ],
+     [
+      "returned",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "nationalCode_1_deleted_1_returned_1",
+    "key": [
+     [
+      "nationalCode",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "returned",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "nationalCode_1_ReceptionID_-1",
+    "key": [
+     [
+      "nationalCode",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "risPatientId_1_ReceptionID_-1",
+    "key": [
+     [
+      "risPatientId",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "workflowStatus_1",
+    "key": [
+     [
+      "workflowStatus",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "lastSyncedAt_-1",
+    "key": [
+     [
+      "lastSyncedAt",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "isEmergency_-1_pacsPriority_1",
+    "key": [
+     [
+      "isEmergency",
+      -1
+     ],
+     [
+      "pacsPriority",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "RequestID_1_modality_1",
+    "key": [
+     [
+      "RequestID",
+      1
+     ],
+     [
+      "modality",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "patient_1_createdAt_-1",
+    "key": [
+     [
+      "patient",
+      1
+     ],
+     [
+      "createdAt",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "imagingWorkflow.report.pacsAttachments.hasAttachments_1_deleted_1_ReceptionID_-1",
+    "key": [
+     [
+      "imagingWorkflow.report.pacsAttachments.hasAttachments",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   },
+   {
+    "name": "imagingWorkflow.report.risAttachmentsHasAny_1_deleted_1_ReceptionID_-1",
+    "key": [
+     [
+      "imagingWorkflow.report.risAttachmentsHasAny",
+      1
+     ],
+     [
+      "deleted",
+      1
+     ],
+     [
+      "ReceptionID",
+      -1
+     ]
+    ]
+   }
+  ],
+  "Modality": [
+   {
+    "name": "_id_",
+    "key": [
+     [
+      "_id",
+      1
+     ]
+    ]
+   },
+   {
+    "name": "shortName_1",
+    "key": [
+     [
+      "shortName",
+      1
+     ]
+    ]
+   }
+  ],
+  "ServicesInfo": [
+   {
+    "name": "_id_",
+    "key": [
+     [
+      "_id",
+      1
+     ]
+    ]
+   }
+  ],
+  "AdminUsers": [
+   {
+    "name": "_id_",
+    "key": [
+     [
+      "_id",
+      1
+     ]
+    ]
+   }
+  ]
+ },
+ "catalogues": {
+  "Modality": [
+   {
+    "_id": "3",
+    "Modality": "US",
+    "FullName": "Sonography",
+    "PerFullName": "سونوگرافی",
+    "Icon": "ultrasiund.png",
+    "Disabled": false,
+    "__v": 8,
+    "RequiresScheduling": false,
+    "WarehouseProducts": []
+   },
+   {
+    "_id": "1",
+    "Modality": "CT",
+    "FullName": "CT Scan",
+    "PerFullName": "سی تی اسکن",
+    "Icon": "ct.png",
+    "Disabled": false,
+    "__v": 2,
+    "RequiresScheduling": false,
+    "WarehouseProducts": []
+   },
+   {
+    "_id": "4",
+    "Modality": "DX",
+    "FullName": "Radiology",
+    "PerFullName": "رادیولوژی",
+    "Icon": "x-ray.png",
+    "Disabled": false,
+    "__v": 0,
+    "RequiresScheduling": false
+   },
+   {
+    "_id": "5",
+    "Modality": "BD",
+    "FullName": "Bone Density",
+    "PerFullName": "سنجش تراکم استخوان",
+    "Icon": "BD01.png",
+    "Disabled": false,
+    "__v": 0,
+    "RequiresScheduling": false
+   },
+   {
+    "_id": "2",
+    "Modality": "MR",
+    "FullName": "MRI",
+    "PerFullName": "ام آر آی",
+    "Icon": "MRI2.png",
+    "Disabled": false,
+    "__v": 2,
+    "WarehouseProducts": [],
+    "RequiresScheduling": false
+   },
+   {
+    "_id": "9",
+    "Modality": "Mammography",
+    "FullName": "Mammography",
+    "PerFullName": "ماموگرافی",
+    "Icon": "mammography.png",
+    "Disabled": true,
+    "__v": 4,
+    "RequiresScheduling": false,
+    "WarehouseProducts": []
+   },
+   {
+    "_id": "14",
+    "Modality": "تخصصی هیسترو",
+    "FullName": "تخصصی هیسترو",
+    "PerFullName": "تخصصی هیسترو",
+    "Disabled": true,
+    "RequiresScheduling": false,
+    "WarehouseProducts": [
+     "6890d7926f0ee4f0fd360a2f",
+     "689b3cddbe32750dac1720c8"
+    ],
+    "__v": 4
+   }
+  ],
+  "ServicesInfo_fields": {
+   "ArteshPatientCost": {
+    "count": 400,
+    "types": {
+     "null": 9,
+     "string": 391
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "FreeTariff": {
+    "count": 400,
+    "types": {
+     "string": 400
+    },
+    "distinct_sampled": 225,
+    "values_top": [
+     [
+      "61463001",
+      15
+     ],
+     [
+      "36338500",
+      13
+     ],
+     [
+      "4753500",
+      13
+     ],
+     [
+      "43724000",
+      11
+     ],
+     [
+      "57573000",
+      8
+     ],
+     [
+      "9281000",
+      8
+     ]
+    ]
+   },
+   "GovernmentalProfessionalK_Price": {
+    "count": 395,
+    "types": {
+     "null": 10,
+     "string": 385
+    },
+    "distinct_sampled": 174,
+    "values_top": [
+     [
+      "2413260",
+      15
+     ],
+     [
+      "1289655",
+      13
+     ],
+     [
+      "415125",
+      13
+     ],
+     [
+      "1881900",
+      12
+     ],
+     [
+      "None",
+      10
+     ],
+     [
+      "2988900",
+      8
+     ]
+    ]
+   },
+   "GovernmentalTariff": {
+    "count": 400,
+    "types": {
+     "string": 400
+    },
+    "distinct_sampled": 227,
+    "values_top": [
+     [
+      "14349060",
+      15
+     ],
+     [
+      "8448855",
+      13
+     ],
+     [
+      "1167525",
+      13
+     ],
+     [
+      "10249500",
+      11
+     ],
+     [
+      "13625100",
+      8
+     ],
+     [
+      "2390910",
+      8
+     ]
+    ]
+   },
+   "GovernmentalTechnicalK_Price": {
+    "count": 395,
+    "types": {
+     "null": 10,
+     "string": 385
+    },
+    "distinct_sampled": 151,
+    "values_top": [
+     [
+      "11935800",
+      18
+     ],
+     [
+      "752400",
+      18
+     ],
+     [
+      "7159200",
+      14
+     ],
+     [
+      "8367600",
+      12
+     ],
+     [
+      "3522600",
+      11
+     ],
+     [
+      "None",
+      10
+     ]
+    ]
+   },
+   "Group": {
+    "count": 400,
+    "types": {
+     "ObjectId": 387,
+     "null": 13
+    },
+    "distinct_sampled": 29,
+    "values_top": [
+     [
+      "69c25b089aa3dbee2d0c6aad",
+      78
+     ],
+     [
+      "69c25bab9aa3dbee2d0c6bba",
+      63
+     ],
+     [
+      "69c25bab9aa3dbee2d0c6bfe",
+      38
+     ],
+     [
+      "69c25b089aa3dbee2d0c6afd",
+      27
+     ],
+     [
+      "69c25b4e9aa3dbee2d0c6b52",
+      23
+     ],
+     [
+      "69c25b089aa3dbee2d0c6b1a",
+      22
+     ]
+    ]
+   },
+   "Modality": {
+    "count": 400,
+    "types": {
+     "string": 400
+    },
+    "distinct_sampled": 8,
+    "values": [
+     [
+      "4",
+      133
+     ],
+     [
+      "1",
+      101
+     ],
+     [
+      "3",
+      80
+     ],
+     [
+      "2",
+      70
+     ],
+     [
+      "5",
+      7
+     ],
+     [
+      "9",
+      5
+     ],
+     [
+      "14",
+      3
+     ],
+     [
+      "6",
+      1
+     ]
+    ]
+   },
+   "PatientCost": {
+    "count": 400,
+    "types": {
+     "null": 9,
+     "string": 391
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "PrivateProfessionalK_Price": {
+    "count": 395,
+    "types": {
+     "null": 10,
+     "string": 385
+    },
+    "distinct_sampled": 174,
+    "values_top": [
+     [
+      "8066001",
+      15
+     ],
+     [
+      "4310500",
+      13
+     ],
+     [
+      "1387500",
+      13
+     ],
+     [
+      "6290000",
+      12
+     ],
+     [
+      "None",
+      10
+     ],
+     [
+      "9990000",
+      8
+     ]
+    ]
+   },
+   "PrivateTariff": {
+    "count": 400,
+    "types": {
+     "string": 400
+    },
+    "distinct_sampled": 225,
+    "values_top": [
+     [
+      "61463001",
+      15
+     ],
+     [
+      "36338500",
+      13
+     ],
+     [
+      "4753500",
+      13
+     ],
+     [
+      "43724000",
+      11
+     ],
+     [
+      "57573000",
+      8
+     ],
+     [
+      "9281000",
+      8
+     ]
+    ]
+   },
+   "PrivateTechnicalK_Price": {
+    "count": 395,
+    "types": {
+     "null": 10,
+     "string": 385
+    },
+    "distinct_sampled": 151,
+    "values_top": [
+     [
+      "53397000",
+      18
+     ],
+     [
+      "3366000",
+      18
+     ],
+     [
+      "32028000",
+      14
+     ],
+     [
+      "37434000",
+      12
+     ],
+     [
+      "15759000",
+      11
+     ],
+     [
+      "None",
+      10
+     ]
+    ]
+   },
+   "Professional_K": {
+    "count": 399,
+    "types": {
+     "string": 399
+    },
+    "distinct_sampled": 175,
+    "values_top": [
+     [
+      "4.36",
+      15
+     ],
+     [
+      "2.33",
+      13
+     ],
+     [
+      "0.75",
+      13
+     ],
+     [
+      "3.4",
+      12
+     ],
+     [
+      "",
+      9
+     ],
+     [
+      "5.4",
+      8
+     ]
+    ]
+   },
+   "SA": {
+    "count": 400,
+    "types": {
+     "null": 9,
+     "string": 391
+    },
+    "distinct_sampled": 220,
+    "values_top": [
+     [
+      "43024101",
+      15
+     ],
+     [
+      "25436950",
+      13
+     ],
+     [
+      "3327450",
+      13
+     ],
+     [
+      "30606800",
+      11
+     ],
+     [
+      "None",
+      9
+     ],
+     [
+      "40301100",
+      8
+     ]
+    ]
+   },
+   "SS": {
+    "count": 400,
+    "types": {
+     "null": 9,
+     "string": 391
+    },
+    "distinct_sampled": 220,
+    "values_top": [
+     [
+      "10044342",
+      15
+     ],
+     [
+      "5914199",
+      13
+     ],
+     [
+      "817268",
+      13
+     ],
+     [
+      "7174650",
+      11
+     ],
+     [
+      "None",
+      9
+     ],
+     [
+      "9537570",
+      8
+     ]
+    ]
+   },
+   "ST": {
+    "count": 400,
+    "types": {
+     "null": 9,
+     "string": 391
+    },
+    "distinct_sampled": 220,
+    "values_top": [
+     [
+      "10044342",
+      15
+     ],
+     [
+      "5914199",
+      13
+     ],
+     [
+      "817268",
+      13
+     ],
+     [
+      "7174650",
+      11
+     ],
+     [
+      "None",
+      9
+     ],
+     [
+      "9537570",
+      8
+     ]
+    ]
+   },
+   "Service": {
+    "count": 400,
+    "types": {
+     "string": 400
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "ServiceGroup": {
+    "count": 377,
+    "types": {
+     "string": 377
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "Tamin-Loeing": {
+    "count": 400,
+    "types": {
+     "array": 400
+    },
+    "distinct_sampled": 0
+   },
+   "Tamin-Loeing[].LoeingCode": {
+    "count": 671,
+    "types": {
+     "string": 671
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "Tamin-Loeing[].Name": {
+    "count": 671,
+    "types": {
+     "string": 671
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "Tamin-Loeing[]._id": {
+    "count": 671,
+    "types": {
+     "string": 671
+    },
+    "distinct_sampled": 671,
+    "values_top": [
+     [
+      "6889974598e25f8512f4b4db",
+      1
+     ],
+     [
+      "688997ff98e25f8512f4b4e6",
+      1
+     ],
+     [
+      "6889971198e25f8512f4b4d7",
+      1
+     ],
+     [
+      "688997ec98e25f8512f4b4e2",
+      1
+     ],
+     [
+      "688996eb98e25f8512f4b4d3",
+      1
+     ],
+     [
+      "6889957198e25f8512f4b4c8",
+      1
+     ]
+    ]
+   },
+   "Technical_K": {
+    "count": 399,
+    "types": {
+     "string": 399
+    },
+    "distinct_sampled": 154,
+    "values_top": [
+     [
+      "10.47",
+      18
+     ],
+     [
+      "0.66",
+      18
+     ],
+     [
+      "6.28",
+      14
+     ],
+     [
+      "7.34",
+      12
+     ],
+     [
+      "3.09",
+      11
+     ],
+     [
+      "1",
+      10
+     ]
+    ]
+   },
+   "Total_K": {
+    "count": 399,
+    "types": {
+     "string": 399
+    },
+    "distinct_sampled": 200,
+    "values_top": [
+     [
+      "14.83",
+      15
+     ],
+     [
+      "8.61",
+      13
+     ],
+     [
+      "1.41",
+      13
+     ],
+     [
+      "10.74",
+      11
+     ],
+     [
+      "",
+      9
+     ],
+     [
+      "3.26",
+      9
+     ]
+    ]
+   },
+   "__v": {
+    "count": 400,
+    "types": {
+     "number": 400
+    },
+    "distinct_sampled": 1,
+    "values": [
+     [
+      "0",
+      400
+     ]
+    ]
+   },
+   "_id": {
+    "count": 400,
+    "types": {
+     "string": 400
+    },
+    "distinct_sampled": 400,
+    "values_top": [
+     [
+      "36",
+      1
+     ],
+     [
+      "1015",
+      1
+     ],
+     [
+      "136",
+      1
+     ],
+     [
+      "1007",
+      1
+     ],
+     [
+      "137",
+      1
+     ],
+     [
+      "117",
+      1
+     ]
+    ]
+   },
+   "internalCode": {
+    "count": 164,
+    "types": {
+     "string": 164
+    },
+    "distinct_sampled": 151,
+    "values_top": [
+     [
+      "",
+      8
+     ],
+     [
+      "136",
+      2
+     ],
+     [
+      "137",
+      2
+     ],
+     [
+      "117",
+      2
+     ],
+     [
+      "173",
+      2
+     ],
+     [
+      "84",
+      2
+     ]
+    ]
+   },
+   "internalName": {
+    "count": 164,
+    "types": {
+     "string": 164
+    },
+    "values": "<withheld: PHI-bearing>"
+   },
+   "org": {
+    "count": 400,
+    "types": {
+     "array": 400
+    },
+    "distinct_sampled": 0
+   },
+   "reminderDays": {
+    "count": 3,
+    "types": {
+     "number": 3
+    },
+    "distinct_sampled": 1,
+    "values": [
+     [
+      "0",
+      3
+     ]
+    ]
+   }
+  },
+  "ServicesInfo_total": 519,
+  "services_per_modality": [
+   {
+    "modality": "1",
+    "services": 208
+   },
+   {
+    "modality": "4",
+    "services": 135
+   },
+   {
+    "modality": "3",
+    "services": 87
+   },
+   {
+    "modality": "2",
+    "services": 73
+   },
+   {
+    "modality": "5",
+    "services": 7
+   },
+   {
+    "modality": "9",
+    "services": 5
+   },
+   {
+    "modality": "14",
+    "services": 3
+   },
+   {
+    "modality": "6",
+    "services": 1
+   }
+  ]
+ },
+ "vocabularies": {
+  "insuranceType": [
+   "0",
+   "1",
+   "2",
+   "3",
+   "4",
+   "آزاد"
+  ],
+  "insuranceSource": [
+   "manual",
+   "mixed",
+   "none",
+   "online"
+  ],
+  "workflowStatus": [
+   "inProgress",
+   "waiting_appointment"
+  ],
+  "reportStatus": [
+   "awaiting_physician_approval",
+   "awaiting_secretary_approval",
+   "completed",
+   "pending",
+   "physician_approved"
+  ],
+  "modality": [
+   "1",
+   "1",
+   "2",
+   "2",
+   "3",
+   "3",
+   "3",
+   "4",
+   "4",
+   "5",
+   "5"
+  ],
+  "settled": [
+   false,
+   true
+  ],
+  "deleted": [
+   false,
+   true
+  ],
+  "returned": [
+   false,
+   null,
+   true
+  ],
+  "isEmergency": [
+   false,
+   true
+  ]
+ },
+ "related": {
+  "patients": {
+   "note": "patient master",
+   "total": 47719,
+   "fields": {
+    "IssuerOfPatientID": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientAddress": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientAge": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientBirthDate": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientID": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientName": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientSex": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PatientWeight": {
+     "count": 60,
+     "types": {
+      "number": 20,
+      "null": 40
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "_id": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "6a8b52521e71bea23485ed29",
+       1
+      ],
+      [
+       "6a8b4fb51e71bea23485ec92",
+       1
+      ],
+      [
+       "6a8b47051e71bea23485eb8f",
+       1
+      ],
+      [
+       "6a8b43e81e71bea23485eb1f",
+       1
+      ],
+      [
+       "6a8b3ef91e71bea23485ea8e",
+       1
+      ],
+      [
+       "6a8b3eac06a001ab41dec79a",
+       1
+      ]
+     ]
+    },
+    "createdAt": {
+     "count": 60,
+     "types": {
+      "datetime": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "2026-08-23 23:34:34.005000",
+       1
+      ],
+      [
+       "2026-08-23 23:23:25.851000",
+       1
+      ],
+      [
+       "2026-08-23 22:46:21.042000",
+       1
+      ],
+      [
+       "2026-08-23 22:33:04.370000",
+       1
+      ],
+      [
+       "2026-08-23 22:12:01.040000",
+       1
+      ],
+      [
+       "2026-08-23 22:10:44.904000",
+       1
+      ]
+     ]
+    },
+    "updatedAt": {
+     "count": 60,
+     "types": {
+      "datetime": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "2026-08-23 23:34:35.390000",
+       1
+      ],
+      [
+       "2026-08-23 23:32:45.272000",
+       1
+      ],
+      [
+       "2026-08-23 23:08:00.604000",
+       1
+      ],
+      [
+       "2026-08-23 22:33:08.030000",
+       1
+      ],
+      [
+       "2026-08-23 22:12:02.390000",
+       1
+      ],
+      [
+       "2026-08-23 22:12:09.612000",
+       1
+      ]
+     ]
+    }
+   }
+  },
+  "AdminUsers": {
+   "note": "staff / cashier / operator",
+   "total": 45,
+   "fields": {
+    "Avatar": {
+     "count": 1,
+     "types": {
+      "string": 1
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "NoAvatar.png",
+       1
+      ]
+     ]
+    },
+    "Deactive": {
+     "count": 45,
+     "types": {
+      "bool": 45
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "False",
+       34
+      ],
+      [
+       "True",
+       11
+      ]
+     ]
+    },
+    "EnglishName": {
+     "count": 22,
+     "types": {
+      "string": 22
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "FullName": {
+     "count": 45,
+     "types": {
+      "string": 45
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "InoUserCode": {
+     "count": 24,
+     "types": {
+      "null": 18,
+      "string": 6
+     },
+     "distinct_sampled": 7,
+     "values": [
+      [
+       "None",
+       18
+      ],
+      [
+       "634d15419bb4eb3b517a6ca7",
+       1
+      ],
+      [
+       "666028e406f1367fb00f060d",
+       1
+      ],
+      [
+       "6284b847012249014928eae6",
+       1
+      ],
+      [
+       "6284b7e7fecf3b1bb60244e2",
+       1
+      ],
+      [
+       "621f7a78c8585d1af23c3ec8",
+       1
+      ],
+      [
+       "61f11ac0facb9758665e0631",
+       1
+      ]
+     ]
+    },
+    "Max": {
+     "count": 45,
+     "types": {
+      "number": 34,
+      "null": 11
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "0",
+       34
+      ],
+      [
+       "None",
+       11
+      ]
+     ]
+    },
+    "Min": {
+     "count": 45,
+     "types": {
+      "number": 34,
+      "null": 11
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "0",
+       34
+      ],
+      [
+       "None",
+       11
+      ]
+     ]
+    },
+    "NID": {
+     "count": 45,
+     "types": {
+      "string": 45
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "NickName": {
+     "count": 45,
+     "types": {
+      "string": 45
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "Password": {
+     "count": 45,
+     "types": {
+      "string": 45
+     },
+     "distinct_sampled": 24,
+     "values_top": [
+      [
+       "7c4a8d09ca3762af61e59520943dc26494f8941b",
+       16
+      ],
+      [
+       "20eabe5d64b0e216796e834f52d61fd0b70332fc",
+       4
+      ],
+      [
+       "316d6217494b82ce7143fa8984d3ad6596deaeef",
+       3
+      ],
+      [
+       "6ad0ecd70087f1ca05b5564a0984ca76719297bc",
+       2
+      ],
+      [
+       "f021b1f491644ecf232d439664171b1b3f3fe337",
+       1
+      ],
+      [
+       "c7fb03dab288ec6bd06395e6c0f66b4921ebb5cc",
+       1
+      ]
+     ]
+    },
+    "Percent": {
+     "count": 45,
+     "types": {
+      "null": 45
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "None",
+       45
+      ]
+     ]
+    },
+    "PersonnelID": {
+     "count": 9,
+     "types": {
+      "null": 5,
+      "ObjectId": 4
+     },
+     "distinct_sampled": 4,
+     "values": [
+      [
+       "None",
+       5
+      ],
+      [
+       "6887a95ae7e66cdc2029a960",
+       2
+      ],
+      [
+       "68d8f977306ac354d3393f0b",
+       1
+      ],
+      [
+       "68d8f8d7306ac354d33930f1",
+       1
+      ]
+     ]
+    },
+    "Price": {
+     "count": 45,
+     "types": {
+      "number": 34,
+      "null": 11
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "0",
+       34
+      ],
+      [
+       "None",
+       11
+      ]
+     ]
+    },
+    "Tel": {
+     "count": 45,
+     "types": {
+      "string": 45
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "User": {
+     "count": 45,
+     "types": {
+      "string": 45
+     },
+     "distinct_sampled": 45,
+     "values_top": [
+      [
+       "elnaz",
+       1
+      ],
+      [
+       "asal",
+       1
+      ],
+      [
+       "rajabi",
+       1
+      ],
+      [
+       "L.B",
+       1
+      ],
+      [
+       "matin.k",
+       1
+      ],
+      [
+       "reza.ab",
+       1
+      ]
+     ]
+    },
+    "__v": {
+     "count": 45,
+     "types": {
+      "number": 45
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "0",
+       45
+      ]
+     ]
+    },
+    "_id": {
+     "count": 45,
+     "types": {
+      "ObjectId": 45
+     },
+     "distinct_sampled": 45,
+     "values_top": [
+      [
+       "6a79b91b1d8a192af945bed0",
+       1
+      ],
+      [
+       "6a5f133c5edc89036e5fcead",
+       1
+      ],
+      [
+       "6a1530c7f275ede3badf2dc3",
+       1
+      ],
+      [
+       "6a017afcf67759ae2daf5cf4",
+       1
+      ],
+      [
+       "697f0e3c6994c3fd4f4c0d58",
+       1
+      ],
+      [
+       "697260f59764b2c1d054f73b",
+       1
+      ]
+     ]
+    },
+    "roles": {
+     "count": 40,
+     "types": {
+      "ObjectId": 40
+     },
+     "distinct_sampled": 13,
+     "values_top": [
+      [
+       "687e481a55940aed94932a85",
+       8
+      ],
+      [
+       "694bf5ce1f51ddd04dfda4f9",
+       6
+      ],
+      [
+       "694bf5da1f51ddd04dfda50a",
+       6
+      ],
+      [
+       "689ae4fe58bf33acc1f37f62",
+       5
+      ],
+      [
+       "694bf68b1f51ddd04dfdaedf",
+       3
+      ],
+      [
+       "69102e057cbb52801e248f77",
+       3
+      ]
+     ]
+    },
+    "updated": {
+     "count": 45,
+     "types": {
+      "datetime": 45
+     },
+     "distinct_sampled": 45,
+     "values_top": [
+      [
+       "2026-08-10 11:42:19.402000",
+       1
+      ],
+      [
+       "2026-07-21 06:35:40.443000",
+       1
+      ],
+      [
+       "2026-05-26 05:33:59.768000",
+       1
+      ],
+      [
+       "2026-05-11 06:45:16.690000",
+       1
+      ],
+      [
+       "2026-02-01 08:26:36.925000",
+       1
+      ],
+      [
+       "2026-01-22 17:40:05.834000",
+       1
+      ]
+     ]
+    }
+   }
+  },
+  "ReferrerPhysician": {
+   "note": "referring physician",
+   "total": 6001,
+   "fields": {
+    "Address": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "CentersID": {
+     "count": 60,
+     "types": {
+      "array": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "None",
+       60
+      ]
+     ]
+    },
+    "Deleted": {
+     "count": 60,
+     "types": {
+      "bool": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "False",
+       60
+      ]
+     ]
+    },
+    "Expertise": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "FullName": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "Location": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "",
+       60
+      ]
+     ]
+    },
+    "MSID": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "195749",
+       1
+      ],
+      [
+       "76766",
+       1
+      ],
+      [
+       "123456",
+       1
+      ],
+      [
+       "63526",
+       1
+      ],
+      [
+       "196510",
+       1
+      ],
+      [
+       "45533",
+       1
+      ]
+     ]
+    },
+    "Tel": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "__v": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "0",
+       60
+      ]
+     ]
+    },
+    "_id": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "6a8b26f2540b05a4f5a71b86",
+       1
+      ],
+      [
+       "6a8b1aad540b05a4f5a6c9d1",
+       1
+      ],
+      [
+       "6a8b12d7540b05a4f5a69d2e",
+       1
+      ],
+      [
+       "6a8afdb1540b05a4f5a5a0c7",
+       1
+      ],
+      [
+       "6a8af154540b05a4f5a513b8",
+       1
+      ],
+      [
+       "6a8ae53b540b05a4f5a48f30",
+       1
+      ]
+     ]
+    }
+   }
+  },
+  "studies": {
+   "note": "DICOM study",
+   "total": 50316,
+   "fields": {
+    "AccessionNumber": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 5,
+     "values": [
+      [
+       "",
+       56
+      ],
+      [
+       "1a031acbe38",
+       1
+      ],
+      [
+       "1a0319305e3",
+       1
+      ],
+      [
+       "1a031a3c7b7",
+       1
+      ],
+      [
+       "1a0319ad914",
+       1
+      ]
+     ]
+    },
+    "ModalitiesInStudy": {
+     "count": 60,
+     "types": {
+      "array": 60
+     },
+     "distinct_sampled": 6,
+     "values": [
+      [
+       "MR",
+       23
+      ],
+      [
+       "DOC",
+       23
+      ],
+      [
+       "US",
+       19
+      ],
+      [
+       "CT",
+       6
+      ],
+      [
+       "DX",
+       4
+      ],
+      [
+       "PX",
+       2
+      ]
+     ]
+    },
+    "NumberOfInstances": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "distinct_sampled": 29,
+     "values_top": [
+      [
+       "1",
+       9
+      ],
+      [
+       "42",
+       7
+      ],
+      [
+       "2",
+       5
+      ],
+      [
+       "5",
+       4
+      ],
+      [
+       "3",
+       3
+      ],
+      [
+       "43",
+       2
+      ]
+     ]
+    },
+    "NumberOfSeries": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "distinct_sampled": 11,
+     "values": [
+      [
+       "1",
+       28
+      ],
+      [
+       "6",
+       11
+      ],
+      [
+       "5",
+       10
+      ],
+      [
+       "7",
+       3
+      ],
+      [
+       "9",
+       2
+      ],
+      [
+       "12",
+       1
+      ],
+      [
+       "14",
+       1
+      ],
+      [
+       "11",
+       1
+      ],
+      [
+       "10",
+       1
+      ],
+      [
+       "13",
+       1
+      ],
+      [
+       "3",
+       1
+      ]
+     ]
+    },
+    "PatientID": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "PerformingPhysicianName": {
+     "count": 33,
+     "types": {
+      "string": 33
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "ReferringPhysicianName": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "StudyDate": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 3,
+     "values": [
+      [
+       "20260823",
+       54
+      ],
+      [
+       "14050601",
+       4
+      ],
+      [
+       "14050531",
+       2
+      ]
+     ]
+    },
+    "StudyDescription": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "StudyID": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 33,
+     "values_top": [
+      [
+       "1",
+       17
+      ],
+      [
+       "",
+       8
+      ],
+      [
+       "2",
+       4
+      ],
+      [
+       "3",
+       2
+      ],
+      [
+       "20260823204515",
+       1
+      ],
+      [
+       "20260823204020",
+       1
+      ]
+     ]
+    },
+    "StudyInstanceUID": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "1.3.12.2.1107.5.2.46.174759.30000026082309294782900000133",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.30000026082309294782900000130",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.30000026082309294782900000121",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.30000026082309294782900000127",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.30000026082309294782900000124",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.30000026082309294782900000118",
+       1
+      ]
+     ]
+    },
+    "StudyTime": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "232744.381000",
+       1
+      ],
+      [
+       "231810.430000",
+       1
+      ],
+      [
+       "230743.601000",
+       1
+      ],
+      [
+       "225323.524000",
+       1
+      ],
+      [
+       "224549.642000",
+       1
+      ],
+      [
+       "223234.663000",
+       1
+      ]
+     ]
+    },
+    "_id": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "6a8b52521e71bea23485ed2a",
+       1
+      ],
+      [
+       "6a8b51e31e71bea23485ecf9",
+       1
+      ],
+      [
+       "6a8b4fb51e71bea23485ec93",
+       1
+      ],
+      [
+       "6a8b4c151e71bea23485ec2f",
+       1
+      ],
+      [
+       "6a8b48a51e71bea23485ebff",
+       1
+      ],
+      [
+       "6a8b47051e71bea23485eb90",
+       1
+      ]
+     ]
+    },
+    "contentVersion": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "createdAt": {
+     "count": 60,
+     "types": {
+      "datetime": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "2026-08-23 23:34:34.005000",
+       1
+      ],
+      [
+       "2026-08-23 23:32:43.696000",
+       1
+      ],
+      [
+       "2026-08-23 23:23:25.851000",
+       1
+      ],
+      [
+       "2026-08-23 23:07:57.336000",
+       1
+      ],
+      [
+       "2026-08-23 22:53:17.858000",
+       1
+      ],
+      [
+       "2026-08-23 22:46:21.042000",
+       1
+      ]
+     ]
+    },
+    "lastAssignedAt": {
+     "count": 33,
+     "types": {
+      "datetime": 33
+     },
+     "distinct_sampled": 26,
+     "values_top": [
+      [
+       "2026-08-23 23:30:18.699000",
+       3
+      ],
+      [
+       "2026-08-23 23:36:47.101000",
+       2
+      ],
+      [
+       "2026-08-23 21:37:26.913000",
+       2
+      ],
+      [
+       "2026-08-23 21:23:39.660000",
+       2
+      ],
+      [
+       "2026-08-23 20:35:21.799000",
+       2
+      ],
+      [
+       "2026-08-23 20:15:52.108000",
+       2
+      ]
+     ]
+    },
+    "patient": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "radiologistId": {
+     "count": 33,
+     "types": {
+      "string": 33
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "6a1ada67ea85a96a25468338",
+       19
+      ],
+      [
+       "68d8f977306ac354d3393f0b",
+       14
+      ]
+     ]
+    },
+    "radiologistName": {
+     "count": 33,
+     "types": {
+      "string": 33
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "radiologistSource": {
+     "count": 33,
+     "types": {
+      "string": 33
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "ris_personnel",
+       33
+      ]
+     ]
+    },
+    "reportStatus": {
+     "count": 34,
+     "types": {
+      "string": 34
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "reportStatusHistory": {
+     "count": 34,
+     "types": {
+      "array": 34
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "reportStatusHistory[].comment": {
+     "count": 64,
+     "types": {
+      "string": 64
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "reportStatusHistory[].from_status": {
+     "count": 64,
+     "types": {
+      "string": 64
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "reportStatusHistory[].timestamp": {
+     "count": 64,
+     "types": {
+      "string": 64
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "reportStatusHistory[].to_status": {
+     "count": 64,
+     "types": {
+      "string": 64
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "reportStatusHistory[].user_id": {
+     "count": 64,
+     "types": {
+      "string": 64
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "seriesInfo": {
+     "count": 60,
+     "types": {
+      "array": 60
+     },
+     "distinct_sampled": 0
+    },
+    "seriesInfo[].Modality": {
+     "count": 124,
+     "types": {
+      "string": 124
+     },
+     "distinct_sampled": 6,
+     "values": [
+      [
+       "MR",
+       69
+      ],
+      [
+       "US",
+       19
+      ],
+      [
+       "CT",
+       18
+      ],
+      [
+       "DX",
+       10
+      ],
+      [
+       "DOC",
+       6
+      ],
+      [
+       "PX",
+       2
+      ]
+     ]
+    },
+    "seriesInfo[].SeriesInstanceUID": {
+     "count": 124,
+     "types": {
+      "string": 124
+     },
+     "distinct_sampled": 124,
+     "values_top": [
+      [
+       "1.3.12.2.1107.5.2.46.174759.2026082323285060154041381.0.0.0",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.2026082323290326370841389.0.0.0",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.2026082323301818036341428.0.0.0",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.2026082323203945370838430.0.0.0",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.2026082323211038753138967.0.0.0",
+       1
+      ],
+      [
+       "1.3.12.2.1107.5.2.46.174759.2026082323222071614739011.0.0.0",
+       1
+      ]
+     ]
+    },
+    "seriesInfo[].SeriesNumber": {
+     "count": 124,
+     "types": {
+      "number": 124
+     },
+     "distinct_sampled": 24,
+     "values_top": [
+      [
+       "1",
+       26
+      ],
+      [
+       "3",
+       20
+      ],
+      [
+       "4",
+       18
+      ],
+      [
+       "2",
+       15
+      ],
+      [
+       "5",
+       10
+      ],
+      [
+       "101",
+       7
+      ]
+     ]
+    },
+    "seriesInfo[].thumbnailPath": {
+     "count": 124,
+     "types": {
+      "string": 124
+     },
+     "distinct_sampled": 53,
+     "values_top": [
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55587\\1.3.12",
+       9
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55512\\1.3.12",
+       6
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55502\\1.3.12",
+       6
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55496\\1.3.12",
+       6
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55601\\1.3.12",
+       3
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55556\\1.3.12",
+       3
+      ]
+     ]
+    },
+    "studyPath": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 53,
+     "values_top": [
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55587\\1.3.12",
+       3
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55512\\1.3.12",
+       2
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55502\\1.3.12",
+       2
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55496\\1.3.12",
+       2
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55574\\1.2.15",
+       2
+      ],
+      [
+       "D:\\Program Files\\AI_PACS_SERVER\\data\\dicom_data\\55426\\1.2.15",
+       2
+      ]
+     ]
+    },
+    "tags": {
+     "count": 6,
+     "types": {
+      "object": 6
+     },
+     "distinct_sampled": 0
+    },
+    "updatedAt": {
+     "count": 60,
+     "types": {
+      "datetime": 60
+     },
+     "distinct_sampled": 59,
+     "values_top": [
+      [
+       "2026-08-23 23:30:18.699000",
+       2
+      ],
+      [
+       "2026-08-23 23:41:39.797000",
+       1
+      ],
+      [
+       "2026-08-23 23:43:33.349000",
+       1
+      ],
+      [
+       "2026-08-23 23:36:47.101000",
+       1
+      ],
+      [
+       "2026-08-23 23:41:17.300000",
+       1
+      ],
+      [
+       "2026-08-23 23:38:15.273000",
+       1
+      ]
+     ]
+    }
+   }
+  },
+  "transactions": {
+   "note": "financial transaction",
+   "total": 133729,
+   "fields": {
+    "ReceptionID": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "__v": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "0",
+       58
+      ],
+      [
+       "1",
+       2
+      ]
+     ]
+    },
+    "_id": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "6a8b4c40540b05a4f5a769d4",
+       1
+      ],
+      [
+       "6a8b4bcb540b05a4f5a76916",
+       1
+      ],
+      [
+       "6a8b4342540b05a4f5a75e0a",
+       1
+      ],
+      [
+       "6a8b4305540b05a4f5a75d69",
+       1
+      ],
+      [
+       "6a8b3c4a540b05a4f5a753f5",
+       1
+      ],
+      [
+       "6a8b3c09540b05a4f5a75380",
+       1
+      ]
+     ]
+    },
+    "amount": {
+     "count": 60,
+     "types": {
+      "number": 60
+     },
+     "distinct_sampled": 32,
+     "values_top": [
+      [
+       "38330000",
+       15
+      ],
+      [
+       "3250000",
+       4
+      ],
+      [
+       "17660000",
+       4
+      ],
+      [
+       "114990000",
+       3
+      ],
+      [
+       "8330000",
+       3
+      ],
+      [
+       "33420000",
+       2
+      ]
+     ]
+    },
+    "card": {
+     "count": 26,
+     "types": {
+      "ObjectId": 26
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "6880cc6d7e4719ba0d054de8",
+       26
+      ]
+     ]
+    },
+    "date": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "1405/06/01",
+       60
+      ]
+     ]
+    },
+    "deleted": {
+     "count": 60,
+     "types": {
+      "bool": 60
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "False",
+       58
+      ],
+      [
+       "True",
+       2
+      ]
+     ]
+    },
+    "deletedAt": {
+     "count": 2,
+     "types": {
+      "string": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "1405/06/01 20:20:49",
+       1
+      ],
+      [
+       "1405/06/01 20:01:17",
+       1
+      ]
+     ]
+    },
+    "deletedBy": {
+     "count": 2,
+     "types": {
+      "ObjectId": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "687fc2e747d74a8766e0235a",
+       1
+      ],
+      [
+       "6a5f133c5edc89036e5fcead",
+       1
+      ]
+     ]
+    },
+    "description": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "editAdjustment": {
+     "count": 60,
+     "types": {
+      "bool": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "False",
+       60
+      ]
+     ]
+    },
+    "insuranceSource": {
+     "count": 11,
+     "types": {
+      "string": 11
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "online",
+       11
+      ]
+     ]
+    },
+    "insuranceType": {
+     "count": 11,
+     "types": {
+      "string": 11
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "tamin",
+       11
+      ]
+     ]
+    },
+    "registeredBy": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "distinct_sampled": 4,
+     "values": [
+      [
+       "687fc2e747d74a8766e0235a",
+       29
+      ],
+      [
+       "687fc33147d74a8766e0235d",
+       16
+      ],
+      [
+       "694bf5421f51ddd04dfda299",
+       10
+      ],
+      [
+       "6a5f133c5edc89036e5fcead",
+       5
+      ]
+     ]
+    },
+    "time": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 60,
+     "values_top": [
+      [
+       "23:08:40",
+       1
+      ],
+      [
+       "23:06:43",
+       1
+      ],
+      [
+       "22:30:18",
+       1
+      ],
+      [
+       "22:29:17",
+       1
+      ],
+      [
+       "22:00:34",
+       1
+      ],
+      [
+       "21:59:29",
+       1
+      ]
+     ]
+    },
+    "type": {
+     "count": 60,
+     "types": {
+      "string": 60
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "credit",
+       37
+      ],
+      [
+       "debt",
+       23
+      ]
+     ]
+    },
+    "updateHistory": {
+     "count": 60,
+     "types": {
+      "array": 60
+     },
+     "distinct_sampled": 0
+    },
+    "updateHistory[].User": {
+     "count": 2,
+     "types": {
+      "ObjectId": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "687fc2e747d74a8766e0235a",
+       1
+      ],
+      [
+       "6a5f133c5edc89036e5fcead",
+       1
+      ]
+     ]
+    },
+    "updateHistory[]._id": {
+     "count": 2,
+     "types": {
+      "ObjectId": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "6a8b16d9540b05a4f5a6b46b",
+       1
+      ],
+      [
+       "6a8b1245540b05a4f5a69788",
+       1
+      ]
+     ]
+    },
+    "updateHistory[].action": {
+     "count": 2,
+     "types": {
+      "string": 2
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "delete",
+       2
+      ]
+     ]
+    },
+    "updateHistory[].date": {
+     "count": 2,
+     "types": {
+      "string": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "1405/06/01 20:20:49",
+       1
+      ],
+      [
+       "1405/06/01 20:01:17",
+       1
+      ]
+     ]
+    },
+    "updateHistory[].newAmount": {
+     "count": 2,
+     "types": {
+      "number": 2
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "0",
+       2
+      ]
+     ]
+    },
+    "updateHistory[].oldAmount": {
+     "count": 2,
+     "types": {
+      "number": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "17730000",
+       1
+      ],
+      [
+       "5910000",
+       1
+      ]
+     ]
+    },
+    "updateHistory[].reason": {
+     "count": 2,
+     "types": {
+      "string": 2
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "wallet": {
+     "count": 60,
+     "types": {
+      "ObjectId": 60
+     },
+     "distinct_sampled": 36,
+     "values_top": [
+      [
+       "691bfec0694049abf172f3cd",
+       3
+      ],
+      [
+       "6a8b11f4540b05a4f5a6902a",
+       3
+      ],
+      [
+       "68d1535414eda65d9d1dde78",
+       3
+      ],
+      [
+       "6a8b1e3a540b05a4f5a6e8f6",
+       3
+      ],
+      [
+       "6a5ba4ea18a091772b94be09",
+       3
+      ],
+      [
+       "6a8b1679540b05a4f5a6ad21",
+       3
+      ]
+     ]
+    },
+    "walletCreditApplied": {
+     "count": 60,
+     "types": {
+      "bool": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "False",
+       60
+      ]
+     ]
+    },
+    "walletCreditTransfer": {
+     "count": 60,
+     "types": {
+      "bool": 60
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "False",
+       60
+      ]
+     ]
+    }
+   }
+  },
+  "CashDeskKart": {
+   "note": "bank card / POS",
+   "total": 5,
+   "fields": {
+    "Bank": {
+     "count": 5,
+     "types": {
+      "string": 5
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "Name": {
+     "count": 5,
+     "types": {
+      "string": 5
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "Number": {
+     "count": 5,
+     "types": {
+      "string": 5
+     },
+     "distinct_sampled": 5,
+     "values": [
+      [
+       "5",
+       1
+      ],
+      [
+       "4",
+       1
+      ],
+      [
+       "3",
+       1
+      ],
+      [
+       "2",
+       1
+      ],
+      [
+       "1",
+       1
+      ]
+     ]
+    },
+    "__v": {
+     "count": 5,
+     "types": {
+      "number": 5
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "0",
+       5
+      ]
+     ]
+    },
+    "_id": {
+     "count": 5,
+     "types": {
+      "ObjectId": 5
+     },
+     "distinct_sampled": 5,
+     "values": [
+      [
+       "6880ccd47e4719ba0d054dee",
+       1
+      ],
+      [
+       "6880ccb07e4719ba0d054dec",
+       1
+      ],
+      [
+       "6880cc887e4719ba0d054dea",
+       1
+      ],
+      [
+       "6880cc6d7e4719ba0d054de8",
+       1
+      ],
+      [
+       "6880cc4a7e4719ba0d054de6",
+       1
+      ]
+     ]
+    }
+   }
+  },
+  "receptionsTag": {
+   "note": "reception tag",
+   "total": 4,
+   "fields": {
+    "Color": {
+     "count": 4,
+     "types": {
+      "string": 4
+     },
+     "distinct_sampled": 4,
+     "values": [
+      [
+       "#8000ff",
+       1
+      ],
+      [
+       "#00b3ff",
+       1
+      ],
+      [
+       "#d4ff00",
+       1
+      ],
+      [
+       "#ff0000",
+       1
+      ]
+     ]
+    },
+    "CreatedAt": {
+     "count": 4,
+     "types": {
+      "datetime": 4
+     },
+     "distinct_sampled": 4,
+     "values": [
+      [
+       "2026-01-11 05:12:44.232000",
+       1
+      ],
+      [
+       "2026-01-06 10:14:25.971000",
+       1
+      ],
+      [
+       "2025-12-28 18:16:56.146000",
+       1
+      ],
+      [
+       "2025-12-28 18:11:01.396000",
+       1
+      ]
+     ]
+    },
+    "CreatedBy": {
+     "count": 4,
+     "types": {
+      "null": 2,
+      "ObjectId": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "None",
+       2
+      ],
+      [
+       "000000000000000000000000",
+       2
+      ]
+     ]
+    },
+    "Description": {
+     "count": 4,
+     "types": {
+      "string": 4
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "IsActive": {
+     "count": 4,
+     "types": {
+      "bool": 4
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "True",
+       4
+      ]
+     ]
+    },
+    "Name": {
+     "count": 4,
+     "types": {
+      "string": 4
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "Order": {
+     "count": 4,
+     "types": {
+      "number": 4
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "1",
+       3
+      ],
+      [
+       "2",
+       1
+      ]
+     ]
+    },
+    "PersianName": {
+     "count": 4,
+     "types": {
+      "string": 4
+     },
+     "values": "<withheld: PHI-bearing>"
+    },
+    "UpdatedAt": {
+     "count": 4,
+     "types": {
+      "datetime": 4
+     },
+     "distinct_sampled": 4,
+     "values": [
+      [
+       "2026-01-11 06:53:36.954000",
+       1
+      ],
+      [
+       "2026-01-06 10:30:17.481000",
+       1
+      ],
+      [
+       "2025-12-28 18:16:56.146000",
+       1
+      ],
+      [
+       "2025-12-28 18:11:01.396000",
+       1
+      ]
+     ]
+    },
+    "UpdatedBy": {
+     "count": 4,
+     "types": {
+      "null": 2,
+      "ObjectId": 2
+     },
+     "distinct_sampled": 2,
+     "values": [
+      [
+       "None",
+       2
+      ],
+      [
+       "000000000000000000000000",
+       2
+      ]
+     ]
+    },
+    "__v": {
+     "count": 4,
+     "types": {
+      "number": 4
+     },
+     "distinct_sampled": 1,
+     "values": [
+      [
+       "0",
+       4
+      ]
+     ]
+    },
+    "_id": {
+     "count": 4,
+     "types": {
+      "ObjectId": 4
+     },
+     "distinct_sampled": 4,
+     "values": [
+      [
+       "6963314c5edcfc17d9b00dd6",
+       1
+      ],
+      [
+       "695ce081b036177fe97abbd0",
+       1
+      ],
+      [
+       "695174185217a69f60e5fcd8",
+       1
+      ],
+      [
+       "695172b515a9e495cd4efcb6",
+       1
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "imaging_workflow_example_fields": {
+  "imagingWorkflow.appointment": {
+   "count": 1,
+   "types": {
+    "object": 1
+   },
+   "distinct_sampled": 0
+  },
+  "imagingWorkflow.appointment.duration": {
+   "count": 1,
+   "types": {
+    "number": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "10",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.endTime": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "19:58",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.persianDate": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "1404/05/18",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.room": {
+   "count": 1,
+   "types": {
+    "ObjectId": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "687e4c0e0bd7a390fbd0914c",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.scheduledAt": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "2025-08-09T14:43:25.369Z",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.shift": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "689305390591b3bb2effc537",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.shiftName": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.appointment.startTime": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "19:48",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.appointment.timeSlot": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.imagingItems": {
+   "count": 1,
+   "types": {
+    "array": 1
+   },
+   "distinct_sampled": 0
+  },
+  "imagingWorkflow.pacsComment": {
+   "count": 1,
+   "types": {
+    "object": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.pacsComment.text": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.pacsListManagement": {
+   "count": 1,
+   "types": {
+    "object": 1
+   },
+   "distinct_sampled": 0
+  },
+  "imagingWorkflow.pacsListManagement.hidden": {
+   "count": 1,
+   "types": {
+    "bool": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "False",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.pacsListManagement.priority": {
+   "count": 1,
+   "types": {
+    "number": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "9999",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.report": {
+   "count": 1,
+   "types": {
+    "object": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags": {
+   "count": 1,
+   "types": {
+    "object": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.physicianApproved": {
+   "count": 1,
+   "types": {
+    "bool": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.physicianApprovedAt": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.physicianApprovedBy": {
+   "count": 1,
+   "types": {
+    "ObjectId": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.secretaryApproved": {
+   "count": 1,
+   "types": {
+    "bool": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.secretaryApprovedAt": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.approvalFlags.secretaryApprovedBy": {
+   "count": 1,
+   "types": {
+    "ObjectId": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.content": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.findings": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice": {
+   "count": 1,
+   "types": {
+    "object": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.count": {
+   "count": 1,
+   "types": {
+    "number": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.hasVoice": {
+   "count": 1,
+   "types": {
+    "bool": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.pacsVoice.lastFileSize": {
+   "count": 1,
+   "types": {
+    "number": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.radiologist": {
+   "count": 1,
+   "types": {
+    "ObjectId": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.reportDate": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.status": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.report.typist": {
+   "count": 1,
+   "types": {
+    "ObjectId": 1
+   },
+   "values": "<withheld: PHI-bearing>"
+  },
+  "imagingWorkflow.updatedAt": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "2026-06-13T10:34:34.898Z",
+     1
+    ]
+   ]
+  },
+  "imagingWorkflow.workflowStatus": {
+   "count": 1,
+   "types": {
+    "string": 1
+   },
+   "distinct_sampled": 1,
+   "values": [
+    [
+     "scheduled",
+     1
+    ]
+   ]
+  }
+ }
+}

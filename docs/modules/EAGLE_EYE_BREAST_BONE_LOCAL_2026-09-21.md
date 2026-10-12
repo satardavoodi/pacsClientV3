@@ -955,3 +955,37 @@ Configuration, models, weights, prompts, clinical data and GUI processes were no
 changed. This closes the backend update requirement only; no real-patient inference
 or source/artifact GUI acceptance is claimed. See the private deployment receipt
 under generated-files/eagle-eye/bone-demographics-20261004.
+
+
+### Bone Age confirmation identity consistency (2026-10-10)
+
+The worker request context accepted patient_id/PatientID from viewer metadata,
+but the live confirmation callback only checked metadata_fixed. A valid pending
+study could consequently be cancelled before opening the demographic dialog or
+submitting any server request. One shared viewer_identity resolver now supplies
+both boundaries and is re-evaluated for confirmation and result delivery.
+Fixed metadata retains precedence; missing identity, explicit cancellation and
+case-switch rejection remain fail-closed. No model, authentication, wire contract,
+provider route or mobile behavior changes are introduced (Windows viewer only).
+
+Guard: test_viewer_metadata_identity_opens_review_before_submission exercises the
+actual controller callback and dialog bridge for both metadata aliases. Before
+fix: 2 failures, exit 1, popup never opened. After fix: 34 focused tests pass,
+exit 0; 528 plugin mirror pairs match. The real worker also traverses the actual
+job routing bridge with a synthetic client, verifies physician provenance and
+receives the synthetic age result before report preparation. This is not live
+server inference. The unchanged Client uses an explicit empty ProxyHandler and
+existing authenticated Razi session; no alternate provider is introduced.
+
+Changed runtime: demographics.py and ai_chat_interactorstyle.py plus viewer mirror.
+Guards: test_bone_age_review.py and test_bone_age_automatic_pdf.py; existing builder
+payload guard passes. Shared Python source remains a build input; no binaries
+were built. Razi immutable Developer parity is tracked in
+ generated-files/eagle-eye/bone-identity-sync-20261010/receipt.json.
+Activation is separate; active server remains ordinary-human-r2. No service restart
+or executing-source replacement. Native Client form -> authenticated Razi job ->
+returned result/PDF acceptance remains pending: the existing Test Control socket
+was unreachable. The human must launch/sign into the patched source with the
+explicit TestServer opt-in outside clinical work. Do not automate login/recovery.
+Rollback only this resolver/call-site correction and its mirror, preserving all
+unrelated dirty changes; do not replace model weights or earlier reviewed deltas.

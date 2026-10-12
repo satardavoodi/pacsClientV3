@@ -136,8 +136,8 @@ def test_search_and_selection_workflow_uses_observed_list_and_receipt():
     calls=[]
     def run(action,entities):
         calls.append((action,dict(entities)))
-        if action=='advanced_search_patients':return {'ok':True,'data':{'state':'searching'}}
-        if action=='read_patients':return {'ok':True,'data':{'state':'ready','list_id':'actual-list'}}
+        if action=='advanced_search_patients':return {'ok':True,'data':{'state':'searching','source':'server','search_id':'00000000-0000-4000-8000-000000000001'}}
+        if action=='read_patients':return {'ok':True,'data':{'state':'ready','list_id':'actual-list','source':'server','count':3,'search_id':'00000000-0000-4000-8000-000000000001'}}
         if action=='select_patients':
             assert entities['list_id']=='actual-list'
             return {'ok':True,'data':{'selection_id':'actual-selection','selected_count':2}}

@@ -31,6 +31,10 @@ def validate_payload(source: Path, engine: str, *, for_distribution: bool = True
         raise ValueError(f'{engine} must use a standalone Python runtime, not a development venv.')
     if (source / 'runtime/pyvenv.cfg').exists() or (source / 'runtime/Scripts/python.exe').exists():
         raise ValueError(f'{engine} still depends on a local Python installation.')
+    if engine == 'breast' and not {
+            'runtime/msvcp140.dll', 'runtime/vcruntime140.dll',
+            'runtime/vcruntime140_1.dll'}.issubset(manifest['sha256']):
+        raise ValueError('Breast requires a sealed app-local Visual C++ runtime.')
     probe_path = source / 'runtime-probe.json'
     if not probe_path.is_file():
         raise ValueError(f'{engine} is missing its isolated interpreter probe.')

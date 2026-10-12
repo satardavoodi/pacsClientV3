@@ -169,3 +169,26 @@ def test_all_ai_modules_are_shared_saved_results(tmp_path, module):
     cases.jobs.jobs={'synthetic':dict(job_id='synthetic',owner='first',module=module,
         study_uid='1.2.3',status='succeeded',created_at=1)}
     assert cases.snapshot('second',CASE)['eagle_eye'][0]['module'] == module
+
+
+def test_open_patient_retries_capability_when_server_is_upgraded(monkeypatch):
+    from modules.ai_imaging.eagle_eye_remote import case_receiver as module
+    reads = []; waits = []
+    receiver = module.CaseReceiver(CASE, settings={'url':'http://synthetic-pacs'}, pacs_host='synthetic-pacs')
+    class Peer:
+        url = 'http://synthetic-pacs'
+        def __init__(self, config): pass
+        def json(self, path):
+            reads.append(path)
+            return {'case_realtime':{'version':1}} if len(reads) > 1 else {}
+        def case_snapshot(self, reference):
+            return {'case':reference, 'pacs_host':'synthetic-pacs', 'cursor':{'epoch':'synthetic','revision':1},
+                    'echomind':[{'request_id':'synthetic'}], 'eagle_eye':[], 'jobs':[]}
+        def case_events(self, reference, cursor):
+            receiver.stopped.set()
+            return {'changed':False, 'epoch':'synthetic', 'revision':1}
+    monkeypatch.setattr(module, 'Client', Peer)
+    monkeypatch.setattr(receiver.stopped, 'wait', lambda seconds:waits.append(seconds) or False)
+    receiver.run()
+    assert len(reads) == 2 and waits == [15]
+    assert receiver.drain()['status'] == 'connected'

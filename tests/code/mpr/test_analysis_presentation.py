@@ -71,6 +71,79 @@ def test_icons_are_distinct_and_render_at_small_sizes(ui):
         assert images[0] != images[1] and images[1] != images[2]
 
 
+def test_common_chrome_brands_late_editors_and_viewport_controls_without_layout_change(ui):
+    app, p = ui
+    window = QtWidgets.QMainWindow()
+    central = QtWidgets.QWidget(window)
+    window.setCentralWidget(central)
+    layout = QtWidgets.QVBoxLayout(central)
+    p.install(window)
+    # Simulate a module and slice controller created after startup.
+    effects = QtWidgets.QFrame(central); effects.setObjectName('EffectsGroupBox')
+    layout.addWidget(effects)
+    paint = QtWidgets.QToolButton(effects); paint.setObjectName('Paint')
+    controller = QtWidgets.QFrame(central); controller.setObjectName('ViewControllerBar')
+    layout.addWidget(controller)
+    pin = QtWidgets.QToolButton(controller); pin.setObjectName('PinButton')
+    pin.setToolTip('Pin slice controls'); pin.setCheckable(True)
+    fit = QtWidgets.QToolButton(controller); fit.setObjectName('FitToWindowToolButton')
+    fit.setToolTip('Reset field of view')
+    events = []
+    fit.clicked.connect(lambda: events.append('fit'))
+    slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, controller)
+    slider.setRange(2, 100); slider.setValue(43)
+    orientation = QtWidgets.QComboBox(controller)
+    orientation.setObjectName('SliceOrientationSelector')
+    orientation.addItem('Axial', 'ax'); orientation.addItem('Coronal', 'cor')
+    orientation.setCurrentIndex(1)
+    for widget in (effects, paint, controller, pin, fit, slider, orientation):
+        widget.ensurePolished()
+    app.processEvents()
+    assert not paint.icon().isNull() and not pin.icon().isNull() and not fit.icon().isNull()
+    assert pin.iconSize() == QtCore.QSize(14, 14)
+    assert fit.iconSize() == QtCore.QSize(14, 14)
+    assert pin.sizeHint().height() <= 26
+    assert paint.iconSize() == QtCore.QSize(20, 20)
+    assert pin.toolTip() == 'Pin slice controls'
+    pin.click(); assert pin.isChecked()
+    fit.click(); assert events == ['fit']
+    assert slider.value() == 43 and slider.minimum() == 2 and slider.maximum() == 100
+    assert 'QSlider::handle' in slider.styleSheet()
+    assert not orientation.itemIcon(0).isNull() and not orientation.itemIcon(1).isNull()
+    assert orientation.currentData() == 'cor' and orientation.currentText() == 'Coronal'
+    assert window.centralWidget() is central and layout.count() == 2
+    assert not window.isVisible() and window.menuBar().isHidden()
+    window.deleteLater(); app.processEvents()
+
+
+def test_common_segment_actions_modules_and_position_readout(ui):
+    app, p = ui
+    window = QtWidgets.QMainWindow()
+    bar = window.addToolBar('Modules'); bar.setObjectName('ModuleSelectorToolBar')
+    menu = QtWidgets.QMenu(bar)
+    names = ('Models', 'Segment Editor', 'Segmentations', 'Markups', 'Informatics', 'Volume Rendering')
+    actions = [menu.addAction(n) for n in names]
+    selected = QtWidgets.QComboBox(bar); selected.addItem('Segment Editor', 'SegmentEditor'); bar.addWidget(selected)
+    central = QtWidgets.QWidget(window); window.setCentralWidget(central)
+    buttons = []
+    for name in ('AddSegmentButton', 'RemoveSegmentButton', 'Show3DButton', 'SpecifyGeometryButton'):
+        button = QtWidgets.QToolButton(central); button.setObjectName(name); buttons.append(button)
+    controller = QtWidgets.QFrame(central); controller.setObjectName('ViewControllerBar')
+    position = QtWidgets.QDoubleSpinBox(controller); position.setRange(-500, 500)
+    position.setValue(78.4); position.setSuffix(' mm')
+    before = position.value()
+    p.install(window)
+    images = [a.icon().pixmap(24, 24).toImage() for a in actions]
+    fingerprints = [bytes(image.bits()) for image in images]
+    assert len(set(fingerprints)) == len(names)
+    assert not selected.itemIcon(0).isNull()
+    assert all(not b.icon().isNull() and b.iconSize() == QtCore.QSize(16, 16) for b in buttons)
+    assert '#e1edf6' in position.styleSheet()
+    assert position.value() == before and position.suffix() == ' mm'
+    assert selected.currentData() == 'SegmentEditor'
+    window.deleteLater(); app.processEvents()
+
+
 @pytest.mark.parametrize('screen,target', [
     ((1920, 0, 1280, 976), (2100, 50, 1920, 1032)),
     ((-1280, -200, 1280, 976), (-1400, -500, 2000, 1500)),

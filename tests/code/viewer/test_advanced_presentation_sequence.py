@@ -115,6 +115,60 @@ def test_mixed_identities_cannot_be_published(tmp_path):
     with pytest.raises(ValueError): load_presentation_sequence([a,b],series_number=1)
 
 
+@pytest.mark.parametrize('modality', ['PX', 'DX'])
+@pytest.mark.parametrize('valid_window', [True, False])
+def test_projection_with_voi_lut_uses_one_display_transform(tmp_path, modality, valid_window):
+    import pydicom
+    from pydicom.dataset import Dataset
+    from vtkmodules.util.numpy_support import vtk_to_numpy
+    from PacsClient.pacs.patient_tab.utils.advanced_presentation import load_presentation_sequence
+    path, pixels = write_frame(tmp_path/'panorama.dcm', 1)
+    ds = pydicom.dcmread(path)
+    ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.1.1'
+    ds.Modality = modality
+    ds.PixelSpacing = [0.2, 0.1]
+    lut = Dataset()
+    lut.LUTDescriptor = [64, 0, 16]
+    table = (np.arange(64, dtype=np.uint16) ** 2 * 16).astype(np.uint16)
+    lut.LUTData = table.astype('<u2').tobytes()
+    ds.VOILUTSequence = [lut]
+    if not valid_window:
+        del ds.WindowWidth
+        del ds.WindowCenter
+    ds.save_as(path, write_like_original=False)
+    result = load_presentation_sequence([path], series_number=1)
+    assert result is not None, 'Projection pixels must not require patient IPP/IOP'
+    image, metadata = result
+    assert image.GetDimensions() == (6, 8, 1)
+    assert image.GetSpacing() == (0.1, 0.2, 1.0)
+    assert metadata['series']['modality'] == modality
+    assert metadata['spatial_geometry_available'] is False
+    instance = metadata['instances'][0]
+    assert instance['image_position_patient'] is None
+    assert instance['image_orientation_patient'] is None
+    got = vtk_to_numpy(image.GetPointData().GetScalars()).reshape(pixels.shape)
+    # Window and LUT are alternative views, never consecutive transforms.
+    np.testing.assert_array_equal(got, (pixels if valid_window else table[pixels])[::-1])
+    expected_window = (101, 51) if valid_window else (65535, 32767.5)
+    assert (instance['window_width'], instance['window_center']) == expected_window
+
+
+def test_panorama_does_not_admit_processing_sop_or_mixed_modalities(tmp_path):
+    import pydicom
+    from PacsClient.pacs.patient_tab.utils.advanced_presentation import load_presentation_sequence
+    path, _ = write_frame(tmp_path/'processing.dcm', 1)
+    ds = pydicom.dcmread(path)
+    ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.1.1.1'
+    ds.Modality = 'PX'
+    ds.save_as(path, write_like_original=False)
+    assert load_presentation_sequence([path], series_number=1) is None
+    ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.1.1'
+    ds.save_as(path, write_like_original=False)
+    other, _ = write_frame(tmp_path/'other.dcm', 2)
+    with pytest.raises(ValueError, match='Mixed modalities'):
+        load_presentation_sequence([path, other], series_number=1)
+
+
 @pytest.mark.parametrize('calibration, suffix', [('detector', 'mm (detector)'), ('uncalibrated', 'px'), ('image_plane', 'mm')])
 def test_dx_ruler_labels_measurement_plane(calibration, suffix):
     import vtk
@@ -129,7 +183,8 @@ def test_dx_ruler_labels_measurement_plane(calibration, suffix):
     assert widget.GetRepresentation().GetLabelFormat() == '%-#6.3g ' + suffix
 
 
-def test_large_dx_worker_route_renders_full_resolution(tmp_path, monkeypatch):
+@pytest.mark.parametrize('modality', ['DX', 'PX'])
+def test_large_dx_worker_route_renders_full_resolution(tmp_path, monkeypatch, modality):
     import pydicom
     import vtk
     from types import SimpleNamespace
@@ -141,7 +196,7 @@ def test_large_dx_worker_route_renders_full_resolution(tmp_path, monkeypatch):
     path, _ = write_frame(folder/'large.dcm', 1)
     ds = pydicom.dcmread(path)
     ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.1.1'
-    ds.Modality = 'DX'
+    ds.Modality = modality
     ds.Rows, ds.Columns = 6869, 4528
     ds.ImagerPixelSpacing = [0.1, 0.1]
     ds.WindowWidth, ds.WindowCenter = 4096, 2048

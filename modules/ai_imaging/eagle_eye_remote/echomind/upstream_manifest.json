@@ -110,5 +110,28 @@
     "viewer_chat/turbo_xr_modules.py": [
       "1dbc6b6f5a39f7400f027381b3ff1ee9170cead3d87ab3c0aeae0761e72a10e1"
     ]
-  }
+  },
+  "targeted_updates": [
+    {
+      "date": "2026-10-07",
+      "feature": "Echocardiography reporting",
+      "files_sha256": {
+        "service.py": "955486795738744534825ce72e09fbf6605daeaafecb31206e1232b60630f22f",
+        "core/ai_chat_config.py": "fe022e39d86d1af10e956f2c9b8c2581078333a18fcff99a0b3b52ed6f9bfc0a",
+        "core/normal_templates.py": "36694271ab8bb543e27622baa900856f6a9db6f86936aebef35265c122680c36",
+        "core/viewer_chat/openai_reporter.py": "e85aabd3f50a8c47554a29f3de9d5b14264375b5fc090ec90e15db95f2088a97"
+      },
+      "note": "Original upstream receipt retained; targeted source adaptation, not a deployed server receipt."
+    },
+    {
+      "date": "2026-10-07",
+      "feature": "Reference comparison v1, signed unsupported values retained",
+      "files_sha256": {
+        "service.py": "e54813b6156d66a880bb92c93d29edd23ff74f362470ce7c975e875ecbc5d159",
+        "hosting.py": "ac88d9437b91b0433ae2834b7d653fd80d4f6f79dc00afa8dd7237391d1fb62b",
+        "reference_report.py": "589ad9a27e0a80498d5ebc47fae62e20cf7adcc46f457e91855d822615415f79"
+      },
+      "note": "Canonical source receipt. Deployment overlay preserves baseline reporter whitespace and has a separate hash manifest."
+    }
+  ]
 }

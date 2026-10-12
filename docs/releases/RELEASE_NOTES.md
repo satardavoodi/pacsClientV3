@@ -1,8 +1,10 @@
 # AIPacs Release Notes (Consolidated)
 
-**Latest receipt-backed Client build:** v3.6.8 (2026-09-26), four installers compiled and independently verified. Later v3.6.9 local install-QA artifacts are recorded separately; they do not establish a synchronized source release.
+**Latest completed receipt-backed Client candidate:** v3.7.1 (2026-10-06), four installers compiled with cross-backend coherence. Installed acceptance remains separate.
 
-**Pending release:** v3.7.1 (2026-10-06), four Standard/ARM64-emulated Client installers requested with the latest working-source changes and publication to all three configured Git repositories. No Eagle Eye Server build is requested. Source, build-input and artifact verification are recorded separately.
+**Current build request:** v3.7.3 (2026-10-12), publication to all three repositories followed by four Standard/ARM64-emulated Client installers from one immutable snapshot. No Server build or service transition is requested. See the version record for actual progress and acceptance gaps.
+
+**Previous local candidate:** v3.7.2 completed both backends with coherence exit code 0; four files were independently checked on 2026-10-10. This was local install QA, not Git publication or installed qualification.
 
 **Previous published source:** v3.7.0, verified online on both release branches in all three repositories on 2026-10-06. Only its PyInstaller pair completed; the Nuitka compression run was interrupted before the September 30 host reboot. The existing tag and artifacts are preserved.
 
@@ -10,6 +12,41 @@
 **Previous Stable:** v3.6.3 (2026-08-23)
 **Release Date:** 2026-08-29
 **Branch:** beta-version
+
+---
+
+## v3.7.3 (Standard Client source publication and candidate, 2026-10-12)
+
+Capture the current Windows workstation source for Standard and x64-on-ARM64
+emulation, using both PyInstaller and Nuitka through BUILD.md's coordinator.
+Inputs include current Education/media, Home/thumbnail and Fast Viewer lifecycle,
+shutdown, Settings/EchoMind integration and customized Advanced Viewer Python/UI
+payloads. Retain DICOM EOF/Flow compatibility, codecs, Lite Viewer and Qt hygiene.
+Reuse the verified September 28 native Slicer/VMTK cache; overlay current Python
+presentation including viewer_chrome.py without rebuilding the native runtime.
+
+Ordinary Eagle access and separate mobile-to-Workstation Agent pairing retain
+their distinct connection contracts. Shared source is not Server acceptance.
+No Eagle Eye Server installer, model bundle or clinical service transition is
+part of this request. See [VERSION_3.7.3_RELEASE.md](VERSION_3.7.3_RELEASE.md)
+for publication, artifact evidence and outstanding clean-host acceptance.
+
+---
+
+## v3.7.2 (Frozen Standard Client install-QA candidate, 2026-10-09)
+
+Freeze the current working-source Client package into one sanitized immutable
+snapshot for Standard and x64-on-ARM64 emulation, using both PyInstaller and
+Nuitka. Later Eagle Eye Server edits must not enter that snapshot. Current
+Education, Home, Settings, EchoMind/Secretary integration and Advanced Viewer
+Python payload changes are included as build inputs, not certified clinical
+outcomes. Reuse the verified custom native Slicer/VMTK cache; do not rebuild
+Slicer or include offline Eagle Eye models.
+
+See [VERSION_3.7.2_RELEASE.md](VERSION_3.7.2_RELEASE.md) for the owner-directed
+scope exception, verification, canonical output paths and pending acceptance.
+No Server installer, clinical service transition or Git publication is performed
+by this local candidate run.
 
 ---
 

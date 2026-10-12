@@ -33,6 +33,9 @@ _SERVICE: Optional["AgentGatewayService"] = None
 
 def install_service(get_bus: Callable[[], Any]) -> "AgentGatewayService":
     """Create (once) the app-scoped gateway service. Does NOT start it."""
+    from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+    if settings_role() == 'server':
+        raise ValueError('Mobile execution pairing requires the Windows Client role.')
     global _SERVICE
     if _SERVICE is None:
         _SERVICE = AgentGatewayService(get_bus)
@@ -153,6 +156,9 @@ class AgentGatewayService:
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start_if_enabled(self) -> bool:
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        if settings_role() == 'server':
+            return False
         from .feature_flags import agent_gateway_enabled
 
         if not agent_gateway_enabled():
@@ -168,6 +174,9 @@ class AgentGatewayService:
         main-window paint. The dispatcher is the only Qt-owned object and is
         deliberately constructed by the caller before the daemon starts.
         """
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        if settings_role() == 'server':
+            return False
         from .feature_flags import agent_gateway_enabled
 
         if not agent_gateway_enabled():
@@ -197,6 +206,9 @@ class AgentGatewayService:
             return False
 
     def start(self) -> bool:
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        if settings_role() == 'server':
+            return False
         if self._running:
             return True
         self._last_error = ""

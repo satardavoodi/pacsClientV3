@@ -75,7 +75,7 @@ def test_eagle_eye_page_uses_role_specific_controls(monkeypatch, role):
         app.processEvents()
 
 
-def test_installed_server_role_is_cached_without_changing_runtime_routing(monkeypatch):
+def test_installed_server_role_is_cached_and_ignores_source_override(monkeypatch):
     import aipacs_runtime
     from modules.ai_imaging.eagle_eye_remote import administration as admin
     monkeypatch.delenv('AIPACS_EAGLE_EYE_ROLE', raising=False)
@@ -88,6 +88,16 @@ def test_installed_server_role_is_cached_without_changing_runtime_routing(monkey
         assert admin.settings_role() == admin.settings_role() == 'server'
         assert len(calls) == 1
         monkeypatch.setenv('AIPACS_EAGLE_EYE_ROLE', 'standard')
-        assert admin.settings_role() == 'standard'
+        assert admin.settings_role() == 'server'
     finally:
         admin._installed_settings_role.cache_clear()
+
+
+def test_source_role_environment_is_honored(monkeypatch):
+    import aipacs_runtime
+    from modules.ai_imaging.eagle_eye_remote import administration as admin
+    monkeypatch.setattr(aipacs_runtime, 'is_frozen', lambda: False)
+    monkeypatch.setenv('AIPACS_EAGLE_EYE_ROLE', 'standard')
+    assert admin.settings_role() == 'standard'
+    monkeypatch.setenv('AIPACS_EAGLE_EYE_ROLE', 'server')
+    assert admin.settings_role() == 'server'

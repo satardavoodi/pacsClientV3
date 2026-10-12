@@ -337,3 +337,11 @@ an instrumented sweep of all menus, slice interactions and extension dialogs.
 No native binary rebuild, model change, runtime process recovery or release was
 performed. A rollback would restore the defective promotion path; the existing
 `AIPACS_SLICER_RESIDENT=0` switch remains the documented legacy fallback.
+
+
+## Function-specific editor presentation contract (2026-10-11)
+
+For the on-demand Brain correction editor and future function-specific layouts,
+use [Advanced Image Analysis startup profiles](ADVANCED_IMAGE_ANALYSIS_STARTUP_PROFILES.md).
+It documents the early off-desktop guard and both-backend physical-script contract.
+Keep the resident MPR process and headless computation domains separate.

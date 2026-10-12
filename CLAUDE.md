@@ -1,5 +1,14 @@
 # AI-PACS — Project Instructions
 
+## Connection boundary authority (owner decision, 2026-10-12)
+
+Ordinary Eagle Server ingress is HTTP IP:port plus username/password, upstream
+PACS/Reception identity and internal feature/module permissions. Mobile/Windows
+callers need no device pairing or caller-supplied provider token. QR/HTTPS pairing
+belongs only to mobile-to-Windows-Client Agent PACS execution. Mobile imaging AI
+is not a current feature. Read the [canonical connection contract and audit](docs/architecture/EAGLE_EYE_CONNECTION_BOUNDARIES_2026-10-12.md);
+it supersedes older paired-server requirements without claiming legacy code fixed.
+
 This file is picked up automatically by AI agents working in this repository
 (`E:\ai-pacs\ai-pacs codes\ai-pacs beta version\`). Keep it accurate and integrate
 new guidance cleanly rather than overwriting existing sections.
@@ -16,6 +25,25 @@ new guidance cleanly rather than overwriting existing sections.
 > **Canonical Git release route (2026-09-07):** start with [`RELEASE.md`](RELEASE.md)
 > before a versioned commit, tag, push, or full build. It requires one reviewed SHA
 > across every declared remote/branch and produces the receipt consumed by `BUILD.md`.
+
+## Mandatory Developer parity (owner decision, 2026-10-08)
+
+**Mandatory Developer parity (owner decision, 2026-10-08):** every change on the
+local workstation or Razi Eagle Eye Server Developer side must be reconciled and
+applied to the other side in the same work session. Completion and build handoff
+require hash-verified source/payload parity; blocked synchronization remains an
+explicit blocker. Preserve host-private state and never overwrite executing code.
+Read [the synchronization contract](docs/modules/eagle-eye-server-development/docs/DEVELOPER_SYNC_POLICY.md)
+and the corresponding mandatory section in AGENTS.md.
+
+## Developer test/build ownership (owner decision, 2026-10-09)
+
+Keep local Client/Server and Razi Server Developer source synchronized. Razi runs
+server Function Tester/scenarios; this control computer runs Client-to-Server
+integration and builds both products only after acceptance. Verify the active
+source process, not just transferred files. Preserve host-specific licensing and
+identities. See [the durable workflow](docs/modules/eagle-eye-server-development/docs/DEVELOPER_TEST_BUILD_WORKFLOW.md)
+and the mandatory synchronization contract. No automatic build or live hot reload.
 
 ## EchoMind routing authority (owner decision, 2026-09-30)
 

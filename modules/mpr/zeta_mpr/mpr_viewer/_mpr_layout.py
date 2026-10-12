@@ -440,6 +440,8 @@ class _MprLayoutMixin:
         # bails instead of building into a finalizing widget (the callback also
         # swallows the deleted-object RuntimeError as a second layer).
         self._deferred_3d_pending = False
+        self._initial_views_pending = False
+        self._initial_view_steps = []
         curve = getattr(self, "_curve_reconstruction", None)
         if curve is not None:
             try:

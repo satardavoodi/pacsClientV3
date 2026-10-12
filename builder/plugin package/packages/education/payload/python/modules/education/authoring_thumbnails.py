@@ -33,13 +33,13 @@ def _badge(kind, text=""):
     return image
 
 
-def _cover_image(path):
+def _cover_image(path, target_size=SIZE):
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)
     size = reader.size()
     if not size.isValid() or size.width() * size.height() > 40_000_000:
         return QImage()
-    reader.setScaledSize(size.scaled(SIZE, Qt.KeepAspectRatio))
+    reader.setScaledSize(size.scaled(target_size, Qt.KeepAspectRatio))
     return reader.read()
 
 
@@ -172,7 +172,9 @@ class _Job(QRunnable):
             if self.cancel.is_set():
                 return
             try:
-                if self.channel == "slides":
+                if self.channel == "cover":
+                    image = _cover_image(entry["path"], QSize(166, 166))
+                elif self.channel == "slides":
                     from modules.education.course_database import get_content_for_slide
                     content = get_content_for_slide(entry["slide_pk"])
                     image = slide_preview(entry, content)
@@ -181,6 +183,8 @@ class _Job(QRunnable):
                 if not self.cancel.is_set():
                     self.signals.ready.emit(self.channel, self.generation, index, image)
             except Exception:
+                if self.channel == "cover" and not self.cancel.is_set():
+                    self.signals.ready.emit(self.channel, self.generation, index, QImage())
                 continue
 
 
@@ -189,6 +193,7 @@ class AuthoringThumbnails(QObject):
         super().__init__(parent)
         self.targets = {}
         self.serial = 0
+        self.cover_pending = False
         self.signals = _Signals()
         self.signals.ready.connect(self._ready)
         targets = self.targets
@@ -198,6 +203,20 @@ class AuthoringThumbnails(QObject):
         for _, _, cancel in self.targets.values():
             cancel.set()
         self.targets.clear()
+
+    def request_cover(self, label, path):
+        """Decode only QImage on the bounded pool; create QPixmap on the GUI."""
+        global _pool
+        if _pool is None:
+            _pool = QThreadPool()
+            _pool.setMaxThreadCount(2)
+        self.invalidate()
+        self.cover_pending = True
+        self.serial += 1
+        cancel = threading.Event()
+        self.targets["cover"] = (label, self.serial, cancel)
+        label.destroyed.connect(lambda *_: cancel.set())
+        _pool.start(_Job("cover", self.serial, [{"path": str(path)}], cancel, self.signals))
 
     def request(self, channel, widget, entries):
         global _pool
@@ -220,6 +239,13 @@ class AuthoringThumbnails(QObject):
     def _ready(self, channel, generation, index, image):
         target = self.targets.get(channel)
         if target and target[1] == generation:
+            if target[2].is_set():
+                return
+            if channel == "cover":
+                self.cover_pending = False
+                if not image.isNull():
+                    target[0].setPixmap(QPixmap.fromImage(image))
+                return
             item = target[0].item(index)
             if item is not None:
                 item.setIcon(QIcon(QPixmap.fromImage(image)))

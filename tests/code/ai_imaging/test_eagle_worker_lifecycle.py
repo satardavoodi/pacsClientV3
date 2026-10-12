@@ -224,8 +224,20 @@ def test_start_dx_process_has_reentrancy_guard_and_registers_worker():
 
 def test_job_client_uses_a_bounded_transport_timeout():
     """A dead host must fail fast, not hang a worker thread for the full budget."""
-    client = (REPO_ROOT / 'modules/ai_imaging/eagle_eye_remote/client.py').read_text(encoding='utf-8')
-    assert 'self.opener.open(req, timeout=30)' in client
+    import io
+    from types import SimpleNamespace
+    from modules.ai_imaging.eagle_eye_remote.client import Client
+    client = Client.__new__(Client)
+    client.url, client.token = 'http://synthetic.invalid', ''
+    client._check_profile = lambda: None
+    observed = []
+    client.opener = SimpleNamespace(open=lambda request, *, timeout:
+        observed.append(timeout) or io.BytesIO(b'{}'))
+    with client.open('/v1/capabilities'):
+        pass
+    with client.open('/v1/capabilities', timeout=7):
+        pass
+    assert observed == [30, 7]
     assert 'resp = requests.post(' not in SRC
 
 

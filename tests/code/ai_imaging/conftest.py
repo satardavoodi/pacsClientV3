@@ -1,5 +1,6 @@
 """Explicit synthetic provider choices for tests with injected transports."""
 import pytest
+from tests.code.ai_imaging.human_access_fixture import human_access
 
 
 @pytest.fixture

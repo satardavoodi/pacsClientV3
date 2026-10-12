@@ -14,6 +14,7 @@ import zipfile
 import pytest
 
 from modules.ai_imaging.eagle_eye_remote import contracts, artifacts, client, server, source, settings
+from tests.code.ai_imaging.human_access_fixture import human_access
 
 
 def request(module='bone-age'):
@@ -41,6 +42,11 @@ def test_request_requires_exact_series_roles_and_count():
 
 class SyntheticSource:
     def case_identity(self, study_uid):
+        if study_uid != '1.2.3':
+            raise ValueError('Unknown synthetic study')
+        return {'study_uid':study_uid, 'patient_id':'synthetic-patient'}
+
+    def case_identity(self, study_uid):
         assert study_uid == '1.2.3'
         return {'study_uid': study_uid, 'patient_id': 'synthetic-patient'}
 
@@ -64,11 +70,12 @@ def synthetic_runner(job, cancel):
 
 
 @pytest.fixture
-def http_service(tmp_path, monkeypatch):
+def http_service(tmp_path, monkeypatch, human_access):
     jobs = server.Jobs(tmp_path / 'server', SyntheticSource(), synthetic_runner)
     token = 'a' * 64
     monkeypatch.setenv('EAGLE_TEST_TOKEN', token)
-    http = ThreadingHTTPServer(('127.0.0.1', 0), server.handler(jobs, {'first': token, 'second': 'b' * 64}))
+    http = ThreadingHTTPServer(('127.0.0.1', 0), server.handler(jobs, {'first': token, 'second': 'b' * 64},
+                                                           license_guard=lambda: True, user_authority=human_access))
     worker = threading.Thread(target=http.serve_forever, daemon=True)
     worker.start()
     cfg = {'url': f'http://127.0.0.1:{http.server_port}', 'token_env': 'EAGLE_TEST_TOKEN'}
@@ -170,7 +177,10 @@ def test_observation_timeout_is_detached_and_handle_is_credential_bound(http_ser
         client.Client(cfg).resume(handle, tmp_path / 'resumed')
 
 
-def test_tls_listener_requires_trusted_certificate_and_matching_host(tmp_path, monkeypatch):
+def test_tls_listener_requires_trusted_certificate_and_matching_host(tmp_path, monkeypatch, human_access):
+    from types import SimpleNamespace
+    from modules.LicenseGenerator import renewal
+    monkeypatch.setattr(renewal, 'server_manager', lambda cfg: SimpleNamespace(check_license=lambda: (True, 'Synthetic license')))
     from datetime import datetime, timedelta, timezone
     import ipaddress
     import secrets
@@ -198,7 +208,7 @@ def test_tls_listener_requires_trusted_certificate_and_matching_host(tmp_path, m
     monkeypatch.delenv('EAGLE_TLS_FIXTURE_TOKEN', raising=False)
     monkeypatch.setattr(source, 'source_provider', lambda cfg: SyntheticSource())
     http, jobs = server.create_server(dict(host='127.0.0.1', port=0,
-        job_root=str(tmp_path / 'server'), pacs={}, clients={'fixture': str(token_path)},
+        job_root=str(tmp_path / 'server'), center_id='synthetic-center', pacs={'url': 'http://synthetic.invalid'}, clients={'fixture': str(token_path)},
         certificate=str(cert_path), private_key=str(key_path)))
     jobs.runner = synthetic_runner
     worker = threading.Thread(target=http.serve_forever, daemon=True)
@@ -245,11 +255,10 @@ def test_http_authentication_ownership_and_idempotency(http_service, monkeypatch
         c.json('/v1/jobs', body)
     monkeypatch.setenv('EAGLE_TEST_TOKEN', 'b' * 64)
     other = client.Client(cfg)
-    with pytest.raises(RuntimeError):
-        other.json('/v1/jobs/' + first['job_id'])
-    with pytest.raises(urllib.error.HTTPError) as error:
-        urllib.request.urlopen(cfg['url'] + '/v1/capabilities')
-    assert error.value.code == 401
+    # Both paired clients authenticated the same synthetic upstream person.
+    assert other.json('/v1/jobs/' + first['job_id'])['job_id'] == first['job_id']
+    with urllib.request.urlopen(cfg['url'] + '/v1/capabilities') as response:
+        assert response.status == 200
 
 
 def test_cancelled_job_never_publishes(tmp_path):

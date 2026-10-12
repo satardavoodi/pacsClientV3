@@ -577,6 +577,19 @@ class PatientCaseController(QObject):
         self.future = self.executor.submit(work)
 
     def show_result(self, kind, value):
+        if kind == 'eagle_eye' and value.get('server_module') == 'dental-panorama':
+            from modules.ai_imaging.dental_panorama_widget import DentalPanoramaWidget
+            dialog = QDialog(self.patient)
+            dialog.setAttribute(Qt.WA_DeleteOnClose)
+            dialog.setWindowTitle('Saved Panoramic Dental AI | Research Review')
+            dialog.resize(1100, 800)
+            layout = QVBoxLayout(dialog)
+            widget = DentalPanoramaWidget(dialog, study_uid=self.reference['study_uid'])
+            layout.addWidget(widget)
+            dialog.finished.connect(lambda _code: widget.teardown())
+            widget.restore_saved_result(value)
+            dialog.show()
+            return
         if kind == 'eagle_eye' and value.get('server_module') in ('brain', 'brain-lesions'):
             from modules.ai_imaging.eagle_eye_workspace import open_eagle_eye_workspace
             workspace = open_eagle_eye_workspace(self.patient)

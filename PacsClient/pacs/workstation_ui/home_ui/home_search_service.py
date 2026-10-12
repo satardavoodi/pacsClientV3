@@ -523,6 +523,8 @@ class HomeSearchService:
         home = self._home
         loop = asyncio.get_running_loop()
         home._cancel_search_requested = False
+        home._search_generation = int(getattr(home, "_search_generation", 0)) + 1
+        local_generation = home._search_generation
 
         try:
             home.show_loading("Local Search", "Searching local database...", cancellable=True)
@@ -687,6 +689,11 @@ class HomeSearchService:
                         home.patient_table_widget.end_bulk_insert()
 
             home._update_connection_indicator_by_status('online', f'Local DB - Found {total} studies')
+            if hasattr(home, 'workflow_realtime'):
+                from modules.network.home_legacy_workflow import local_source
+                source = await loop.run_in_executor(self._thread_pool(), local_source)
+                if source and home._search_generation == local_generation and not self._cancelled:
+                    home.workflow_realtime.bind(*source, local_generation, mode='Local')
 
         except asyncio.CancelledError:
             try:

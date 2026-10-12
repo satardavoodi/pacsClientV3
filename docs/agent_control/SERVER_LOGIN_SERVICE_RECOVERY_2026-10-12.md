@@ -1,0 +1,15 @@
+# Server GUI login service recovery
+
+Owner policy: each successfully authenticated Eagle Eye Server GUI login requests one restart of the fixed owned Eagle service, even if accepted Eagle requests are interrupted. Window close does not trigger restart. Windows Client, Android and iOS login behavior is unchanged.
+
+The GUI consumes the successful login operation and runs stop/start off the Qt thread before creating Home or its native Secretary binding. The worker opens only AIPacsEagleEye with QUERY_CONFIG, QUERY_STATUS, START and STOP. It checks the exact reviewed source/runtime/configuration and LocalService account before control, then waits for STOPPED and a new PID/creation generation. SERVICE_RUNNING follows the existing owned-child listener-ready handshake; service_restarted is not a model, provider or native-binding acceptance claim. Home opens only on that result; existing native attestation runs afterwards.
+
+An elevated installer/operator may explicitly provision a selected account or local operator group SID with service-specific mask 0x35. No ordinary GUI writes an ACL, requests elevation, changes service configuration, deletes a service or obtains rights over other services. Existing DACL entries are preserved. Broad built-in principals, null DACL and conflicting subject entries are rejected. Group membership and protected target/configuration read access must be qualified on the actual host; they are not automatically provisioned by importing this module.
+
+An explicit SCM stop permits the existing supervisor to close its owned Job after its bounded stop budget. The coordinator itself never kills a PID. If SCM stop cannot finish or identity changes, it fails without start, retry or replay. A deadlocked OS supervisor is not covered by a promise of unconditional force. Requests interrupted by restart may fail; no LLM or command operation is resubmitted automatically.
+
+Source checks use synthetic service adapters. Live operator ACL provisioning, ordinary-user stop/start, fresh GUI/native acceptance, Developer snapshot parity and installed WinA100 qualification remain separate pending gates. No live ACL, restart or deployment was performed while implementing this slice.
+
+Explicit source-administration entry point (run elevated only after selecting and approving the operator identity): `python tools/eagle_eye/provision_login_operator.py --config <absolute-reviewed-server-config> --operator-sid <approved-specific-SID>`. It targets only the fixed Eagle service; it does not create a group or add members. Customer installer integration must invoke this same provisioning policy with an explicitly approved account/group and qualify effective ordinary-user access. No broad default principal is granted.
+
+The new helper is statically imported by AppHandler and the existing PyInstaller specification collects the modules tree. Scoped mirror inspection found no applicable mirrors for these files. Full frozen PyInstaller/Nuitka inclusion and ordinary-user installed acceptance remain mandatory WinA100 gates; this source slice is not a completed build.

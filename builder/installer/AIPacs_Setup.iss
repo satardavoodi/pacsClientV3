@@ -14,6 +14,23 @@
 #ifndef DistributionEdition
   #define DistributionEdition "legacy"
 #endif
+#if DistributionEdition == "eagle-eye"
+  #ifndef EagleEyeReleaseId
+    #error Eagle Eye Server requires an immutable release identity from the canonical compiler.
+  #endif
+  #define ServerReleaseRoot "{app}\releases\" + EagleEyeReleaseId
+  #undef MyAppName
+  #define MyAppName "AIPacs Eagle Eye Server"
+  #define ProductAppId "7A9BA630-A7D7-4E20-8435-5F263CF96702"
+  #define ProductDataRoot "{commonappdata}\AIPacs\EagleEyeServer"
+  #define ProductLocalRoot "{localappdata}\AIPacs\EagleEyeServer"
+  #define ProductRoamingRoot "{userappdata}\AIPacs\EagleEyeServer"
+#else
+  #define ProductAppId "2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65"
+  #define ProductDataRoot "{commonappdata}\AIPacs"
+  #define ProductLocalRoot "{localappdata}\AIPacs"
+  #define ProductRoamingRoot "{userappdata}\AIPacs"
+#endif
 #ifndef IncludeAdvancedMpr
   #define IncludeAdvancedMpr "1"
 #endif
@@ -73,7 +90,7 @@
 #endif
 
 [Setup]
-AppId={{2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65}
+AppId={{{#ProductAppId}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
@@ -116,7 +133,11 @@ VersionInfoVersion={#MyAppVersion}
 ; a manual uninstall before reinstalling. RestartApplications=no keeps it simple:
 ; we close the running app but do not relaunch it at the end of setup (the [Run]
 ; entry already offers an optional launch).
+#if DistributionEdition == "eagle-eye"
+CloseApplications=no
+#else
 CloseApplications=yes
+#endif
 CloseApplicationsFilter=*.exe,*.dll,*.pyd
 RestartApplications=no
 
@@ -163,48 +184,64 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; accounts to write DICOM downloads, cache, AI data, etc. after install.
 Name: "{app}\User Data"; Permissions: users-modify
 ; Legacy path kept so upgrade installs do not lose references to old files.
-Name: "{localappdata}\AIPacs\user_data"; Permissions: users-modify
-Name: "{userappdata}\AIPacs\config"; Permissions: users-modify
-Name: "{commonappdata}\AIPacs\config"; Permissions: users-modify
-Name: "{commonappdata}\AIPacs\module_packages"; Permissions: users-modify
+Name: "{#ProductLocalRoot}\user_data"; Permissions: users-modify
+Name: "{#ProductRoamingRoot}\config"; Permissions: users-modify
+#if DistributionEdition == "eagle-eye"
+Name: "{#ProductDataRoot}\config"
+Name: "{#ProductDataRoot}\module_packages"
+#else
+Name: "{#ProductDataRoot}\config"; Permissions: users-modify
+Name: "{#ProductDataRoot}\module_packages"; Permissions: users-modify
+#endif
 
 [Files]
 Source: "ensure_english_voice.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
+#if DistributionEdition == "eagle-eye"
+Source: "{#StageDir}\core\*"; DestDir: "{#ServerReleaseRoot}\core"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\plugin_packages\*"; DestDir: "{#ServerReleaseRoot}\plugin_packages"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 Source: "EULA.txt"; DestDir: "{app}\Legal"; DestName: "AI-PACS-EULA.txt"; Components: core; Flags: ignoreversion
 Source: "THIRD_PARTY_NOTICES.txt"; DestDir: "{app}\Legal"; Components: core; Flags: ignoreversion
-Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: optional\data_analysis; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+#if DistributionEdition != "eagle-eye"
+Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{#ProductDataRoot}\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{#ProductDataRoot}\module_packages\data_analysis"; Components: optional\data_analysis; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #if AdvancedMprRuntimeAvailable
-Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Excludes: "*.pyc,*.pyo,*.pyd.orig,*\__pycache__\*,*\.pytest_cache\*,*\.mypy_cache\*,payload\offline_lumbar\*,payload\eagle_eye\*"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{#ProductDataRoot}\module_packages\advanced_mpr"; Excludes: "*.pyc,*.pyo,*.pyd.orig,*\__pycache__\*,*\.pytest_cache\*,*\.mypy_cache\*,payload\offline_lumbar\*,payload\eagle_eye\*"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 #if OfflineLumbarAvailable
 ; Copy the model environment without pruning package resources needed at runtime.
-Source: "{#StageDir}\plugin_packages\advanced_mpr\payload\offline_lumbar\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\offline_lumbar"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\plugin_packages\advanced_mpr\payload\offline_lumbar\*"; DestDir: "{#ProductDataRoot}\module_packages\advanced_mpr\payload\offline_lumbar"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 #if DistributionEdition == "eagle-eye" && EagleEyeBrainRuntimeAvailable
-Source: "{#EagleEyeBrainRoot}\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\eagle_eye\brain"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#EagleEyeBrainRoot}\*"; DestDir: "{#ProductDataRoot}\module_packages\advanced_mpr\payload\eagle_eye\brain"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 #if DistributionEdition == "eagle-eye" && EagleEyeBreastRuntimeAvailable
-Source: "{#EagleEyeBreastRoot}\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\eagle_eye\breast"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#EagleEyeBreastRoot}\*"; DestDir: "{#ProductDataRoot}\module_packages\advanced_mpr\payload\eagle_eye\breast"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 #if DistributionEdition == "eagle-eye" && EagleEyeBoneAgeRuntimeAvailable
-Source: "{#EagleEyeBoneAgeRoot}\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr\payload\eagle_eye\bone-age"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#EagleEyeBoneAgeRoot}\*"; DestDir: "{#ProductDataRoot}\module_packages\advanced_mpr\payload\eagle_eye\bone-age"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
-Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPacs\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\AIPacs\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\consultation\*"; DestDir: "{commonappdata}\AIPacs\module_packages\consultation"; Components: optional\consultation; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\aipacs_chat\*"; DestDir: "{commonappdata}\AIPacs\module_packages\aipacs_chat"; Components: optional\aipacs_chat; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{#ProductDataRoot}\module_packages\printing"; Components: optional\printing; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{#ProductDataRoot}\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{#ProductDataRoot}\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{#ProductDataRoot}\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\consultation\*"; DestDir: "{#ProductDataRoot}\module_packages\consultation"; Components: optional\consultation; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\aipacs_chat\*"; DestDir: "{#ProductDataRoot}\module_packages\aipacs_chat"; Components: optional\aipacs_chat; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+#endif
 
 [Icons]
+#if DistributionEdition != "eagle-eye"
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"; Tasks: desktopicon
+#endif
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\setup\ensure_english_voice.ps1"""; StatusMsg: "Preparing English voice for Secretary EchoMind..."; Flags: runhidden waituntilterminated
+#if DistributionEdition != "eagle-eye"
 Filename: "{app}\AIPacs.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+#endif
 
 [Messages]
 SetupWindowTitle={#MyAppName} {#MyAppVersion} Setup
@@ -452,9 +489,9 @@ end;
 function InternalConfigDir(): String;
 begin
   // Primary: ProgramData (writable by installer and runtime without elevation)
-  if DirExists(ExpandConstant('{commonappdata}\AIPacs\config')) then
+  if DirExists(ExpandConstant('{#ProductDataRoot}\config')) then
   begin
-    Result := ExpandConstant('{commonappdata}\AIPacs\config');
+    Result := ExpandConstant('{#ProductDataRoot}\config');
     Exit;
   end;
   // Fallback: engine\config (current PyInstaller layout)
@@ -697,7 +734,7 @@ var
   ProfilePath: String;
   JsonText: String;
 begin
-  ConfigDir := ExpandConstant('{commonappdata}\AIPacs\config');
+  ConfigDir := ExpandConstant('{#ProductDataRoot}\config');
   ForceDirectories(ConfigDir);
   ProfilePath := AddBackslash(ConfigDir) + 'installation_profile.json';
 
@@ -771,12 +808,12 @@ var
   Value: String;
 begin
   // Inno records its uninstaller under <AppId>_is1. The AppId in [Setup] is the
-  // literal GUID {2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65}. RegQueryStringValue uses
-  // the subkey string verbatim (no constant expansion), so the GUID is safe inline.
+  // selected role GUID. Client and Server never adopt each other's uninstall key.
+  // RegQueryStringValue uses the expanded subkey string verbatim.
   Result := '';
   UninstallKey :=
     'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' +
-    '{2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65}_is1';
+    '{{#ProductAppId}}_is1';
 
   if RegQueryStringValue(HKLM64, UninstallKey, 'QuietUninstallString', Value) then
     Result := Value
@@ -861,20 +898,47 @@ begin
   //
   // User data is preserved: the previous uninstaller only removes files it logged
   // at install time. Downloaded DICOMs/cache under {app}\User Data and the module
-  // packages under {commonappdata}\AIPacs are not in that log, so they survive.
+  // packages under {#ProductDataRoot} are not in that log, so they survive.
   Result := '';
   NeedsRestart := False;
 
   PreviousUninstaller := GetPreviousUninstaller();
+#if DistributionEdition == "eagle-eye"
+  // Legacy in-place uninstallation cannot retain a running Server for rollback.
+  // A fresh QA installation is separate; existing/legacy targets require the
+  // qualified coordinated Server updater before any files can be overwritten.
+  if (PreviousUninstaller <> '') or FileExists(ExpandConstant('{app}\AIPacs.exe')) then
+    Result := 'Use the qualified coordinated Server updater. The existing installation has not been modified.';
+#else
+  if FileExists(ExpandConstant('{app}\eagle-eye-release.json')) then
+  begin
+    Result := 'This folder belongs to Eagle Eye Server. Choose a separate Client installation folder.';
+    exit;
+  end;
   if PreviousUninstaller <> '' then
     RunPreviousUninstaller(PreviousUninstaller);
+#endif
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  SetupExit: Integer;
+  SetupArguments: String;
 begin
   if CurStep = ssPostInstall then
   begin
     WriteInstallationProfile();
+#if DistributionEdition == "eagle-eye"
+    SetupArguments := '--eagle-eye-setup-server "' + ExpandConstant('{#ProductDataRoot}') +
+      '" "' + ExpandConstant('{param:EagleEyeConfig|}') + '" "' +
+      ExpandConstant('{autodesktop}\{#MyAppName}.lnk') + '"';
+    if not Exec(ExpandConstant('{#ServerReleaseRoot}\core\AIPacs.exe'), SetupArguments,
+      '', SW_HIDE, ewWaitUntilTerminated, SetupExit) or (SetupExit <> 0) then
+      MsgBox('Package files are installed; Server activation did not complete or requires recovery.' + #13#10 +
+        'Retained binaries, the service and private transaction receipts have been preserved.' + #13#10 +
+        'Review the protected setup receipts under ' + ExpandConstant('{#ProductDataRoot}') +
+        ' before retrying. Installer completion does not certify Server activation.', mbError, MB_OK);
+#else
 
     if OptionalModuleSelected('advanced_mpr') then
       MsgBox(
@@ -890,6 +954,7 @@ begin
         mbInformation,
         MB_OK
       );
+#endif
   end;
 end;
 

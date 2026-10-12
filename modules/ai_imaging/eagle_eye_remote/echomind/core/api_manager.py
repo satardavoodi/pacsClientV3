@@ -1,7 +1,18 @@
 """Headless, request-scoped replacement for the Qt credential singleton."""
 from types import SimpleNamespace
-from modules.ai_imaging.eagle_eye_remote.echomind.runtime import company_identity, current_settings
+from modules.ai_imaging.eagle_eye_remote.echomind.runtime import company_identity as registry_identity, current_settings
 
+
+def company_identity():
+    settings = current_settings()
+    if settings.get('brain_server') == 'custom':
+        key = str(settings.get('openai_api_key') or '').strip()
+        if not key:
+            raise ValueError('Configure your own Custom API key in AI > Connection.')
+        return 'Custom API', key
+    if settings.get('brain_server') in ('server_2','server_3'):
+        raise ValueError('This Brain route has no qualified model/API yet.')
+    return registry_identity()
 
 class Manage:
     @classmethod

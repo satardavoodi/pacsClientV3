@@ -268,6 +268,8 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
             )
             print(f"[CommandBus] wired with {len(self.command_bus.actions())} action(s)")
             self._wire_agent_background_layer()
+            from modules.ai_imaging.eagle_eye_remote.secretary_native_connector import schedule_home
+            schedule_home(self)
             # Test Control Server — env-gated external transport for the bus
             # (AIPACS_TEST_SERVER=1, source build only). No-op in production.
             # See TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md §4.
@@ -275,6 +277,10 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 from modules.EchoMind.secretary.test_server import maybe_start_test_server
                 self._test_control_server = maybe_start_test_server(
                     get_bus=lambda: self.command_bus,
+                    get_native_runtime=lambda: getattr(
+                        getattr(self, 'secretary_button_widget', None), '_native_secretary_runtime', None),
+                    get_native_lifecycle=lambda: getattr(
+                        getattr(self, 'secretary_button_widget', None), '_native_secretary_attachment', None),
                     get_active_patient_tab=self._get_active_patient_tab_for_bus,
                     get_main_tab_widget=lambda: self.tab_widget,
                 )
@@ -289,11 +295,13 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 from modules.agent_gateway.service import install_service
                 from PySide6.QtWidgets import QApplication
 
-                _gw = install_service(lambda: self.command_bus)
-                _gw.start_if_enabled_async()
-                _app = QApplication.instance()
-                if _app is not None:
-                    _app._agent_gateway_service = _gw
+                from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+                if settings_role() != 'server':
+                    _gw = install_service(lambda: self.command_bus)
+                    _gw.start_if_enabled_async()
+                    _app = QApplication.instance()
+                    if _app is not None:
+                        _app._agent_gateway_service = _gw
             except Exception as _gw_err:  # noqa: BLE001
                 print(f"[AgentGateway] init skipped (non-fatal): {_gw_err}")
         except Exception as _cmd_bus_err:  # noqa: BLE001

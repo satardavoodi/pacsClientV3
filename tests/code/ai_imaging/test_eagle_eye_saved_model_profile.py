@@ -36,7 +36,7 @@ def test_direct_anatomy_uses_user_model_settings(monkeypatch):
 
 @pytest.mark.parametrize('model', ['gpt-6-astra', 'openai/gpt-6-astra', 'gemini-3.1-pro-preview'])
 def test_company_wire_profile_is_model_specific_and_keeps_transport(monkeypatch, tmp_path, model):
-    from modules.EchoMind.viewer_chat import openai_reporter as reporter
+    from modules.ai_imaging.eagle_eye_remote.echomind.core.viewer_chat import openai_reporter as reporter
     sent = []
     manager = SimpleNamespace(get_center_and_gapgpt_key=lambda: ('synthetic-center', 'synthetic-key'))
     monkeypatch.setattr(reporter, 'Manage', SimpleNamespace(instance=lambda: manager))

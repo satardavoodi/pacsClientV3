@@ -164,11 +164,30 @@ def test_failed_refresh_preparation_drops_retained_cards_and_allows_retry(lap, m
 
 
 @pytest.mark.parametrize("initial_count,replacement", [
-    (1, []), (1, rows(2)), (2, list(reversed(rows(2, images=3))))])
+    (1, []), (1, rows(2)),
+    (2, [dict(row, series_number=str(2 - index))
+         for index, row in enumerate(rows(2, images=3))])])
 def test_empty_or_changed_membership_order_is_not_retained(lap, initial_count, replacement):
     old = lap.seed(count=initial_count)
     lap.panel.display_thumbnails(replacement, progressive=False)
     assert lap.panel.content_grid.count() == 0 and old.isHidden()
+
+
+def test_reversed_input_with_same_presentation_order_retains_cards(lap):
+    old = lap.seed(count=2)
+    lap.panel.display_thumbnails(list(reversed(rows(2, images=3))), progressive=False)
+    assert lap.panel.content_grid.count() == 2 and not old.isHidden()
+    lap.queued.pop(0)()
+    assert old.isHidden()
+    cards = [lap.panel.content_grid.itemAt(index).widget() for index in range(2)]
+    assert [card.count_label.text() for card in cards] == ["3 images", "3 images"]
+    actions = []
+    lap.panel.seriesActionRequested.connect(actions.append)
+    for card in cards:
+        card.image_button._home_activate_series()
+        lap.queued.pop(0)()
+    assert [action.series_uid for action in actions] == [
+        "synthetic-series-0", "synthetic-series-1"]
 
 
 def test_grouped_duplicate_numbers_keep_distinct_actions_and_headers(lap):

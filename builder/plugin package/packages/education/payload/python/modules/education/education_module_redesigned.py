@@ -9,9 +9,9 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QSpacerItem, QSizePolicy, QCheckBox,
     QGroupBox, QTreeWidget, QTreeWidgetItem, QMessageBox, QDialog,
     QProgressBar, QSlider, QListWidget, QListWidgetItem, QFileDialog,
-    QStackedWidget, QSplitter
+    QStackedWidget, QSplitter, QLayout
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent, QSignalBlocker
 from PySide6.QtGui import QFont, QIcon, QPixmap, QShortcut, QKeySequence
 
 import json
@@ -33,6 +33,7 @@ from modules.education.course_database import (
 from modules.education.study_picker_dialog import StudyPickerDialog
 from PacsClient.utils.config import EDUCATION_STORAGE_PATH
 from PacsClient.utils.theme_manager import get_theme_manager
+from PacsClient.utils.diagnostic_logging import content_diagnostic_phase, content_diagnostic_work
 
 
 # ==================== CONSTANTS ====================
@@ -142,7 +143,10 @@ class FilterPanel(QFrame):
         # Narrower than before (was 380): reclaim horizontal space for the
         # course grid + details panel.  Filter labels fit because the modality
         # grid drops to 2 columns below.
-        self.setFixedWidth(300)
+        self.setMinimumWidth(260)
+        self.setMaximumWidth(440)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self._filter_grids = []
         self.setStyleSheet("""
             QFrame {
                 background-color: #0f1419;
@@ -150,9 +154,20 @@ class FilterPanel(QFrame):
             }
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 24, 18, 24)  # More horizontal padding
-        layout.setSpacing(28)  # Reduced slightly for better fit
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.filter_scroll = QScrollArea(self)
+        self.filter_scroll.setWidgetResizable(True)
+        self.filter_scroll.setFrameShape(QFrame.NoFrame)
+        self.filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.filter_body = QWidget()
+        layout = QVBoxLayout(self.filter_body)
+        layout.setContentsMargins(18, 20, 18, 20)
+        layout.setSpacing(18)
+        layout.setSizeConstraint(QLayout.SetMinimumSize)
+        self.filter_scroll.setWidget(self.filter_body)
+        outer.addWidget(self.filter_scroll)
+        self.filter_scroll.viewport().installEventFilter(self)
         
         # Title - Desktop readable
         title = QLabel("Filters")
@@ -260,7 +275,7 @@ class FilterPanel(QFrame):
         
         # Clear filters button - professional outline style
         clear_btn = QPushButton("Clear Filters")
-        clear_btn.setFixedHeight(44)
+        clear_btn.setMinimumHeight(44)
         clear_btn.setMinimumWidth(200)  # Ensure button is wide enough
         clear_btn.setStyleSheet("""
             QPushButton {
@@ -307,7 +322,7 @@ class FilterPanel(QFrame):
         checkboxes = []
         for index, item in enumerate(items):
             cb = QCheckBox(item)
-            cb.setMinimumHeight(32)  # Ensure enough vertical space
+            cb.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             cb.setStyleSheet("""
                 QCheckBox {
                     color: #e2e8f0;
@@ -346,7 +361,10 @@ class FilterPanel(QFrame):
                     col = index // rows
             group_layout.addWidget(cb, row, col)
         
+        group_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         group.setLayout(group_layout)
+        self._filter_grids.append((group, group_layout, checkboxes))
         parent_layout.addWidget(group)
         
         # Store checkboxes for clearing
@@ -388,13 +406,16 @@ class FilterPanel(QFrame):
             checkboxes.append(cb)
             group_layout.addWidget(cb, row, 1)
 
+        group_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         group.setLayout(group_layout)
+        self._filter_grids.append((group, group_layout, checkboxes))
         parent_layout.addWidget(group)
         setattr(self, f'{filter_key}_checkboxes', checkboxes)
 
     def _build_filter_checkbox(self, item, filter_key):
         cb = QCheckBox(item)
-        cb.setMinimumHeight(32)
+        cb.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         cb.setStyleSheet("""
             QCheckBox {
                 color: #e2e8f0;
@@ -422,6 +443,35 @@ class FilterPanel(QFrame):
         cb.stateChanged.connect(lambda state, key=filter_key, val=item: self.on_filter_changed(key, val, state))
         return cb
     
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow_filter_groups()
+
+    def eventFilter(self, watched, event):
+        if (hasattr(self, "filter_scroll")
+                and watched is self.filter_scroll.viewport()
+                and event.type() == QEvent.Resize):
+            self._reflow_filter_groups()
+        return super().eventFilter(watched, event)
+
+    def _reflow_filter_groups(self):
+        """Use two columns only when both full labels fit the viewport."""
+        if not hasattr(self, "filter_scroll"):
+            return
+        available = max(1, self.filter_scroll.viewport().width() - 38)
+        for group, grid, checks in self._filter_grids:
+            needed = 2 * max(check.sizeHint().width() for check in checks) + grid.horizontalSpacing()
+            columns = 2 if needed <= available else 1
+            if group.property("filterColumns") == columns:
+                continue
+            for check in checks:
+                grid.removeWidget(check)
+            for index, check in enumerate(checks):
+                grid.addWidget(check, index // columns, index % columns)
+            group.setProperty("filterColumns", columns)
+            grid.invalidate()
+        self.filter_body.layout().activate()
+
     def on_filter_changed(self, filter_key, value, state):
         """Handle filter checkbox change."""
         if state == Qt.Checked:
@@ -502,13 +552,13 @@ class ModernCourseCard(QFrame):
         thumbnail_label.setStyleSheet("QLabel { background-color: #0a0f18; color: #9db1c5; border: 1px solid #1d2a3a; }")
 
         thumbnail_path = self.course_data.get('thumbnail_path') or ''
-        if thumbnail_path and Path(thumbnail_path).exists():
-            pixmap = QPixmap(thumbnail_path)
-            thumbnail_label.setPixmap(pixmap.scaled(168, 168, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
-        else:
-            thumbnail_label.setText("Course Image")
+        thumbnail_label.setText("Course Image")
+        if thumbnail_path:
+            from modules.education.authoring_thumbnails import AuthoringThumbnails
+            self._cover_thumbnails = AuthoringThumbnails(self)
+            self._cover_thumbnails.request_cover(thumbnail_label, thumbnail_path)
 
-        image_layout.addWidget(thumbnail_label)
+        image_layout.addWidget(thumbnail_label, 0, Qt.AlignCenter)
         layout.addWidget(image_frame)
 
         # Content area
@@ -682,7 +732,9 @@ class CourseDetailsPanel(QFrame):
         # Wider than before (was 340) so the title / description / tags no
         # longer truncate.  Paired with the narrower filter panel this keeps
         # the centre grid roomy.
-        self.setFixedWidth(420)
+        self.setMinimumWidth(340)
+        self.setMaximumWidth(540)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("""
             QFrame {
                 background-color: #161b22;
@@ -738,7 +790,8 @@ class CourseDetailsPanel(QFrame):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(20)  # Increased section spacing: 18-22px
+        layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignTop)
 
         # Course thumbnail (if available) â€” gives the panel a visual anchor.
         thumb_path = str(course_data.get('thumbnail_path') or "").strip()
@@ -748,7 +801,7 @@ class CourseDetailsPanel(QFrame):
                 thumb_label = QLabel()
                 pm = _QPixmap(thumb_path)
                 if not pm.isNull():
-                    thumb_label.setPixmap(pm.scaledToWidth(300, Qt.SmoothTransformation))
+                    thumb_label.setPixmap(pm.scaled(360, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                     thumb_label.setAlignment(Qt.AlignCenter)
                     thumb_label.setStyleSheet("border: none; border-radius: 4px;")
                     layout.addWidget(thumb_label)
@@ -873,6 +926,7 @@ class CourseDetailsPanel(QFrame):
         root = QTreeWidgetItem(content_tree)
         root.setText(0, f"{slides_count} Slides")
         
+        content_tree.setMaximumHeight(130)
         layout.addWidget(content_tree)
         
         layout.addStretch()
@@ -960,10 +1014,10 @@ class CourseDetailsPanel(QFrame):
             delete_btn.clicked.connect(lambda: self.action_requested.emit('delete', self.current_course))
             actions_layout.addWidget(delete_btn)
         
-        layout.addWidget(actions_container)
-        
+        actions_layout.setContentsMargins(0, 0, 0, 0)
         scroll.setWidget(content)
-        self.main_layout.addWidget(scroll)
+        self.main_layout.addWidget(scroll, 1)
+        self.main_layout.addWidget(actions_container)
         _retint_widget_tree(self, get_theme_manager().current_theme())
     
     def clear_layout(self):
@@ -1072,6 +1126,7 @@ class LibraryPage(QWidget):
         # Scrollable grid
         self.cards_scroll = QScrollArea()
         self.cards_scroll.setWidgetResizable(True)
+        self.cards_scroll.viewport().installEventFilter(self)
         self.cards_scroll.setStyleSheet("""
             QScrollArea {
                 border: none;
@@ -1097,7 +1152,7 @@ class LibraryPage(QWidget):
     
     def load_courses(self):
         """Load all courses (library shows all courses)."""
-        self.all_courses = get_all_courses()
+        self.all_courses = content_diagnostic_work('library_query', get_all_courses)
         self.apply_filters()
     
     def on_search_changed(self, text):
@@ -1133,6 +1188,10 @@ class LibraryPage(QWidget):
     
     def update_grid(self):
         """Update course grid."""
+        from modules.education.card_grid_build import CardGridBuild
+        if not hasattr(self, '_card_grid_build'):
+            self._card_grid_build = CardGridBuild(self)
+        self._card_grid_build.cancel()
         # Clear existing
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
@@ -1146,15 +1205,40 @@ class LibraryPage(QWidget):
         visible_courses = self.filtered_courses
         cols = self._responsive_columns()
         self._last_grid_cols = cols
-        for i, course in enumerate(visible_courses):
-            row = i // cols
-            col = i % cols
-
-            card = ModernCourseCard(course)
+        def add_card(i, course):
+            # A resize can reflow already constructed cards while this build runs.
+            cols = self._last_grid_cols
+            card = content_diagnostic_work('course_card', ModernCourseCard, course)
             card.clicked.connect(self.on_card_clicked)
             card.action_requested.connect(self.on_card_action)
-            self.grid_layout.addWidget(card, row, col)
+            self.grid_layout.addWidget(card, i // cols, i % cols)
+            _retint_widget_tree(card, get_theme_manager().current_theme())
+        self._card_grid_build.start(
+            visible_courses, add_card, surface=getattr(self, 'cards_scroll', None),
+            ready=lambda: all(not getattr(getattr(self.grid_layout.itemAt(i).widget(),
+                                                  '_cover_thumbnails', None), 'cover_pending', False)
+                              for i in range(self.grid_layout.count())))
         self._update_cards_scroll_height()
+
+    def eventFilter(self, watched, event):
+        if (watched is self.cards_scroll.viewport()
+                and event.type() == QEvent.Resize):
+            QTimer.singleShot(0, self, self._reflow_cards)
+        return super().eventFilter(watched, event)
+
+    def _reflow_cards(self):
+        if self._responsive_columns() == getattr(self, "_last_grid_cols", None):
+            return
+        cols = self._responsive_columns()
+        self._last_grid_cols = cols
+        # Move existing cards, preserving selection and signal connections.
+        cards = []
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            if item.widget():
+                cards.append(item.widget())
+        for index, card in enumerate(cards):
+            self.grid_layout.addWidget(card, index // cols, index % cols)
 
     def _responsive_columns(self) -> int:
         """Number of card columns that fit the current grid viewport width."""
@@ -1172,7 +1256,7 @@ class LibraryPage(QWidget):
         self._update_cards_scroll_height()
         # Reflow the grid only when the responsive column count actually changes.
         if self._responsive_columns() != getattr(self, "_last_grid_cols", None):
-            self.update_grid()
+            self._reflow_cards()
 
     def _update_cards_scroll_height(self):
         target_height = (self.CARD_HEIGHT * self.VISIBLE_ROWS) + (self.GRID_SPACING * (self.VISIBLE_ROWS - 1)) + 10
@@ -1797,7 +1881,8 @@ class MyCoursesPage(QWidget):
     def load_courses(self):
         """Load courses based on current view."""
         self._ensure_my_courses_samples()
-        all_courses = get_all_courses()
+        from PacsClient.utils.diagnostic_logging import content_diagnostic_work
+        all_courses = content_diagnostic_work('my_courses_query', get_all_courses)
 
         if self.current_view == 'downloaded':
             courses = search_and_filter_courses(
@@ -1839,6 +1924,10 @@ class MyCoursesPage(QWidget):
     
     def update_grid(self, courses):
         """Update course grid."""
+        from modules.education.card_grid_build import CardGridBuild
+        if not hasattr(self, '_card_grid_build'):
+            self._card_grid_build = CardGridBuild(self)
+        self._card_grid_build.cancel()
         # Clear existing
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
@@ -1864,14 +1953,17 @@ class MyCoursesPage(QWidget):
         
         # Add course cards (2 columns, 2 rows visible then scroll)
         cols = self.GRID_COLUMNS
-        for i, course in enumerate(courses):
-            row = i // cols
-            col = i % cols
-            
-            card = ModernCourseCard(course)
+        def add_card(i, course):
+            card = content_diagnostic_work('course_card', ModernCourseCard, course)
             card.clicked.connect(self._on_card_clicked)
             card.action_requested.connect(self.on_card_action)
-            self.grid_layout.addWidget(card, row, col)
+            self.grid_layout.addWidget(card, i // cols, i % cols)
+            _retint_widget_tree(card, get_theme_manager().current_theme())
+        self._card_grid_build.start(
+            courses, add_card, surface=getattr(self, 'cards_scroll', None),
+            ready=lambda: all(not getattr(getattr(self.grid_layout.itemAt(i).widget(),
+                                                  '_cover_thumbnails', None), 'cover_pending', False)
+                              for i in range(self.grid_layout.count())))
         
         self._update_cards_scroll_height()
         _retint_widget_tree(self.grid_container, get_theme_manager().current_theme())
@@ -2014,7 +2106,7 @@ class MyCoursesPage(QWidget):
             pass
 
     def _ensure_my_courses_samples(self):
-        existing_courses = get_all_courses()
+        existing_courses = content_diagnostic_work('seed_query', get_all_courses)
         # Only seed example/demo courses into a brand-new (empty) library.
         # Once the user has any real courses (migrated / imported / created),
         # demo samples must NOT be re-injected -- deleted demos stay deleted.
@@ -2201,12 +2293,10 @@ class ItemMetaDialog(QDialog):
         type_label.setStyleSheet(label_style)
         layout.addWidget(type_label)
         self.type_combo = QComboBox()
-        self.type_combo.addItem("DICOM Image Set", "dicom_reference")
-        self.type_combo.addItem("Image", "image")
-        self.type_combo.addItem("Audio (Voice)", "audio")
-        self.type_combo.addItem("Video", "video")
+        self.type_combo.addItem("Multimedia (Text, Image, Audio, Video)", "multimedia")
         self.type_combo.addItem("PDF", "pdf")
-        self.type_combo.addItem("Text / Teaching Notes", "text")
+        self.type_combo.addItem("PowerPoint", "presentation")
+        self.type_combo.addItem("DICOM Image Set", "dicom_reference")
         self.type_combo.setStyleSheet(field_style)
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         layout.addWidget(self.type_combo)
@@ -2266,15 +2356,15 @@ class ItemMetaDialog(QDialog):
         name_layout.addWidget(note)
         layout.addWidget(self.name_options)
 
-        self.text_label = QLabel("Teaching Text *")
-        self.text_label.setStyleSheet(label_style)
+        from modules.education.slide_content import SlideContentEditor
+        self.text_label = QLabel("Slide Content")
         layout.addWidget(self.text_label)
-        self.text_input = QTextEdit()
-        self.text_input.setAcceptRichText(False)
-        self.text_input.setPlaceholderText("Learning objectives, question, explanation, or take-home points...")
-        self.text_input.setStyleSheet(field_style)
-        self.text_input.setMinimumHeight(150)
-        layout.addWidget(self.text_input)
+        self.content_editor = SlideContentEditor(self)
+        self.text_input = self.content_editor.body
+        layout.addWidget(self.content_editor)
+        self.clear_media_btn = QPushButton("Clear Media")
+        self.clear_media_btn.clicked.connect(self._clear_media)
+        layout.addWidget(self.clear_media_btn)
 
         layout.addStretch()
         actions = QHBoxLayout()
@@ -2319,22 +2409,30 @@ class ItemMetaDialog(QDialog):
         self.content_data = {}
         self.content_type = None
         self.source_input.clear()
-        self.text_input.clear()
+        self.content_editor.load({})
         self._update_type_controls()
 
     def _update_type_controls(self):
         type_key = self.type_combo.currentData()
         is_text = type_key == "text"
         self.source_label.setVisible(not is_text)
+        self.source_label.setText("Optional Media" if type_key == "multimedia" else "Content Source *")
         self.source_input.setVisible(not is_text)
         self.source_btn.setVisible(not is_text)
-        self.source_btn.setEnabled(type_key in {"dicom", "dicom_reference", "image", "audio", "video", "pdf"})
+        self.source_btn.setEnabled(type_key in {"dicom", "dicom_reference", "image", "audio", "video", "pdf", "presentation", "multimedia"})
         self.source_btn.setText("Patient ID / Study" if type_key in {"dicom_reference", "dicom"} else "Select File")
-        self.folder_btn.setVisible(type_key in {"dicom_reference", "dicom"})
-        self.name_options.setVisible(type_key in {"dicom_reference", "dicom"})
-        self.folder_hint.setVisible(type_key in {"dicom_reference", "dicom"})
-        self.text_label.setVisible(is_text)
-        self.text_input.setVisible(is_text)
+        for widget in (self.folder_btn,self.name_options,self.folder_hint):
+            widget.setVisible(type_key in {"dicom_reference", "dicom"})
+        composed = type_key in {"multimedia", "pdf", "presentation"}
+        self.content_editor.setVisible(composed or is_text)
+        self.content_editor.document_mode(type_key in {"pdf", "presentation"})
+        self.text_label.setVisible(composed or is_text)
+        self.clear_media_btn.setVisible(type_key == "multimedia")
+
+    def _clear_media(self):
+        for key in ('path','media_type'):
+            self.content_data.pop(key,None)
+        self.source_input.clear()
 
     def _load_existing(self):
         if not self.existing_item:
@@ -2370,8 +2468,7 @@ class ItemMetaDialog(QDialog):
                 self.source_input.setText(f"Study {existing_data.get('study_uid', '')}")
             return
 
-        if existing_type == "text":
-            self.text_input.setPlainText(str(existing_data.get("text") or ""))
+        self.content_editor.load(existing_data)
         if existing_data.get("path"):
             self.source_input.setText(existing_data.get("path"))
 
@@ -2415,16 +2512,26 @@ class ItemMetaDialog(QDialog):
             "audio": "Audio (*.wav *.mp3 *.ogg *.m4a *.aac)",
             "video": "Videos (*.mp4 *.avi *.mov *.mkv *.wmv)",
             "pdf": "PDF (*.pdf)",
+            "presentation": "PowerPoint (*.ppt *.pptx *.pps *.ppsx *.ppx *.odp)",
+            "multimedia": "Media (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.wav *.mp3 *.ogg *.m4a *.aac *.mp4 *.avi *.mov *.mkv *.wmv)",
         }
         selected_file, _ = QFileDialog.getOpenFileName(
             self, "Select Content File", "", filters.get(type_key, "All Files (*)")
         )
         if not selected_file:
             return
-        from modules.education.authoring_tasks import CourseAssetCopyTask
+        if type_key == 'multimedia':
+            from modules.education.slide_content import media_kind
+            try:
+                media_kind(selected_file)
+            except ValueError:
+                QMessageBox.warning(self, 'Unsupported Media', 'Choose an image, audio or video file.')
+                return
+        from modules.education.authoring_tasks import CourseAssetCopyTask, CourseDocumentImportTask
         self._asset_type = type_key
         self._cancel_import = False
-        self._asset_worker = CourseAssetCopyTask(selected_file, self.course_pk, self)
+        task = CourseDocumentImportTask if type_key == "presentation" else CourseAssetCopyTask
+        self._asset_worker = task(selected_file, self.course_pk, self)
         self._asset_worker.finished.connect(self._asset_import_finished)
         self.source_input.setText("Importing file...")
         self.setEnabled(False)
@@ -2487,8 +2594,12 @@ class ItemMetaDialog(QDialog):
             self.source_input.setText(getattr(self, "_source_before_import", str(self.content_data.get("path") or "")))
             QMessageBox.critical(self, "Import Failed", str(worker.error) if isinstance(worker.error, str) else "Could not copy the file. Check access and available storage, then retry.")
         else:
-            if self._asset_type == "dicom":
+            if self._asset_type in {"dicom", "presentation"}:
                 self.content_data = dict(worker.result)
+            elif self._asset_type == "multimedia":
+                from modules.education.slide_content import media_kind
+                self.content_data['path'] = worker.result
+                self.content_data['media_type'] = media_kind(worker.result)
             else:
                 self.content_data = {"path": worker.result}
             self.content_type = self._asset_type
@@ -2532,7 +2643,13 @@ class ItemMetaDialog(QDialog):
                     self._import_dicom_folder(None, study_uid=self.content_data.get("study_uid"),
                                               series_number=self.content_data.get("series_number"))
                 return
-        if type_key == "text":
+        if type_key == "multimedia":
+            self.content_data.update(self.content_editor.payload())
+            if not self.content_data['text'].strip() and not self.content_data.get('path'):
+                QMessageBox.warning(self, "Validation Error", "Add teaching text or select media.")
+                return
+            self.content_type = "multimedia"
+        elif type_key == "text":
             text = self.text_input.toPlainText()
             if not text.strip():
                 QMessageBox.warning(self, "Validation Error", "Teaching text is required.")
@@ -2549,7 +2666,7 @@ class ItemMetaDialog(QDialog):
                 return
             if not self.content_type:
                 self.content_type = "dicom_study"
-        elif type_key in {"image", "audio", "video", "pdf"}:
+        elif type_key in {"image", "audio", "video", "pdf", "presentation"}:
             if not self.content_data.get("path"):
                 QMessageBox.warning(self, "Validation Error", "Please select a content file.")
                 return
@@ -2557,6 +2674,8 @@ class ItemMetaDialog(QDialog):
         elif self.content_type != type_key or not self.content_data:
             QMessageBox.warning(self, "Validation Error", "Select a supported content type and a new source.")
             return
+        if type_key in {"pdf", "presentation"}:
+            self.content_data.update({key:value for key,value in self.content_editor.payload().items() if key not in {"text","rich_text","layout"}})
         self.content_data["name"] = item_name
         self.content_data["description"] = self.desc_input.toPlainText().strip()
         self.accept()
@@ -2655,10 +2774,11 @@ class BuildCoursePage(QWidget):
         root.setSpacing(0)
 
         form_container = QWidget()
-        form_container.setMaximumWidth(1150)
+        form_container.setMaximumWidth(1440)
         form = QVBoxLayout(form_container)
         form.setContentsMargins(0, 0, 0, 0)
-        form.setSpacing(16)
+        form.setSpacing(12)
+        form.setAlignment(Qt.AlignTop)
 
         field_style = """
             QLineEdit, QTextEdit, QComboBox {
@@ -2681,6 +2801,7 @@ class BuildCoursePage(QWidget):
 
         left_block = QVBoxLayout()
         left_block.setSpacing(10)
+        left_block.setAlignment(Qt.AlignTop)
         name_label = QLabel("Course Name *")
         name_label.setStyleSheet(label_style)
         left_block.addWidget(name_label)
@@ -2883,9 +3004,9 @@ class BuildCoursePage(QWidget):
         actions.addWidget(create_btn)
         form.addLayout(actions)
 
-        root.addStretch()
-        root.addWidget(form_container)
-        root.addStretch()
+        root.setContentsMargins(20, 12, 20, 12)
+        root.addWidget(form_container, 1)
+        root.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         return page
 
     def _build_step_two(self):
@@ -3175,7 +3296,7 @@ class BuildCoursePage(QWidget):
             self.cover_preview.setPixmap(QPixmap())
             return
         self.cover_preview.setPixmap(
-            pixmap.scaled(self.cover_preview.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            pixmap.scaled(self.cover_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
 
     def _clear_step_one(self):
@@ -3229,8 +3350,22 @@ class BuildCoursePage(QWidget):
         for btn in self.item_action_buttons:
             btn.setEnabled(enabled)
 
-    def load_course_for_edit(self, course_pk: int):
+    def command_authoring_busy(self):
+        """Commands must not save or discard an unrelated human draft."""
+        if self._cover_worker is not None or self._slide_thumbnail_worker is not None:
+            return True
+        if self._card_values() != self._card_snapshot:
+            return True
+        slide = next((s for s in self.slides_cache if s['slide_pk'] == self._editing_slide_pk), None)
+        return bool(slide and (
+            self.slide_name_input.text().strip() != (slide.get('slide_title') or '')
+            or self.slide_desc_input.toPlainText().strip() != (slide.get('slide_notes') or '')))
+
+    def load_course_for_edit(self, course_pk: int, prepared_course=None):
         """Load an existing course into Build Course for continued editing."""
+        if prepared_course is not None and (
+                prepared_course.get('course_pk') != course_pk or self.command_authoring_busy()):
+            return False
         if self._cover_worker is not None or self._slide_thumbnail_worker is not None:
             return False
         if self._card_values() != self._card_snapshot:
@@ -3244,7 +3379,7 @@ class BuildCoursePage(QWidget):
                     return False
         if not self._save_slide():
             return False
-        course_full = get_course_with_slides(course_pk)
+        course_full = prepared_course if prepared_course is not None else get_course_with_slides(course_pk)
         if not course_full:
             QMessageBox.warning(self, "Course Not Found", "Could not load selected course for editing.")
             return False
@@ -3313,10 +3448,13 @@ class BuildCoursePage(QWidget):
 
         thumbnail_path = str(course_full.get("thumbnail_path") or "")
         self.cover_image_source = thumbnail_path
-        if thumbnail_path and Path(thumbnail_path).exists():
+        if prepared_course is not None:
+            self.cover_preview.setPixmap(QPixmap())
+            self.cover_preview.setText("Cover available" if thumbnail_path else "No image selected")
+        elif thumbnail_path and Path(thumbnail_path).exists():
             pixmap = QPixmap(thumbnail_path)
             self.cover_preview.setPixmap(
-                pixmap.scaled(self.cover_preview.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                pixmap.scaled(self.cover_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
         else:
             self.cover_preview.setPixmap(QPixmap())
@@ -3339,7 +3477,11 @@ class BuildCoursePage(QWidget):
             f"Course: {self.course_data['course_name']} | Visibility: {visibility} | Modality: {modality or 'N/A'}"
         )
         self._set_step(2)
-        self._load_slides()
+        self._prepared_command_course = prepared_course
+        try:
+            self._load_slides()
+        finally:
+            self._prepared_command_course = None
         self._card_snapshot = self._card_values()
         self.save_status.setText("Draft loaded. Slide edits are saved when you move between slides.")
         return True
@@ -3526,7 +3668,8 @@ class BuildCoursePage(QWidget):
             self._set_slide_edit_enabled(False)
             return
 
-        self.slides_cache = get_slides_for_course(self.course_pk)
+        prepared = getattr(self, '_prepared_command_course', None)
+        self.slides_cache = prepared['slides'] if prepared is not None else get_slides_for_course(self.course_pk)
         for slide in self.slides_cache:
             title = slide.get("slide_title", "") or "Untitled Slide"
             display = f"{slide.get('slide_order', 0)}. {title}"
@@ -3698,7 +3841,11 @@ class BuildCoursePage(QWidget):
             return
 
         slide_pk = self.slides_cache[current_row]["slide_pk"]
-        self.items_cache = get_content_for_slide(slide_pk)
+        prepared = getattr(self, '_prepared_command_course', None)
+        if prepared is not None:
+            self.items_cache = next((s['content'] for s in prepared['slides'] if s['slide_pk'] == slide_pk), [])
+        else:
+            self.items_cache = get_content_for_slide(slide_pk)
         for item in self.items_cache:
             content_type = item.get("content_type", "unknown")
             content_data = item.get("content_data", {})
@@ -3820,7 +3967,7 @@ class BuildCoursePage(QWidget):
 # ==================== MAIN EDUCATION MODULE ====================
 
 class EducationModuleRedesigned(QWidget):
-    """Main education module widget with three tabs."""
+    """Lightweight Education shell; pages are created only on demand."""
 
     _last_instance_ref = None  # weakref to the most recently created instance
 
@@ -3849,6 +3996,114 @@ class EducationModuleRedesigned(QWidget):
         except Exception:
             inst = None
         return inst
+
+    @property
+    def library_page(self):
+        return self._ensure_page('library')
+
+    @property
+    def mycourses_page(self):
+        return self._ensure_page('mycourses')
+
+    @property
+    def build_page(self):
+        return self._ensure_page('build')
+
+    @property
+    def case_of_day_tab(self):
+        return self._ensure_page('case')
+
+    @property
+    def online_consultation_page(self):
+        return self._ensure_page('consultation')
+
+    def _ensure_page(self, key):
+        """Return the real page, preserving tab identity for programmatic callers."""
+        if key not in self._page_factories:
+            return None
+        if key in self._pages:
+            return self._pages[key]
+        if key in self._pages_loading:
+            raise RuntimeError('Education page construction is already in progress')
+        from PacsClient.utils.diagnostic_logging import ContentDiagnosticTrace
+        trace = ContentDiagnosticTrace('education_page', self)
+        self._pages_loading.add(key)
+        page = None
+        try:
+            phase = {'library': 'library_construct', 'mycourses': 'my_courses_construct',
+                     'build': 'build_course_construct', 'case': 'case_of_day_construct',
+                     'consultation': 'consultation_construct'}[key]
+            with trace.bind(), trace.measure(phase):
+                page = self._page_factories[key]()
+                self._wire_page(key, page)
+                _retint_widget_tree(page, self._theme)
+            slot = self._page_slots[key]
+            index = self.tab_widget.indexOf(slot)
+            selected = self.tab_widget.currentIndex()
+            label = self.tab_widget.tabText(index)
+            page.setProperty('education_page_key', key)
+            # Avoid recursive currentChanged callbacks while replacing the slot.
+            with QSignalBlocker(self.tab_widget):
+                self.tab_widget.insertTab(index, page, label)
+                self.tab_widget.removeTab(index + 1)
+                self.tab_widget.setCurrentIndex(selected)
+            self._pages[key] = page
+            slot.deleteLater()
+            trace.finish('completed')
+            return page
+        except Exception as error:
+            if page is not None:
+                page.deleteLater()
+            trace.finish('failed', error_kind=trace.error_kind(error))
+            raise
+        finally:
+            self._pages_loading.discard(key)
+
+    def _wire_page(self, key, page):
+        if key in {'library', 'mycourses'}:
+            page.course_opened.connect(self.on_course_opened)
+            page.course_edited.connect(self.on_course_edited)
+        if key == 'mycourses':
+            page.case_of_day_opened.connect(self.on_case_of_day_opened)
+        elif key == 'build':
+            page.course_created.connect(self.on_course_created)
+            page.preview_requested.connect(self.on_course_presented)
+        elif key == 'case':
+            page.case_opened.connect(self.on_case_of_day_opened)
+            page.case_created.connect(lambda: self.tab_widget.setCurrentWidget(page))
+
+    def _schedule_current_page(self, *_args):
+        slot = self.tab_widget.currentWidget()
+        if slot is None:
+            return
+        key = slot.property('education_page_key')
+        if key not in self._pages:
+            # Context-bound callback is retired automatically on native deletion.
+            QTimer.singleShot(0, self, lambda: self._load_selected_page(key))
+
+    def _load_selected_page(self, key):
+        if not self.isVisible():
+            return
+        selected = self.tab_widget.currentWidget()
+        if selected is None or selected.property('education_page_key') != key:
+            return  # A quick tab change supersedes this pending selection.
+        try:
+            self._ensure_page(key)
+        except Exception:
+            slot = self._page_slots[key]
+            slot.findChild(QLabel).setText('Unable to load this section. Select Retry to try again.')
+            slot.findChild(QPushButton).show()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._schedule_current_page()
+
+    def refresh_loaded_pages(self):
+        """Unvisited pages read fresh data when first opened; never prewarm them."""
+        for key, method in [('library', 'load_courses'), ('mycourses', 'load_courses'), ('case', 'refresh')]:
+            page = self._pages.get(key)
+            if page is not None:
+                getattr(page, method)()
 
     def show_online_consultation(self, section: str | None = None):
         """Switch to the Online Consultation tab when it exists (flag-gated).
@@ -3985,111 +4240,63 @@ class EducationModuleRedesigned(QWidget):
             }
         """)
         
-        # Create tabs
-        from modules.education.case_of_day_widget import CaseOfDayLocalServerPage
+        # Slots are cheap widgets; factories import and construct only on demand.
+        def case_page():
+            with content_diagnostic_phase('case_of_day_import'):
+                from modules.education.case_of_day_widget import CaseOfDayLocalServerPage
+            return CaseOfDayLocalServerPage()
 
-        self.library_page = LibraryPage()
-        self.mycourses_page = MyCoursesPage()
-        self.build_page = BuildCoursePage()
-        # Case of the Day is now a top-level tab. It hosts a Local / Server
-        # segmented header; only the Local section is functional today (the
-        # Server section is a placeholder for the future shared-feed flow).
-        self.case_of_day_tab = CaseOfDayLocalServerPage()
+        def consultation_page():
+            from modules.education.online_consultation.consultation_page import OnlineConsultationPage
+            return OnlineConsultationPage(parent=self)
 
-        self.tab_widget.addTab(self.library_page, "Library")
-        self.tab_widget.addTab(self.mycourses_page, "My Courses")
-        self.tab_widget.addTab(self.build_page, "Build Course")
-        self.tab_widget.addTab(self.case_of_day_tab, "Case of the Day")
-
-        # Online Consultation (Drive-backed physician consultation) â€” additive,
-        # double-flag-gated (Identity + cloud_consultation). When either flag is
-        # off this block is a no-op and the Education module renders exactly as
-        # before. Any failure is swallowed so Education can never break.
-        self.online_consultation_page = None
-        try:
-            from modules.education.online_consultation import (
-                online_consultation_available,
-            )
-
-            if online_consultation_available():
-                from modules.education.online_consultation.consultation_page import (
-                    OnlineConsultationPage,
-                )
-
-                self.online_consultation_page = OnlineConsultationPage(parent=self)
-                self.tab_widget.addTab(
-                    self.online_consultation_page, "Online Consultation"
-                )
-        except Exception as _oc_exc:
-            print(f"[Education] Online Consultation tab unavailable: {_oc_exc}")
-
+        self._pages = {}
+        self._pages_loading = set()
+        self._page_slots = {}
+        self._page_factories = {
+            'library': lambda: LibraryPage(),
+            'mycourses': lambda: MyCoursesPage(),
+            'build': lambda: BuildCoursePage(),
+            'case': case_page,
+        }
+        definitions = [('library', 'Library'), ('mycourses', 'My Courses'),
+                       ('build', 'Build Course'), ('case', 'Case of the Day')]
+        from modules.education.online_consultation import online_consultation_available
+        if online_consultation_available():
+            self._page_factories['consultation'] = consultation_page
+            definitions.append(('consultation', 'Online Consultation'))
+        for key, title in definitions:
+            slot = QWidget()
+            slot.setProperty('education_page_key', key)
+            slot_layout = QVBoxLayout(slot)
+            slot_layout.addStretch()
+            message = QLabel('Loading section...')
+            message.setAlignment(Qt.AlignCenter)
+            slot_layout.addWidget(message)
+            retry = QPushButton('Retry')
+            retry.clicked.connect(lambda _checked=False, name=key: self._load_selected_page(name))
+            retry.hide()
+            slot_layout.addWidget(retry)
+            slot_layout.addStretch()
+            self._page_slots[key] = slot
+            self.tab_widget.addTab(slot, title)
+        self.tab_widget.currentChanged.connect(self._schedule_current_page)
         layout.addWidget(self.tab_widget)
-
-        # Connect signals
-        self.library_page.course_opened.connect(self.on_course_opened)
-        self.library_page.course_edited.connect(self.on_course_edited)
-        self.mycourses_page.course_opened.connect(self.on_course_opened)
-        self.mycourses_page.course_edited.connect(self.on_course_edited)
-        # Cases can be opened either from the legacy My Courses button OR from
-        # the new top-level tab â€” wire both into the same handler.
-        self.mycourses_page.case_of_day_opened.connect(self.on_case_of_day_opened)
-        self.case_of_day_tab.case_opened.connect(self.on_case_of_day_opened)
-        self.build_page.course_created.connect(self.on_course_created)
-        self.build_page.preview_requested.connect(self.on_course_presented)
-        # Switch to the new tab whenever a case is created from the toolbar
-        # path so the user sees the freshly-saved card.
-        self.case_of_day_tab.case_created.connect(
-            lambda: self.tab_widget.setCurrentWidget(self.case_of_day_tab)
-        )
         _retint_widget_tree(self, self._theme)
     
     def _open_education_transfer(self):
         from modules.education.transfer_dialog import EducationTransferDialog
         dialog = EducationTransferDialog(self)
-        dialog.imported.connect(self.library_page.load_courses)
-        dialog.imported.connect(self.mycourses_page.load_courses)
-        dialog.imported.connect(self.case_of_day_tab.refresh)
+        dialog.imported.connect(self.refresh_loaded_pages)
         dialog.exec()
 
     def on_course_opened(self, course_data):
-        """Handle course open request."""
-        print(f"Opening educational course viewer: {course_data['course_name']}")
-
-        try:
-            from modules.education.educational_patient_viewer_widget import EducationalCourseViewerWidget
-
-            course_pk = course_data.get('course_pk')
-            course_full = get_course_with_slides(course_pk) if course_pk else None
-            if not course_full:
-                course_full = dict(course_data)
-                course_full.setdefault('slides', [])
-
-            host_tab_widget, host_custom_tab_manager, host_owner = self._resolve_tab_host()
-            viewer = EducationalCourseViewerWidget(course_full, parent=host_owner if host_owner else self)
-            course_name = str(course_full.get('course_name') or 'Course')
-
-            if host_custom_tab_manager:
-                if hasattr(host_custom_tab_manager, 'add_educational_course_tab'):
-                    host_custom_tab_manager.add_educational_course_tab(
-                        course_name=course_name,
-                        course_pk=course_full.get('course_pk'),
-                        widget=viewer,
-                        activate=True,
-                    )
-                else:
-                    tab_index = host_tab_widget.addTab(viewer, f"Educational Course - {course_name}")
-                    host_tab_widget.setCurrentIndex(tab_index)
-            elif host_tab_widget is not None:
-                tab_index = host_tab_widget.addTab(viewer, f"Educational Course - {course_name}")
-                host_tab_widget.setCurrentIndex(tab_index)
-            else:
-                viewer.setWindowTitle(f"Educational Course - {course_name}")
-                viewer.showMaximized()
-
-        except Exception as e:
-            print(f"Error opening course: {e}")
-            import traceback
-            traceback.print_exc()
+        """Open the saved course in the independent presentation viewer."""
+        course_pk = course_data.get('course_pk')
+        course_full = get_course_with_slides(course_pk) if course_pk else None
+        from modules.education.presentation_window import CoursePresentationWindow
+        window = CoursePresentationWindow(course_full or course_data, self, auto_start=True)
+        window.show()
 
     def on_course_edited(self, course_data):
         """Handle course edit request."""

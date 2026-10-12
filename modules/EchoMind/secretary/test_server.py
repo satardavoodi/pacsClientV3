@@ -138,9 +138,13 @@ class _Connection:
 class TestControlServer:
     """QLocalServer wrapper dispatching JSON commands onto the CommandBus."""
 
-    def __init__(self, get_bus: Callable[[], Any], server_name: str) -> None:
+    def __init__(self, get_bus: Callable[[], Any], server_name: str,
+                 get_native_runtime: Optional[Callable[[], Any]] = None,
+                 get_native_lifecycle: Optional[Callable[[], Any]] = None) -> None:
         from PySide6.QtNetwork import QLocalServer
         self._get_bus = get_bus
+        self._get_native_runtime = get_native_runtime
+        self._get_native_lifecycle = get_native_lifecycle
         self.server_name = server_name
         self._connections: set[_Connection] = set()
         # Remove a stale endpoint from a crashed previous run, then listen.
@@ -168,6 +172,52 @@ class TestControlServer:
         if action == "ping":
             return _result_to_wire({"ok": True, "action": "ping", "data": "pong"}, req_id)
 
+        if action == 'secretary_lifecycle':
+            result = {'ok': False, 'error_code': 'NOT_FOUND'}
+            try:
+                getter = getattr(self, '_get_native_lifecycle', None)
+                attachment = getter() if getter and entities == {} else None
+                if attachment is not None:
+                    from modules.ai_imaging.eagle_eye_remote.secretary_native_connector import safe_lifecycle
+                    result = {'ok': True, 'data': safe_lifecycle(attachment.diagnostics())}
+            except Exception:
+                pass
+            return _result_to_wire(dict(result, action=action), req_id)
+
+        if action == 'secretary_runtime_binding':
+            # Inspect the existing owner-bound GUI runtime only. Do not invoke
+            # lazy runtime/memory initialization or expose conversation content.
+            result = {'ok': False, 'error_code': 'NOT_FOUND'}
+            try:
+                import threading
+                from uuid import UUID
+                runtime = self._get_native_runtime() if self._get_native_runtime else None
+                if (entities == {} and runtime is not None and not runtime.closed
+                        and threading.get_ident() == runtime.gui_thread_id
+                        and runtime.owner_getter() == runtime.owner):
+                    memory = runtime.widget._secretary_orchestrator._memory_store
+                    session_id = memory._conversation['id']
+                    runtime_id = runtime.runtime_instance
+                    if str(UUID(session_id)) == session_id and str(UUID(runtime_id)) == runtime_id:
+                        result = {'ok': True, 'data': {'runtime_instance': runtime_id,
+                                                       'current_session': session_id}}
+            except Exception:
+                pass
+            return _result_to_wire(dict(result, action=action), req_id)
+
+        if action in ('secretary_terminal_receipt', 'secretary_terminal_diagnostic'):
+            # Test-only, aggregate-only lookup. Never route through the Agent
+            # catalog or create a runtime as a side effect of inspection.
+            result = {'ok': False, 'error_code': 'NOT_FOUND'}
+            try:
+                runtime = self._get_native_runtime() if self._get_native_runtime else None
+                if runtime is not None:
+                    result = (runtime.test_terminal_diagnostic(entities) if action == 'secretary_terminal_diagnostic'
+                              else runtime.test_terminal_receipt(entities))
+            except Exception:
+                pass
+            return _result_to_wire(dict(result, action=action), req_id)
+
         bus = self._get_bus()
         if bus is None:
             return _result_to_wire(
@@ -176,7 +226,7 @@ class TestControlServer:
 
         if action == "list_actions":
             return _result_to_wire(
-                {"ok": True, "action": "list_actions", "data": list(bus.actions())},
+                {"ok": True, "action": "list_actions", "data": list(bus.actions()) + ['secretary_terminal_receipt', 'secretary_terminal_diagnostic', 'secretary_runtime_binding', 'secretary_lifecycle']},
                 req_id)
 
         from .command_envelope import CommandPlan
@@ -208,6 +258,8 @@ def maybe_start_test_server(
     get_main_tab_widget: Optional[Callable[[], Any]] = None,
     server_name: Optional[str] = None,
     force: bool = False,
+    get_native_runtime: Optional[Callable[[], Any]] = None,
+    get_native_lifecycle: Optional[Callable[[], Any]] = None,
 ) -> Optional[TestControlServer]:
     """Start the test server when ``AIPACS_TEST_SERVER=1`` (else no-op).
 
@@ -222,7 +274,9 @@ def maybe_start_test_server(
         return None
 
     name = server_name or default_server_name()
-    server = TestControlServer(get_bus=get_bus, server_name=name)
+    server = TestControlServer(get_bus=get_bus, server_name=name,
+                               get_native_runtime=get_native_runtime,
+                               get_native_lifecycle=get_native_lifecycle)
 
     # Test-mode-only write adapter (never in the production bus).
     try:

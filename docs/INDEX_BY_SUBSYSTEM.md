@@ -1,5 +1,14 @@
 # AI-PACS Documentation ط·آ£ط¢آ¢ط£آ¢أ¢â‚¬ع‘ط¢آ¬ط£آ¢أ¢â€ڑآ¬أ¢â‚¬إ’ Index by Subsystem
 
+## Eagle Eye lumbar marrow pilot (2026-10-08)
+
+[Lumbar Bone Marrow implementation and Development route](modules/LUMBAR_BONE_MARROW.md)
+documents the study-bound client form, server-owned experimental T1 sampling,
+bounded clinical context and isolated Razi TLS/SSH test connection. Guards:
+`tests/code/ai_imaging/test_lumbar_marrow.py` and `test_lumbar_marrow_stage.py`.
+Whole-vertebra erosion is not a validated marrow/body ROI. GUI/patient inference
+acceptance and clinical qualification remain separate from code/model preflight.
+
 ## Eagle Eye brain manual correction (2026-10-06)
 
 [Server development history](modules/eagle-eye-server-development/docs/HISTORY.md#2026-10-06-slicer-manual-review-launch-and-path-compatibility)
@@ -1480,6 +1489,15 @@ and same-viewer presentation. See [workspace entry](modules/EAGLE_EYE_WORKSPACE_
 and `tests/code/ai_imaging/test_eagle_eye_result_tabs.py` for preserved feedback and
 pending native rendering acceptance.
 
+The Lumbar path now uses `eagle_eye_lumbar/result_tab.py` for one persistent
+study-owned result page containing the final text and the existing read-only
+stage-card gallery. `eagle_eye_saved_results.py` restores the latest complete
+exact-study raw Lumbar session, while `eagle_eye_result_tabs.py` may retrieve an
+existing case-inventory result through the Server's saved-analysis read API.
+Neither restoration path submits inference. Guards are in
+`test_eagle_eye_lumbar_result_tab.py`, `test_saved_eagle_eye_results.py`, and
+`test_eagle_eye_ui_boundary.py`.
+
 ### Total Spine action discovery and Segment feasibility (2026-09-20)
 
 See `docs/modules/EAGLE_EYE_TOTAL_SPINE_ALIGNMENT.md` for implemented action controls
@@ -1781,3 +1799,114 @@ Manual correction UI: native Segment Editor inline controls supersede the floati
 ### DICOM missing encapsulation delimiter compatibility (2026-10-06)
 
 Pure reader: `PacsClient/utils/dicom_reader.py`. Guard: `tests/code/viewer/test_encapsulation_eof_compatibility.py`. Diagnosis, safeguards, caller coverage and pending acceptance: `docs/reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md`, October 6 execution receipt. FAST and Advanced remain distinct execution domains.
+
+- EchoMind echocardiography reporting: docs/echomind/ECHOCARDIOGRAPHY_REPORTING_2026-10-07.md records the cardiac modality, dedicated server prompt, regression evidence and pending deployment/live acceptance.
+
+
+## Licensing / company generator and additive renewal (2026-10-07)
+
+[LicenseGenerator folder map](../modules/LicenseGenerator/README.md) preserves the existing company entrypoint and launch/build helpers. [Signed renewal implementation](modules/LICENSE_RENEWAL.md) owns UI, additive-expiry/replay contracts, company key custody, product isolation, legacy migration, independent-service enforcement, code evidence and the separate pending native/frozen acceptance gates. Guards live in `tests/code/licensing` and `tests/code/builder/test_license_security_boundary.py`.
+
+- EchoMind Add Reference: docs/echomind/REFERENCE_REPORTS.md covers verified equations, adult reference intervals, server/client ownership, limitations and Razi activation.
+
+- EchoMind report source attachments: [contract and verification](echomind/REPORT_SOURCE_ATTACHMENTS.md).
+
+Lumbar marrow report review: lumbar_marrow_widget.py resultsReady delegates to EagleEyeWorkspaceController._show_marrow_results; study-owned expanding tab, input popup retained. See modules/LUMBAR_BONE_MARROW.md.
+
+### FAST viewport first-show hint geometry (2026-10-08)
+
+Owner: `PacsClient/pacs/patient_tab/ui/patient_ui/vtk_widget/qt_fast_container.py` show/resize lifecycle. Guard: `tests/code/viewer/test_fast_empty_hint_initial_layout.py`. Existing VTK domains report records diagnosis, minimal fix and validation limits; no decoder or native VTK change.
+
+Marrow review UX: modules/ai_imaging/lumbar_marrow_review.py owns presentation/PDF; lumbar_marrow_revision.py owns client submission and server recalculation. Existing bounded segmentation correction and isolated Slicer controls are reused. See modules/LUMBAR_BONE_MARROW.md.
+
+Automatic Eagle Eye history: eagle_eye_saved_results.py discovers bounded exact-study local results; AnalysisResultTabs restores module tabs on workspace open. Full marrow review restoration in LumbarMarrowWidget; generic reports for other server modules. See modules/EAGLE_EYE_WORKSPACE_ENTRY_2026-09-11.md.
+
+- Client AI connection layout: [Client AI Connection settings](modules/eagle-eye-server-development/docs/CLIENT_AI_CONNECTION_SETTINGS_2026-10-08.md); regression guards in `tests/code/echomind/test_ai_connection_settings.py`.
+
+
+- AI usage: `modules/ai_imaging/eagle_eye_remote/usage.py` and `settings_ui/ai_usage_settings.py`; authenticated retained counters; scope and verification in the Client AI Connection settings record.
+
+
+- Named usage breakdown: `eagle_eye_remote/usage.py` groups retained records by canonical module/workflow and Agent mode; `ai_usage_settings.py` presents separate rows. See the named usage follow-up in the Client AI Connection settings record.
+
+
+- Server sender usage: `eagle_eye_remote/usage.py` and Server-only `administration.usage_snapshot`; paired-client/function rows, no human username inference or cross-client identity export; loopback dispatch matrix in `tests/code/ai_imaging/test_ai_usage_requests.py`.
+
+- Eagle Eye automatic Brain Volumetry / Brain Lesions saved tabs: modules/ai_imaging/eagle_eye_saved_results.py and eagle_eye_result_tabs.py; evidence in modules/eagle-eye-server-development/docs/HISTORY.md.
+
+- Breast dual result delivery and MONOCHROME1 preprocessing: `modules/BREAST_AI_DEVELOPMENT.md`, B93; server `eagle_eye_engines/breast_dual.py`, client `eagle_eye_remote/breast_results.py`.
+
+
+## Eagle Eye hosted reception CRM (2026-10-08)
+
+See [source integration and migration gates](modules/eagle-eye-server-development/docs/CRM_INTEGRATION_2026-10-08.md) for CRM 1.32.6 prompts, AI > CRM, shared connections, reception identity, process ownership and pending GUI/service acceptance.
+
+- Secretary content authoring and Eagle Eye web assets: [implementation, configuration and pending acceptance](agent_control/SECRETARY_CONTENT_WEB_ASSETS_2026-10-09.md).
+
+- Lumbar Client/Server capability negotiation: [Server-owned LLM authority and compatibility contract](modules/eagle-eye-server-development/docs/CLIENT_LLM_SERVER_AUTHORITY_2026-10-09.md); guards in `tests/code/ai_imaging/test_lumbar_vision_server_route.py` and `test_user_access_http.py`.
+
+- Legacy first-transition safety: [reversible admission fence and fail-closed aggregate observer](modules/eagle-eye-server-development/docs/LEGACY_BOOTSTRAP_ADMISSION_FENCE_2026-10-10.md); guards in `tests/code/ai_imaging/test_legacy_admission_fence.py` and `test_legacy_activity_observer.py`. This supports the old active revision bootstrap and does not itself activate Razi.
+
+
+- Advanced/EGLI panoramic PX admission and projection VOI alternatives (OPT-35): [VTK owner evidence](reports/VTK_DOMAINS_GEOMETRY_PERFORMANCE_REVIEW_2026-09-16.md), 2026-10-09 entry. Exact projection SOP, independent native frames and unchanged CT/MR geometry.
+
+## Current-request Agent, CRM and Secretary language (2026-10-10)
+
+[Shared narrative language contract](modules/eagle-eye-server-development/docs/REQUEST_LANGUAGE_2026-10-10.md) records the frozen helper, canonical mobile capability, Secretary compatibility and local tests. Full Developer parity, safe activation and native/provider acceptance remain pending.
+
+## Private server admission and safe transition (2026-10-10)
+
+[Private transition contract](modules/eagle-eye-server-development/docs/SAFE_TRANSITION_2026-10-10.md) covers process-local HTTP/model completion, private owning-parent control, timeout resume and the separate old-active bootstrap blocker. Inactive source only; no activation or full parity claim.
+
+
+- Eagle Eye Server readiness hardening and open installer/activation gates: `docs/modules/eagle-eye-server-development/docs/SERVER_HARDENING_2026-10-10.md`.
+
+
+### Total Spine wheel zoom geometry and native crash (2026-10-10)
+
+See `modules/EAGLE_EYE_TOTAL_SPINE_ALIGNMENT.md`, wheel zoom investigation, and
+`tests/code/ai_imaging/test_total_spine_zoom_index.py`: notified hit geometry,
+point-index checks and real wheel/ToolTip/rebuild stress. Original native abort
+and fresh-source GUI acceptance remain open; coordinated with fix 2 under OPT-51.
+
+
+### Total Spine saved-result reopening (2026-10-10)
+
+`modules/EAGLE_EYE_TOTAL_SPINE_ALIGNMENT.md` documents native history recovery
+without Function, worker-only source binding and portable Server review_views.
+Runtime service: `modules/ai_imaging/eagle_eye_total_spine/saved_review.py`.
+Guard: `tests/code/ai_imaging/test_total_spine_saved_restore.py`.
+
+
+### Alignment progress and restored measurements (2026-10-10)
+
+See [Alignment View](modules/EAGLE_EYE_ALIGNMENT_VIEW.md#2026-10-10-server-progress-and-saved-review-recovery).
+Worker-only `eagle_eye_alignment/saved_review.py` binds saved points, calibration,
+orientation and reports to exact source identity. Progress uses the common Server
+Client callback. Guard: `test_alignment_saved_workflow.py`; live/parity gates pending.
+Brain manual review: [paired review UI](reports/BRAIN_PAIRED_REVIEW_UI_2026-10-11.md); guard `tests/code/ai_imaging/test_brain_review_views.py`.
+Brain regional reference chart: [pattern-report contract](modules/eagle-eye-server-development/docs/BRAIN_ATROPHY_PATTERN_REPORT_2026-10-11.md); guard `tests/code/ai_imaging/test_brain_atrophy_patterns.py`. Interval comparisons do not supply a dementia probability.
+
+
+## Advanced Image Analysis presentation profiles (2026-10-11)
+
+[Reusable startup contract](modules/ADVANCED_IMAGE_ANALYSIS_STARTUP_PROFILES.md):
+early off-desktop preparation, function-specific Python layouts, lifecycle, both
+installer backends and separate source/installed acceptance gates.
+
+
+Advanced Viewer shared editor/navigation/viewport chrome and function-layout
+boundary: [startup profiles](modules/ADVANCED_IMAGE_ANALYSIS_STARTUP_PROFILES.md),
+`viewer_chrome.py`, `tests/code/mpr/test_analysis_presentation.py` (2026-10-11).
+
+
+### Lifecycle / Windows final exit (2026-10-11, OPT-60)
+
+PacsClient/utils/process_exit.py owns only the final native exit primitive used by main.py and the existing single-instance takeover failsafe. Shutdown ordering stays with existing owners. Evidence and remaining acceptance gates: docs/reports/CRASH_UNIFY_KPI_CLOSURE_AUDIT_2026-09-15.md, October 11 section. Guard: tests/code/system/test_windows_final_exit.py; native fixture: tools/diagnostics/fixtures/windows_detach_probe.c. External Advanced Analysis Qt5/PythonQt faults remain a distinct viewer-domain investigation.
+
+
+### 2026-10-11 lifecycle/responsiveness follow-up
+
+- Source launch independence and closed-console logging: tools/dev/start_source_detached.ps1, tools/diagnostics/tee_process_output.py; tests/code/system/test_tee_host_disconnect.py.
+- Tab activation bounds and collection-yield observation: tests/code/system/test_logo_activation_bounded.py and test_close_gc_yield_observation.py; existing OPT-21/OPT-60 UI stall report.
+- Fast instance-owned VOI reuse: docs/viewer/FAST_PIPELINE_DETAILED.md and tests/code/viewer/test_fast_decode_voi_reuse.py. Source GUI and Developer parity remain separate pending gates.

@@ -878,19 +878,16 @@ class CustomTabManager:
     def set_logo_active(self, active=True):
         """Set the logo button as active or inactive"""
         if hasattr(self, 'logo_button'):
+            active = bool(active)
+            if self.logo_button.property("active") == active:
+                return
             self.logo_button.setProperty("active", active)
 
-            # Do NOT reassign older styles here.
-            # Only polish/unpolish so the [active="true"] selector updates.
-            try:
-                self._apply_logo_logotype_style()
-            except Exception:
-                pass
-
+            # The stylesheet is owned by setup/theme changes. Activation only
+            # updates its selector; rebuilding it causes redundant style events.
             self.logo_button.style().unpolish(self.logo_button)
             self.logo_button.style().polish(self.logo_button)
             self.logo_button.update()
-            self.logo_button.repaint()
     
     def close_patient_tab(self, tab_index):
         """Close a specific patient tab"""

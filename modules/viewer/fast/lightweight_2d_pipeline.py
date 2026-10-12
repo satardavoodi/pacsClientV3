@@ -446,6 +446,9 @@ class SliceMeta:
     # own header/metadata. A series-level photometric fallback must not make an
     # incomplete DB row eligible for the metadata-driven subprocess decoder.
     pixel_facts_authoritative: bool = True
+    # Instance-owned negative cache: absence is known only after reading this
+    # dataset. Keeping it on the slice isolates retired prefetch work.
+    voi_lut_function_resolved: bool = False
 
 
 @dataclass(frozen=True)
@@ -2945,6 +2948,15 @@ class Lightweight2DPipeline(QObject):
             if _is_mf:
                 self._mf_ds_cache_put(sm.path, ds)
 
+        # Retain display facts from the dataset already owned by this decode.
+        # Cache absence too: missing VOILUTFunction is a resolved fact, not a
+        # reason for the render path to reopen the same file on the GUI thread.
+        voi_function = str(getattr(ds, "VOILUTFunction", "") or "").strip().upper()
+        sm.voi_lut_function = (
+            voi_function if voi_function in {"LINEAR", "LINEAR_EXACT", "SIGMOID"} else None
+        )
+        sm.voi_lut_function_resolved = True
+
         # Multi-frame frame selection: for a multi-frame file this SliceMeta's
         # frame_index picks its OWN frame; single-frame slices (frame_index None)
         # keep the legacy frame-0 behaviour. Clamp defensively.
@@ -4271,7 +4283,8 @@ class Lightweight2DPipeline(QObject):
             samples_per_pixel=entry.samples_per_pixel,
             window_width=entry.window_width,
             window_center=entry.window_center,
-            voi_lut_function=None,
+            voi_lut_function=getattr(entry, "voi_lut_function", None),
+            voi_lut_function_resolved=True,
             slope=entry.slope,
             intercept=entry.intercept,
             instance_number=entry.instance_number,
@@ -4289,6 +4302,8 @@ class Lightweight2DPipeline(QObject):
         raw = str(sm.voi_lut_function or "").strip().upper()
         if raw in {"LINEAR", "LINEAR_EXACT", "SIGMOID"}:
             return raw
+        if sm.voi_lut_function_resolved:
+            return None
 
         key = str(sm.path or "")
         if not key:

@@ -1,0 +1,570 @@
+{
+  "schema_version": 1,
+  "system": "INO Reception / PACS CRM",
+  "base_urls": {
+    "crm_api": "http://81.16.117.196:8080/api",
+    "dashboard": "http://81.16.117.196/dashboard",
+    "pacs_api": "http://81.16.117.196:8000/api",
+    "socket": "http://81.16.117.196:50052"
+  },
+  "safety_levels": {
+    "read": "Read-only operation. May be executed by analytics skills.",
+    "low_write": "Creates or updates non-clinical workflow metadata. Requires dry-run and explicit confirmation.",
+    "clinical_write": "Creates or changes patient, reception, prescription, report, or appointment data. Requires strong validation and explicit confirmation.",
+    "destructive": "Deletes, cancels, rejects, refunds, or otherwise removes clinical or financial state. Disabled by default."
+  },
+  "defaults": {
+    "auth": "bearer_token_from_login",
+    "date_format": "YYYY/MM/DD",
+    "timezone": "Asia/Tehran",
+    "write_mode": "dry_run_only"
+  },
+  "operations": [
+    {
+      "name": "auth.login",
+      "title": "Login and receive bearer token",
+      "method": "POST",
+      "url": "{{crm_api}}/auth/login",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["username", "password"],
+        "optional": []
+      },
+      "body_template": {
+        "username": "{{username}}",
+        "password": "{{password}}"
+      },
+      "notes": "Credentials must be supplied from environment variables or a secure secret provider."
+    },
+    {
+      "name": "reports.patients_by_service_insurance",
+      "title": "Daily admissions and financial summary",
+      "method": "GET",
+      "url": "{{crm_api}}/Reports/patients-by-service-insurance",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["startDate", "endDate"],
+        "optional": ["modality", "insuranceType", "page", "limit"]
+      },
+      "query_template": {
+        "startDate": "{{startDate}}",
+        "endDate": "{{endDate}}",
+        "modality": "{{modality}}",
+        "insuranceType": "{{insuranceType}}",
+        "page": "{{page|1}}",
+        "limit": "{{limit|1000}}"
+      },
+      "returns": [
+        "overall",
+        "debt",
+        "walletVsReception",
+        "byInsurance",
+        "byModality",
+        "byModalityAndInsurance",
+        "records"
+      ]
+    },
+    {
+      "name": "cashdesk.admissions",
+      "title": "Cash desk admissions detail",
+      "method": "GET",
+      "url": "{{crm_api}}/CashDeskAnalysis/admissions",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["startDate", "endDate"],
+        "optional": ["cashier", "page", "limit"]
+      },
+      "query_template": {
+        "startDate": "{{startDate}}",
+        "endDate": "{{endDate}}",
+        "cashier": "{{cashier}}",
+        "page": "{{page|1}}",
+        "limit": "{{limit|1000}}"
+      }
+    },
+    {
+      "name": "cashdesk.risk_analysis",
+      "title": "Risk and follow-up candidates",
+      "method": "GET",
+      "url": "{{crm_api}}/CashDeskAnalysis/risk-analysis",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["startDate", "endDate"],
+        "optional": ["cashier"]
+      },
+      "query_template": {
+        "startDate": "{{startDate}}",
+        "endDate": "{{endDate}}",
+        "cashier": "{{cashier}}"
+      }
+    },
+    {
+      "name": "cashdesk.discrepancy_report",
+      "title": "Cash desk mismatch report",
+      "method": "GET",
+      "url": "{{crm_api}}/CashDeskAnalysis/discrepancy-report",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["startDate", "endDate"],
+        "optional": ["cashier"]
+      },
+      "query_template": {
+        "startDate": "{{startDate}}",
+        "endDate": "{{endDate}}",
+        "cashier": "{{cashier}}"
+      }
+    },
+    {
+      "name": "cashdesk.discounts",
+      "title": "Discount records",
+      "method": "GET",
+      "url": "{{crm_api}}/CashDeskAnalysis/discounts",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["startDate", "endDate"],
+        "optional": ["cashier", "page", "limit"]
+      }
+    },
+    {
+      "name": "cashdesk.refunds",
+      "title": "Refund records",
+      "method": "GET",
+      "url": "{{crm_api}}/CashDeskAnalysis/refunds",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["startDate", "endDate"],
+        "optional": ["cashier", "page", "limit"]
+      }
+    },
+    {
+      "name": "workflow.reporting",
+      "title": "Reporting worklist",
+      "method": "GET",
+      "url": "{{crm_api}}/imagingWorkflow/workflow/reporting",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": [],
+        "optional": ["page", "limit", "startDate", "endDate", "receptionID", "search", "modality", "status", "radiologist", "hasVoiceAttachment", "includeStats"]
+      }
+    },
+    {
+      "name": "reports.current_get",
+      "title": "Read current PACS report content",
+      "method": "GET",
+      "url": "{{crm_api}}/pacs/report/{{ReceptionID}}",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["ReceptionID"],
+        "optional": []
+      },
+      "notes": "Uses numeric ReceptionID. Returns report.findings, report.content, status, radiologist, and approvalFlags."
+    },
+    {
+      "name": "reports.pacs_patient_detail",
+      "title": "Read PACS patient/reception detail",
+      "method": "GET",
+      "url": "{{crm_api}}/pacs/patients/{{ReceptionID}}",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["ReceptionID"],
+        "optional": []
+      }
+    },
+    {
+      "name": "reports.logs",
+      "title": "Read report change logs",
+      "method": "GET",
+      "url": "{{crm_api}}/imagingWorkflow/{{workflowId}}/workflow/report/logs",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["workflowId"],
+        "optional": ["page", "limit", "action", "field", "startDate", "endDate", "changedBy", "sort"]
+      },
+      "notes": "Uses workflow ObjectId, not numeric ReceptionID."
+    },
+    {
+      "name": "reports.status_history",
+      "title": "Read report status history",
+      "method": "GET",
+      "url": "{{crm_api}}/imagingWorkflow/{{workflowId}}/workflow/report/status/history",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["workflowId"],
+        "optional": []
+      }
+    },
+    {
+      "name": "workflow.waiting_appointment",
+      "title": "Waiting appointment worklist",
+      "method": "GET",
+      "url": "{{crm_api}}/imagingWorkflow/workflow/waiting-appointment",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": [],
+        "optional": ["page", "limit", "modality"]
+      }
+    },
+    {
+      "name": "patients.auto_check_nid",
+      "title": "Find patient by national ID",
+      "method": "POST",
+      "url": "{{crm_api}}/Patient/autoCheckNID",
+      "safety": "read",
+      "enabled": true,
+      "inputs": {
+        "required": ["NID", "Clinic", "CenterID"],
+        "optional": []
+      },
+      "body_template": {
+        "Clinic": "{{Clinic}}",
+        "CenterID": "{{CenterID}}",
+        "NID": "{{NID}}"
+      },
+      "notes": "The prescription route may rewrite this endpoint to IrannobatPatient/autoCheckNID."
+    },
+    {
+      "name": "patients.add_patient",
+      "title": "Create patient record",
+      "method": "POST",
+      "url": "{{crm_api}}/Patient/addPatient",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["patient_payload"],
+        "optional": []
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["NationalID", "FirstName", "LastName", "Phone"]
+      },
+      "notes": "Full patient schema must be captured from live UI before enabling."
+    },
+    {
+      "name": "reception.add",
+      "title": "Create reception/admission",
+      "method": "POST",
+      "url": "{{crm_api}}/Reception/add",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["patient", "nationalCode", "User", "insuranceType", "modality", "services"],
+        "optional": [
+          "referrerPhys",
+          "modalityId",
+          "inventoryConsumption",
+          "cashDeskDiscount",
+          "supplementaryInsuranceId",
+          "manualSupplementaryInsurance",
+          "tags",
+          "skipCustomerClubDiscount",
+          "customerClubDiscount"
+        ]
+      },
+      "body_template_observed_fields": {
+        "patient": "{{patient}}",
+        "nationalCode": "{{nationalCode}}",
+        "User": "{{User}}",
+        "insuranceType": "{{insuranceType}}",
+        "modality": "{{modality}}",
+        "services": "{{services}}",
+        "referrerPhys": "{{referrerPhys}}",
+        "modalityId": "{{modalityId}}",
+        "inventoryConsumption": "{{inventoryConsumption|[]}}",
+        "cashDeskDiscount": "{{cashDeskDiscount|0}}",
+        "supplementaryInsuranceId": "{{supplementaryInsuranceId}}",
+        "manualSupplementaryInsurance": "{{manualSupplementaryInsurance}}",
+        "tags": "{{tags|[]}}",
+        "skipCustomerClubDiscount": "{{skipCustomerClubDiscount}}",
+        "customerClubDiscount": "{{customerClubDiscount}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["patient", "nationalCode", "modality", "services", "insuranceType", "expectedPrice"]
+      },
+      "notes": "Payload fields mapped from reception page chunk lines around Reception/add. Operation remains disabled until validation and a controlled live test are approved."
+    },
+    {
+      "name": "reception.update",
+      "title": "Update reception/admission",
+      "method": "PUT",
+      "url": "{{crm_api}}/Reception/update/{{receptionId}}",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["receptionId", "patient", "User", "nationalCode", "insuranceType", "modality", "services"],
+        "optional": [
+          "referrerPhysician",
+          "modalityId",
+          "inventoryConsumption",
+          "cashDeskDiscount",
+          "supplementaryInsuranceId",
+          "manualSupplementaryInsurance",
+          "tags",
+          "skipCustomerClubDiscount",
+          "customerClubDiscount"
+        ]
+      },
+      "body_template_observed_fields": {
+        "patient": "{{patient}}",
+        "User": "{{User}}",
+        "referrerPhysician": "{{referrerPhysician}}",
+        "nationalCode": "{{nationalCode}}",
+        "insuranceType": "{{insuranceType}}",
+        "modality": "{{modality}}",
+        "services": "{{services}}",
+        "modalityId": "{{modalityId}}",
+        "inventoryConsumption": "{{inventoryConsumption|[]}}",
+        "cashDeskDiscount": "{{cashDeskDiscount|0}}",
+        "supplementaryInsuranceId": "{{supplementaryInsuranceId}}",
+        "manualSupplementaryInsurance": "{{manualSupplementaryInsurance}}",
+        "tags": "{{tags|[]}}",
+        "skipCustomerClubDiscount": "{{skipCustomerClubDiscount}}",
+        "customerClubDiscount": "{{customerClubDiscount}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["receptionId", "patient", "nationalCode", "modality", "services", "insuranceType"]
+      }
+    },
+    {
+      "name": "appointments.schedule",
+      "title": "Schedule waiting appointment",
+      "method": "PATCH",
+      "url": "{{crm_api}}/imagingWorkflow/{{receptionId}}/workflow/schedule",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["receptionId", "persianDate", "timeSlot", "room"],
+        "optional": ["scheduledAt", "startTime", "endTime", "roomName", "shift", "shiftName", "duration"]
+      },
+      "body_template": {
+        "appointment": {
+          "scheduledAt": "{{scheduledAt}}",
+          "startTime": "{{startTime}}",
+          "endTime": "{{endTime}}",
+          "persianDate": "{{persianDate}}",
+          "timeSlot": "{{timeSlot}}",
+          "room": "{{room}}",
+          "roomName": "{{roomName}}",
+          "shift": "{{shift}}",
+          "shiftName": "{{shiftName}}",
+          "duration": "{{duration|30}}"
+        }
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["receptionId", "appointmentDate", "appointmentTime", "modality"]
+      },
+      "notes": "Payload mapped from booking page apiPayload. Operation remains disabled until validation and a controlled live test are approved."
+    },
+    {
+      "name": "cashdesk.receive_payment",
+      "title": "Receive cashier payment for one reception",
+      "method": "POST",
+      "url": "{{crm_api}}/Reception/pay/{{walletId}}",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["walletId", "cashPayment", "cardPayment", "walletPayment", "User", "receptionIds", "selectedReceptionId", "paymentType"],
+        "optional": ["cardCode"]
+      },
+      "body_template": {
+        "cashPayment": "{{cashPayment|0}}",
+        "cardPayment": "{{cardPayment|0}}",
+        "walletPayment": "{{walletPayment|0}}",
+        "cardCode": "{{cardCode|}}",
+        "User": "{{User}}",
+        "receptionIds": "{{receptionIds}}",
+        "selectedReceptionId": "{{selectedReceptionId}}",
+        "paymentType": "{{paymentType|single}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["walletId", "selectedReceptionId", "cashPayment", "cardPayment", "walletPayment", "cardCode", "paymentType"]
+      },
+      "notes": "Verified live cashier pattern from Treasury: use paymentType=single and selectedReceptionId as numeric ReceptionID for exact reception payment. Keep disabled until production identity, permission, idempotency, and audit guards are complete."
+    },
+    {
+      "name": "reports.update_content",
+      "title": "Update PACS report text",
+      "method": "POST",
+      "url": "{{crm_api}}/pacs/update-report",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["ReceptionID", "content", "findings", "status"],
+        "optional": []
+      },
+      "body_template": {
+        "receptionId": "{{ReceptionID}}",
+        "content": "{{content}}",
+        "findings": "{{findings}}",
+        "status": "{{status}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["ReceptionID", "patient", "service", "status", "contentPreview", "priorStatus", "priorVersionHash"]
+      },
+      "notes": "Uses numeric ReceptionID. This writes report content/status but does not update displayed approval flags."
+    },
+    {
+      "name": "reports.approval_flags",
+      "title": "Update report approval flags",
+      "method": "PATCH",
+      "url": "{{crm_api}}/imagingWorkflow/{{workflowId}}/workflow/report/approval-flags",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["workflowId", "physicianApproved", "secretaryApproved"],
+        "optional": []
+      },
+      "body_template": {
+        "physicianApproved": "{{physicianApproved}}",
+        "secretaryApproved": "{{secretaryApproved}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["workflowId", "ReceptionID", "patient", "targetStatus", "physicianApproved", "secretaryApproved", "actor"]
+      },
+      "notes": "Uses workflow ObjectId. Required for statuses that must show as approved/completed in the INO worklist."
+    },
+    {
+      "name": "reports.status_transition",
+      "title": "Transition report status",
+      "method": "PATCH",
+      "url": "{{crm_api}}/imagingWorkflow/{{workflowId}}/workflow/report/status",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["workflowId", "status"],
+        "optional": ["reason"]
+      },
+      "body_template": {
+        "status": "{{status}}",
+        "reason": "{{reason}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["workflowId", "ReceptionID", "patient", "priorStatus", "status", "reason"]
+      },
+      "notes": "Present in frontend/API map but not yet exercised by this project."
+    },
+    {
+      "name": "reports.revert_content",
+      "title": "Revert report field to previous value",
+      "method": "PATCH",
+      "url": "{{crm_api}}/imagingWorkflow/{{workflowId}}/workflow/report/revert",
+      "safety": "destructive",
+      "enabled": false,
+      "inputs": {
+        "required": ["workflowId", "field", "oldValue", "logId"],
+        "optional": []
+      },
+      "body_template": {
+        "field": "{{field}}",
+        "oldValue": "{{oldValue}}",
+        "logId": "{{logId}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "owner_approval_required": true,
+        "show_fields_before_submit": ["workflowId", "ReceptionID", "patient", "field", "logId"]
+      }
+    },
+    {
+      "name": "prescriptions.submit",
+      "title": "Submit prescription",
+      "method": "POST",
+      "url": "{{crm_api}}/{{insurance_prescription_endpoint}}",
+      "safety": "clinical_write",
+      "enabled": false,
+      "inputs": {
+        "required": ["insurance_prescription_endpoint", "prescription_payload"],
+        "optional": [
+          "tamin:CenterID",
+          "tamin:NID",
+          "tamin:PMN",
+          "tamin:PatientID",
+          "tamin:Comment",
+          "tamin:note",
+          "tamin:PTI",
+          "tamin:SrvNames",
+          "tamin:prescTypeName",
+          "tamin:ExpierDate",
+          "salamat:CenterID",
+          "salamat:SamadCode",
+          "salamat:CitizenSessionId",
+          "salamat:otherServices"
+        ]
+      },
+      "body_template": "{{prescription_payload}}",
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "show_fields_before_submit": ["patientNID", "insurance", "items", "physician", "totalAmount"]
+      },
+      "notes": "Prescription UI uses TaminEprescV2/PrescriptionAdd|PrescriptionEdit and BimehSalamat/PrescriptionSave|PrescriptionUpdate. Keep disabled until insurer-specific validation is implemented."
+    },
+    {
+      "name": "prescriptions.delete_tamin",
+      "title": "Delete Tamin prescription",
+      "method": "POST",
+      "url": "{{crm_api}}/TaminEprescV2/PrescriptionDelete",
+      "safety": "destructive",
+      "enabled": false,
+      "inputs": {
+        "required": ["headerID", "PrID", "CenterID"],
+        "optional": []
+      },
+      "body_template": {
+        "headerID": "{{headerID}}",
+        "PrID": "{{PrID}}",
+        "CenterID": "{{CenterID}}"
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "owner_approval_required": true
+      }
+    },
+    {
+      "name": "prescriptions.delete_salamat",
+      "title": "Delete Salamat prescription",
+      "method": "POST",
+      "url": "{{crm_api}}/BimehSalamat/DeleteRegisterPresc",
+      "safety": "destructive",
+      "enabled": false,
+      "inputs": {
+        "required": ["CenterID", "SavePresc", "checkCode", "SamadCode", "NID"],
+        "optional": []
+      },
+      "confirmation": {
+        "required": true,
+        "dry_run_required": true,
+        "owner_approval_required": true
+      }
+    }
+  ]
+}

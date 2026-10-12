@@ -258,12 +258,13 @@ class CourseCardWidget(QFrame):
         if thumbnail_path and Path(thumbnail_path).exists():
             pixmap = QPixmap(thumbnail_path)
             image_label = QLabel()
+            image_label.setFixedSize(294, 110)
             image_label.setAlignment(Qt.AlignCenter)
             image_label.setPixmap(
                 pixmap.scaled(
                     294,
-                    140,
-                    Qt.KeepAspectRatioByExpanding,
+                    110,
+                    Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
             )

@@ -22,8 +22,8 @@ _AI_MG_LOGGER = logging.getLogger(__name__)
 # Ground truth for the reported study (50016) is CLEAN: each MG series has exactly
 # 1 file on disk and 1 instance row in the DB (image_count=1), and the reslice
 # reset rebinds correctly for a single-slice volume. So the extra scrollable image
-# is a RUNTIME condition — a volume that arrived with Z>1, or a metadata instance
-# list of length >1, or a slice-count/slider mismatch — none of which is visible in
+# is a RUNTIME condition â€” a volume that arrived with Z>1, or a metadata instance
+# list of length >1, or a slice-count/slider mismatch â€” none of which is visible in
 # static analysis. This logs every candidate source at the viewport boundary so the
 # next real run pins the mechanism exactly, in app.log (prints never reached it).
 _MG_VOLUME_DIAG = os.getenv("AIPACS_MG_VOLUME_DIAG", "1").strip().lower() not in ("0", "false", "no", "off")
@@ -33,7 +33,7 @@ _MG_VOLUME_DIAG = os.getenv("AIPACS_MG_VOLUME_DIAG", "1").strip().lower() not in
 # arrives with a metadata instance list of length > 1 (the "previous image was
 # appended" signature), the extra instances are dropped so the viewport shows the
 # ONE intended image. Default OFF until the diagnostic above confirms the exact
-# mechanism on a live run — a blind volume edit could mis-handle a genuine
+# mechanism on a live run â€” a blind volume edit could mis-handle a genuine
 # multi-frame MG series (tomo/cine), which is why this is opt-in, not default-on.
 _MG_ENFORCE_SINGLE_IMAGE = os.getenv("AIPACS_MG_ENFORCE_SINGLE_IMAGE", "0").strip().lower() in ("1", "true", "yes", "on")
 
@@ -59,7 +59,7 @@ def _diagnose_mg_volume(logger, where, vtk_image_data, metadata, series_index):
         instances = metadata.get("instances", []) if isinstance(metadata, dict) else []
         inst_n = len(instances) if isinstance(instances, (list, tuple)) else 0
 
-        # Distinct SOP UIDs and files — the append-bug stacks DIFFERENT SOPs/files.
+        # Distinct SOP UIDs and files â€” the append-bug stacks DIFFERENT SOPs/files.
         sops, files = set(), set()
         for it in (instances or []):
             if isinstance(it, dict):
@@ -85,7 +85,7 @@ def _diagnose_mg_volume(logger, where, vtk_image_data, metadata, series_index):
         )
         if suspect and files:
             logger.warning("[MG][VTK-DIAG] %s files=%s sops=%s", where, sorted(files), sorted(s[-12:] for s in sops))
-    except Exception as exc:  # noqa: BLE001 — diagnostics must never break a load
+    except Exception as exc:  # noqa: BLE001 â€” diagnostics must never break a load
         try:
             logger.debug("[MG][VTK-DIAG] failed: %s", exc)
         except Exception:
@@ -97,11 +97,11 @@ def enforce_single_image_metadata(metadata, series_index=None, logger=None):
     Collapse an MG series' metadata instance list to its single intended image.
 
     Returns the (possibly trimmed) metadata. Pure aside from logging; safe to call
-    unconditionally — it only acts when ALL of these hold, which is exactly the
+    unconditionally â€” it only acts when ALL of these hold, which is exactly the
     append-bug signature and NEVER a legitimate single-image or multi-frame series:
-        • modality == MG
-        • the flag AIPACS_MG_ENFORCE_SINGLE_IMAGE is on
-        • the instance list has >1 entry with DISTINCT SOP UIDs (i.e. genuinely
+        â€¢ modality == MG
+        â€¢ the flag AIPACS_MG_ENFORCE_SINGLE_IMAGE is on
+        â€¢ the instance list has >1 entry with DISTINCT SOP UIDs (i.e. genuinely
           different images stacked together, not one multi-frame file)
 
     A multi-frame MG series (one file, many frames) has ONE instance/SOP, so it is
@@ -121,7 +121,7 @@ def enforce_single_image_metadata(metadata, series_index=None, logger=None):
             for it in instances if isinstance(it, dict) and (it.get("sop_uid") or it.get("sop_instance_uid"))
         }
         if len(distinct_sops) <= 1:
-            return metadata  # one image / multi-frame — leave it alone
+            return metadata  # one image / multi-frame â€” leave it alone
         keep = [instances[0]]
         metadata = dict(metadata)
         metadata["instances"] = keep
@@ -148,6 +148,7 @@ class AIVTKWidget(VTKWidget):
     segmentation_ready = Signal(object, object, object, object)
     manager_ai_requested = Signal(int, object)
     apply_boxes_requested = Signal(object, object, object)
+    calcium_ready = Signal(object, object)
     def __init__(self, parent=None, height_viewer=480, patient_widget=None, type_viewer=None):
         super().__init__(parent, height_viewer, patient_widget=patient_widget)
         self.apply_default_filter = False
@@ -195,15 +196,20 @@ class AIVTKWidget(VTKWidget):
         self.segmentation_ready.connect(self._on_segmentation_ready)
         self.manager_ai_requested.connect(self._on_manager_ai_requested)
         self.apply_boxes_requested.connect(self._on_apply_boxes_requested)
+        self.calcium_ready.connect(self._on_calcium_ready)
 
         # --- Eagle Eye on-viewer "Show/Hide Boxes" toggle ---
         self._ai_boxes_visible = True
         self._boxes_toggle_btn = None
+        from modules.ai_imaging.ai_module_ui.breast_display import CalciumDisplayLayer
+        self._calcium_layer = CalciumDisplayLayer()
+        self._calcium_toggle_btn = None
         try:
             # Lumbar MRI has no AI boxes to show or hide, and every pane of its
             # 3x1 layout ends up inside a saved screenshot - an inert toggle
             # button would be baked into every captured frame.
             _mode = getattr(patient_widget, 'eagle_eye_mode', None)
+            self._breast_display_controls = _mode in (None, 'mammography')
             if self.type_viewer != TYPES_VIEWER.fixed_viewer and _mode != "lumbar_mri":
                 self._create_boxes_toggle_button()
         except Exception:
@@ -233,6 +239,7 @@ class AIVTKWidget(VTKWidget):
                 pts_world = [list(p) for p in (pts_world_out or [])]
                 pts_ijk = [list(p) for p in (ijk_list_3d or [])]
                 self.image_viewer.overlay(out_path, pts_world_out=pts_world, pts_ijk=pts_ijk)
+                self._apply_ai_boxes_visibility()
             except Exception as e:
                 print(f"[AI][SEG] Overlay failed: {e}")
 
@@ -372,6 +379,8 @@ class AIVTKWidget(VTKWidget):
             pass
 
     def _schedule_manager_ai(self, delay_ms=200, reason=None):
+        if reason == 'mg_run_changed':
+            self._clear_microcalcifications()
         try:
             series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid')
             series_num = self.image_viewer.metadata.get('series', {}).get('series_number')
@@ -516,10 +525,10 @@ class AIVTKWidget(VTKWidget):
             return None
         if check_all:
             # NOTE: df is the AI module's custom CsvTable, whose columns are
-            # CsvColumn objects — they do NOT implement pandas' .isin().
+            # CsvColumn objects â€” they do NOT implement pandas' .isin().
             # Use an explicit boolean mask (CsvTable.__getitem__ accepts a
             # list of bools). The previous .isin() call raised AttributeError,
-            # which the caller swallowed — silently dropping every per-box
+            # which the caller swallowed â€” silently dropping every per-box
             # classification label.
             match_set = set(matches)
             mask = [str(v) in match_set for v in df["dicom_full_path"]]
@@ -1048,6 +1057,9 @@ class AIVTKWidget(VTKWidget):
         return result
 
     def start_process_series(self, vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed):
+        clear_calcium = getattr(self, '_clear_microcalcifications', None)
+        if clear_calcium:
+            clear_calcium()
         series_meta = metadata.get('series', {}) if isinstance(metadata, dict) else {}
         modality = str(series_meta.get('modality', '') or '').upper()
         print(f"[MG][VTK] start_process_series called for series={series_index} modality={modality or 'N/A'}")
@@ -1107,6 +1119,9 @@ class AIVTKWidget(VTKWidget):
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None, force_reload: bool = False):
+        clear_calcium = getattr(self, '_clear_microcalcifications', None)
+        if clear_calcium:
+            clear_calcium()
         # force_reload (manual drag-drop "always replace", 2026-06-14): accept and
         # forward to the base VTKWidget so the Eagle Eye viewport stays compatible
         # with the shared switch pipeline. Without this kwarg every series load
@@ -1146,7 +1161,7 @@ class AIVTKWidget(VTKWidget):
                         self.csv_classification = ATTACHMENT_PATH / study_uid / 'classification.csv'
                         print("[MG][VTK] CSV paths loaded from default")
         
-        # ✅ CRITICAL FIX: Use super().switch_series() not switch_series_backup()
+        # âœ… CRITICAL FIX: Use super().switch_series() not switch_series_backup()
         result = super().switch_series(vtk_image_data, metadata, series_index, vtk_image_data_2, metadata_2,
                                        metadata_fixed, force_reload=force_reload)
         if result:
@@ -1240,9 +1255,9 @@ class AIVTKWidget(VTKWidget):
 
         if check_all_rows:  # return list of series_ai_data
             for dicom_path_str in lst_dicom_path:
-                s = str(dicom_path_str).strip().strip('"').strip("'")  # پاکسازی احتمالی
+                s = str(dicom_path_str).strip().strip('"').strip("'")  # ظ¾ط§ع©ط³ط§ط²غŒ ط§ط­طھظ…ط§ظ„غŒ
 
-                # اگر بک‌اسلش داریم (مسیر ویندوزی)، از PureWindowsPath استفاده کن
+                # ط§ع¯ط± ط¨ع©â€Œط§ط³ظ„ط´ ط¯ط§ط±غŒظ… (ظ…ط³غŒط± ظˆغŒظ†ط¯ظˆط²غŒ)طŒ ط§ط² PureWindowsPath ط§ط³طھظپط§ط¯ظ‡ ع©ظ†
                 p = PureWindowsPath(s) if ('\\' in s and '/' not in s) else Path(s)
 
                 parent_dir = p.parent
@@ -1278,9 +1293,9 @@ class AIVTKWidget(VTKWidget):
 
         else:  # get first rows if series_ai_data exist
             for dicom_path_str in lst_dicom_path:
-                s = str(dicom_path_str).strip().strip('"').strip("'")  # پاکسازی احتمالی
+                s = str(dicom_path_str).strip().strip('"').strip("'")  # ظ¾ط§ع©ط³ط§ط²غŒ ط§ط­طھظ…ط§ظ„غŒ
 
-                # اگر بک‌اسلش داریم (مسیر ویندوزی)، از PureWindowsPath استفاده کن
+                # ط§ع¯ط± ط¨ع©â€Œط§ط³ظ„ط´ ط¯ط§ط±غŒظ… (ظ…ط³غŒط± ظˆغŒظ†ط¯ظˆط²غŒ)طŒ ط§ط² PureWindowsPath ط§ط³طھظپط§ط¯ظ‡ ع©ظ†
                 p = PureWindowsPath(s) if ('\\' in s and '/' not in s) else Path(s)
 
                 parent_dir = p.parent
@@ -1302,13 +1317,13 @@ class AIVTKWidget(VTKWidget):
                     or (instance_numbers and dicom_num in instance_numbers)
                 ):
                     print(
-                        f"[MG][MATCH] ✓ Matched CSV row: series_uid={dicom_series_uid} "
+                        f"[MG][MATCH] âœ“ Matched CSV row: series_uid={dicom_series_uid} "
                         f"name={dicom_name} token={dicom_token} num={dicom_num}"
                     )
                     series_ai_data = df[df["dicom_full_path"] == dicom_path_str]
                     return series_ai_data
             print(
-                "[MG][MATCH] ✗ NO rows matched by series_uid/instance name/token/number "
+                "[MG][MATCH] âœ— NO rows matched by series_uid/instance name/token/number "
                 f"series={series_num} uid={series_uid}"
             )
             print(
@@ -1347,6 +1362,8 @@ class AIVTKWidget(VTKWidget):
         Synchronous method to add AI boxes to the viewer.
         Changed from async to sync to avoid task conflicts.
         """
+        from modules.ai_imaging.ai_module_ui.breast_display import parenchymal_display_items
+        boxes_scores = parenchymal_display_items(boxes_scores)
         if not boxes_scores:
             self._notify_processing_status("Processing: Ready", False)
             return
@@ -1362,6 +1379,7 @@ class AIVTKWidget(VTKWidget):
                 self._lock_camera_scale(duration_ms=800)
                 self._notify_processing_status("Processing: Drawing boxes...", True)
                 lst_boxes_object = self.image_viewer.draw_boxes_ijk(boxes_scores, color=(0.0, 1.0, 0.0), line_width=3.0)
+                self._apply_ai_boxes_visibility()
                 print(f'after draw boxes object')
                 if lst_boxes_object:
                     self.update_boxes_details_ui(lst_boxes_object)
@@ -1564,6 +1582,7 @@ class AIVTKWidget(VTKWidget):
             return
         self.patient_widget.sidebar_clear()
         if self.image_viewer.metadata['series']['modality'].upper() == 'MG':
+            self._load_calcium_for_run()
             self._notify_processing_status("Processing: Reading AI results...", True)
             print(f"[MG][MANAGER_AI] MG modality detected, loading boxes...")
             df = self.load_csv()
@@ -1669,7 +1688,7 @@ class AIVTKWidget(VTKWidget):
         return super()._bind_backend_from_metadata(metadata, force_vtk=True, source=source)
 
     def _update_backend_badge(self):
-        """Eagle Eye is always Advanced/VTK — the badge must never show FAST."""
+        """Eagle Eye is always Advanced/VTK â€” the badge must never show FAST."""
         try:
             badge = getattr(self, "_backend_badge", None)
             if badge is not None:
@@ -1690,11 +1709,12 @@ class AIVTKWidget(VTKWidget):
         """Create the on-viewer Show/Hide Boxes toggle (Eagle Eye only)."""
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QPushButton
-        btn = QPushButton("Hide Boxes", self)
+        breast = getattr(self, '_breast_display_controls', True)
+        btn = QPushButton("Parenchymal lesions: on" if breast else "Hide Boxes", self)
         btn.setObjectName("AIBoxesToggle")
         btn.setCursor(Qt.PointingHandCursor)
         btn.setFocusPolicy(Qt.NoFocus)
-        btn.setToolTip("Show or hide the AI detection boxes")
+        btn.setToolTip("Show or hide Mass, Asymmetry and Architectural Distortion findings and their overlays. Model labels require physician review." if breast else "Show or hide the AI detection boxes")
         btn.setStyleSheet(
             "QPushButton#AIBoxesToggle {"
             " background: rgba(20, 28, 40, 210); color: #d6e2f0;"
@@ -1708,6 +1728,18 @@ class AIVTKWidget(VTKWidget):
         btn.show()
         btn.raise_()
         self._boxes_toggle_btn = btn
+        if not breast:
+            self._position_boxes_toggle_button()
+            return
+        calcium = QPushButton("Microcalcifications: unavailable", self)
+        calcium.setObjectName("MicrocalcificationsToggle")
+        calcium.setCursor(Qt.PointingHandCursor)
+        calcium.setFocusPolicy(Qt.NoFocus)
+        calcium.setEnabled(False)
+        calcium.setToolTip("No result from the separate calcium model is loaded. This does not mean no calcification.")
+        calcium.clicked.connect(self._toggle_microcalcifications)
+        self._calcium_toggle_btn = calcium
+        calcium.show()
         self._position_boxes_toggle_button()
 
     def _position_boxes_toggle_button(self):
@@ -1726,6 +1758,12 @@ class AIVTKWidget(VTKWidget):
         x = min(x, max(0, self.width() - btn.width() - 4))
         btn.move(x, y)
         btn.raise_()
+        calcium = getattr(self, '_calcium_toggle_btn', None)
+        if calcium is not None:
+            calcium.adjustSize()
+            # A second row remains usable in narrow paired CC/MLO panes.
+            calcium.move(min(x, max(0, self.width() - calcium.width() - 4)), y + btn.height() + 4)
+            calcium.raise_()
 
     def _toggle_ai_boxes(self):
         """Flip AI detection-box visibility (on-viewer toggle handler)."""
@@ -1733,15 +1771,90 @@ class AIVTKWidget(VTKWidget):
         self._apply_ai_boxes_visibility()
         btn = getattr(self, "_boxes_toggle_btn", None)
         if btn is not None:
-            btn.setText("Hide Boxes" if self._ai_boxes_visible else "Show Boxes")
+            if getattr(self, '_breast_display_controls', True):
+                btn.setText("Parenchymal lesions: on" if self._ai_boxes_visible else "Parenchymal lesions: off")
+            else:
+                btn.setText("Hide Boxes" if self._ai_boxes_visible else "Show Boxes")
             self._position_boxes_toggle_button()
+
+    def _load_calcium_for_run(self):
+        """Read on a worker, apply on Qt; discard old run/series callbacks."""
+        self._clear_microcalcifications()
+        detection = self.csv_details_path
+        if not detection:
+            return
+        study = self.image_viewer.metadata_fixed.get('study_uid')
+        key = (self._calcium_delivery_token, str(detection), study)
+        def work():
+            from modules.ai_imaging.eagle_eye_remote.breast_results import load_calcium
+            try:
+                data = load_calcium(detection, study)
+            except Exception:
+                data = {'status': 'unavailable', 'reason': 'invalid_calcium_result'}
+            try:
+                self.calcium_ready.emit(key, data)
+            except RuntimeError:
+                pass  # The owning viewer was closed while reading.
+        threading.Thread(target=work, daemon=True, name='CalciumResultRead').start()
+
+    def _on_calcium_ready(self, key, data):
+        current = (getattr(self, '_calcium_delivery_token', 0), str(self.csv_details_path),
+                   self.image_viewer.metadata_fixed.get('study_uid'))
+        if key != current:
+            return
+        if data.get('status') != 'success':
+            return
+        try:
+            self.set_microcalcification_result(data)
+        except ValueError:
+            self._clear_microcalcifications()
+
+    def _clear_microcalcifications(self):
+        self._calcium_delivery_token = getattr(self, '_calcium_delivery_token', 0) + 1
+        layer = getattr(self, '_calcium_layer', None)
+        if layer is not None:
+            layer.clear()
+        btn = getattr(self, '_calcium_toggle_btn', None)
+        if btn is not None:
+            btn.setEnabled(False)
+            btn.setText('Microcalcifications: unavailable')
+            btn.setToolTip('No result from the separate calcium model is loaded. This does not mean no calcification.')
+        # Repaint even when a replacement result is rejected after this clear.
+        self._apply_ai_boxes_visibility()
+
+    def set_microcalcification_result(self, result):
+        """GUI-thread sink for the server's complete dedicated calcium branch."""
+        from PySide6.QtCore import QThread
+        from modules.ai_imaging.ai_module_ui.breast_display import calcium_record_for_view
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError('Calcium overlays must be applied on the GUI thread.')
+        self._clear_microcalcifications()
+        record = calcium_record_for_view(result, self.image_viewer)
+        self._calcium_layer.apply_result(record, result['study_id'], self.image_viewer)
+        self._update_microcalcification_button()
+        self._apply_ai_boxes_visibility()
+
+    def _update_microcalcification_button(self):
+        btn = getattr(self, '_calcium_toggle_btn', None)
+        if btn is not None:
+            btn.setEnabled(self._calcium_layer.available)
+            btn.setText('Microcalcifications: on' if self._calcium_layer.visible else 'Microcalcifications: off')
+            btn.setToolTip('Show or hide the separate calcium model support points. A point is not necessarily one calcification; morphology is not classified.')
+            self._position_boxes_toggle_button()
+
+    def _toggle_microcalcifications(self):
+        if not self._calcium_layer.available:
+            return
+        self._calcium_layer.set_visible(not self._calcium_layer.visible)
+        self._update_microcalcification_button()
+        self._apply_ai_boxes_visibility()
 
     def _apply_ai_boxes_visibility(self):
         """Apply the _ai_boxes_visible flag to every AI annotation on the viewer.
 
         Hides/shows the detection-box rectangles and their score/label text,
         AND the segmentation overlay (the yellow highlighted area) and any
-        legacy overlay actor — so that hiding leaves only the raw underlying
+        legacy overlay actor â€” so that hiding leaves only the raw underlying
         image visible.
         """
         try:
@@ -1758,7 +1871,7 @@ class AIVTKWidget(VTKWidget):
                     except Exception:
                         pass
 
-            # Segmentation overlays — the yellow highlighted areas.
+            # Segmentation overlays â€” the yellow highlighted areas.
             # Each _overlays entry is a (vtk_image, map_colors, actor) tuple.
             for entry in (getattr(viewer, "_overlays", None) or []):
                 try:

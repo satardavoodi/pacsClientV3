@@ -134,7 +134,7 @@ class StandardMPRViewer(
 
     def __init__(self, vtk_image_data, parent=None, window_width=None, window_center=None,
                  layout_views=None, slab_mode=None, slab_thickness_mm=None,
-                 pre_flipped_image_data=None):
+                 pre_flipped_image_data=None, progressive_2d=False):
         super().__init__(parent)
 
         _emit_geometry_contract_missing_guard(
@@ -367,6 +367,8 @@ class StandardMPRViewer(
         # flush, wheel event arriving mid-teardown) no-ops instead of touching a
         # render window whose graphics resources are already released. See
         # `_mpr_is_closed()` in _mpr_orientation.py.
+        self._progressive_2d = bool(progressive_2d)
+        self._initial_views_pending = False
         self._mpr_closed = False
 
         # Toolbar tool routing (Zeta MPR <-> 2D toolbar)
@@ -452,11 +454,10 @@ class StandardMPRViewer(
         self._setup_ui()
 
         # Apply initial window/level from main viewer (if provided)
-        if self._initial_window_level is not None:
-            self._apply_window_level(*self._initial_window_level)
-
-        # Highlight current series in scroller
-        self._highlight_current_series()
+        if not self._initial_views_pending:
+            if self._initial_window_level is not None:
+                self._apply_window_level(*self._initial_window_level)
+            self._highlight_current_series()
 
         logger.info("StandardMPRViewer created successfully!")
         logger.info("=" * 80)

@@ -12,6 +12,7 @@ from modules.ai_imaging.eagle_eye_remote import server, client, contracts
 from modules.ai_imaging.eagle_eye_remote.case_realtime import CaseService
 from modules.ai_imaging.eagle_eye_remote.case_receiver import CaseReceiver
 from modules.ai_imaging.eagle_eye_remote.text_history import History
+from tests.code.ai_imaging.human_access_fixture import human_access
 
 CASE = {'study_uid': '1.2.3', 'patient_id': 'synthetic-person'}
 
@@ -41,13 +42,14 @@ def runner(job, cancel):
 
 
 @pytest.fixture
-def service(tmp_path, monkeypatch):
+def service(tmp_path, monkeypatch, human_access):
     jobs = server.Jobs(tmp_path / 'jobs', Source(), runner)
     history = History(tmp_path / 'history')
-    cases = CaseService(jobs, history, {'first': 'a', 'second': 'a', 'outside': 'b'}, 'a')
+    cases = CaseService(jobs, history, {'first': 'synthetic-center', 'second': 'synthetic-center', 'outside': 'b'}, 'synthetic-center')
     jobs.case_events = cases.events
     tokens = {'first': 'a' * 64, 'second': 'b' * 64, 'outside': 'c' * 64}
-    http = ThreadingHTTPServer(('127.0.0.1', 0), server.handler(jobs, tokens, cases=cases))
+    http = ThreadingHTTPServer(('127.0.0.1', 0), server.handler(jobs, tokens, cases=cases,
+                                                          license_guard=lambda: True, user_authority=human_access))
     http.daemon_threads = True
     thread = threading.Thread(target=http.serve_forever, daemon=True)
     thread.start()
@@ -127,15 +129,13 @@ def test_saved_analysis_read_from_other_owner_never_submits_again(service, tmp_p
         second.saved_analysis({**CASE, 'patient_id': 'wrong'}, job_id, tmp_path / 'wrong')
 
 
-def test_normal_owner_cancel_and_job_read_remain_private(service):
+def test_same_verified_person_keeps_job_access_across_paired_devices(service):
     jobs, cases, history, configs = service
     request = dict(protocol=1, request_id=uuid.uuid4().hex, module='bone-age',
                    study_uid='1.2.3', series={}, parameters={})
     jid = client.Client(configs['first']).json('/v1/jobs', request)['job_id']
-    with pytest.raises(RuntimeError):
-        client.Client(configs['second']).json('/v1/jobs/' + jid)
-    with pytest.raises(RuntimeError):
-        client.Client(configs['second']).json('/v1/jobs/' + jid + '/cancel', {})
+    assert client.Client(configs['second']).json('/v1/jobs/' + jid)['job_id'] == jid
+    assert client.Client(configs['second']).json('/v1/jobs/' + jid + '/cancel', {})['cancellation_requested'] is True
 
 
 def test_staged_stdlib_client_can_read_shared_history_without_server_modules(service, tmp_path, monkeypatch):

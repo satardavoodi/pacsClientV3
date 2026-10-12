@@ -141,8 +141,10 @@ class EchoMindSettingsWidget(QWidget):
         "whisper-1",
     ]
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, separate_connections=False):
         super().__init__(parent)
+        self._separate_connections = separate_connections
+        self.connection_page = None
         self._build_ui()
         self._load_initial_state()
 
@@ -288,14 +290,31 @@ class EchoMindSettingsWidget(QWidget):
         self._root.setSpacing(14)
 
         self._build_header()
+        functional_root = self._root
+        if self._separate_connections:
+            self.connection_page = QWidget(self)
+            self.connection_page.setObjectName("EchoMindSettingsWidget")
+            self.connection_page.setStyleSheet(self.styleSheet())
+            self.connection_page.hide()
+            self._root = QVBoxLayout(self.connection_page)
         self._build_backend_group()
         self._build_proxy_group()
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        if settings_role() == 'server':
+            self.proxy_group.hide()
         self._build_company_auth_group()
         self._build_openai_group()
+        self._root = functional_root
         self._build_prompt_group()
         self._build_normal_templates_group()
         self._build_usage_group()
+        from .ai_usage_settings import AIUsageWidget
+        self.usage_widget = AIUsageWidget('echomind', self)
+        self._root.addWidget(self.usage_widget)
+        if self._separate_connections:
+            self._root = self.connection_page.layout()
         self._build_stt_group()
+        self._root = functional_root
         self._root.addStretch(1)
 
     def _note_label(self, text: str) -> QLabel:
@@ -313,6 +332,8 @@ class EchoMindSettingsWidget(QWidget):
         self._root.addWidget(title)
 
         subtitle = QLabel(
+            "Connection and backend settings are in AI > Connection. Configure personal prompts and templates here."
+            if self._separate_connections else
             "Configure EchoMind authentication, backend selection, OpenAI direct connection, prompts, and Secretary voice-to-text."
         )
         subtitle.setWordWrap(True)
@@ -352,8 +373,8 @@ class EchoMindSettingsWidget(QWidget):
         layout.setVerticalSpacing(12)
 
         self.backend_combo = QComboBox()
-        self.backend_combo.addItem("AI PACS Ecomind Backend", userData="company")
-        self.backend_combo.addItem("OpenAI Direct Backend", userData="openai")
+        self.backend_combo.addItem("AI-PACS via Eagle Eye Server" if self._separate_connections else "Server 1 - LLM G", userData="company")
+        self.backend_combo.addItem("Personal API — own credentials and prompt", userData="openai")
         self.backend_combo.currentIndexChanged.connect(self._on_backend_changed)
         self.backend_combo.setMaximumWidth(340)
 
@@ -401,6 +422,8 @@ class EchoMindSettingsWidget(QWidget):
 
         layout.addWidget(
             self._note_label(
+                "Applies to your personal API connection. Eagle Eye Server pairing uses its shared connection settings. "
+                if self._separate_connections else
                 "Applies to both AI PACS EchoMind and OpenAI Direct backend connections. "
                 "When SOCKS5 is selected, all EchoMind API calls are tunnelled through the local proxy at 127.0.0.1. "
                 "Requires the requests[socks] package (PySocks) to be installed."
@@ -446,14 +469,14 @@ class EchoMindSettingsWidget(QWidget):
         self._root.addWidget(group)
 
     def _build_company_auth_group(self):
-        self.company_auth_group = QGroupBox("Company Authentication")
+        self.company_auth_group = QGroupBox("Eagle AI Brain Authentication")
         group = self.company_auth_group
         layout = QVBoxLayout(group)
         layout.setSpacing(12)
 
         layout.addWidget(
             self._note_label(
-                "Used only for the current AI PACS EchoMind / GapGPT backend. This section is hidden when OpenAI direct mode is selected."
+                "Authenticate Eagle AI Brain using your existing center access code. This section is hidden when OpenAI direct mode is selected."
             )
         )
 
@@ -461,7 +484,7 @@ class EchoMindSettingsWidget(QWidget):
         row.setSpacing(10)
         self.key_input = QLineEdit()
         self.key_input.setEchoMode(QLineEdit.Password)
-        self.key_input.setPlaceholderText("Enter EchoMind credential / access key")
+        self.key_input.setPlaceholderText("Enter Eagle AI Brain center access code")
         row.addWidget(self.key_input, 1)
 
         self.auth_btn = QPushButton("Authenticate")
@@ -679,6 +702,7 @@ class EchoMindSettingsWidget(QWidget):
     def _build_usage_group(self):
         self.usage_group = QGroupBox("Account / Usage")
         group = self.usage_group
+        self.legacy_usage_group = group
         layout = QVBoxLayout(group)
         layout.setSpacing(12)
 
@@ -868,12 +892,19 @@ class EchoMindSettingsWidget(QWidget):
         backend = str(self.backend_combo.currentData() or "company")
         is_openai = backend == "openai"
 
-        self.company_auth_group.setVisible(not is_openai)
+        split = getattr(self, "_separate_connections", False)
+        self.company_auth_group.setVisible(not is_openai and not split)
+        if split:
+            self.proxy_group.setVisible(is_openai)
         self.openai_group.setVisible(is_openai)
         self.prompt_group.setVisible(is_openai)
+        if getattr(self, 'legacy_usage_group', None) is not None and split:
+            self.legacy_usage_group.setVisible(is_openai)
+        if getattr(self, 'usage_widget', None) is not None:
+            self.usage_widget.setVisible(not is_openai)
 
     def _load_initial_state(self):
-        saved_key = get_echomind_api_key()
+        saved_key = "" if self._separate_connections else get_echomind_api_key()
         if saved_key:
             self.key_input.setText(saved_key)
 
@@ -907,7 +938,8 @@ class EchoMindSettingsWidget(QWidget):
         else:
             self._set_not_authenticated_state("No credential saved. Enter your key and click Authenticate.")
 
-        self._refresh_usage_for_active_backend()
+        if not self._separate_connections or backend == "openai":
+            self._refresh_usage_for_active_backend()
 
     def _load_proxy_state(self):
         cfg = get_proxy_settings()
@@ -1014,7 +1046,10 @@ class EchoMindSettingsWidget(QWidget):
             )
         else:
             self.backend_help.setText(
-                "AI PACS mode keeps the current EchoMind / GapGPT structure exactly as before."
+                "AI-PACS uses the shared Eagle Eye Server connection in AI > Connection. "
+                "The server owns company credentials, prompts and provider settings."
+                if self._separate_connections else
+                "Eagle AI Brain: Server 1 uses the existing company GapGPT connection and center access code. Existing workflow models and prompts are unchanged."
             )
         self._update_backend_status()
 
@@ -1028,6 +1063,9 @@ class EchoMindSettingsWidget(QWidget):
                 self.backend_status.setText("Save your API key and Base URL before enabling direct mode.")
             return
 
+        if self._separate_connections:
+            self.backend_status.setText("Uses the shared Eagle Eye Server connection; test it in Connection.")
+            return
         manager = APIKeyManager.instance()
         if manager.is_validated():
             self.backend_status.setText(f"AI PACS backend active: {manager.get_current_center() or 'EchoMind'}")
@@ -1145,7 +1183,9 @@ class EchoMindSettingsWidget(QWidget):
 
     def _update_provider_help(self):
         provider = self._current_stt_provider()
-        if provider == STT_PROVIDER_GOOGLE:
+        if provider == 'auto':
+            text = 'Automatic: Google Speech, then GapGPT Whisper, then company speech services. A manually selected provider is used without automatic fallback.'
+        elif provider == STT_PROVIDER_GOOGLE:
             text = "Runs locally with Google Speech (requires speech_recognition and internet). No server endpoint."
         elif provider == STT_PROVIDER_OPENAI:
             text = "Uses the OpenAI API key and transcription model configured on this page."
@@ -1311,6 +1351,9 @@ class EchoMindSettingsWidget(QWidget):
         self._start_probe(self.openai_test_btn, "Testing…", _work, _render)
 
     def _on_refresh_clicked(self):
+        if self._separate_connections and self.backend_combo.currentData() == "company":
+            self.center_value.setText("Company usage is managed by Eagle Eye Server.")
+            return
         backend = str(self.backend_combo.currentData() or "company")
         if backend == "company":
             key = (self.key_input.text() or "").strip() or (get_echomind_api_key() or "").strip()
@@ -1351,6 +1394,9 @@ class EchoMindSettingsWidget(QWidget):
             QMessageBox.information(self, "EchoMind Authentication", "Authentication successful.")
 
     def _refresh_usage_for_active_backend(self):
+        if self._separate_connections and self.backend_combo.currentData() == "company":
+            self.center_value.setText("Company usage is managed by Eagle Eye Server.")
+            return
         backend = str(self.backend_combo.currentData() or "company")
         if backend == "openai":
             api_key = (self.openai_api_key_input.text() or "").strip()

@@ -81,13 +81,30 @@ def test_workflow_rejects_unconfirmed_selection(count):
 
 @pytest.mark.parametrize("wrong_study", [False, True])
 def test_list_then_open_verifies_exact_captured_study(wrong_study):
-    a=Adapter(); ex=SecretaryExecutor(a); state={}
+    from types import SimpleNamespace
+    from modules.EchoMind.secretary.adapters.home_command_adapter import HomeCommandAdapter
+    from modules.EchoMind.secretary.registry import AdapterRegistry
+    from modules.EchoMind.secretary.command_bus import CommandBus
+    class CanonicalAdapter(Adapter):
+        def open_patient(self,patient_id,patient_name,study_uid,report_status):
+            self.opened.append(dict(patient_id=patient_id,study_uid=study_uid))
+    a=CanonicalAdapter(); ex=SecretaryExecutor(a); state={}
+    table=SimpleNamespace(results_table=SimpleNamespace(rowCount=lambda:len(a.rows)),
+        get_patient_data_by_row=lambda i:a.rows[i])
+    a.home=SimpleNamespace(patient_table_widget=table,
+        data_access_panel_widget=SimpleNamespace(get_result=lambda:a.source))
+    adapter=HomeCommandAdapter(a)
+    registry=AdapterRegistry()
+    registry.register('home',adapter,{'list_patients':'list_patients','read_patients':'read_patients','open_patient':'open_patient'})
+    bus=CommandBus(registry)
+    ex._command_bus_getter=lambda:bus
     def run(action, entities):
         if action=="get_active_tab":
             return {"ok":True, "data":{"patient_id":ROWS[0]["patient_id"],
                     "study_uid":"1.2.3.999" if wrong_study else ROWS[0]["study_uid"]}}
         return ex.execute(plan(action, **entities),state,confirmed=True)
-    steps=[{"action":"list_patients", "entities":{}}, {"action":"open_patient", "entities":{"row_index":1}}]
+    steps=[{"action":"list_patients", "entities":{}},
+           {"action":"open_patient", "entities":{"row_index":1,"list_id":"$list_id","source":"local"}}]
     result=WorkflowExecutor(run,sleep=lambda _:None).run(build_plan("list and open",steps))
     assert result.ok is (not wrong_study)
     assert len(a.opened)==1

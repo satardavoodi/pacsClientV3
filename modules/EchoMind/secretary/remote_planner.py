@@ -11,14 +11,58 @@ from .validator import validate_plan, validate_steps
 
 MAX_BODY = 128 * 1024
 MAX_RESPONSE = 256 * 1024
-_FIELDS = {'modules', 'memory_context', 'invalid_plan', 'validation_errors',
-           'execution_error', 'attempt', 'max_attempts', 'runtime_capabilities', 'interaction_mode', 'question_context', 'ui_image'}
+_FIELDS = {'conversation', 'modules', 'memory_context', 'invalid_plan', 'validation_errors',
+           'execution_error', 'attempt', 'max_attempts', 'runtime_capabilities', 'interaction_mode', 'question_context', 'ui_image', 'session_sources'}
 
 
 class RemotePlanningError(RuntimeError):
-    def __init__(self, message, *, error_code='SERVER_PLANNING_FAILED'):
+    def __init__(self, message, *, error_code='SERVER_PLANNING_FAILED', diagnostic=None):
         super().__init__(message)
         self.error_code = error_code
+        from .patient_list_receipt import safe_planning_diagnostic
+        self.diagnostic = safe_planning_diagnostic(diagnostic) if diagnostic is not None else None
+
+
+def planning_preflight(body):
+    """Pure worker preflight matching existing server schema and actual wire bytes."""
+    from pydantic import ValidationError
+    from modules.ai_imaging.eagle_eye_remote.secretary.service import Request
+    from modules.ai_imaging.eagle_eye_remote.secretary.session_sources import MAX_BODY as SOURCE_BODY
+    from .patient_list_receipt import safe_planning_diagnostic
+    descriptor={'stage':'valid','valid':True}
+    try:
+        descriptor['wire_bytes']=len(json.dumps(body,allow_nan=False).encode('utf-8'))
+    except (ValueError,TypeError,OverflowError):
+        return safe_planning_diagnostic(dict(descriptor,stage='schema',valid=False,error_type='serialization_error'))
+    try:
+        request=Request.model_validate(body)
+    except ValidationError as error:
+        first=error.errors(include_input=False,include_context=False,include_url=False)[0]
+        loc=first.get('loc',())
+        return safe_planning_diagnostic(dict(descriptor,stage='schema',valid=False,
+            field_root=loc[0] if loc else 'unknown',error_type=first.get('type')))
+    limit=SOURCE_BODY if request.session_sources else 512*1024 if request.ui_image is not None else MAX_BODY
+    descriptor['limit_bytes']=limit
+    if descriptor['wire_bytes']>limit:
+        return safe_planning_diagnostic(dict(descriptor,stage='body_bounds',valid=False))
+    if request.ui_image is not None:
+        context=request.question_context.get('ui_controls',{})
+        if (request.phase=='route' or not isinstance(context,dict)
+                or context.get('snapshot_id')!=request.ui_image.snapshot_id
+                or context.get('context_digest')!=request.ui_image.context_digest):
+            return safe_planning_diagnostic(dict(descriptor,stage='ui_binding',valid=False,field_root='ui_image'))
+    return safe_planning_diagnostic(descriptor)
+
+
+def _require_preflight(body):
+    descriptor=planning_preflight(body)
+    if not descriptor['valid']:
+        large=descriptor['stage']=='body_bounds'
+        raise RemotePlanningError('Secretary request context is too large.' if large else
+            'Secretary request context failed local validation.',
+            error_code='SERVER_REQUEST_TOO_LARGE' if large else 'UI_CONTEXT_MISMATCH' if
+            descriptor['stage']=='ui_binding' else 'SERVER_REQUEST_INVALID', diagnostic=descriptor)
+    return descriptor
 
 
 def uses_server():
@@ -91,7 +135,7 @@ def validate_runtime_proposal(plan, capabilities):
     return plan
 
 
-def request(phase, text, *, language='auto', timeout=90, **fields):
+def request(phase, text, *, language='auto', language_preference=None, timeout=90, **fields):
     from .credential_guard import contains_api_credential, LOCAL_ENTRY_MESSAGE
     if contains_api_credential(text):
         raise RemotePlanningError(LOCAL_ENTRY_MESSAGE)
@@ -105,16 +149,41 @@ def request(phase, text, *, language='auto', timeout=90, **fields):
         raise RemotePlanningError('Secretary planning must run in the background worker.')
     if phase not in ('route', 'plan', 'repair') or language not in ('fa', 'en', 'auto'):
         raise RemotePlanningError('Invalid Secretary planning phase or language.')
+    if language_preference is not None and language_preference not in ('fa', 'en'):
+        raise RemotePlanningError('Invalid Secretary language preference.')
     if not isinstance(text, str) or not text.strip() or len(text) > 20000 or set(fields) - _FIELDS:
         raise RemotePlanningError('Enter a Secretary request of at most 20,000 characters.')
     if 'memory_context' in fields:
         fields['memory_context'] = memory_data(fields['memory_context'])
         if len(fields['memory_context']) > 20000:
             raise RemotePlanningError('Secretary conversation memory is too large. Start a new conversation.')
+    if fields.get('conversation') is not None and 'session_sources' not in fields:
+        from .session_files import SessionFiles
+        try:
+            fields['session_sources'] = SessionFiles().snapshot(fields['conversation']['id'])
+        except (ValueError, OSError) as exc:
+            raise RemotePlanningError(str(exc), error_code='SESSION_FILES_INVALID') from None
     body = dict(protocol=1, request_id=str(uuid4()), phase=phase, text=text,
                 language=language, client_time=datetime.now().astimezone().isoformat(), **fields)
+    preflight = _require_preflight(body)
     try:
         client=Client()
+        if language_preference is not None:
+            advertised = client.json('/v1/capabilities')
+            policy = advertised.get('request_language') if isinstance(advertised, dict) else None
+            if (isinstance(policy, dict) and type(policy.get('protocol')) is int and policy.get('protocol') == 1
+                    and policy.get('preference_field') == 'language_preference'
+                    and isinstance(policy.get('supported_preferences'), list)
+                    and all(isinstance(value, str) for value in policy['supported_preferences'])
+                    and {'fa', 'en'}.issubset(policy['supported_preferences'])
+                    and isinstance(policy.get('workflows'), list)
+                    and all(isinstance(value, str) for value in policy['workflows'])
+                    and 'secretary' in policy.get('workflows', [])):
+                body['language_preference'] = language_preference
+        if fields.get('session_sources'):
+            capability = client.json('/v1/capabilities').get('secretary') or {}
+            if capability.get('session_sources', {}).get('version') != 1:
+                raise RemotePlanningError('Update Eagle Eye Server before using session files.', error_code='SESSION_FILES_UNSUPPORTED')
         if fields.get('ui_image') is not None:
             from modules.ai_imaging.eagle_eye_remote.secretary.ui_observation import UiImage
             UiImage.model_validate(fields['ui_image'])
@@ -123,13 +192,17 @@ def request(phase, text, *, language='auto', timeout=90, **fields):
             observation=capability.get('ui_observation') if isinstance(capability,dict) else None
             if not isinstance(observation,dict) or observation.get('version') != 1:
                 raise RemotePlanningError('Update Eagle Eye Server before including screen context.',error_code='UI_OBSERVATION_UNSUPPORTED')
-        if len(json.dumps(body, ensure_ascii=False, allow_nan=False).encode('utf-8')) > (512*1024 if fields.get('ui_image') is not None else MAX_BODY):
-            raise RemotePlanningError('Secretary request context is too large.')
+        preflight = _require_preflight(body)
         with client.open('/v1/secretary/plan', body, timeout=timeout) as response:
             raw = response.read(MAX_RESPONSE + 1)
         if len(raw) > MAX_RESPONSE:
             raise RemotePlanningError('Secretary server response is too large.')
         result = json.loads(raw)
+        if fields.get('session_sources'):
+            expected = [(s['name'],s['sha256']) for s in fields['session_sources']]
+            received = result.get('session_sources') if isinstance(result,dict) else None
+            if not isinstance(received,list) or [(s.get('name'),s.get('sha256')) for s in received] != expected or any(s.get('status')!='extracted' for s in received):
+                raise RemotePlanningError('The server did not acknowledge the current session files.', error_code='SESSION_FILES_MISMATCH')
         if fields.get('ui_image') is not None:
             from modules.ai_imaging.eagle_eye_remote.secretary.ui_observation import UiImage,receipt
             if not isinstance(result,dict) or result.get('ui_observation') != receipt(UiImage.model_validate(fields['ui_image'])):
@@ -137,6 +210,15 @@ def request(phase, text, *, language='auto', timeout=90, **fields):
         if (not isinstance(result, dict) or type(result.get('protocol')) is not int or result['protocol'] != 1
                 or result.get('request_id') != body['request_id'] or result.get('phase') != phase):
             raise RemotePlanningError('Secretary server response does not match this request.')
+        if fields.get('conversation') is not None:
+            from modules.ai_imaging.eagle_eye_remote.secretary.conversation import Conversation
+            try:
+                incoming = Conversation.model_validate(result.get('conversation')).model_dump()
+                if incoming['id'] != fields['conversation']['id'] or incoming['mode'] != fields.get('interaction_mode', 'act'):
+                    raise ValueError('Conversation identity mismatch')
+                result['conversation'] = incoming
+            except (ValueError, TypeError):
+                raise RemotePlanningError('Update Eagle Eye Server: conversation identity was not acknowledged.', error_code='CONVERSATION_CONTEXT_MISMATCH') from None
         route = result.get('route')
         if not isinstance(route, dict) or not isinstance(route.get('modules'), list) or len(route['modules']) > 30:
             raise RemotePlanningError('Secretary server returned an invalid route.')
@@ -171,23 +253,33 @@ def request(phase, text, *, language='auto', timeout=90, **fields):
         return {**result, 'plan':proposal}
     except ServerHTTPError as exc:
         specifics = {
+            'SERVER_SESSION_FILES_INVALID':'Eagle Eye could not read the session files. Use up to 12 supported files (8 MiB total), unencrypted PDFs of at most 20 pages, or export complex Office documents to PDF.',
             'SERVER_INVALID_JSON':'Eagle Eye returned invalid response JSON. Please retry the question.',
             'SERVER_ROUTE_INVALID':'Eagle Eye could not identify a valid software module for this question.',
             'SERVER_ANSWER_INVALID':'Eagle Eye returned an invalid answer format. No control action was executed.',
             'SERVER_UPSTREAM_FAILED':'Eagle Eye could not obtain an answer from its configured AI service.',
         }
+        from modules.ai_imaging.eagle_eye_remote.secretary_errors import safe_code
         code = getattr(exc, 'error_code', None)
+        from modules.ai_imaging.eagle_eye_remote.secretary_errors import safe_rejection
+        rejection = safe_rejection(getattr(exc, 'rejection', None))
+        if code == 'SERVER_PLAN_INVALID' and rejection is not None:
+            preflight = dict(preflight, rejection=rejection)
         if code in specifics:
-            raise RemotePlanningError(specifics[code], error_code=code) from None
-        messages = {401: 'Eagle Eye authentication failed.', 403: 'Eagle Eye pairing was rejected.',
+            raise RemotePlanningError(specifics[code], error_code=code, diagnostic=preflight) from None
+        messages = {401: 'Sign in to PACS or Reception before using Secretary.',
+                    403: 'Your Eagle Eye user or Secretary access has not been approved. Contact the server administrator.',
                     404: 'Update Eagle Eye Server to support Secretary planning.',
                     422: 'Eagle Eye rejected the Secretary request contract.',
                     429: 'Eagle Eye Server is busy. Try again later.',
                     502: 'Eagle Eye could not complete Secretary planning.',
                     503: 'Secretary planning is unavailable on Eagle Eye Server.'}
         raise RemotePlanningError(messages.get(exc.status, 'Eagle Eye Secretary request failed.'),
-                                  error_code='SERVER_HTTP_'+str(exc.status)) from None
-    except RemotePlanningError:
+                                  error_code=safe_code(code) or 'SERVER_HTTP_'+str(exc.status), diagnostic=preflight) from None
+    except RemotePlanningError as error:
+        if error.diagnostic is None:
+            error.diagnostic = preflight
         raise
     except (RuntimeError, OSError, ValueError, TypeError):
-        raise RemotePlanningError('Check the Eagle Eye connection and TLS pairing. No provider fallback was sent.') from None
+        raise RemotePlanningError('Check the Eagle Eye connection and TLS pairing. No provider fallback was sent.',
+                                  diagnostic=preflight) from None

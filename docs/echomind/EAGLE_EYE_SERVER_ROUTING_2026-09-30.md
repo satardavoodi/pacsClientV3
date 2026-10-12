@@ -1,5 +1,14 @@
 # EchoMind on Eagle Eye Server
 
+## Ordinary ingress clarification (2026-10-12)
+
+The [canonical connection boundary contract](../architecture/EAGLE_EYE_CONNECTION_BOUNDARIES_2026-10-12.md)
+supersedes older references here to a paired Eagle server: ordinary EchoMind,
+Secretary and CRM ingress uses HTTP IP:port and username/password, server-owned
+PACS/Reception identity resolution and internal grants. QR pairing/HTTPS applies
+only to mobile-to-Windows-Client remote Agent PACS execution. Existing token
+fallbacks are recorded migration deltas; this documentation does not remove them.
+
 The owner directed EchoMind reporting and reference workflows to the Eagle Eye
 Server edition on Razi. The older PACS HTTP pilot remains historical evidence;
 updating Eagle Eye must no longer depend on replacing PACS_Server.exe.
@@ -47,6 +56,24 @@ to server prompt composition in the corresponding migration slice.
 This change records the routing authority in AGENTS.md and CLAUDE.md. No runtime
 migration, source launch, server update or new network acceptance is claimed.
 
+## Shared connection and Voice to Text clarification (2026-10-09)
+
+Owner requires one AI connection profile (Eagle Eye Server address, port and
+paired trust) for company Eagle Eye, EchoMind, Secretary and CRM. Retain ordinary
+client login and automatically exchange the current user's credentials for human
+admission; server-owned PACS-first/Reception-second identity resolution precedes
+local grants. Connection approval never grants all modules automatically.
+The personal API choice retains the own-key plus own-prompt requirement above.
+
+Voice to Text is the explicit exception to company inference routing: default
+Auto uses Google Speech, then GapGPT Whisper, then company transcription
+services, through the shared Windows VoiceTranscriptionService and reviewed
+mobile equivalent. Preserve explicit saved choices. This supersedes the earlier
+statement that all client transcription necessarily needs Eagle Eye migration;
+it does not authorize client-direct company reporting or planning fallback.
+Implementation, synthetic verification and native acceptance are tracked
+separately in the Windows/mobile owner receipts.
+
 ## Current text-service contract
 
 Registered RAZI_SERVER aliases (including the owner's registered uppercase-C
@@ -63,8 +90,13 @@ selection, reference calls and research. Each response returns content, usage an
 workflow. Requests and responses are now retained in private user_data history;
 clinical bodies are never written to general diagnostic logs.
 
-STT retains the shared `VoiceTranscriptionService` before text submission. This
-text contract does not claim server audio ingestion or image-upload support.
+STT retains the shared `VoiceTranscriptionService` before text submission. The
+general `/v1/echomind/process` text contract does not claim server audio or image
+upload support. Lumbar derived-card vision uses the separate bounded,
+authenticated `/v1/imaging/lumbar-vision` contract: exact study binding,
+canonical stage ID/version and validated derived images only. It rejects client
+prompts, models, providers, token budgets and sampling controls; it is not a
+general-purpose image endpoint.
 Workstation command execution remains local; moving report generation does not
 move the CommandBus or grant remote desktop control.
 

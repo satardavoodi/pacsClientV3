@@ -106,5 +106,8 @@ def calculate(request, records, output):
     measurements = validate_report_views(views, request['study_uid'], reviewed=value['reviewed'])
     result = generate_report(views, request['study_uid'], value['reviewed'], value['notes'], root=output)
     result.update(measurements=measurements, parent_job_id=value['parent_job_id'],
-                  clinical_report_signed=False, reviewed=value['reviewed'])
+                  clinical_report_signed=False, reviewed=value['reviewed'], notes=value['notes'],
+                  review_views=[dict({k: deepcopy(v) for k, v in view.items() if k != 'image'},
+                                    image={k: deepcopy(v) for k, v in view['image'].items() if k != 'pixels'})
+                                for view in views])
     return result

@@ -106,6 +106,7 @@ DIST_METADATA = [
 # does. Keep this list to packages that are imported dynamically / lazily and
 # therefore not reliably discovered by Nuitka's static import following.
 INCLUDE_PACKAGES = [
+    "modules.LicenseGenerator",
     # First-party
     "PacsClient",
     "database",
@@ -145,6 +146,13 @@ INCLUDE_PACKAGES = [
 # in even when Nuitka cannot see the import statically (lazy imports, plugin
 # discovery, C-extension entry points).
 FORCED_IMPORTS = [
+    "modules.ai_imaging.eagle_eye_remote.installer_entry",
+    "modules.ai_imaging.eagle_eye_remote.startup_barrier",
+    "tools.eagle_eye.installed_release_host",
+    "tools.eagle_eye.fresh_server_install",
+    "tools.eagle_eye.fresh_install_driver",
+    "modules.ai_imaging.eagle_eye_remote.installed_layout",
+    "modules.ai_imaging.eagle_eye_remote.service_control",
     # Project bootstrap helpers
     "_project_root",
     "aipacs_runtime",
@@ -276,6 +284,9 @@ FORCED_IMPORTS = [
 # conflicting Qt bindings or huge unused ML stacks. fitz/pymupdf are excluded
 # because they crash the compile and are imported conditionally at runtime.
 EXCLUDES = [
+    "tools.licensing",
+    "modules.LicenseGenerator.license_generator",
+    "modules.LicenseGenerator.license_generator_gui",
     "PyQt5",
     "PyQt6",
     "tkinter",
@@ -358,8 +369,12 @@ DATA_DIRS = [
 # Single-file / optional data. build_nuitka.py places a file at
 # ``dest/basename`` (or at the exe root when dest == ".").
 OPTIONAL_DATA = [
+    ("modules/ai_imaging/eagle_eye_remote/crm/vendor/reception_crm", "reception_crm"),
+    ("modules/ai_imaging/eagle_eye_remote/crm/vendor/config/operations.json", "modules/ai_imaging/eagle_eye_remote/crm/vendor/config"),
     # The external Slicer interpreter needs the physical correction UI script.
     ("modules/ai_imaging/eagle_eye_brain/manual_slicer.py", "modules/ai_imaging/eagle_eye_brain"),
+    ("modules/ai_imaging/eagle_eye_brain/AIPacsBrainReviewStartup.py", "modules/ai_imaging/eagle_eye_brain"),
+    ("modules/mpr/advanced_3d_slicer/slicer_custom_app/viewer_chrome.py", "modules/mpr/advanced_3d_slicer/slicer_custom_app"),
     ("modules/ai_imaging/eagle_eye_brain/slicer_worker.py", "modules/ai_imaging/eagle_eye_brain"),
     ("modules/EchoMind/secretary/module_map.yaml", "modules/EchoMind/secretary"),
     # Software-OpenGL (Mesa) fallback DLLs â€” required on machines without a GPU

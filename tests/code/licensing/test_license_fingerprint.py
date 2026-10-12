@@ -6,6 +6,8 @@ which changes across reboots. Key 1 must now be stable and must NOT depend on
 network adapters / MAC / COMPUTERNAME.
 """
 import importlib
+import hashlib
+from datetime import datetime, timedelta
 import os
 import sys
 
@@ -34,6 +36,13 @@ def isolate_appdata(tmp_path, monkeypatch):
 
 def _fixed_components(guid="GUID-AAAA", serial="DEADBEEF"):
     return {"machine_guid": guid, "system_volume_serial": serial}
+
+
+def _legacy_fixture(hardware_id, days):
+    """Synthetic compatibility fixture; customer runtime no longer issues keys."""
+    expiry = (datetime.now() + timedelta(days=days)).strftime('%Y%m%d')
+    digest = hashlib.sha256(f'{hardware_id}|{expiry}|{lm.SECRET_KEY}'.encode()).hexdigest()[:24].upper()
+    return f'{expiry}-{digest}'
 
 
 def test_key1_is_deterministic_and_32_chars(monkeypatch):
@@ -65,7 +74,7 @@ def test_generate_validate_roundtrip(monkeypatch):
     monkeypatch.setattr(lm, "collect_fingerprint_components",
                         lambda: _fixed_components())
     m = LicenseManager()
-    key = m.generate_license_key(m.get_hardware_id(), 365)
+    key = _legacy_fixture(m.get_hardware_id(), 365)
     ok, msg = m.validate_license(key)
     assert ok, msg
 
@@ -74,7 +83,7 @@ def test_foreign_machine_rejected(monkeypatch):
     monkeypatch.setattr(lm, "collect_fingerprint_components",
                         lambda: _fixed_components())
     m = LicenseManager()
-    key = m.generate_license_key("F" * 32, 365)
+    key = _legacy_fixture("F" * 32, 365)
     ok, _ = m.validate_license(key)
     assert not ok
 
@@ -86,7 +95,7 @@ def test_legacy_license_still_validates(monkeypatch):
                         lambda: _fixed_components())
     m = LicenseManager()
     legacy_id = lm._hash_id(lm._read_legacy_node_raw())
-    legacy_key = m.generate_license_key(legacy_id, 365)
+    legacy_key = _legacy_fixture(legacy_id, 365)
     ok, msg = m.validate_license(legacy_key)
     assert ok, msg
 
@@ -95,7 +104,7 @@ def test_expired_rejected(monkeypatch):
     monkeypatch.setattr(lm, "collect_fingerprint_components",
                         lambda: _fixed_components())
     m = LicenseManager()
-    key = m.generate_license_key(m.get_hardware_id(), -1)
+    key = _legacy_fixture(m.get_hardware_id(), -1)
     ok, _ = m.validate_license(key)
     assert not ok
 

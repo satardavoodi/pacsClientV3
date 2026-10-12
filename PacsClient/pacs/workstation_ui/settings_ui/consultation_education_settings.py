@@ -348,9 +348,7 @@ class ConsultationEducationSettingsWidget(QWidget):
             return
         workspace = module.EducationModuleRedesigned.last_instance()
         if workspace is not None:
-            workspace.library_page.load_courses()
-            workspace.mycourses_page.load_courses()
-            workspace.case_of_day_tab.refresh()
+            workspace.refresh_loaded_pages()
 
     # ── 1 · Identity ──────────────────────────────────────────────────────────
     def _build_identity(self, parent_layout):

@@ -378,3 +378,386 @@ selected builder tests and 63 PACS workflow/socket tests passed (exit 0).
 The expanded three-node acceptance passed, including original image retrieval.
 Python AST, scoped whitespace and PACS documentation catalog checks passed.
 Mirror verification retains the existing unrelated 511/512 parity result.
+
+
+## Operational Home investigation, 2026-10-07
+
+Owner report: Home does not reflect report/status/physician/assignment changes
+until Search or Sync. This investigation does not authorize clinical deployment
+or restart, and no runtime code or server configuration was changed.
+
+A read-only unauthenticated protocol-detection probe was sent to the configured
+PACS socket using `GetWorkflowStates` and a synthetic UID. The server returned
+an unknown-endpoint error, rather than the source handler's expected unauthorized
+workflow response. No patient payload or credentials were requested or printed.
+The active profile matched the socket configuration and profiles were enabled.
+This establishes that the configured operational endpoint does not expose the
+new workflow snapshot contract. It does not establish its exact installed version
+or whether a different live endpoint was selected in the running GUI.
+
+The receiver requires authenticated v1 subscription/snapshot negotiation. On an
+unsupported negotiation it sets `unavailable` and exits. Home currently does not
+surface that receiver status. Thus successful ordinary Search/Sync proves only
+the existing patient-query path, not the live workflow contract. Earlier source
+and synthetic acceptance receipts explicitly did not deploy the operational
+PACS server; they cannot certify this endpoint.
+
+Additional source findings, not all reproduced operational causes:
+
+- `WorkflowRealtime._active_key` admits only Server mode with the exact bound
+  server/search generation and a socket token. Local Home is excluded.
+- Home binds realtime after normal or advanced Server search. A new search
+  generation invalidates the prior binding until the replacement bind finishes.
+- Visible rows only (up to 100) are watched. This is a deliberate bounded view;
+  periodic authoritative reconciliation runs every 30 seconds after negotiation.
+- `_apply` reads reporting physician from the old table role. Snapshot assignment
+  identifies radiologist/typist, but that is not automatically the actual report
+  author/approver. The existing post-search physician hydration is a separate
+  path; its success after Search does not prove a live report-author refresh.
+- Reception sync emits `reception_updated` / `reception_workflow_changed`, which
+  are not the receiver's currently negotiated workflow events. Its default
+  upstream poll is two minutes; configured timing was not inspected.
+
+Verification: 15 focused network/Home Qt tests passed, exit 0. These exercise
+synthetic compatible servers/cells, not the configured unsupported operational
+endpoint. Test Control ping remains unavailable; current GUI mode, worker status
+and affected-workflow live acceptance were not observed. The user was asked
+whether Home is in Server or Local mode; that answer remains pending.
+
+Required next steps: qualify the exact operational PACS endpoint against the v1
+contract and deploy/restart it only under separate clinical deployment authority;
+verify Home mode/token/binding and expose a visible unsupported/disconnected
+status; establish the authoritative report-author field and its live update path;
+cover Reception-to-workflow invalidation and Local mode according to owner intent.
+Until those gates pass, operational live synchronization remains unverified.
+
+
+## Home live update source correction, 2026-10-07
+
+The owner authorized fixing the operational investigation's findings. Runtime
+changes are now implemented; operational deployment/restart was not performed.
+
+### Changes
+
+- Home owns a visible `homeWorkflowRealtimeStatus` label and an inspectable
+  `workflowRealtimeStatus` property. Connected broadcast, legacy periodic updates,
+  reconnect, unsupported/unauthorized and source-switch states are distinguished.
+  Ordinary Socket Connected/Search success cannot masquerade as live acceptance.
+- Home opts into compatibility reads only when negotiation succeeds without v1
+  or explicitly reports an unknown endpoint/unsupported protocol. Authorization
+  rejection, including unknown-token errors, never enables compatibility.
+  Every compatibility request carries the signed-in socket token. No credential
+  collection, login automation or unauthenticated retry was introduced.
+- Compatibility uses existing `GetPatientStatus` plus bounded `GetPatientList`
+  queries for visible exact PatientID/StudyInstanceUID pairs. Requests, identity,
+  response size and inventory bounds are checked; at most 20 watched studies are
+  processed per 15-second batch. These are periodic socket queries, not broadcast.
+  Larger visible batches rotate; endpoint rejection is visibly reconnecting.
+  An unsupported old server is not represented as a v1 server to Eagle Eye.
+- Local search resolves the active PACS profile on its existing worker pool and
+  binds the same Home adapter in Local mode. Generation/source/token checks,
+  retirement and no-GUI-join behavior remain. Live updates overlay the visible
+  Local rows; no new background writes to the live local DICOM database were added.
+- Reporting physician uses the actual Reception/report authority, independently
+  of assigned radiologist. Existing static authenticated Reception fetch/extract
+  helpers run on the receiver worker, with a PACS inventory cross-check. A
+  reception result without an explicit study is admitted only for the authoritative
+  latest matching study; an explicit mismatch or different patient is rejected.
+  Actor IDs use the existing authenticated full-name resolver. Repeated snapshots
+  can update report status and author without another Search; cached table author
+  is replaced only when an authoritative value is present.
+- Server assignment remains visible when the local INO history feature is off.
+  Unknown legacy assignment data cannot erase a known assignment. Local completed
+  assignment lifecycle overlays remain when that feature is enabled.
+- PACS snapshot projection carries an explicitly stored report-author field when
+  available. Reception updated/workflow-changed events normalize to existing v1
+  patient-list invalidations; private Reception payload bodies are absent from v1
+  events. Legacy event contracts and strict Eagle Eye bridge negotiation remain.
+
+### Evidence
+
+Three Home guards failed before production changes: Local binding unsupported,
+missing protocol status label, and cached reporting author not replaced. The
+INO-disabled server-assignment guard also failed before its fix. A new Local
+source resolver guard caught and corrected its initial display-name mismatch.
+The real synthetic old socket listener delivers completed status, voice and
+assignment without Search, and authorization rejection cannot trigger downgrade.
+Reception tests cover latest/older study isolation, author change and actor-name
+resolution. The preview-retirement fixture lacked the already-required selected
+server name; the fixture was aligned with the production panel contract without
+changing the existing Server search implementation.
+
+Final commands exited 0: 71 focused workstation/Home/search/network/case/selected
+builder tests; 31 PACS workflow/report/attachment tests. The actual two-client
+three-node socket/HTTP acceptance again passed doctor, images, status, voice,
+original media, shared results and reconnect. Mirror verification: 513/513 pairs
+match. Scoped whitespace and Python syntax checks passed; PACS catalogs refreshed.
+No repository-wide, lint or produced-artifact pass is claimed.
+
+### Periodic latency root-cause investigation, 2026-10-07
+
+The owner reports slow sequential blue voice confirmation and asks whether
+Periodic is the intended online state. Current bounded synthetic-identity probes
+confirm SubscribeToEvents succeeds without realtime_version and GetWorkflowStates
+returns a correlated unknown-endpoint error. This proves the operational source
+lacks this client's negotiated v1 snapshot contract; it does not prove that the
+server has no older event publisher. No private identity or token was used.
+
+Client analysis finds a second independent defect: a legacy batch performs
+GetPatientStatus and GetPatientList serially per patient, then ReceptionOverlay
+performs a Reception read and duplicate GetPatientStatus per patient. Mailbox
+publication occurs only after all reads and transformation finish. A synthetic
+20-study counting harness verifies 20 status + 20 metadata + 20 Reception + 20
+duplicate-status reads before publication (80 total), excluding name-resolution
+and Mongo retries. The loop then sleeps another 15 seconds; that is not a
+15-second refresh deadline. A theoretical one-second average per read gives an
+80-second batch plus sleep, not a measured clinical latency. Multiple rotating
+batches compound this delay. The Qt mailbox timer is 500 ms and is not the
+principal bottleneck identified here.
+
+Periodic is an explicit temporary compatibility state, not completed realtime
+delivery. Server-side contract activation and end-to-end event verification remain
+necessary. Further source work should publish voice facts independently of report/
+physician enrichment, reuse the initial exact-study inventory rather than duplicate
+it, and reconcile slow metadata separately. No runtime changes or fabricated live
+acceptance were made in this investigation; no clinical service was restarted.
+
+### Home assignment and voice presentation correction, 2026-10-07
+
+The supplied screenshot shows duplicate voice icons and widespread red Assign/
+Report rendering while Periodic is active. The compatibility adapter incorrectly
+promoted latest-study radiologist metadata into active assignment evidence. It
+now accepts only an explicit assignment object on the exact study; otherwise
+assignment remains unknown, the existing Assign cell is preserved, and reporter
+metadata cannot inject an assigned-person display into the Report cell. Three
+fail-before cases cover direct and real framed legacy delivery; a separate guard
+preserves an explicit assignment. No completion is inferred from a voice file.
+
+Server voice counts now feed the existing status-chip renderer through a
+container property. Local and server availability share one microphone, blue
+when available on the server, with a combined tooltip. Async local flags rebuilds
+retain the server observation, and removal of server voice keeps an unsynced
+local microphone. A guard fails against the unchanged HEAD renderer in an
+isolated in-memory fixture; no worktree reset or clinical data was involved.
+The main Home/network/search suite passed 66 tests. Adjacent report/async/approval
+tests had 34 passes and one unchanged baseline failure:
+`test_login_carries_the_user_identity_ids` checks the unmodified download-manager
+socket client; it was not repaired in this slice. Mirrors match 513/513.
+
+The screenshot is evidence for the previous source behavior, not acceptance of
+this correction. Fresh-source visual acceptance and true broadcast activation
+on the operational server remain pending. Periodic denotes compatibility only,
+not the intended final broadcast mode.
+
+### Periodic-to-offline investigation, 2026-10-07
+
+The owner relaunched source, loaded Home and observed Periodic then Offline.
+The documented Test Control ping still cannot connect. Bounded read-only socket
+probes used a synthetic nonexistent identity only: GetPatientStatus returned a
+correlated not-found error, while GetPatientList returned correlated success.
+This proves socket responsiveness for those probes, not the failing signed-in
+request or full broadcast support. No patient payload or token was displayed.
+
+Two fail-before guards reproduced one failed patient aborting the whole batch
+and optional assignment metadata failure discarding successful voice/report
+facts. Reads now isolate patient failures and preserve exact-study facts when
+optional metadata fails. Authorization errors remain terminal and never cause
+query degradation. GetPatientList reuses the existing narrowly detected Mongo
+sortArray compatibility modes with the same exact patient filter and bound.
+Partial batches publish successful rows and retain Periodic; retries show
+Connecting. The badge tooltip and change-only logger record endpoint/category
+only, with no server error payload, token, patient or study identifier. The
+observed live error is still unproven; these fixes address reproduced failure
+paths and add the missing evidence needed for the next launch.
+
+63 focused network/UI/search tests passed, including real framed loopback
+delivery with a missing patient and unchanged successful voice/report facts.
+The active clinical server was not deployed or restarted. True Online still
+requires the negotiated broadcast/snapshot server contract; compatibility
+updates are not described as broadcast acceptance. Fresh-source observation
+of this correction and an authorized cross-client update remain pending.
+
+### Pending live gate and next-build handoff
+
+Owner follow-up: a compact connection indicator beside Refresh Statuses is
+approved, instead of a separate status panel. The adapter inserts a small label
+into that existing header layout. Online means an active broadcast connection;
+Periodic explicitly denotes the legacy polling mode, Connecting covers retries,
+and Offline denotes lost/rejected connections. Before initial list binding it
+shows Waiting. The badge does not alter refresh behavior or add network work to
+the GUI thread. Four behavioral badge guards failed before implementation;
+55 focused UI/network/search tests passed afterward. Fresh-source visual and
+cross-client acceptance remain unverified; the existing listener is unavailable.
+
+The human confirmed a fresh source launch and Home readiness. Test Control ping
+still fails and read-only named-pipe enumeration found no matching test listener;
+this does not establish the launch environment. The supplied Home screenshot
+shows the new status label and an empty Server list before the first search.
+Two fail-before-fix guards reproduced the label taking a horizontal Home column
+and incorrectly implying a missing token before source binding. The label now
+lives only as an internal Qt status property: the owner explicitly rejected any
+visible status panel, so the label was removed entirely. Background receiver,
+row updates and reconnection remain active. Waiting for the initial search is
+distinguished internally from missing source credentials. The final focused
+UI/network/search suite passed 51 tests. This visual
+receipt does not prove cross-client updates. Verify both Server and Local Home, update an
+existing report/status/assignment on another authorized workstation, and observe
+row identity, selection and label state without Search/Sync. Verify periodic mode
+against the existing server separately from broadcast mode against updated PACS.
+Reception upstream polling/authentication and actual installed endpoint schemas
+must be verified in that live gate; synthetic acceptance does not prove them.
+
+Changed internal support files: Home `workflow_realtime.py` and
+`home_search_service.py`, network `workflow_realtime.py` / `home_legacy_workflow.py`,
+and PACS workflow/socket sources. Standard/ARM Home consumers apply in both
+PyInstaller and Nuitka; the Eagle Eye bridge remains strict and its shared server
+contracts were retested. These are internal helpers using existing components,
+configuration and authentication; no new installer component, dependency or
+feature-flag family was introduced. Static imports expose the helper to existing
+module discovery; selected packaging guards pass, but no candidate was built.
+Prepared source version remains 3.7.1; no completed four-file 3.7.0 matrix is implied.
+
+Rollback: remove Home's compatibility opt-in and Local bind plus Reception overlay
+and status adapter additions, retaining strict v1 behavior; existing Search/Sync
+remains intact. Clinical deployment follows the separate Win A100 -> PC Greece ->
+Razi acceptance runbook; this source fix did not modify the operational service.
+
+### Verified legacy live connection and stable Home projection, 2026-10-07
+
+This receipt supersedes the earlier conclusion that the installed PACS has no
+broadcast capability. Read-only synthetic-identity probes and the deployed
+3.0.93 source receipt (commit 2300de466c01d099262abf9690f9b0fae8be49c4)
+confirm an existing framed broadcast subscription, VerifyToken and ping; the
+new GetWorkflowStates endpoint is absent. The old client closed that usable
+subscription when it did not advertise v1. Explicit legacy opt-in now keeps it
+only after server token verification and a correlated heartbeat, reverifies
+the session, reconnects on EOF and reconciles immediately. The default receiver
+remains strict. Periodic is only a fallback, not a relabeled polling connection.
+The owner confirmed Online and supplied a Home screenshot showing Online and
+one blue microphone. This verifies connection/presentation, not a cross-client
+mutation or the latest stability correction.
+
+Inventory uses four bounded worker reads, publishes each completed exact study
+immediately and coalesces event bursts. Reception/report/assignment enrichment
+runs independently, so slow REST reads cannot block voice delivery or the held
+event reader. Thirty-second reconciliation is a recovery mechanism; ordinary
+mutations trigger reads immediately. The Eagle Eye source bridge supports the
+same verified legacy subscription and exact, already-authorized study/patient
+watch map. Its event ring contains resource invalidations, never clinical bodies.
+Synthetic real-wire three-node acceptance passed with same-center sharing and
+other-center rejection. The active Eagle Eye revision
+20261004-secretary-help-ticket does not contain case_realtime.py or
+pacs_case_bridge.py. No service activation, restart or production completion is
+claimed; that separate versioned deployment remains required.
+
+The owner's subsequent live screenshot and report identified alternating report
+names/statuses despite Online. Three fail-before guards reproduce fast inventory
+reverting enriched report facts, Report substituting the assignee for the report
+author, and a RIS reporting participant becoming an internal assignment. Fast
+inventory now changes voice only when enrichment is present. Unknown enrichment
+fields preserve confirmed values; bounded coalescing and local observation order
+reject late responses. Assignment REST data reuses parse_assignment and its
+existing real-assigner criterion; unknown assignment preserves the last verified
+display, including completion when a report changes. Report always names the
+reporting physician; Assign owns the assignee. This latest owner requirement
+supersedes the historical Report-as-assignee rendering guards. Actual changes
+still repaint; identical connection and report projections do not.
+
+Final direct pytest selection: 161 passed, one explicitly deselected unchanged
+baseline login-identity guard, retries disabled, exit zero. The guard's historical
+failure is recorded above; it was not repaired or counted as passing. Mirrors:
+513/513 match. Scoped whitespace checks pass. No live database, credentials,
+patient fixtures, release build or clinical-server mutation was used. The local
+source processes expose TestServer=0 despite the owner's launch confirmation,
+so documented Test Control ping remains unavailable. Fresh-source stability and
+an authorized second-client mutation without Search/Sync remain open GUI gates.
+
+### Unstable-network and worker ownership follow-up, 2026-10-07
+
+The owner now reports that the live projection behaves correctly and logically,
+and continues manual testing. Record that as owner acceptance of the preceding
+stability slice; it is not proof of an Eagle Eye service cutover or every failure
+condition. This follow-up targets no GUI blocking, bounded ownership and recovery.
+
+Two new guards failed before correction. Receiver shutdown previously finished
+while a slow enrichment thread still ran, allowing repeated source switches to
+orphan one worker each. Receiver-owned shutdown now waits for its enrichment and
+inventory workers on the receiver thread only. Qt stop remains immediate; the
+existing source-switch gate starts a replacement only after quiescence. Pending
+reads have the existing transport/HTTP deadlines; sockets close on stop and late
+results are discarded. No shared HTTP pool, download connection or other module
+is stopped. The silent-stream stop and trickled-frame tests verify nonblocking
+caller stop and a total frame deadline that cannot grow per received fragment.
+
+Session renewal also previously reset observation numbering while retaining the
+same GUI ordering scope; new legitimate observations could be rejected as old.
+A local projection epoch now changes for every receiver replacement, independently
+of source-generation identity, and retains no session token in row observations.
+Old observations remain rejected within the same epoch.
+
+Final related selection: 165 passed, one unchanged baseline login-identity guard
+deselected, reruns disabled, exit zero. Mirrors match 513/513. Existing tests also
+cover EOF/reconnect, token revocation, partial reads, bounded bursts and slow REST
+isolation. Test Control ping remains unavailable. The two latest runtime changes
+need a fresh-source live pass; no application restart, clinical network outage,
+real patient mutation, service deployment or broad freeze-free claim was made.
+
+### Patient-to-Eagle Eye server staging, 2026-10-07
+
+Owner reiterates that an open Patient tab must discover server-owned EchoMind and
+Eagle Eye saved results and update red availability through the same background
+flow. Authenticated live preflight confirms that the active October 4 service has
+no case_realtime capability. The source already has authenticated cursor-held
+case notifications, exact-study shared reads and Patient red availability; the
+operational gap is the unapplied server feature, not a need for another UI panel.
+
+Baseline-derived candidate 20261007-case-realtime is now staged on Eagle Eye with
+16 hash-verified overlay files. Private configuration and clinical payloads were
+excluded from the transferred overlay; active service/source remain unchanged.
+Target selection: 80 passes, reruns disabled, pip check clean. Local Patient/case/
+network selection: 59 passes; adjacent TLS/service/EchoMind: 45 passes; mirrors
+513/513. The older TLS fixture needed a synthetic authoritative case_identity;
+no production permission check was weakened. The candidate preserves the active
+Secretary request limit and unrelated Secretary source/settings.
+
+An open tab previously stopped probing permanently when case capability was
+absent. A fail-before guard now requires interruptible 15-second capability retry
+so a later server activation is discovered while the same Patient tab stays open.
+Result inventory itself still uses notifications and bounded reconciliation,
+never client-direct inference or an unauthenticated socket endpoint.
+
+Authenticated preflight showed zero active model/history requests and preserved
+seven module routes at the observation time. Configuration and exact prior SCM
+command are backed up in restricted server storage; prior revision is retained.
+The activation helper validates ownership/hashes/empty work and automatically
+restores the prior service command on failed authenticated post-start acceptance.
+Activation is pending explicit manual approval under deploy-safety-check. See
+[the concrete activation record](../agent_control/deploy-record-eagle-eye-case-realtime-2026-10-07.md).
+Patient GUI and second-client saved-result acceptance remain pending cutover.
+
+
+## 2026-10-07: Razi Eagle Eye case synchronization activated
+
+The owner explicitly authorized the prepared Razi update. AIPacsEagleEye now runs
+20261007-case-realtime under its existing LocalService identity and private config.
+Authenticated paired-TLS acceptance passed: protocol 1, case_realtime enabled,
+seven model routes and fourteen EchoMind workflows. The post-start preflight
+observed zero active model jobs and history requests. Existing PACS 50052/8000,
+DICOM 105 and CRM 8770 listeners retained their prior process owners.
+Restricted configuration/SCM backup and immutable baseline remain available.
+Receipt: server validation/case-realtime-20261007-cutover.json, activated=true.
+The 80 candidate tests passed before activation. Actual source Patient red
+availability, saved-result retrieval and second-client updates remain pending;
+transport acceptance does not establish clinical or GUI acceptance.
+
+## 2026-10-10: Refresh result overwritten by animation (OPT-51)
+
+The owner observed a red Refresh icon with a successful assignment tooltip.
+The eight-step animation restored its captured old error icon after the terminal
+response. A generation token now invalidates queued animation callbacks whenever
+_set_refresh_result receives success, failure or breaker state. No network or
+broadcast semantics changed. Both deterministic early-result guards failed before
+the fix; 44 related tests pass, one unchanged login identity guard deselected.
+528 plugin mirror pairs match. Source GUI acceptance remains pending because the
+existing Test Control endpoint is unavailable. Full Developer inventory parity
+and build handoff remain pending; scoped file synchronization is not full parity.

@@ -118,9 +118,37 @@ def test_manual_launch_stages_script_outside_space_containing_checkout(tmp_path,
     command,options=calls[0];script=Path(command[command.index('--python-script')+1])
     assert ' ' not in str(script)
     assert script.read_bytes()==Path(manual_review.__file__).with_name('manual_slicer.py').read_bytes()
+    chrome = Path(manual_review.__file__).resolve().parents[2] / 'mpr/advanced_3d_slicer/slicer_custom_app/viewer_chrome.py'
+    assert script.with_name('viewer_chrome.py').read_bytes() == chrome.read_bytes()
     assert Path(session).is_relative_to(tmp_path/'private-ai')
     assert options['env']['AIPACS_MANUAL_REVIEW']==session
+    # This option prevents main-window construction, so Segment Editor cannot run.
+    assert '--no-main-window' not in command
+    assert '--no-splash' in command and '--launcher-no-splash' in command
+    assert len(calls) == 1
+    startup_path = Path(command[command.index('--additional-module-paths') + 1])
+    assert (startup_path / 'AIPacsBrainReviewStartup.py').is_file()
+    assert not (startup_path / 'manual_slicer.py').exists()
+    if manual_review.os.name == 'nt':
+        assert options['startupinfo'].dwFlags & manual_review.subprocess.STARTF_USESHOWWINDOW
+        assert options['startupinfo'].wShowWindow == 0
     assert json.loads((Path(session)/'session.json').read_text())['source_result']['server_job_id']=='synthetic-parent'
+
+
+def test_interactive_review_does_not_inherit_workstation_software_gl():
+    from modules.ai_imaging.eagle_eye_brain.manual_review import review_environment
+    original = dict(QT_OPENGL='software', QT_OPENGL_DLL='opengl32sw',
+                    LIBGL_ALWAYS_SOFTWARE='1', LIBGL_ALWAYS_INDIRECT='1',
+                    MESA_GL_VERSION_OVERRIDE='3.3', GALLIUM_DRIVER='llvmpipe',
+                    VTK_OPENGL_FORCE_SOFTPIPE='1', QT_QUICK_BACKEND='software',
+                    VTK_DEFAULT_OPENGL_WINDOW='vtkOSOpenGLRenderWindow', KEEP='yes')
+    env = review_environment(original, 'synthetic-session')
+    assert env['QT_OPENGL'] == 'desktop'
+    assert 'QT_OPENGL_DLL' not in env and 'LIBGL_ALWAYS_SOFTWARE' not in env
+    assert 'VTK_DEFAULT_OPENGL_WINDOW' not in env
+    assert env['KEEP'] == 'yes' and original['QT_OPENGL'] == 'software'
+    original['AIPACS_MANUAL_REVIEW_SOFTWARE_RENDERING'] = '1'
+    assert review_environment(original, 'synthetic-session')['QT_OPENGL'] == 'software'
 
 
 def test_review_controls_are_embedded_in_segment_editor():

@@ -275,3 +275,97 @@ source launch/sign-in was requested. That live gate remains pending.
 Guards: `tests/code/ai_imaging/test_eagle_eye_alignment.py`,
 `tests/code/builder/test_eagle_eye_alignment_payload.py`, and Eagle Eye cases in
 `tests/code/builder/test_distribution_profiles.py`.
+
+
+## 2026-10-10: Server progress and saved review recovery
+
+The latest owner-triggered Alignment execution was verified read-only on Razi:
+landmark inference and its report correction both reached `succeeded`, with an
+owned server job. The returned PDF SHA-256 equals the server PDF SHA-256. Private
+job/patient identifiers are deliberately omitted here. Source-level restoration of
+that existing report recovered 16 landmarks without another inference request.
+
+A visible indeterminate progress bar and status now sit directly under the title.
+The existing authenticated Client progress callback reaches the GUI through a
+thread-safe queue polled by its owned Qt timer. Scan, image loading, processing,
+report receipt and failure leave a visible status; no invented percentage is used.
+Client inference routing and authentication are unchanged.
+
+Workspace history opens the editable Alignment surface for source-bound results.
+Its session uses the saved series, not whichever viewer series happens to be
+selected. Loading an image checks the latest matching archive on the worker before
+automatic inference. Restoration verifies study/series/SOP and original source hash
+or semantic fingerprint; it restores points, scale, flip, notes and PDF. Clinical
+review checkboxes are not automatically attested. A corrupt latest review does not
+silently fall back to older measurements or submit new inference.
+
+New Server archives include Alignment `report.json` with their existing hashed
+artifact envelope. Older locally submitted reports can recover calibration and flip
+from the exact job's retained correction request after source, parent and landmark
+matching. If metadata is unavailable, history retains PDF access without guessing
+editable measurements. A missing local source is reported for the user to load.
+All archive scanning, source reading and validation remain off the GUI thread.
+
+Verification: first five guards failed before implementation; the archive guard
+also failed because report.json was omitted. Final focused run: 138 passed, four
+explicitly deselected pre-existing HTTP human-ownership fixture failures, exit 0.
+Those same four failures reproduce with the pre-change artifact publisher in an
+isolated test process. The broader initial run had 136 passes and four failures.
+529 plugin mirror pairs match; dry-run found no drift. Synthetic widget rendering
+shows the top status/progress. This is not live application acceptance.
+
+Developer synchronization: affected Alignment/routing/artifact bases matched the
+active Razi source before editing. Workspace/history also contain local-only spine
+and saved-result changes from other owners; their deltas were inspected and retained.
+A reviewed delta is staged separately on Razi, never over executing source. Full
+Developer parity and activation remain blocked by outstanding shared-owner source
+reconciliation and the existing safe-transition gate. No build or restart occurred.
+Local native GUI acceptance is pending a human-launched fresh source test session;
+the existing test-control socket was unavailable. New Server artifact behavior still
+requires Function Tester and matching-runtime integration after safe activation.
+
+Next-build coverage: Standard and ARM Client UI/service imports and Server artifact
+publisher apply to both PyInstaller and Nuitka; current payload guard passes. No
+produced package was tested. Mobile behavior/API semantics are unchanged; the
+additional optional archive file does not alter mobile requests or result fields.
+Rollback is the scoped source delta; persisted reports and measurements are retained.
+
+
+### Native Client acceptance follow-up, 2026-10-10
+
+The owner launched a fresh source Client and signed in. The test-control socket
+still did not answer; verification used native Computer Use against the existing
+Python AIPacs window, without another launch or process interruption.
+
+Observed: the saved Alignment tab displayed the source image, landmarks, bilateral
+measurement table and explicit previous-result/no-new-analysis status. Native
+Load selected image recovered the same state. Open PDF launched Acrobat and the
+three-page report rendered. Save PDF copy opened the native file picker, completed
+to a private application data folder, and displayed `PDF copy saved.` The exported
+copy's SHA-256 equals the original downloaded PDF. No landmarks, calibration,
+review attestations or clinical reports were edited. The newest Alignment archive
+predates this source session; no newly completed analysis archive appeared.
+
+Acceptance scope: saved-result presentation/reload and PDF open/save PASS on the
+fresh source Client. Long-running server progress was NOT observed in this lap
+because cached recovery completed before capture; its synthetic guards remain
+passing. No new model/correction request was submitted solely to lengthen the test.
+Full Developer parity, safe Server activation, Function Tester and new metadata
+transfer acceptance remain pending. This follow-up does not qualify those gates.
+
+### Restored calibration request failure, 2026-10-10
+
+A subsequent human-triggered live inference displayed the top indeterminate bar
+and `Server is analyzing the study`, then returned an authenticated remote
+landmark archive. Automatic report submission failed locally with `Invalid
+calibration`; the previous PDF remained accessible and controls were released.
+This execution preceded the coordinated Server transition and is not acceptance
+of the new Server revision or a complete report workflow.
+
+Restoration validated spacing with NumPy but retained NumPy scalar types. The
+strict correction contract rejects those types before HTTP submission. Convert
+the already-validated spacing to native Python numbers when restoring it; keep
+wire validation unchanged. A synthetic restored-report-to-routing-to-contract
+guard reproduced the exact error before the fix. The focused Client selection
+now passes 47 tests, exit 0. Updated immutable Server reconciliation and a fresh
+source Client GUI run remain pending; do not hot-reload the existing application.

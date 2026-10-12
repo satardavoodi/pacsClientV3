@@ -76,6 +76,20 @@ def build_command_bus(
         registered.
     """
     reg = AdapterRegistry()
+    from .adapters.session_files_adapter import SessionFilesAdapter
+    from modules.ai_imaging.eagle_eye_remote.secretary.validation.session_files import SESSION_FILE_MODELS
+    def session_memory():
+        owner = orchestrator or getattr(home_widget, '_secretary_orchestrator', None)
+        # Discovery/dispatch may run on Qt's thread; never initialize the lazy DB here.
+        values = vars(owner) if owner is not None else {}
+        return values.get('_memory_store', values.get('memory_store'))
+    if orchestrator is not None or home_widget is not None:
+        from .adapters.content_assets_adapter import ContentAssetsAdapter
+        from modules.ai_imaging.eagle_eye_remote.secretary.validation.content_assets import CONTENT_ASSET_MODELS
+        reg.register('content_assets', ContentAssetsAdapter(session_memory,(module_launchers or {}).get('education')),
+                     actions={name:'execute' for name in CONTENT_ASSET_MODELS})
+        reg.register('session_files', SessionFilesAdapter(session_memory),
+                     actions={name:'execute' for name in SESSION_FILE_MODELS})
     from .adapters.support_command_adapter import SupportCommandAdapter, SUPPORT_ACTIONS
     support_adapter = SupportCommandAdapter(home_widget=home_widget)
     support_actions = {name:method for name, method in SUPPORT_ACTIONS.items()
@@ -210,6 +224,9 @@ def build_command_bus(
             )
             reg.register("education", edu_adapter,
                          actions=dict(EDUCATION_ACTIONS))
+            from .adapters.course_authoring_adapter import CourseAuthoringAdapter, COURSE_AUTHORING_ACTIONS
+            reg.register("course_authoring", CourseAuthoringAdapter(module_launchers["education"]),
+                         actions=dict(COURSE_AUTHORING_ACTIONS))
         except Exception:
             logger.exception("bus_factory: EducationAdapter registration failed")
 

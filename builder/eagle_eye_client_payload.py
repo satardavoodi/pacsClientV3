@@ -2,7 +2,8 @@
 from pathlib import Path
 import shutil
 
-FILES = ('__init__.py', 'contracts.py', 'settings.py', 'client.py', 'demographics.py')
+FILES = ('__init__.py', 'contracts.py', 'settings.py', 'client.py', 'demographics.py',
+         'user_session.py', 'parent_ipc.py', 'session_revocation.py', 'secretary_errors.py')
 REPO = Path(__file__).resolve().parents[1]
 
 

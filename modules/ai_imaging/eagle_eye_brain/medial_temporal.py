@@ -54,7 +54,7 @@ def section_html(result, image_html=""):
             "</tr></thead>" + body + "</table>"
             "<p>AI = 200 x (Right - Left) / (Right + Left). Missing structures are not zero. "
             + ("Published intervals use local ICV; cross-method validation is pending. "
-               "Red = >25% beyond nearest reference endpoint, not statistical significance. "
+               "Red = outside published reference interval, not a diagnosis or statistical significance. "
                "* Cortical ranges are anatomical analogues, not matched normal limits or atrophy thresholds. " if published else
                "Normal ranges for either side are unavailable: no validated reference for these SynthSeg measurements. ") +
             "Inferior lateral ventricle volume is a contextual model label, not a measured temporal-horn width.</p>"

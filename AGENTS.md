@@ -1,5 +1,18 @@
 # AI-PACS Codex Working Agreement
 
+## Eagle Server versus mobile/Workstation pairing (owner decision, 2026-10-12)
+
+Read [the connection boundary contract](docs/architecture/EAGLE_EYE_CONNECTION_BOUNDARIES_2026-10-12.md)
+before changing authentication, AI routing or mobile integration. Ordinary Eagle
+access from Windows/Android/iOS uses configured HTTP IP:port and username/password:
+Server checks PACS, then Reception on credential rejection, then its internal
+feature/module grants. No device pairing, client certificate or caller-supplied
+provider token is required. Existing opaque password-login sessions are internal.
+QR pairing and HTTPS are exclusively the separate mobile-to-Windows-Client Agent
+PACS execution path; preserve that path and do not classify it as an Eagle Server
+defect. Mobile has no Eagle imaging feature currently; Windows has native Secretary.
+Document legacy token fallbacks and actual acceptance separately from this contract.
+
 This file is the short, Codex-native entry point for work in this repository. It does not
 replace the detailed project history in `CLAUDE.md` or `docs/`.
 
@@ -22,7 +35,7 @@ indexed at `D:\_RECOVERY\restored\projects\ai-pacs-workstation`.
 - Product: Windows desktop DICOM workstation built with Python, PySide6, VTK, SimpleITK,
   pydicom, SQLite, and packaged plugin payloads.
 - Source entry point: `main.py`.
-- Prepared source/build version: `3.7.1` in `pyproject.toml`, `main.py`, and release docs. The last published source is `3.7.0`; its two PyInstaller files completed, but the Nuitka build was interrupted. Do not describe that as a completed four-file matrix. The last verified complete receipt-backed Client matrix remains `3.6.8`.
+- Prepared source/build version: `3.7.3` in `pyproject.toml`, `main.py`, and release docs; see `docs/releases/VERSION_3.7.3_RELEASE.md` for actual publication and build evidence. The last published source before this request is `3.7.1`, whose four Client files completed. Version `3.7.2` completed as a local install-QA matrix, not a Git-synchronized release. Version `3.7.0` completed only its PyInstaller pair; its interrupted Nuitka run must not be reported as a complete matrix. Installer compilation never establishes installed or clinical acceptance.
 - Supported interpreter in this checkout: Python `3.13.5` from `.venv`.
 - The public AI-PACS website is a separate project. Read `WORKSPACE.md` before adding a
   website endpoint, shared identity/licensing work, Case-of-the-Day publishing, or ATI work.
@@ -86,7 +99,56 @@ item rather than creating a disconnected plan.
   socket protocol configuration, not the DICOM port.
 - Voice-to-text must use `modules/EchoMind/voice_transcription.py::VoiceTranscriptionService`.
 
+
+## Local build and Razi Developer test workflow (owner decision, 2026-10-09)
+
+- The local Client and local Eagle Eye Server Developer code use the canonical
+  workstation repository. Razi runs the reconciled Eagle Eye Server source
+  snapshot; an installed executable is not the Developer test target.
+- Keep both Developer snapshots hash-identical under the synchronization contract.
+  Before testing a change, verify the running Razi process selects the matching
+  reviewed snapshot, not merely that its files were transferred. Python changes
+  need a controlled service transition after model and text work have drained;
+  do not overwrite executing source or assume automatic hot reload.
+- Run server Function Tester / function scenarios on Razi, then test the local
+  source Client against that same authenticated Eagle Eye Server. Record failures
+  and affected-workflow GUI acceptance separately; a capability response or unit
+  test alone is not a complete function pass.
+- After those tests and the required user acceptance succeed, build both Client
+  and Eagle Eye Server on this control computer through BUILD.md and RELEASE.md.
+  Do not build on Razi or start a release just because source parity is green.
+- Owner clarification (2026-10-10): qualify the exact locally built candidate on
+  WinA100 before customer installation. Verify its identity/access. Use existing
+  stability/load/KPI tests on the coordinated
+  Razi Developer target, preserving clinical services and accepted work. Record
+  running-source parity, load evidence and installed acceptance separately.
+- Keep role-specific licenses, identities, credentials and runtime data private to
+  their owning host. A former Client installation needs official Server-role
+  provisioning; never reinterpret a Client key as Server or weaken admission.
+
+The durable runbook is
+[Developer test/build workflow](docs/modules/eagle-eye-server-development/docs/DEVELOPER_TEST_BUILD_WORKFLOW.md).
+
 ## Mirrors, packaging, and release parity
+
+### Mandatory two-way Developer synchronization (owner decision, 2026-10-08)
+
+- The local workstation Developer source and the Razi Eagle Eye Server Developer
+  source are one development line. Every change made on either side must be
+  reconciled and applied to the other side in the same work session, including
+  shared Client/Server code, tests, documentation, mirrors and required assets.
+- Inspect both sides before editing. Select the newest correct implementation
+  using history, behavior and verification, never timestamps alone. Preserve and
+  reconcile remote-only work; do not blindly overwrite either side.
+- A change is not complete and must not be handed off for a build until both
+  Developer snapshots match by file hashes and required payload revisions, with
+  a recorded parity receipt. If synchronization is blocked, explicitly record
+  the pending delta and block completion/build handoff; do not claim parity.
+- Host credentials, patient data, databases, logs, paths and hardware-specific
+  settings remain private and host-specific. Record justified exclusions rather
+  than copying them. Do not overwrite executing source; stage an immutable new
+  revision and track activation separately from source parity.
+- Follow the full [Developer synchronization contract](docs/modules/eagle-eye-server-development/docs/DEVELOPER_SYNC_POLICY.md).
 
 - `RELEASE.md` is the only supported multi-remote release route. A full build
   requires its fresh Git synchronization receipt for the exact clean commit.

@@ -15,15 +15,15 @@ def test_pending_search_is_not_reported_complete():
 
 
 def test_empty_and_failed_search_are_distinct():
-    assert 'No matching' in format_result({'ok': True, 'action': 'list_patients', 'data': {'count': 0}})
-    assert format_result({'ok': False, 'action': 'list_patients', 'message': 'Search unavailable.'}) == 'Search unavailable.'
+    assert 'No matching' in format_result({'ok': True, 'action': 'list_patients', 'data': {'state': 'ready', 'count': 0}})
+    assert 'could not be verified' in format_result({'ok': False, 'action': 'list_patients', 'message': 'Search unavailable.'})
 
 
 def test_workflow_reports_only_verified_actions():
     text = format_result({'ok': True, 'action': '__workflow__', 'data': {'steps': [
         {'tool': 'advanced_search', 'ok': True, 'verified': True},
         {'tool': 'sort_patients', 'ok': True, 'verified': False}]}})
-    assert 'applied the search filters' in text and 'sorted' not in text
+    assert 'not been verified' in text and 'sorted' not in text
 
 
 def test_confirmation_hides_internal_goal_and_corrupted_legacy_text():
@@ -71,3 +71,30 @@ def test_confirmation_outer_frame_is_transparent():
     assert dialog.testAttribute(Qt.WA_TranslucentBackground)
     assert dialog.isModal()
     dialog.close()
+
+
+def test_canonical_search_pending_never_echoes_raw_patient_message():
+    text = format_result({'ok': True, 'action': 'advanced_search_patients',
+        'message': 'SYNTHETIC_PRIVATE_ROW', 'data': {'state': 'searching', 'count': 0}})
+    assert 'SYNTHETIC_PRIVATE_ROW' not in text
+    assert 'still loading' in text
+
+
+def test_search_without_terminal_state_or_count_is_not_complete():
+    for data in ({}, {'count': 0}, {'state': 'ready'}, {'state': 'ready', 'count': True}):
+        text = format_result({'ok': True, 'action': 'advanced_search_patients', 'message': 'SYNTHETIC_PRIVATE_ROW', 'data': data})
+        assert 'completed' not in text and 'ready on screen' not in text
+        assert 'SYNTHETIC_PRIVATE_ROW' not in text
+
+
+def test_workflow_without_any_verified_step_does_not_claim_completed():
+    text = format_result({'ok': True, 'action': '__workflow__', 'data': {'steps': []}})
+    assert 'completed' not in text.lower()
+
+
+def test_workflow_uses_verified_terminal_search_count_without_rows():
+    text = format_result({'ok': True, 'action': '__workflow__', 'data': {'steps': [
+        {'tool': 'advanced_search_patients', 'ok': True, 'verified': True,
+         'receipt': {'state': 'ready', 'count': 17, 'source': 'server', 'rows': ['SYNTHETIC_PRIVATE_ROW']}}]}})
+    assert '17 studies' in text
+    assert 'SYNTHETIC_PRIVATE_ROW' not in text

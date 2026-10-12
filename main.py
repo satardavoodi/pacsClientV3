@@ -692,8 +692,8 @@ from PySide6.QtGui import QIcon
 from PacsClient.app_handler import AppHandler
 from PacsClient.utils.font_manager import load_fonts, setup_font_rendering
 from PacsClient.utils.single_instance_lock import SingleInstanceLock
-from modules.LicenseGenerator.license_manager import LicenseManager
-from modules.LicenseGenerator.license_dialog import LicenseDialog
+from PacsClient.utils.process_exit import hard_exit
+from modules.LicenseGenerator.license_dialog import ensure_license
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
 import vtkmodules.vtkCommonCore as vtkCommonCore
@@ -1360,7 +1360,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.7.1")
+    app.setApplicationVersion("3.7.3")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1408,29 +1408,10 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Warning: Could not initialize qtawesome fonts: {e}")
 
-    # Check license
-    license_manager = LicenseManager()
-    is_licensed, message = license_manager.check_license()
-    
-    if not is_licensed:
-        # Show license activation dialog
-        license_dialog = LicenseDialog()
-        
-        # If user closed the window or chose to exit, close the application
-        result = license_dialog.exec()
-        if result != QDialog.Accepted:
-            sys.exit(0)
-        
-        # Re-check license
-        is_licensed, message = license_manager.check_license()
-        if not is_licensed:
-            QMessageBox.critical(
-                None,
-                "License Error",
-                "No valid license found. Application will close.",
-                QMessageBox.Ok
-            )
-            sys.exit(0)
+    # Hardware, verification and storage run off the GUI thread. A successful
+    # activation is admitted only after the signed response was validated/saved.
+    if not ensure_license():
+        sys.exit(0)
     
     # Integrate asyncio with Qt event loop
     app.setQuitOnLastWindowClosed(True)
@@ -1577,13 +1558,13 @@ if __name__ == "__main__":
         # keep the interpreter — and therefore the whole AIPacs process and its
         # child tree — alive in Task Manager after the user closed the window. The
         # takeover path already had this failsafe (single_instance_lock
-        # _initiate_shutdown); the normal close did not. os._exit skips the rest of
-        # interpreter teardown, so it MUST come after the explicit subprocess kill
+        # _initiate_shutdown); the normal close did not. hard_exit skips further
+        # interpreter and DLL teardown, so it MUST follow the explicit subprocess kill
         # + log flush above. Escape hatch: AIPACS_NO_HARD_EXIT=1 (debugging).
         try:
             if os.environ.get("AIPACS_NO_HARD_EXIT", "") != "1":
                 sys.stdout.flush()
                 sys.stderr.flush()
-                os._exit(0)
+                hard_exit(0)
         except Exception:
             pass

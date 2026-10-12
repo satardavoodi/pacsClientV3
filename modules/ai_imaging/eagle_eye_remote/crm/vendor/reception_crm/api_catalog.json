@@ -1,0 +1,8882 @@
+{
+ "source": "D:\\api (index.js mounts + routes/*.js)",
+ "note": "Absolute paths where the mount was resolvable; router-local otherwise (`mounted: false`). The build/ copy is excluded — it duplicates every router.",
+ "mount_count": 39,
+ "route_count": 691,
+ "routes": [
+  {
+   "method": "GET",
+   "path": "/api/Reports/dashboard",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/personnel",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/medical-services",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/rooms",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/warehouse",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/imaging-workflow",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reports/custom",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/deleted-items",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier-report",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier-report/category-details",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier-report/deleted-details",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier-report/insurance-details",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception-list",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/service-patients",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/insurance",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/general",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/insurance-stats",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/modality-stats",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/daily-stats",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/top-services",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/by-user",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial/reception-income",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial/expenses",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial/wallet-transactions",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial/summary",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/insurance/general",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/insurance/by-type",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/insurance/by-modality",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients/by-gender",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients/by-age",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients/by-insurance",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/services/general",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/services/by-group",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/services/by-modality",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier/by-user",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier/summary",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/cashier/summary",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/detailed-list",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/reception/details/:receptionId",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial/transactions-list",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/financial/expenses-list",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients/detailed-list",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients/details/:patientId",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients/:patientId/receptions",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/services/detailed-list",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/services/details/:serviceId",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/physician-performance/summary",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/physician-performance/by-department",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/physician-performance/patients/:radiologistId",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/physician-performance/search",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/personnel-performance/summary",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/personnel-performance/detailed/:personnelId",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/personnel-performance/comparison",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/personnel-performance/daily",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/Reports/reception/:receptionId/radiologist",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients-by-service-insurance",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/patients-by-service-insurance/summary",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/debtors",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/debtors/:patientId",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/referring-physicians/stats",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reports/referring-physicians/details",
+   "mounted": true,
+   "router": "ReportsRouter.js",
+   "models": [
+    "ClinicUsersModel",
+    "CostModel",
+    "PatientModel",
+    "PaymentModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "Transaction"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/add",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/list",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/search",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/update/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/delete/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/getWallet/:patientId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/deleteWallet/:patientId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/settle/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/pay/:walletId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/pay-reception/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/wallet-balance/:patient",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/pay/:transactionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/pay/:transactionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/transaction/:transactionId/cancel",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/transaction/:transactionId/restore",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/transactions/cancelled",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/deleteAll",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/deleteAllWallet",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/deleteAllTransaction",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/getOne/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/getOneByReceptionID/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/today-reception",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/all-wallets-transactions",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/process-insurance/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/insurance-status/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/get-salamat-details/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/get-register-id/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/pending-insurance",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/deleted",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/restore/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/permanent-delete/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/wallets",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/wallet",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/wallet/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/wallet/:id/credit",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/wallet/:id/debit",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/wallets/:walletId/transactions",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/wallet/:id/report",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/apply-cashdesk-discount/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/discount-summary/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/remove-cashdesk-discount/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/warehouse-products",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/warehouse-product/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/reception-warehouse-transactions/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/add-inventory-consumption/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/inventory-consumption/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/inventory-consumption/:id/:productId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/refund/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/apply-fund-discount/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/remove-fund-discount/:id",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/migrate-wallet-stats",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Reception/:receptionId/tags",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Reception/:receptionId/tags",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Reception/:receptionId/tags/:tagId",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Reception/:receptionId/tags",
+   "mounted": true,
+   "router": "ReceptionRouter.js",
+   "models": [
+    "AdminUsers",
+    "CashDeskKartModel",
+    "Patient",
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "ReceptionsTag"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getSurgeryList",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getCustomerTypes",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getInsuranceType/:CenterID",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getOne/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/ChangeAvatar",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addNote",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getAll",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteNote",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getAttachments/:PatientID/:ClinicID",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getAttachments/:PatientID",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addAttachment",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteAttachment",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/checkByNID",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/autoCheckNID",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/getPenndingPatient",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addDisease",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteDisease/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getDisease/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addSurgery",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editSurgery",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteSurgery",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deletePendingPatient",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/CenterPatient",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/ChangeInsurance",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editPatient",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/updateTel",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/updateInsuranceType",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/updateCustomerInfo",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addPatient",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/search",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addDiseaseHistory",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editDiseaseHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteDiseaseHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addSurgeryHistory",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editSurgeryHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteSurgeryHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addFamilyHistory",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editFamilyHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteFamilyHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addAddictionHistory",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editAddictionHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteAddictionHistory/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addFoodAllergy",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editFoodAllergy/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteFoodAllergy/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Patient/addDrugAllergy",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Patient/editDrugAllergy/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Patient/deleteDrugAllergy/:id",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getMedicalHistory/:PatientID",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Patient/getMedicalHistoryByType/:PatientID/:Type",
+   "mounted": true,
+   "router": "PatientRouter.js",
+   "models": [
+    "CallLogModel",
+    "CenterModel",
+    "DiseaseModel",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "NoneNID",
+    "NoneNidModel",
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/RequestConnection",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Salamat/ConnectionStatus",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Salamat/SalamatPrescTypeId",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Salamat/SalamatType",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Salamat/SalamatInsuranceProductId",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/CpartyOtpCheck",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/ResendOTP",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/DisconnectSession",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/CpartyOtpCheck_Old",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/DeliverPaperPrescription",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/DeliverPrescription",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/CombinationDrugSerach",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PrescriptionUpdate",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/BillInfoFetch",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/BillCheckSend",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PrintDeliver",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PrintOrder",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PrescriptionSave",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/DeconsteRegisterPresc",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PrescriptionFetchSamad",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/SubscriptionCheckOrder",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/SubscriptionCheckPaper",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/DrugSerach",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/ServiceSerach",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/samadElectronicGenerate",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/CheckSubscription",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/SearchSamadCode",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/SearchSamadCode/ByDate",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/CheckSamadCode",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PartnerSearch",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/PartnerFetchPartnerid",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/SamadPaperGenerate",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/FetchReferencePrintcode",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/CheckPrescriptionPrintcode",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Salamat/GetPatientSession",
+   "mounted": true,
+   "router": "BimehSalamat.js",
+   "models": [
+    "CenterServicesInfo",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "ServicesInfoModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/initialize",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/initializeDirectImaging",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/schedule",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/start-imaging",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/items",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/complete-imaging",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report/approval-flags",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report/approve",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/archive",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/waiting-appointment",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/waiting-appointment-clean",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/debug-waiting",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/appointments",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/appointments/search",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/setWaitingAppointment",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/skipScheduling",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/status",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report/status",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report/status/history",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/report/status-guide",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/reports/awaiting-approval",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/reporting",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/test-radiologist",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/test-data",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/workflow/test-search",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report/logs",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/imagingWorkflow/:receptionId/workflow/report/logs/summary",
+   "mounted": true,
+   "router": "imagingWorkflowRouter.js",
+   "models": [
+    "AdminUsers",
+    "ModalityModel",
+    "Personnel",
+    "Personnel2",
+    "Reception",
+    "ReceptionModel",
+    "ReportLog",
+    "ReportLogModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/AdminUser/getCenterUsers",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/AdminUser/getPermisionList",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/updateUser",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/updateUserInoUserCode",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/removeInoUserCode",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/ChangePassword",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/ResetPassword",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/ChangeAvatar",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/setUserRoles",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/deActiveUser",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/ActiveUser",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/getToken",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/AdminUser/verify-token",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/LogIn",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/loginUser",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/loginClinicUser",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/getUserById",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/getUserByToken",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/addUser",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/SetUserPermision",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/AdminUser/SetUserChatPermision",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/AdminUser/setPersonnelID",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/AdminUser/protected-example",
+   "mounted": true,
+   "router": "AdminUserRouter.js",
+   "models": [
+    "ClinicUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/list",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/create",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/supplementary-insurance/update/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/supplementary-insurance/delete/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/supplementary-insurance/toggle-status/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/coverage/service/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/supplementary-insurance/coverage/service/:id/:serviceId",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/coverage/group/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/supplementary-insurance/coverage/group/:id/:groupName",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/calculate/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/calculate-multiple/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/history/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/search",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/duplicate/:id",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/stats/overview",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/active-list",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/preview-reception",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/supplementary-insurance/apply-to-reception/:receptionId",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/supplementary-insurance/remove-from-reception/:receptionId",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/reception-details/:receptionId",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/supplementary-insurance/reception-usage/:insuranceId",
+   "mounted": true,
+   "router": "SupplementaryInsuranceRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ServicesInfo",
+    "ServicesInfoModel",
+    "SupplementaryInsurance",
+    "SupplementaryInsuranceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/config",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/test",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/status",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/token/generate",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/token/info",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/study/downloadjpeg",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/study/downloadjpeg/reception/:receptionId",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/upload/image",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/upload/reception/:receptionId",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/patient/:patientId/studies",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/study/:studyId/images",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/studies/search",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/marco-pacs/:resourceType/:resourceId",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/marco-pacs/study/:studyId",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/statistics",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/custom",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/reception/:receptionId/import-images",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/reception/:receptionId/images",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/quickview/generate",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/marco-pacs/token/get",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/marco-pacs/reception/:receptionId/quickview",
+   "mounted": true,
+   "router": "MarcoPACSRouter.js",
+   "models": [
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Tamin/ConnectionStatus",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/TaminDeliverPrescriptionByCenter",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/TaminDeliverPrescriptionByNID",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/CenterPrescriptionByNID",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/CenterPrescriptionByID",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/CenterPrescription",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/DrugAmountCode",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/DrugInstruction",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/PrescriptionType",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ServiceType",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/Service/:id",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/PatientInfo",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaclinicInformation",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaclinicInformation/AcceptableServices",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaEPresc/RequestList",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaEPresc/ReferRequest",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaEPresc/DelEpresc",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaEPresc/RequestParPresc",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/ParaEPresc/RequestPresc",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Tamin/Reception/ParaEPresc/RequestPresc",
+   "mounted": true,
+   "router": "BimehTamin.js",
+   "models": [
+    "CenterIModel",
+    "CenterModel",
+    "CenterServicesInfo",
+    "GroupDetail",
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatientReceptionModel",
+    "ServicesInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/:id",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/rooms/",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/rooms/:id",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/rooms/:id/shifts",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/specialists",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/specialists/:specialistId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/specialists",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/rooms/:id",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/modality/:modalityId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/:id/available-slots/:serviceGroupId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/service-groups",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/service-groups",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/service-groups/:groupId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/service-groups/:groupId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/service-groups",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/rooms/:roomId/shifts/:shiftId/available-slots/:serviceGroupId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/rooms/:roomId/shifts/:shiftId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/rooms/:roomId/shifts/:shiftId",
+   "mounted": true,
+   "router": "RoomRouter.js",
+   "models": [
+    "DataModality",
+    "DataServicesGroupInfo",
+    "ModalityModel",
+    "Room",
+    "RoomModel",
+    "ServicesGroupInfo"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/ServicesSynchToIno/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ServicesInfo/addGroup",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ServicesInfo/search/:id/:text",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ServicesInfo/editGroup/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/ServicesInfo/deleteGroup/:modalityId/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/getByModalityIno/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/getByModality/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/deleteByModality/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/deleteGroupByModality/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/getGroupsByModality/:id",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ServicesInfo/edit/:ServiceID",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ServicesInfo/EditServiceTariffByValue/:col/:type",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ServicesInfo/add",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/ServicesInfo/delete/:modalityId/:ServiceID",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ServicesInfo/EditServiceGroup/:ServiceID",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ServicesInfo/getOneService/:ServiceID",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ServicesInfo/AddLoeing/:ServiceID",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ServicesInfo/EditLoeing",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/ServicesInfo/DeleteLoeing",
+   "mounted": true,
+   "router": "ServicessInfoRouter.js",
+   "models": [
+    "ServicesGroupInfo",
+    "ServicesInfoModel",
+    "ServicesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/studies",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/studies/:studyInstanceUID",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/studies/:studyInstanceUID/series",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/studies/:studyInstanceUID/series/:seriesInstanceUID/images",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/studies/:studyInstanceUID/thumbnails",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/studies/:studyInstanceUID/series/:seriesInstanceUID/instances/:sopInstanceUID/file",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Dicom/studies/:studyInstanceUID",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Dicom/studies/:studyInstanceUID",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Dicom/studies/:studyInstanceUID/series/:seriesInstanceUID",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Dicom/studies/:studyInstanceUID/series/:seriesInstanceUID/images/:sopInstanceUID",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Dicom/add",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/getAll",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/getOne/:id",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Dicom/update/:id",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Dicom/delete/:id",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/getAll",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Dicom/deleteAll",
+   "mounted": true,
+   "router": "DicomRoutes.js",
+   "models": [
+    "DicomDataModel",
+    "DicomModel",
+    "Series"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs-config/",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/:name",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/pacs-config/:name",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/pacs-config/:name",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/pacs-config/:name/toggle",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs-config/:name/test",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/:name/statistics",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs-config/:name/execute/:endpoint",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/:name/check/:endpoint",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/:name/endpoints",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs-config/:name/endpoints",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/pacs-config/:name/endpoints/:endpointName",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs-config/:name/endpoints/:endpointName/sample-response",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/:name/endpoints/:endpointName/sample-response",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs-config/:name/endpoints/:endpointName/copy-last-to-sample",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs-config/:name/endpoints/:endpointName/last-response",
+   "mounted": true,
+   "router": "PACSConfigRouter.js",
+   "models": [
+    "PACSConfig",
+    "PACSConfigModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/Insurance/DebugSettings",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/Insurance/AllConnectionStatus",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Setting/Setting/Set",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/Setting/get",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Setting/Insurance/add",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/Insurance/getAll",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/Insurance/getOne/:id",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Setting/Insurance/update/:id",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Setting/Insurance/delete/:id",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Setting/PatternMount/set",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/PatternMount/getAll",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/PatternMount/getOne/:id",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Setting/PatternMount/delete/:id",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/PatternMount/eventKeys",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/RefundType/get",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Setting/RefundType/set",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Setting/PatternMount/apiPatterns",
+   "mounted": true,
+   "router": "SettingRouter.js",
+   "models": [
+    "InsuranceModel",
+    "InsuranceSetting",
+    "PatternMountModel",
+    "Setting",
+    "SettingModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/synchToIrannobat",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Modality/add",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getAll",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getOne/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getOneWithProducts/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getNoSchedulingRequired",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getSchedulingRequired",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Modality/addWarehouseProduct/:modalityId",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Modality/removeWarehouseProduct/:modalityId/:warehouseProductId",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getWarehouseProducts/:modalityId",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Modality/getAvailableWarehouseProducts",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Modality/update/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Modality/active/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Modality/deActive/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Modality/updateSchedulingRequired/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Modality/delete/:id",
+   "mounted": true,
+   "router": "ModalityRoutes.js",
+   "models": [
+    "ModalityModel",
+    "ModalitySubModel",
+    "WarehouseProductModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/petty-cash-account/",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/petty-cash-account/:id/transactions",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/petty-cash-account/:id",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/petty-cash-account/",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/petty-cash-account/:id",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/petty-cash-account/:id",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/petty-cash-account/:id/add-user",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/petty-cash-account/:id/user/:userId/permissions",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/petty-cash-account/:id/user/:userId/permissions",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/petty-cash-account/:id/remove-user/:userId",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/petty-cash-account/:id/balance",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/petty-cash-account/:id/transactions",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/petty-cash-account/:accountId/transactions/:transactionId",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/petty-cash-account/:accountId/transactions/:transactionId",
+   "mounted": true,
+   "router": "PettyCashAccountRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PettyCashAccount",
+    "PettyCashAccountModel",
+    "PettyCashTransaction",
+    "PettyCashTransactionModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "resultRouter.js",
+   "models": [
+    "EventModel",
+    "Order",
+    "OrderModel",
+    "Result",
+    "ResultModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/params",
+   "mounted": false,
+   "router": "resultRouter.js",
+   "models": [
+    "EventModel",
+    "Order",
+    "OrderModel",
+    "Result",
+    "ResultModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/order/:orderId",
+   "mounted": false,
+   "router": "resultRouter.js",
+   "models": [
+    "EventModel",
+    "Order",
+    "OrderModel",
+    "Result",
+    "ResultModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "resultRouter.js",
+   "models": [
+    "EventModel",
+    "Order",
+    "OrderModel",
+    "Result",
+    "ResultModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "resultRouter.js",
+   "models": [
+    "EventModel",
+    "Order",
+    "OrderModel",
+    "Result",
+    "ResultModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "resultRouter.js",
+   "models": [
+    "EventModel",
+    "Order",
+    "OrderModel",
+    "Result",
+    "ResultModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/rooms",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/rooms",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/rooms/:roomId",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/rooms/:roomId/participants",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/rooms/:roomId/messages",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/messages/:messageId",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/messages/:messageId",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/online-users",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/admin-users",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/check-admin-status",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/user-sessions",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/all-sessions",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/private-room",
+   "mounted": false,
+   "router": "ChatRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Form/add",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Form/addViaGpt",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Form/addPatientForm",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Form/editPatientForm/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Form/editPatientForm/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Form/deletePatientForm/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Form/Delete/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Form/patientFormGetOne/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Form/patientFormGetByUserID/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Form/patientForms/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Form/getOne/:id",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Form/getAll",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Form/update/:ID",
+   "mounted": true,
+   "router": "formBuilderRouter.js",
+   "models": [
+    "PatientReceptionForm",
+    "PatientReceptionFormModel",
+    "formBuilderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/:id",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/personnel/",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/personnel/:id",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/personnel/:id",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/department/:departmentName",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/speciality/:specialityName",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/personnel/:id/profile-image",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/metadata/specialities",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/metadata/departments",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/type/:personnelType",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/gender/:gender",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/personnel/metadata/personnel-types",
+   "mounted": true,
+   "router": "PersonnelRouter.js",
+   "models": [
+    "Personnel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/print-layout/",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/print-layout/templates",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/print-layout/:id",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/print-layout/",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/print-layout/:id",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/print-layout/:id/default",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/print-layout/:id",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/print-layout/:id/duplicate",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/print-layout/:id/fields/:instanceId",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/print-layout/:id/fields/:instanceId",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/print-layout/:id/fields",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/print-layout/info/paper-sizes",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/print-layout/info/field-categories",
+   "mounted": true,
+   "router": "PrintReportLayoutRouter.js",
+   "models": [
+    "PrintReportLayout",
+    "PrintReportLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/reception/:receptionId",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/:id/transition",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/dashboard/:role",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/statistics",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/sync/reception/:receptionId",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/:id/restore",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/next-steps/:status",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/transitions/:status",
+   "mounted": false,
+   "router": "RadiologyEncounterRouter.js",
+   "models": [
+    "RadiologyEncounterV2"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReportPrintSettings/create",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReportPrintSettings/active",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReportPrintSettings/all",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReportPrintSettings/:id",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ReportPrintSettings/:id",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/ReportPrintSettings/:id",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/ReportPrintSettings/:id",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/ReportPrintSettings/:id/toggle",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReportPrintSettings/default",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReportPrintSettings/:id/duplicate",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReportPrintSettings/templates/list",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReportPrintSettings/validate",
+   "mounted": true,
+   "router": "ReportPrintSettingsRouter.js",
+   "models": [
+    "ReportPrintSettings",
+    "ReportPrintSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/modality/:modalityId",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/personnel/:personnelId",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/modality/:modalityId/personnel/:personnelId",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/category/:category",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/popular",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/:id/use",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "SampleReportRouter.js",
+   "models": [
+    "Modality",
+    "ModalityModel",
+    "Personnel",
+    "SampleReport",
+    "SampleReportModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Warehouse/products",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Warehouse/products",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Warehouse/products/:id",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Warehouse/products/:id",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Warehouse/transactions/product/:productId",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Warehouse/transactions/in",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Warehouse/transactions/out",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Warehouse/transactions/report",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Warehouse/inventory",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Warehouse/logs",
+   "mounted": true,
+   "router": "WarehouseRouter.js",
+   "models": [
+    "WarehouseProduct",
+    "WarehouseProductModel",
+    "WarehouseTransaction",
+    "WarehouseTransactionModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/series",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/pregnancy/:pregnancyId",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/series/:seriesId",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id/fromSeries",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/series/:seriesId",
+   "mounted": false,
+   "router": "eventRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "EventSeries",
+    "EventSeriesModel",
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs/patients",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs/patients/:receptionId",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs/modalities",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs/images/:receptionId",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pacs/report/:receptionId",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs/update-status",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs/patients/:receptionId/priority",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs/patients/:receptionId/hide",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pacs/patients/:receptionId/show",
+   "mounted": true,
+   "router": "PACSRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "Modality",
+    "ModalityModel",
+    "Reception",
+    "ReceptionModel",
+    "Room",
+    "RoomModel",
+    "UserProfileModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/backup/",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "POST",
+   "path": "/api/backup/save",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "POST",
+   "path": "/api/backup/restore",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "POST",
+   "path": "/api/backup/restore/file",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "GET",
+   "path": "/api/backup/list",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "GET",
+   "path": "/api/backup/download/:filename",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/backup/:filename",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "POST",
+   "path": "/api/backup/compare",
+   "mounted": true,
+   "router": "BackupRouter.js",
+   "models": []
+  },
+  {
+   "method": "GET",
+   "path": "/api/MedicalService/",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/MedicalService/:id",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/MedicalService/",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/MedicalService/:id",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/MedicalService/:id",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/MedicalService/search/:term",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/MedicalService/group/:groupId",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/MedicalService/price-range/:min/:max",
+   "mounted": true,
+   "router": "medical-service.routes.js",
+   "models": [
+    "MedicalService"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receipt-layout/",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/receipt-layout/",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/receipt-layout/:id",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/receipt-layout/:id",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receipt-layout/templates",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receipt-layout/:id",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/receipt-layout/:id/default",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receipt-layout/info/paper-sizes",
+   "mounted": true,
+   "router": "ReceiptLayoutRouter.js",
+   "models": [
+    "ReceiptLayout",
+    "ReceiptLayoutModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/reception-attachments/upload",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-attachments/types/list",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-attachments/stats/:receptionId",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-attachments/",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-attachments/:id",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/reception-attachments/:id",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/reception-attachments/:id",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/reception-attachments/:id/restore",
+   "mounted": true,
+   "router": "ReceptionAttachmentsRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionAttachments",
+    "ReceptionAttachmentsModel",
+    "ReceptionModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/FetalWeight/",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/FetalWeight/:id/measurements",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/FetalWeight/patient/:patientId",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/FetalWeight/:id",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/FetalWeight/:id",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/FetalWeight/:id/measurements/:measurementIndex",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/FetalWeight/:id/measurements/:measurementIndex",
+   "mounted": true,
+   "router": "fetalWeightCalculationRoutes.js",
+   "models": [
+    "FetalWeightCalculation"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReceiptSettings/set",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReceiptSettings/get",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReceiptSettings/getAll",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReceiptSettings/getOne/:id",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ReceiptSettings/update/:id",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/ReceiptSettings/delete/:id",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReceiptSettings/reset",
+   "mounted": true,
+   "router": "ReceiptSettingsRouter.js",
+   "models": [
+    "ReceiptSettings",
+    "ReceiptSettingsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-refund/",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-refund/:id",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/reception-refund/",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/reception-refund/:id",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/reception-refund/:id/complete",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/reception-refund/:id",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reception-refund/reception/:receptionId",
+   "mounted": true,
+   "router": "ReceptionRefundRouter.js",
+   "models": [
+    "Reception",
+    "ReceptionModel",
+    "ReceptionRefund",
+    "ReceptionRefundModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receptions-tag/",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receptions-tag/:id",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/receptions-tag/",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/receptions-tag/:id",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/receptions-tag/:id",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/receptions-tag/active/list",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/receptions-tag/reorder",
+   "mounted": true,
+   "router": "ReceptionsTagRouter.js",
+   "models": [
+    "ReceptionsTag",
+    "ReceptionsTagModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Roles/add",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Roles/addToDefult",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Roles/getAll",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Roles/getOne/:id",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Roles/update/:id",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Roles/changeRolesPermisions/:id",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Roles/delete/:id",
+   "mounted": true,
+   "router": "RolesRoutes.js",
+   "models": [
+    "RolesModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Device/",
+   "mounted": true,
+   "router": "DeviceRouter.js",
+   "models": [
+    "Device",
+    "DeviceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Device/type/:type",
+   "mounted": true,
+   "router": "DeviceRouter.js",
+   "models": [
+    "Device",
+    "DeviceModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Device/:id",
+   "mounted": true,
+   "router": "DeviceRouter.js",
+   "models": [
+    "Device",
+    "DeviceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Device/",
+   "mounted": true,
+   "router": "DeviceRouter.js",
+   "models": [
+    "Device",
+    "DeviceModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Device/:id",
+   "mounted": true,
+   "router": "DeviceRouter.js",
+   "models": [
+    "Device",
+    "DeviceModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Device/:id",
+   "mounted": true,
+   "router": "DeviceRouter.js",
+   "models": [
+    "Device",
+    "DeviceModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "orderRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "Order",
+    "OrderModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/batch",
+   "mounted": false,
+   "router": "orderRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "Order",
+    "OrderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/event/:eventId",
+   "mounted": false,
+   "router": "orderRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "Order",
+    "OrderModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "orderRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "Order",
+    "OrderModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "orderRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "Order",
+    "OrderModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "orderRouter.js",
+   "models": [
+    "Event",
+    "EventModel",
+    "Order",
+    "OrderModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/Permission/add",
+   "mounted": true,
+   "router": "PermisionsRoutes.js",
+   "models": [
+    "PermisionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Permission/getAll",
+   "mounted": true,
+   "router": "PermisionsRoutes.js",
+   "models": [
+    "PermisionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/Permission/getOne/:id",
+   "mounted": true,
+   "router": "PermisionsRoutes.js",
+   "models": [
+    "PermisionModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Permission/update/:id",
+   "mounted": true,
+   "router": "PermisionsRoutes.js",
+   "models": [
+    "PermisionModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/Permission/Disable/:id",
+   "mounted": true,
+   "router": "PermisionsRoutes.js",
+   "models": [
+    "PermisionModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/Permission/delete/:id",
+   "mounted": true,
+   "router": "PermisionsRoutes.js",
+   "models": [
+    "PermisionModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pregnancy-timeline/",
+   "mounted": true,
+   "router": "pregnancyTimelineRouter.js",
+   "models": [
+    "event"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pregnancy-timeline/week/:week",
+   "mounted": true,
+   "router": "pregnancyTimelineRouter.js",
+   "models": [
+    "event"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/pregnancy-timeline/category/:category",
+   "mounted": true,
+   "router": "pregnancyTimelineRouter.js",
+   "models": [
+    "event"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/pregnancy-timeline/",
+   "mounted": true,
+   "router": "pregnancyTimelineRouter.js",
+   "models": [
+    "event"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/pregnancy-timeline/:id",
+   "mounted": true,
+   "router": "pregnancyTimelineRouter.js",
+   "models": [
+    "event"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/pregnancy-timeline/:id",
+   "mounted": true,
+   "router": "pregnancyTimelineRouter.js",
+   "models": [
+    "event"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/system/sync-permissions",
+   "mounted": true,
+   "router": "SystemDataRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PermisionModel",
+    "PermissionModel",
+    "RolesModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/system/import-roles",
+   "mounted": true,
+   "router": "SystemDataRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PermisionModel",
+    "PermissionModel",
+    "RolesModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/system/import-admin-users",
+   "mounted": true,
+   "router": "SystemDataRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PermisionModel",
+    "PermissionModel",
+    "RolesModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/system/import-all",
+   "mounted": true,
+   "router": "SystemDataRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PermisionModel",
+    "PermissionModel",
+    "RolesModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/system/force-import-all",
+   "mounted": true,
+   "router": "SystemDataRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PermisionModel",
+    "PermissionModel",
+    "RolesModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/system/status",
+   "mounted": true,
+   "router": "SystemDataRouter.js",
+   "models": [
+    "AdminUsersModel",
+    "PermisionModel",
+    "PermissionModel",
+    "RolesModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "windowRouter.js",
+   "models": [
+    "EventModel",
+    "Pregnancy",
+    "PregnancyModel",
+    "Window",
+    "WindowModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/",
+   "mounted": false,
+   "router": "windowRouter.js",
+   "models": [
+    "EventModel",
+    "Pregnancy",
+    "PregnancyModel",
+    "Window",
+    "WindowModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "windowRouter.js",
+   "models": [
+    "EventModel",
+    "Pregnancy",
+    "PregnancyModel",
+    "Window",
+    "WindowModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "windowRouter.js",
+   "models": [
+    "EventModel",
+    "Pregnancy",
+    "PregnancyModel",
+    "Window",
+    "WindowModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "windowRouter.js",
+   "models": [
+    "EventModel",
+    "Pregnancy",
+    "PregnancyModel",
+    "Window",
+    "WindowModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/apply-to-pregnancy/:pregnancyId",
+   "mounted": false,
+   "router": "windowRouter.js",
+   "models": [
+    "EventModel",
+    "Pregnancy",
+    "PregnancyModel",
+    "Window",
+    "WindowModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/CashDeskKart/add",
+   "mounted": true,
+   "router": "CashDeskKartRoutes.js",
+   "models": [
+    "CashDeskKart",
+    "CashDeskKartModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/CashDeskKart/getAll",
+   "mounted": true,
+   "router": "CashDeskKartRoutes.js",
+   "models": [
+    "CashDeskKart",
+    "CashDeskKartModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/CashDeskKart/getOne/:id",
+   "mounted": true,
+   "router": "CashDeskKartRoutes.js",
+   "models": [
+    "CashDeskKart",
+    "CashDeskKartModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/CashDeskKart/update/:id",
+   "mounted": true,
+   "router": "CashDeskKartRoutes.js",
+   "models": [
+    "CashDeskKart",
+    "CashDeskKartModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/CashDeskKart/delete/:id",
+   "mounted": true,
+   "router": "CashDeskKartRoutes.js",
+   "models": [
+    "CashDeskKart",
+    "CashDeskKartModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "catalogRouter.js",
+   "models": [
+    "CatalogItem",
+    "CatalogItemModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/",
+   "mounted": false,
+   "router": "catalogRouter.js",
+   "models": [
+    "CatalogItem",
+    "CatalogItemModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "catalogRouter.js",
+   "models": [
+    "CatalogItem",
+    "CatalogItemModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "catalogRouter.js",
+   "models": [
+    "CatalogItem",
+    "CatalogItemModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "catalogRouter.js",
+   "models": [
+    "CatalogItem",
+    "CatalogItemModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/",
+   "mounted": false,
+   "router": "pregnancyRouter.js",
+   "models": [
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/patient/:patientId",
+   "mounted": false,
+   "router": "pregnancyRouter.js",
+   "models": [
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/:id",
+   "mounted": false,
+   "router": "pregnancyRouter.js",
+   "models": [
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/:id",
+   "mounted": false,
+   "router": "pregnancyRouter.js",
+   "models": [
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/:id",
+   "mounted": false,
+   "router": "pregnancyRouter.js",
+   "models": [
+    "Pregnancy",
+    "PregnancyModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/ReferrerPhysician/add",
+   "mounted": true,
+   "router": "RefDocRouter.js",
+   "models": [
+    "RefDoc"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReferrerPhysician/Find/:MSID",
+   "mounted": true,
+   "router": "RefDocRouter.js",
+   "models": [
+    "RefDoc"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ReferrerPhysician/getAll",
+   "mounted": true,
+   "router": "RefDocRouter.js",
+   "models": [
+    "RefDoc"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/ReferrerPhysician/Update/:ID",
+   "mounted": true,
+   "router": "RefDocRouter.js",
+   "models": [
+    "RefDoc"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/ReferrerPhysician/delete/:ID",
+   "mounted": true,
+   "router": "RefDocRouter.js",
+   "models": [
+    "RefDoc"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/PatientAttachments/upload",
+   "mounted": true,
+   "router": "ImageRouter.js",
+   "models": [
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/PatientAttachments/:id",
+   "mounted": true,
+   "router": "ImageRouter.js",
+   "models": [
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/PatientAttachments/patient/:patientId",
+   "mounted": true,
+   "router": "ImageRouter.js",
+   "models": [
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/PatientAttachments/:id",
+   "mounted": true,
+   "router": "ImageRouter.js",
+   "models": [
+    "PatientAttachmentsModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/",
+   "mounted": false,
+   "router": "index.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/insurance/init-status",
+   "mounted": false,
+   "router": "index.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/insurance/reinitialize",
+   "mounted": false,
+   "router": "index.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/chat/online-users",
+   "mounted": false,
+   "router": "index.js",
+   "models": [
+    "AdminUsersModel",
+    "ChatMessage",
+    "ChatMessageModel",
+    "ChatRoom",
+    "ChatRoomModel",
+    "adminUsersModel"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/wallet/byPatientCode/:patientCode",
+   "mounted": true,
+   "router": "WalletRouter.js",
+   "models": [
+    "Transaction",
+    "UserProfileModel",
+    "Wallet",
+    "WalletModel"
+   ]
+  }
+ ]
+}

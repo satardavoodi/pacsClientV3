@@ -172,7 +172,25 @@ class HighlightedText(str):
 
 def highlight(reference, name, text):
     row = next((r for r in reference.get('rows', []) if r['structure'] == name), None)
-    return HighlightedText(text) if row and large_deviation(row) else text
+    if not row or row.get('mapping_status') == 'anatomical_analogue':
+        return text
+    value, low, high = (row.get(key) for key in ('observed_cm3', 'lower_cm3', 'upper_cm3'))
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in (value, low, high)) or not 0 <= low <= high:
+        return text
+    label = 'Below reference' if value < low else 'Above reference' if value > high else 'Within reference'
+    median = row.get('median_cm3')
+    if low <= value <= high and type(median) in (int, float) and low <= median <= high:
+        label = 'Below median' if value < median else 'Above median' if value > median else 'At median'
+    shown = HighlightedText(text)
+    shown.highlight = large_deviation(row) or getattr(text, 'highlight', False)
+    # Keep anatomical names and numeric alignment unchanged; annotate numeric cells only.
+    try:
+        float(str(text))
+    except ValueError:
+        pass
+    else:
+        shown.reference_position = label
+    return shown
 
 
 def scientific_reference_page():
@@ -205,7 +223,7 @@ def scientific_reference_page():
         'Above: 100 x (measured - upper) / upper. Below: 100 x (lower - measured) / lower. '
         'Exactly 25%, smaller departures and in-range values are not red. '
         'This is a user-selected visual attention threshold, not a p-value, validated atrophy cutoff '
-        'or diagnosis. Starred cortical red values may reflect atlas mismatch.</p>'
+        'or diagnosis. Cortical anatomical analogues are not highlighted as abnormal.</p>'
         '<h2>Reference provenance</h2><p>Published reference tables from the cited authors are stored '
         'locally and checked for integrity. Technical version records are retained in the internal audit documentation.</p>')
 

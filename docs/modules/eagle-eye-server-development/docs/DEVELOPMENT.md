@@ -1,8 +1,12 @@
 # Development workflow
 
+**Owner workflow, 2026-10-09:** server function tests run on Razi; local source
+Client integration and both Client/Server builds run on the control computer after
+acceptance. [Read the durable workflow](DEVELOPER_TEST_BUILD_WORKFLOW.md).
+
 The canonical workstation repository is on the control computer:
-E:/ai-pacs/ai-pacs codes/ai-pacs beta version. This remote revision is an exported
-source subset, not a full Git clone; tests, dependencies and modules may be absent.
+E:/ai-pacs/ai-pacs codes/ai-pacs beta version. The Razi Developer revision is a reconciled complete declared source snapshot,
+not a Git working clone; dependencies and private runtime state are verified separately.
 Preserve remote changes and deliberately merge them back to the canonical repository.
 Never assume a Git push includes ignored Slicer binaries or model assets.
 

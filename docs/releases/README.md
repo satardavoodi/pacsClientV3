@@ -5,7 +5,14 @@ The operational procedures live in [`../../RELEASE.md`](../../RELEASE.md) and
 [`../../BUILD.md`](../../BUILD.md); files in this folder record scope and evidence.
 
 The current four-installer Standard Client request is recorded in
-[the v3.7.1 release record](VERSION_3.7.1_RELEASE.md). The earlier
+[the v3.7.3 release record](VERSION_3.7.3_RELEASE.md). It requests publication to
+all three Git repositories followed by one immutable input for both backends.
+The owner directed an independent Client source freeze; this is not Server parity,
+Server activation or installed production acceptance.
+The previous [v3.7.2 local install-QA record](VERSION_3.7.2_RELEASE.md) remains
+separate from Git-synchronized publication.
+The prior [v3.7.1 record](VERSION_3.7.1_RELEASE.md) retains its publication evidence.
+The earlier
 [v3.7.0 record](VERSION_3.7.0_RELEASE.md) is historical source publication;
 its interrupted Nuitka run does not establish a complete matrix. Eagle Eye Server is not
 part of this build. Earlier expanded Client/Server prerequisite work is recorded in

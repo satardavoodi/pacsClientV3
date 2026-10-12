@@ -347,7 +347,7 @@ def normalize_stt_provider(value: Any) -> str:
     v = str(value or "").strip().lower()
     if v in STT_PROVIDERS:
         return v
-    return _LEGACY_ROUTE_TO_PROVIDER.get(v, STT_PROVIDER_AIPACS_2)
+    return _LEGACY_ROUTE_TO_PROVIDER.get(v, STT_PROVIDER_AUTO)
 
 
 def get_stt_provider() -> str:

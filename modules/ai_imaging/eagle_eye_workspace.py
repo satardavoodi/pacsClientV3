@@ -13,7 +13,8 @@ from .background_analysis import BackgroundAnalysisDialog
 from .eagle_eye_function_dialog import active_viewer_context
 from . import eagle_eye_function_dialog
 from .eagle_eye_function_catalog import FUNCTION_NATIVE_ANALYSIS, FUNCTION_LEGION_CONSULT, FUNCTION_BRAIN_LESIONS, FUNCTION_ALIGNMENT
-from .eagle_eye_function_catalog import FUNCTION_TOTAL_SPINE
+from .eagle_eye_function_catalog import FUNCTION_TOTAL_SPINE, FUNCTION_LUMBAR_MARROW
+from .eagle_eye_function_catalog import FUNCTION_DENTAL_PANORAMA
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,9 @@ class EagleEyeWorkspaceController(QObject):
         self._alignment_widget = None
         self._total_spine_dialog = None
         self._total_spine_widget = None
+        self._marrow_dialog = None
+        self._marrow_widget = None
+        self._dental_widget = None
         self._analysis_sessions = {}
         self._saved_brain_reviews = {}
         self._session_keys = {}
@@ -94,8 +98,12 @@ class EagleEyeWorkspaceController(QObject):
             self._alignment_widget.teardown()
         if self._total_spine_widget is not None:
             self._total_spine_widget.teardown()
+        if self._marrow_widget is not None:
+            self._marrow_widget.teardown()
+        if self._dental_widget is not None:
+            self._dental_widget.teardown()
         current = [getattr(self, '_' + name + '_widget')
-                   for name in ('brain', 'lesion', 'alignment', 'total_spine')]
+                   for name in ('brain', 'lesion', 'alignment', 'total_spine', 'marrow')]
         for _, widget in self._analysis_sessions.values():
             if widget not in current:
                 if hasattr(widget, 'teardown'):
@@ -156,6 +164,8 @@ class EagleEyeWorkspaceController(QObject):
             self.open_brain(control_inputs=inputs)
         elif function == FUNCTION_ALIGNMENT:
             self.open_alignment()
+        elif function == FUNCTION_LUMBAR_MARROW:
+            self.open_marrow()
         else:
             self.window.eagle_eye_mode = context['eagle_eye_mode']
             self.window.imaging_tab.eagle_eye_mode = context['eagle_eye_mode']
@@ -203,7 +213,8 @@ class EagleEyeWorkspaceController(QObject):
         """Read worker-owned state; never infer completion from an open window."""
         function = getattr(self, '_controlled_function', None)
         widget = (self._alignment_widget if function == FUNCTION_ALIGNMENT else
-                  self._total_spine_widget if function == FUNCTION_TOTAL_SPINE else None)
+                  self._total_spine_widget if function == FUNCTION_TOTAL_SPINE else
+                  self._marrow_widget if function == FUNCTION_LUMBAR_MARROW else None)
         if getattr(self, '_controlled_brain', False):
             widget = self._lesion_widget if function == FUNCTION_BRAIN_LESIONS else self._brain_widget
         if widget is not None:
@@ -216,7 +227,7 @@ class EagleEyeWorkspaceController(QObject):
             else:
                 ready = bool(getattr(widget, '_result', None))
             data = {'function': function, 'state': 'running' if busy else 'failed' if getattr(widget, '_control_error', None) else 'cancelled' if widget._cancel.is_set() else 'result_ready' if ready else 'needs_input',
-                    'message': widget.status.text(), 'report_available': bool(getattr(widget, 'report_result', None) or (getattr(widget, '_result', None) or {}).get('pdf_available')),
+                    'message': widget.status.text(), 'report_available': bool(getattr(widget, 'report_result', None) or (getattr(widget, '_result', None) or {}).get('pdf_available') or (getattr(widget, '_result', None) or {}).get('report_html')),
                     'series_uid': getattr(self, '_controlled_series_uid', '')}
             if function in (FUNCTION_ALIGNMENT, FUNCTION_TOTAL_SPINE):
                 editor = widget if function == FUNCTION_ALIGNMENT else widget.tabs.currentWidget()
@@ -268,12 +279,16 @@ class EagleEyeWorkspaceController(QObject):
             choice = controlled_choice if isinstance(controlled_choice, str) else eagle_eye_function_dialog.choose_eagle_eye_function(modality, parent=self.window, mode=mode)
             if choice == FUNCTION_LEGION_CONSULT:
                 self._start_legion()
+            elif choice == FUNCTION_DENTAL_PANORAMA and modality in ('DX', 'CR', 'PX', 'IO'):
+                self.open_dental()
             elif choice == FUNCTION_ALIGNMENT and modality in ('DX', 'CR'):
                 self.open_alignment()
             elif choice == FUNCTION_TOTAL_SPINE and modality in ('DX', 'CR'):
                 self.open_total_spine()
             elif choice == FUNCTION_BRAIN_LESIONS and mode == 'brain_mri':
                 self.open_lesions()
+            elif choice == FUNCTION_LUMBAR_MARROW and modality == 'MR':
+                self.open_marrow()
             elif choice == FUNCTION_NATIVE_ANALYSIS:
                 if mode == "brain_mri":
                     self.open_brain()
@@ -296,9 +311,9 @@ class EagleEyeWorkspaceController(QObject):
         identity = self._source_identity
         return identity[1] if identity and identity[0] == str(self.window._study_uid) else ''
 
-    def _select_analysis_session(self, name):
+    def _select_analysis_session(self, name, *, series_uid=None):
         """Keep reader edits with their input series when Function is used again."""
-        uid = self.selected_series_uid()
+        uid = self.selected_series_uid() if series_uid is None else series_uid
         previous = self._session_keys.get(name)
         widget = getattr(self, '_' + name + '_widget')
         if widget is not None and previous == uid:
@@ -440,6 +455,48 @@ class EagleEyeWorkspaceController(QObject):
         dialog.raise_()
         dialog.activateWindow()
 
+    def open_marrow(self, *, saved_result=None):
+        """Open the study/series-owned research form without starting inference."""
+        self._select_analysis_session('marrow')
+        if self._marrow_dialog is None:
+            from .lumbar_marrow_widget import LumbarMarrowWidget
+            dialog = BackgroundAnalysisDialog(self.window)
+            dialog.setWindowTitle('Eagle Eye Lumbar Bone Marrow')
+            dialog.resize(900, 820)
+            layout = QVBoxLayout(dialog)
+            widget = LumbarMarrowWidget(dialog, study_uid=self.window._study_uid,
+                                       preferred_series_uid=self.selected_series_uid(), load_inputs=saved_result is None)
+            layout.addWidget(widget)
+            dialog.bind_analysis(widget)
+            self._marrow_dialog, self._marrow_widget = dialog, widget
+            widget.resultsReady.connect(lambda: self._show_marrow_results(widget, dialog))
+        if saved_result is not None:
+            if self._marrow_widget._future is None and self._marrow_widget._result is None:
+                self._marrow_widget.restore_saved_result(saved_result)
+            return
+        tabs = getattr(self.window, 'tab_widget', None)
+        if isinstance(tabs, QTabWidget) and tabs.indexOf(self._marrow_widget.review_page) >= 0:
+            tabs.setCurrentWidget(self._marrow_widget.review_page)
+            return
+        self._marrow_dialog.show()
+        self._marrow_dialog.raise_()
+        self._marrow_dialog.activateWindow()
+
+    def _show_marrow_results(self, widget, dialog):
+        """Keep input controls in the popup and review in a study-owned tab."""
+        if self._disposed:
+            return
+        tabs = getattr(self.window, 'tab_widget', None)
+        if not isinstance(tabs, QTabWidget):
+            return
+        page = widget.review_page
+        if tabs.indexOf(page) < 0:
+            tabs.addTab(page, 'Lumbar Bone Marrow')
+        dialog.hide()
+        dialog._activity_timer.stop()
+        if widget is self._marrow_widget:
+            tabs.setCurrentWidget(page)
+
     def open_brain(self, *, control_inputs=None, saved_result=None):
         """Keep the viewer on screen while the Brain tools live in an owned popup."""
         ensure_history = getattr(self.window, 'ensure_saved_brain_results', None)
@@ -473,9 +530,29 @@ class EagleEyeWorkspaceController(QObject):
         if self._brain_widget._future is None and self._brain_widget._result is None:
             self._brain_widget.start_study_segmentation()
 
-    def open_alignment(self):
+    def open_dental(self):
+        """Open the explicit panoramic preparation and result review tab."""
+        tabs = getattr(self.window, 'tab_widget', None)
+        if not isinstance(tabs, QTabWidget):
+            self._message('Open the Eagle Eye study workspace first.')
+            return
+        if self._dental_widget is None:
+            from .dental_panorama_widget import DentalPanoramaWidget
+            self._dental_widget = DentalPanoramaWidget(tabs, study_uid=self.window._study_uid)
+            tabs.addTab(self._dental_widget, 'Panoramic Dental AI')
+            self._dental_widget.scan_study()
+        tabs.setCurrentWidget(self._dental_widget)
+
+    def open_alignment(self, *, saved_result=None):
         """Keep the study-owned measurements reachable through a review tab."""
-        self._select_analysis_session('alignment')
+        saved_uid = None
+        if saved_result is not None:
+            sources = saved_result.get('source_binding', [])
+            if len(sources) != 1 or sources[0].get('study_uid') != str(self.window._study_uid):
+                raise ValueError('Saved Alignment belongs to another examination.')
+            saved_uid = sources[0].get('series_uid')
+            if not saved_uid:raise ValueError('Saved Alignment series is unavailable.')
+        self._select_analysis_session('alignment', series_uid=saved_uid)
         if self._alignment_dialog is None:
             from .eagle_eye_alignment.widget import AlignmentWidget
             dialog = BackgroundAnalysisDialog(self.window)
@@ -483,7 +560,7 @@ class EagleEyeWorkspaceController(QObject):
             dialog.resize(1250, 880)
             layout = QVBoxLayout(dialog)
             widget = AlignmentWidget(dialog, study_uid=self.window._study_uid)
-            widget.preferred_series_uid = self.selected_series_uid()
+            widget.preferred_series_uid = saved_uid or self.selected_series_uid()
             layout.addWidget(widget)
             self._alignment_dialog, self._alignment_widget = dialog, widget
             dialog.bind_analysis(widget)
@@ -505,14 +582,20 @@ class EagleEyeWorkspaceController(QObject):
             self._alignment_dialog.show()
             self._alignment_dialog.raise_()
             self._alignment_dialog.activateWindow()
-        if self._alignment_widget.image is None and self._alignment_widget._future is None:
+        if saved_result is not None:
+            self._alignment_widget.restore_saved_result(saved_result)
+        elif self._alignment_widget.image is None and self._alignment_widget._future is None:
             self._alignment_widget.scan_study()
 
-    def open_total_spine(self, *, control_inputs=None):
+    def open_total_spine(self, *, control_inputs=None, saved_result=None):
         """Prepare proposals before adding the study-owned review tab."""
         if not str(self.window._study_uid or '').strip():
             self._message('Open a study before using Total Spine Alignment.')
             return
+        if saved_result is not None:
+            from .eagle_eye_brain.saved_results import _same_study
+            if not _same_study(saved_result, self.window._study_uid):
+                raise ValueError('Saved spine result belongs to another examination.')
         tabs = getattr(self.window, 'tab_widget', None)
         self._select_analysis_session('total_spine')
         if self._total_spine_widget is None:
@@ -525,13 +608,23 @@ class EagleEyeWorkspaceController(QObject):
             dialog.bind_analysis(widget)
             self._total_spine_dialog, self._total_spine_widget = dialog, widget
             widget._control_projection = (control_inputs or {}).get('projection')
-            widget.resultsReady.connect(lambda: self._show_spine_results(widget, dialog))
+            widget.resultsReady.connect(lambda: self._show_spine_results(
+                widget, dialog, activate=not getattr(widget, '_restoring_saved', False)))
             selected_uid = self.selected_series_uid()
-            if selected_uid:
+            if saved_result is not None:
+                widget.restore_saved_result(saved_result)
+            elif selected_uid:
                 widget.begin_automatic(series_uid=selected_uid)
             else:
                 widget.begin_automatic()
         widget = self._total_spine_widget
+        if saved_result is not None:
+            # Show restoration immediately, including recoverable missing-source errors.
+            original = tabs.currentWidget() if isinstance(tabs, QTabWidget) else None
+            self._show_spine_results(widget, self._total_spine_dialog, activate=False)
+            if original is not None:
+                tabs.setCurrentWidget(original)
+            return
         if isinstance(tabs, QTabWidget) and tabs.indexOf(widget) >= 0:
             tabs.setCurrentWidget(widget)
         else:
@@ -539,7 +632,7 @@ class EagleEyeWorkspaceController(QObject):
             self._total_spine_dialog.raise_()
             self._total_spine_dialog.activateWindow()
 
-    def _show_spine_results(self, widget=None, dialog=None):
+    def _show_spine_results(self, widget=None, dialog=None, *, activate=True):
         if self._disposed:
             return
         widget = widget if widget is not None else self._total_spine_widget
@@ -550,7 +643,7 @@ class EagleEyeWorkspaceController(QObject):
                 dialog.layout().removeWidget(widget)
                 tabs.addTab(widget, 'Total Spine Alignment')
             dialog.hide()
-            if widget is self._total_spine_widget:
+            if activate and widget is self._total_spine_widget:
                 tabs.setCurrentWidget(widget)
         else:
             dialog.setWindowTitle('Total Spine Alignment | Review results')

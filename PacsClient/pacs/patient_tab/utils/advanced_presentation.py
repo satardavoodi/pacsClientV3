@@ -1,4 +1,4 @@
-"""Worker-side preparation of nonspatial MR/SC, DOC/SC and DX presentations.
+"""Worker-side preparation of nonspatial MR/SC, DOC/SC and DX/PX presentations.
 
 Frames retain their native dimensions and components. They are NOT a 3D volume.
 Only the Advanced renderer consumes these independently prepared VTK images.
@@ -75,7 +75,8 @@ def contains_presentation_frames(files):
         except (OSError, ValueError):
             continue
         if (str(ds.get('SOPClassUID', '')), str(ds.get('Modality', '')).upper()) in (
-                (SC, 'MR'), (SC, 'DOC'), (DX_PRESENTATION, 'DX'), (ENHANCED_MR, 'MR')):
+                (SC, 'MR'), (SC, 'DOC'), (DX_PRESENTATION, 'DX'),
+                (DX_PRESENTATION, 'PX'), (ENHANCED_MR, 'MR')):
             return True
     return False
 
@@ -247,7 +248,7 @@ def load_presentation_sequence(files, *, series_number, max_itk_threads=None):
         return _load_enhanced_mr_frames(headers, series_number)
     is_dx = any(str(ds.get('SOPClassUID', '')) == DX_PRESENTATION for _, ds in headers)
     is_document = any(str(ds.get('Modality', '')).upper() == 'DOC' for _, ds in headers)
-    modality = 'DX' if is_dx else ('DOC' if is_document else 'MR')
+    modality = str(headers[0][1].get('Modality', '')).upper() if is_dx else ('DOC' if is_document else 'MR')
     allowed_sops = (DX_PRESENTATION,) if is_dx else ((SC,) if is_document else (SC, MR))
     # A proven presentation candidate must not silently fall back to size grouping.
     if any(str(ds.get('Modality', '')).upper() != modality for _, ds in headers):
@@ -268,7 +269,7 @@ def load_presentation_sequence(files, *, series_number, max_itk_threads=None):
                 or (photo, components) not in (('MONOCHROME2', 1), ('RGB', 3))
                 or (components == 3 and int(ds.get('BitsAllocated', 0)) != 8)
                 or str(ds.get('VOILUTFunction', 'LINEAR')) not in ('', 'LINEAR')
-                or ds.get('VOILUTSequence') or ds.get('ModalityLUTSequence')
+                or (ds.get('VOILUTSequence') and not is_dx) or ds.get('ModalityLUTSequence')
                 or (is_dx and (photo != 'MONOCHROME2'
                     or str(ds.get('PresentationLUTShape', 'IDENTITY')) != 'IDENTITY'))):
             raise ValueError('Unsupported presentation frame layout')
@@ -317,6 +318,27 @@ def load_presentation_sequence(files, *, series_number, max_itk_threads=None):
                 image.SetSpacing((1.0, 1.0, 1.0))
         if str(ds.SOPClassUID) == MR or is_dx:
             image = apply_filters(image, {'series': {'modality': modality}}, max_itk_threads=max_itk_threads)
+        projection_window = None
+        if is_dx and ds.get('VOILUTSequence'):
+            from .dicom_windowing import normalize_window_level
+            projection_window = normalize_window_level(
+                ds.get('WindowWidth'), ds.get('WindowCenter'),
+                treat_legacy_placeholder_as_missing=True,
+            )
+            if projection_window[0] is None:
+                # DICOM C.11.2: window and explicit LUT are alternative views.
+                # Keep valid source windowing (as Fast does); otherwise apply
+                # one LUT here on the worker, never again during rendering.
+                from pydicom.pixel_data_handlers.util import apply_voi_lut
+                bits = int(ds.VOILUTSequence[0].LUTDescriptor[2])
+                if bits not in (8, 16):
+                    raise ValueError('Unsupported projection VOI LUT bit depth')
+                mapped = apply_voi_lut(sitk.GetArrayFromImage(image), ds)
+                mapped_image = sitk.GetImageFromArray(mapped)
+                mapped_image.CopyInformation(image)
+                image = mapped_image
+                width = float((1 << bits) - 1)
+                projection_window = (width, width / 2.0)
         frame = convert_itk2vtk(image)
         if (frame.GetDimensions() != (int(ds.Columns), int(ds.Rows), 1)
                 or frame.GetNumberOfScalarComponents() != int(ds.SamplesPerPixel)):
@@ -329,6 +351,8 @@ def load_presentation_sequence(files, *, series_number, max_itk_threads=None):
             return float(value)
         lo, hi = frame.GetScalarRange()
         ww, wc = first_float(ds.get('WindowWidth')), first_float(ds.get('WindowCenter'))
+        if projection_window is not None:
+            ww, wc = projection_window
         if ww is None or ww <= 0 or wc is None:
             ww, wc = max(1.0, hi - lo), (lo + hi) / 2.0
         instances.append(dict(instance_path=path, instance_number=int(ds.get('InstanceNumber', 0)),

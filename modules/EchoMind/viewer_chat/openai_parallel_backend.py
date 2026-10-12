@@ -104,19 +104,28 @@ def _call(
     api_key_override: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    prompt_key: str | None = None,
 ) -> dict[str, Any]:
     cfg = get_openai_settings()
+    key = prompt_key or {'report': 'report_generation', 'correction': 'report_generation',
+                         'vision': 'image_artifact', 'eagle_eye': 'image_artifact',
+                         'text': 'report_generation'}.get(feature_name, feature_name)
+    personal_prompt = _feature_prompt(key)
+    if not personal_prompt:
+        raise ValueError('Define your own personal API prompt for this workflow in AI Connection settings before sending.')
+    if not str(cfg.get('api_key') or '').strip() or not str(cfg.get('base_url') or '').strip():
+        raise ValueError('Configure your own personal API credentials and endpoint before sending.')
     resolved_model = _resolve_feature_model(feature_name, model)
     result = chat_completion(
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": personal_prompt},
             {"role": "user", "content": user_content},
         ],
         model=resolved_model,
         temperature=float(cfg.get("temperature", 0.2) if temperature is None else temperature),
         max_tokens=int(max_tokens or cfg.get("max_output_tokens") or 4096),
         timeout=int(cfg.get("timeout_seconds") or 60),
-        api_key_override=api_key_override,
+        api_key_override=None,
         reasoning_effort=str(cfg.get("reasoning_effort") or "").strip() or None,
     )
     return {
@@ -316,6 +325,7 @@ def BreastExpertAssistant(
     )
     return _call(
         feature_name="report",
+        prompt_key='breast_assistant',
         system_prompt=_compose_prompt(prompt, "breast_assistant"),
         user_content=user_msg,
         user_msg=user_msg,

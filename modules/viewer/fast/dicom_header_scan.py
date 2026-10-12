@@ -107,6 +107,7 @@ class DicomHeaderEntry:
     frame_time_ms: Optional[float] = None
     cine_rate: Optional[float] = None
     recommended_display_frame_rate: Optional[float] = None
+    voi_lut_function: Optional[str] = None
 
 
 def entry_from_dataset(path: str, ds: pydicom.Dataset) -> DicomHeaderEntry:
@@ -149,6 +150,7 @@ def entry_from_dataset(path: str, ds: pydicom.Dataset) -> DicomHeaderEntry:
         recommended_display_frame_rate=_safe_float(
             getattr(ds, "RecommendedDisplayFrameRate", None)
         ),
+        voi_lut_function=(str(getattr(ds, "VOILUTFunction", "") or "").strip().upper() or None),
     )
 
 

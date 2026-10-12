@@ -30,6 +30,17 @@ def isolated_additional_model_payloads(tmp_path, monkeypatch):
     from tests.code.builder.test_eagle_eye_alignment_payload import make_accepted_payload
     from tests.code.builder.test_eagle_eye_total_spine_payload import make_spine_payload, SYNTHETIC_HASH
     from modules.ai_imaging.eagle_eye_total_spine import service
+    from tests.code.builder.test_eagle_eye_engine_payload import fixture_bundle
+    from tests.code.builder.test_lumen_vmtk_payload import bundle as native_bundle
+    from builder.eagle_eye_engine_payload import digest
+    monkeypatch.setenv('AIPACS_LUMEN_VMTK_BUNDLE_SOURCE', str(native_bundle(tmp_path / 'vmtk')))
+    for engine in ('breast', 'bone-age'):
+        variable = 'AIPACS_EAGLE_EYE_' + engine.upper().replace('-', '_') + '_SOURCE'
+        source = fixture_bundle(tmp_path / engine, engine)
+        (source / 'distribution-approval.json').write_text(json.dumps({
+            'approved':True, 'manifest_sha256':digest(source / 'manifest.json'),
+            'rights_evidence':['Synthetic fixture only; no real model approval']}))
+        monkeypatch.setenv(variable, str(source))
     monkeypatch.setattr(service, 'WEIGHT_SHA256', SYNTHETIC_HASH)
     monkeypatch.setenv('AIPACS_EAGLE_EYE_ALIGNMENT_SOURCE', str(make_accepted_payload(tmp_path / 'alignment')))
     monkeypatch.setenv('AIPACS_EAGLE_EYE_TOTAL_SPINE_SOURCE', str(make_spine_payload(tmp_path / 'spine')))

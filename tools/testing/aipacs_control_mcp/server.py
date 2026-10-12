@@ -93,6 +93,13 @@ def _send(
         'prepare_patient_comment', 'prepare_patient_voice', 'open_support_issue'
     } else entities or {}
     recorded_result=result
+    if action in {
+        'prepare_course_draft', 'update_course_draft', 'get_course_draft', 'load_course_draft',
+        'save_course_draft', 'course_authoring_status', 'open_course_editor', 'preview_course',
+    }:
+        # Educational drafts may include clinical material; no bodies in general test receipts.
+        recorded_entities = {}
+        recorded_result = {key: result.get(key) for key in ('ok', 'action', 'error_code', 'client_ms')}
     if action=='ui_context_status':
         data=result.get('data')
         if isinstance(data,dict) and isinstance(data.get('ui_image'),dict):
@@ -120,6 +127,13 @@ def ping() -> str:
 def list_actions() -> str:
     """List every command the in-app bus currently exposes."""
     return _j(_send("list_actions"))
+
+
+@mcp.tool()
+def secretary_terminal_receipt(request_id: str, session_id: str, runtime_instance: str) -> str:
+    """Read a verified aggregate count from the explicit source QA runtime only."""
+    return _j(_send('secretary_terminal_receipt', {
+        'request_id': request_id, 'session_id': session_id, 'runtime_instance': runtime_instance}))
 
 
 @mcp.tool()
@@ -183,6 +197,24 @@ def ai_settings_control(action: str, preferences_json: str = "{}", confirmed: bo
 def raw_command(action: str, entities_json: str = "{}", mode: str = "") -> str:
     """Send any bus action with a JSON entities object (escape hatch)."""
     return _j(_send(action, json.loads(entities_json or "{}"), mode=mode))
+
+
+@mcp.tool()
+def course_authoring_control(action: str, entities_json: str = "{}") -> str:
+    """Prepare, correct, save, reopen or preview an Education text course.
+
+    Uses the same typed CommandBus actions as Secretary. Save/load/open return
+    operation_id: poll course_authoring_status before claiming completion.
+    No arbitrary files, generated code or DICOM import is accepted.
+    """
+    from modules.ai_imaging.eagle_eye_remote.secretary.validation.course_authoring import COURSE_AUTHORING_MODELS
+    if action not in COURSE_AUTHORING_MODELS:
+        return _j({'ok':False, 'action':action, 'error_code':'UNKNOWN_COURSE_ACTION'})
+    try:
+        entities = COURSE_AUTHORING_MODELS[action].model_validate(json.loads(entities_json)).model_dump(exclude_unset=True)
+    except (ValueError, TypeError):
+        return _j({'ok':False, 'action':action, 'error_code':'INVALID_COURSE_COMMAND'})
+    return _j(_send(action, entities, mode='assistant'))
 
 
 # â”€â”€ workflow tools (requested command set) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

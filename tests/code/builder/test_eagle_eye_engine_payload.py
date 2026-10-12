@@ -7,11 +7,14 @@ import pytest
 from builder import eagle_eye_engine_payload as payload
 
 
-def fixture_bundle(root: Path, engine: str) -> Path:
+def fixture_bundle(root: Path, engine: str, *, with_native=True) -> Path:
     root.mkdir()
     required = ['runner.py', 'runtime/python.exe', 'source/worker.py',
                 'weights/final_model.pth' if engine == 'bone-age'
                 else 'weights/best_fcos_csv_delivery.pth']
+    if engine == 'breast' and with_native:
+        required += ['runtime/msvcp140.dll', 'runtime/vcruntime140.dll',
+                     'runtime/vcruntime140_1.dll']
     hashes = {}
     for name in required:
         file = root / name
@@ -55,3 +58,9 @@ def test_distribution_needs_bound_rights_receipt(tmp_path):
         approved=True, manifest_sha256='0' * 64, rights_evidence=['fixture'])), encoding='utf-8')
     with pytest.raises(ValueError, match='does not match'):
         payload.validate_payload(source, 'bone-age')
+
+
+def test_breast_requires_sealed_app_local_cpp_runtime(tmp_path):
+    source = fixture_bundle(tmp_path / 'source', 'breast', with_native=False)
+    with pytest.raises(ValueError, match='app-local Visual C'):
+        payload.validate_payload(source, 'breast', for_distribution=False)

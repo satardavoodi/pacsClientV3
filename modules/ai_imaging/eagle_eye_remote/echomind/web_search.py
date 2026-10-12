@@ -51,6 +51,8 @@ def trusted_url(url):
 
 
 def parse_result(body):
+    from ..usage import record_tokens
+    record_tokens(body.get("usage") if isinstance(body, dict) else None, "web-search")
     if not isinstance(body, dict) or body.get('status') != 'completed':
         raise ValueError('Web search did not complete')
     output = body.get('output', [])

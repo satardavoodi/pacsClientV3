@@ -574,7 +574,8 @@ class SingleInstanceLock:
                 if os.environ.get("AIPACS_NO_HARD_EXIT", "") != "1":
                     # Failsafe: a modal dialog or stuck teardown must not
                     # block the takeover forever.
-                    QTimer.singleShot(8000, lambda: os._exit(0))
+                    from PacsClient.utils.process_exit import hard_exit
+                    QTimer.singleShot(8000, lambda: hard_exit(0))
                 return
         except Exception:
             pass

@@ -93,7 +93,7 @@ class SecretaryExecutor:
     def _list_patients(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
         return drive_steps(self._list_patients_steps(plan, state))
 
-    def _list_patients_steps(self, plan: SecretaryActionPlan, state: dict[str, Any]) -> SecretaryResult:
+    def _list_patients_steps(self, plan: SecretaryActionPlan, state: dict[str, Any], *, confirmed: bool = False) -> SecretaryResult:
         # A failed replacement search must not leave an older ordinal target.
         state.pop("last_list_source", None)
         if not self.adapter.is_available():
@@ -129,6 +129,14 @@ class SecretaryExecutor:
             criteria["date_to"] = date_to
         if modality_filter:
             criteria["modality"] = modality_filter
+
+        # Prefer the canonical Home adapter's bound list/search receipt. The
+        # legacy row-list result has no verifiable list identity. A bus refusal
+        # is final; only absence of the registered action permits legacy fallback.
+        bus_plan = dict(plan, entities={**entities, **criteria, "source": source})
+        bus_result = self._try_command_bus(bus_plan, state, confirmed=confirmed)
+        if bus_result is not None:
+            return bus_result
 
         try:
             (yield ExecutionCall(self.adapter.search, getattr(self.adapter, "search_async", self.adapter.search), kwargs={"source": source, "criteria": criteria}))
@@ -371,7 +379,7 @@ class SecretaryExecutor:
     def execute_steps(self, plan: SecretaryActionPlan, state: dict[str, Any], *, confirmed: bool = False) -> SecretaryResult:
         action = plan.get("action")
         if action == "list_patients":
-            return (yield from self._list_patients_steps(plan, state))
+            return (yield from self._list_patients_steps(plan, state, confirmed=confirmed))
         if action == "open_patient":
             return (yield from self._open_patient_steps(plan, state, confirmed=confirmed))
         if action == "download_patient":

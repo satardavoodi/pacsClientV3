@@ -22,7 +22,7 @@
   {
     "path": "service.py",
     "source_sha256": "9a1409ef952233dff1a7019604e1b0b033e9944f57f2561070e98113f960d0f4",
-    "adapted_sha256": "9a1409ef952233dff1a7019604e1b0b033e9944f57f2561070e98113f960d0f4"
+    "adapted_sha256": "dc34c1bcb6021efb83978d04aa0874e6f4ddc65571a3fb485041e31f580af72f"
   },
   {
     "path": "upstream_manifest.json",
@@ -42,7 +42,7 @@
   {
     "path": "core/ai_chat_config.py",
     "source_sha256": "3c87091d7f349cc6c9d2704cfcc679dbe26c63bbea9b34776d2dcd67120685e5",
-    "adapted_sha256": "3c87091d7f349cc6c9d2704cfcc679dbe26c63bbea9b34776d2dcd67120685e5"
+    "adapted_sha256": "fe022e39d86d1af10e956f2c9b8c2581078333a18fcff99a0b3b52ed6f9bfc0a"
   },
   {
     "path": "core/api_manager.py",
@@ -72,7 +72,7 @@
   {
     "path": "core/normal_templates.py",
     "source_sha256": "01a4c43af051123b283b4b3a4b42e70a81ec6dc4abf610eb0ebd6bf1bdb3ad31",
-    "adapted_sha256": "224d8cb8b9cc21bb7a8eb89d9ac2c45e9868a5fce3272ab91bf7ea1fae1eb4f1"
+    "adapted_sha256": "36694271ab8bb543e27622baa900856f6a9db6f86936aebef35265c122680c36"
   },
   {
     "path": "core/settings_store.py",
@@ -152,7 +152,7 @@
   {
     "path": "core/viewer_chat/openai_reporter.py",
     "source_sha256": "0d9435015ea494f3bd9d44136106ca157d8a7396988964fd24b37cf2dab31b58",
-    "adapted_sha256": "1d7a6ed506fc0db9932515a691dfb8ff485d7319f6a3096ed7f631ee308cd243"
+    "adapted_sha256": "d50303233bc9f0e471a9e1f75be502875b01036e3ad71e010335b83783c78d1b"
   },
   {
     "path": "core/viewer_chat/turbo_mammo_modules.py",

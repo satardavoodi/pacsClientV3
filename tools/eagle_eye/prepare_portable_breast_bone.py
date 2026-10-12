@@ -19,6 +19,9 @@ sys.path.insert(0, str(REPO))
 from modules.ai_imaging.eagle_eye_engines.service import validate_bundle
 
 PYTHON_MINOR = {'breast': (3, 10), 'bone-age': (3, 12)}
+VC_RUNTIME = (REPO / 'modules/mpr/advanced_3d_slicer/slicer_custom_app'
+              / 'NewMPR2Slicer/build/bin/Release')
+VC_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 
 
 def digest(path: Path) -> str:
@@ -40,13 +43,14 @@ def _package_ignores(directory: str, names: list[str]) -> set[str]:
 
 
 def _probe_runtime(runtime: Path, engine: str) -> dict:
-    modules = ('torch', 'torchvision', 'pydicom', 'numpy', 'pandas') if engine == 'breast' else (
+    modules = ('torch', 'torchvision', 'pydicom', 'numpy', 'pandas', 'itk') if engine == 'breast' else (
         'torch', 'timm', 'pydicom', 'numpy')
     code = (
         'import importlib,json,pathlib,sys; '
         'root=pathlib.Path(sys.prefix).resolve(); '
         'names=' + repr(modules) + '; '
         'mods=[importlib.import_module(name) for name in names]; '
+        + ('import itk; itk.GDCMImageIO.New(); ' if engine == 'breast' else '') +
         'assert root==pathlib.Path(sys.executable).resolve().parent; '
         'assert all(pathlib.Path(mod.__file__).resolve().is_relative_to(root) for mod in mods); '
         'print(json.dumps({"version":list(sys.version_info[:3]),"modules":names}))'
@@ -62,7 +66,8 @@ def _probe_runtime(runtime: Path, engine: str) -> dict:
     return probe
 
 
-def prepare(engine: str, development_bundle: Path, python_home: Path, output: Path) -> Path:
+def prepare(engine: str, development_bundle: Path, python_home: Path, output: Path,
+            *, vc_runtime_dir: Path | None = None) -> Path:
     if engine not in PYTHON_MINOR:
         raise ValueError('Unknown Eagle Eye engine.')
     development_bundle = development_bundle.resolve()
@@ -79,7 +84,14 @@ def prepare(engine: str, development_bundle: Path, python_home: Path, output: Pa
     if original.get('deployment') != 'development-venv':
         raise ValueError('Expected the explicitly verified development engine input.')
     runtime = output / 'runtime'
+    vc_source = (vc_runtime_dir or VC_RUNTIME).resolve()
+    if engine == 'breast' and any(not (vc_source / name).is_file() for name in VC_REQUIRED):
+        raise ValueError('Breast requires the approved app-local Visual C++ runtime files.')
     shutil.copytree(python_home, runtime, ignore=_base_ignores)
+    if engine == 'breast':
+        for path in vc_source.glob('*.dll'):
+            if path.name.lower().startswith(('msvcp140', 'vcruntime140', 'concrt140')):
+                shutil.copy2(path, runtime / path.name)
     shutil.copytree(development_bundle / 'runtime/Lib/site-packages',
                     runtime / 'Lib/site-packages', dirs_exist_ok=True, ignore=_package_ignores)
     for name in ('source', 'weights'):
@@ -120,5 +132,6 @@ if __name__ == '__main__':
     parser.add_argument('--development-bundle', type=Path, required=True)
     parser.add_argument('--python-home', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--vc-runtime-dir', type=Path, default=VC_RUNTIME)
     args = parser.parse_args()
-    print(f'Prepared {prepare(args.engine, args.development_bundle, args.python_home, args.output)}')
+    print(f'Prepared {prepare(args.engine, args.development_bundle, args.python_home, args.output, vc_runtime_dir=args.vc_runtime_dir)}')

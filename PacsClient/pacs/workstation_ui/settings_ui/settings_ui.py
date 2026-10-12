@@ -124,6 +124,7 @@ class SettingsTabWidget(QTabWidget):
         self.viewer_group = None
         self.ai_group = None
         self._requested_ai_page = None
+        self.ai_connection_settings = None
 
         self._add_lazy_tab('Server Settings', self._create_server_settings)
         self._add_lazy_tab('Viewer Configuration', self._create_viewer_group)
@@ -186,6 +187,10 @@ class SettingsTabWidget(QTabWidget):
         self.server_settings = ServerSettingsWidget()
         self.server_settings.eagleEyeSettingsRequested.connect(self._open_eagle_eye_settings)
         return self.server_settings
+
+    def _create_user_settings(self):
+        from .user_settings import UserSettingsWidget
+        return UserSettingsWidget(self)
 
     def open_assistant_section(self, section):
         """Resolve bounded section IDs through the existing lazy settings pages."""
@@ -252,24 +257,85 @@ class SettingsTabWidget(QTabWidget):
         if is_module_enabled('echomind'):
             pages.append(('EchoMind', self._create_echomind_settings))
         pages.extend([('Eagle Eye', self._create_eagle_eye_settings),
-                      ('Agent', self._create_agent_settings)])
+                      ('Agent', self._create_agent_settings),
+                      ('CRM', self._create_crm_settings)])
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        if settings_role() == 'server':
+            pages.append(('Users', self._create_user_settings))
+        pages.append(('Connection', self._create_ai_connection_settings))
         selected = next((i for i, (label, _) in enumerate(pages)
                          if label == self._requested_ai_page), 0)
         self.ai_group = _SettingsGroup(pages, selected)
         return self.ai_group
 
+    def _create_crm_settings(self):
+        from .crm_settings import CRMSettingsWidget
+        self.crm_settings = CRMSettingsWidget()
+        return self.crm_settings
+
+    @staticmethod
+    def _client_ai_connections():
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        return settings_role() != 'server'
+
+    def _create_ai_connection_settings(self):
+        from .ai_connection_settings import AIConnectionSettingsWidget
+        owners = []
+        if not self._client_ai_connections():
+            from .crm_connections import CRMConnectionsWidget
+            from .brain_connection_settings import BrainConnectionWidget
+            owners.append(('Eagle AI Brain', BrainConnectionWidget()))
+            for label, attr in [('EchoMind', 'echomind_settings'),
+                                ('Eagle Eye', 'eagle_eye_settings'), ('Agent', 'agent_settings')]:
+                index = next((i for i in range(self.ai_group.count())
+                              if self.ai_group.tabText(i) == label), None)
+                if index is None:
+                    continue
+                self.ai_group._initialize(index)
+                owner = getattr(self, attr)
+                if label == 'EchoMind':
+                    owner.backend_group.setTitle('Eagle AI Brain')
+                    owner.backend_combo.setItemText(0, 'Server 1 - LLM G')
+                    owner.backend_group.hide()
+                    owner.company_auth_group.hide()
+                    owner.usage_group.hide()
+                    owner.openai_group.hide()
+                    owner.prompt_group.hide()
+                if label == 'Eagle Eye':
+                    owners.append(('Eagle Eye - shared HTTP ingress', owner.listener_page))
+                owners.append((label + ' usage', owner.usage_widget))
+            owners.append(('CRM', CRMConnectionsWidget()))
+            self.ai_connection_settings = AIConnectionSettingsWidget(owners, server=True)
+            return self.ai_connection_settings
+        for label, attr in [('Eagle Eye', 'eagle_eye_settings'),
+                            ('EchoMind', 'echomind_settings'), ('Agent', 'agent_settings')]:
+            index = next((i for i in range(self.ai_group.count())
+                          if self.ai_group.tabText(i) == label), None)
+            if index is None:
+                continue
+            self.ai_group._initialize(index)
+            owner = getattr(self, attr, None)
+            if owner is None or owner.connection_page is None:
+                raise RuntimeError('AI connection settings could not initialize.')
+            owners.append((label, owner.connection_page))
+        from .crm_connections import CRMConnectionsWidget
+        owners.append(('CRM', CRMConnectionsWidget()))
+        self.ai_connection_settings = AIConnectionSettingsWidget(owners)
+        return self.ai_connection_settings
+
     def _open_eagle_eye_settings(self):
-        self._requested_ai_page = 'Eagle Eye'
+        target = 'Connection' if self._client_ai_connections() else 'Eagle Eye'
+        self._requested_ai_page = target
         self.setCurrentIndex(self._ai_index)
         if self.ai_group is not None:
             for index in range(self.ai_group.count()):
-                if self.ai_group.tabText(index) == 'Eagle Eye':
+                if self.ai_group.tabText(index) == target:
                     self.ai_group.setCurrentIndex(index)
                     break
 
     def _create_eagle_eye_settings(self):
         from .eagle_eye_settings import EagleEyeSettingsWidget
-        self.eagle_eye_settings = EagleEyeSettingsWidget()
+        self.eagle_eye_settings = EagleEyeSettingsWidget(separate_connections=self._client_ai_connections())
         return self.eagle_eye_settings
 
     def _create_tools_settings(self):
@@ -293,7 +359,7 @@ class SettingsTabWidget(QTabWidget):
     def _create_agent_settings(self):
         from .agent_settings import AgentSettingsWidget
 
-        self.agent_settings = AgentSettingsWidget()
+        self.agent_settings = AgentSettingsWidget(separate_connections=self._client_ai_connections())
         return self.agent_settings
 
     def _create_consultation_education_settings(self):
@@ -313,7 +379,7 @@ class SettingsTabWidget(QTabWidget):
     def _create_echomind_settings(self):
         from .echomind_settings import EchoMindSettingsWidget
 
-        self.echomind_settings = EchoMindSettingsWidget()
+        self.echomind_settings = EchoMindSettingsWidget(separate_connections=self._client_ai_connections())
         return self.echomind_settings
 
     def apply_assistant_ai_receipt(self, receipt):

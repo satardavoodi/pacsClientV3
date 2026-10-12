@@ -653,6 +653,7 @@ class ImagingToolsTab(AbstractTab):
     # Signal emitted when tab is fully loaded and rendered
     fully_loaded = Signal()
     analysis_result_ready = Signal(str, bool)
+    lumbar_analysis_ready = Signal(object, bool)
     
     def __init__(self, study_uid: Optional[str] = None, eagle_eye_mode: Optional[str] = None):
         super().__init__()

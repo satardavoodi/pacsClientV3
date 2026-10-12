@@ -178,7 +178,7 @@ class AssistantSettingsService(QObject):
         if requested is False:
             raise ValueError('Cleanup is already pending')
         return {'state':'awaiting_local_confirmation', 'category':category,
-                'deleted_files':None, 'completion_source':'local_storage_panel'}
+                'deleted_files':None, 'operation_id':getattr(panel, '_assistant_cleanup_state', {}).get('operation_id'), 'completion_source':'local_storage_panel'}
 
     def cleanup_status(self):
         panel = self._panel()

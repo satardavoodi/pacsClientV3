@@ -6,13 +6,94 @@ import shutil
 import subprocess
 import uuid
 import tempfile
+import threading
+import time
 
 from .contracts import BrainError
+
+_REVIEW_PROCESSES = {}
+_REVIEW_LAUNCH_LOCK = threading.Lock()
+
+
+def _review_running(directory):
+    process = _REVIEW_PROCESSES.get(str(directory))
+    if process is not None and process.poll() is None:
+        return True
+    _REVIEW_PROCESSES.pop(str(directory), None)
+    marker = directory / 'editor-process.json'
+    if not marker.is_file():
+        return False
+    import psutil
+    try:
+        state = json.loads(marker.read_text(encoding='utf-8'))
+        command = psutil.Process(int(state['pid'])).cmdline()
+        script = os.path.normcase(os.path.realpath(state['script']))
+        return any(os.path.normcase(os.path.realpath(arg)) == script for arg in command)
+    except (psutil.NoSuchProcess, ValueError, KeyError, TypeError):
+        return False
+    except psutil.AccessDenied:
+        raise BrainError('Cannot verify the existing Advanced Image Analysis window. Close it before reopening.') from None
+
+
+def reopen_review(session):
+    """Worker-only relaunch; retain the session and any saved corrected mask."""
+    directory = Path(session)
+    if not all((directory / name).is_file() for name in ('session.json', 'image.nii.gz', 'original.nii.gz')):
+        raise BrainError('The saved manual correction session is incomplete.')
+    return _launch_review(directory)
+
+
+def _launch_review(directory):
+    with _REVIEW_LAUNCH_LOCK:
+        deadline = time.monotonic() + 5
+        while _review_running(directory):
+            if time.monotonic() >= deadline:
+                raise BrainError('Advanced Image Analysis is still open or finishing its exit. Return to its window, or wait for it to close.')
+            time.sleep(0.1)
+        return _launch_review_locked(directory)
+
+
+def wait_review_ready(session, *, timeout=180):
+    """Worker-only handshake: process creation is not visible editor readiness."""
+    directory = Path(session)
+    token = json.loads((directory / 'launch-request.json').read_text(encoding='utf-8'))['token']
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            state = json.loads((directory / 'editor-state.json').read_text(encoding='utf-8'))
+        except (FileNotFoundError, json.JSONDecodeError):
+            state = {}
+        if state.get('token') == token:
+            if state.get('status') == 'ready':
+                return str(directory)
+            if state.get('status') == 'error':
+                raise BrainError('Advanced Image Analysis could not be initialized. Review its error message before retrying.')
+        time.sleep(0.1)
+    raise BrainError('Advanced Image Analysis is taking longer than expected. It may still be loading; check its window before retrying.')
+
+
+def open_review_ready(result, session=None):
+    """Keep client activity visible until the prepared editor acknowledges readiness."""
+    return wait_review_ready(reopen_review(session) if session else prepare_review(result))
+
+
+def review_environment(parent, directory):
+    """Interactive VTK owns its GL context; preserve explicit software opt-in."""
+    env = dict(parent)
+    if env.get('AIPACS_MANUAL_REVIEW_SOFTWARE_RENDERING') != '1':
+        for key in ('QT_OPENGL_DLL', 'QT_QUICK_BACKEND', 'LIBGL_ALWAYS_SOFTWARE',
+                    'LIBGL_ALWAYS_INDIRECT', 'MESA_GL_VERSION_OVERRIDE',
+                    'GALLIUM_DRIVER', 'VTK_OPENGL_FORCE_SOFTPIPE',
+                    'VTK_DEFAULT_OPENGL_WINDOW'):
+            env.pop(key, None)
+        env['QT_OPENGL'] = 'desktop'
+    env['AIPACS_MANUAL_REVIEW'] = str(directory)
+    return env
 
 
 def prepare_review(result):
     from .runtime import slicer_executable, sha256
-    executable = slicer_executable()
+    slicer_executable()  # Validate availability before creating a private session.
     lesion = result.get('analysis_type') == 'brain_lesions'
     review_assets = result.get('review_assets', {})
     source = Path(review_assets['mask']) if review_assets else Path(result['mask_path']) if lesion else Path(result['artifact_directory']) / 'labels.nii.gz'
@@ -31,11 +112,31 @@ def prepare_review(result):
     if not lesion:
         manifest['label_names'] = json.loads(Path(review_assets.get('names', root / 'label_names.json')).read_text(encoding='utf-8'))
     (directory / 'session.json').write_text(json.dumps(manifest, allow_nan=False), encoding='utf-8')
+    return _launch_review(directory)
+
+
+def _launch_review_locked(directory):
+    from .runtime import slicer_executable
+    executable = slicer_executable()
+    source = directory / 'original.nii.gz'
+    corrected = directory / 'corrected.nii.gz'
+    if corrected.is_file():
+        import SimpleITK as sitk
+        manifest = json.loads((directory / 'session.json').read_text(encoding='utf-8'))
+        validate_edit(sitk.ReadImage(str(source)), sitk.ReadImage(str(corrected)), lesion=manifest['lesion'])
+        source = corrected
+    shutil.copy2(source, directory / 'editor-input.nii.gz')
     # CTK launcher splits --python-script paths containing spaces. Stage only
     # application code; patient images remain in the private review directory.
     script_source = Path(__file__).with_name('manual_slicer.py')
     staged = Path(tempfile.mkdtemp(prefix='aipacs-manual-')) / 'manual_slicer.py'
     shutil.copy2(script_source, staged)
+    chrome_source = Path(__file__).resolve().parents[2] / 'mpr/advanced_3d_slicer/slicer_custom_app/viewer_chrome.py'
+    shutil.copy2(chrome_source, staged.with_name('viewer_chrome.py'))
+    startup_modules = staged.parent / 'startup-modules'
+    startup_modules.mkdir()
+    shutil.copy2(script_source.with_name('AIPacsBrainReviewStartup.py'),
+                 startup_modules / 'AIPacsBrainReviewStartup.py')
     script_path = str(staged)
     if ' ' in script_path and os.name == 'nt':
         import ctypes
@@ -44,12 +145,22 @@ def prepare_review(result):
         if 0 < length < len(buffer):
             script_path = buffer.value
     if ' ' in script_path:
-        raise BrainError('The Slicer launcher requires a temporary script path without spaces. Configure a space-free TEMP directory.')
-    env = os.environ.copy(); env['AIPACS_MANUAL_REVIEW'] = str(directory)
+        raise BrainError('Advanced Image Analysis requires a temporary script path without spaces. Configure a space-free TEMP directory.')
+    env = review_environment(os.environ, directory)
+    token = uuid.uuid4().hex
+    env['AIPACS_MANUAL_REVIEW_TOKEN'] = token
+    (directory / 'launch-request.json').write_text(json.dumps({'token': token}), encoding='utf-8')
+    startup = None
+    if os.name == 'nt':
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 0
     with (directory / 'slicer-launch.log').open('wb') as log:
-        subprocess.Popen([str(executable), '--no-splash', '--ignore-slicerrc', '--disable-settings',
-                          '--launcher-ignore-user-additional-settings', '--python-script', script_path],
-                         env=env, stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen([str(executable), '--no-splash', '--launcher-no-splash', '--ignore-slicerrc', '--disable-settings',
+                          '--launcher-ignore-user-additional-settings', '--python-script', script_path,
+                          '--additional-module-paths', str(Path(script_path).parent / 'startup-modules')],
+                         env=env, startupinfo=startup, stdout=log, stderr=subprocess.STDOUT)
+    _REVIEW_PROCESSES[str(directory)] = process
     return str(directory)
 
 
@@ -92,7 +203,7 @@ def _recalculate_review(session, *, cancel=None, progress=None):
     manifest = json.loads((directory / 'session.json').read_text(encoding='utf-8'))
     edited_path = directory / 'corrected.nii.gz'
     if not edited_path.is_file():
-        raise BrainError('In Slicer, click Save correction for AI-PACS before recalculating.')
+        raise BrainError('In Advanced Image Analysis, click Save correction for AI-PACS before recalculating.')
     if sha256(manifest['source_mask']) != manifest['source_sha256']:
         raise BrainError('Original segmentation changed. Start a new review session.')
     original, edited = sitk.ReadImage(str(directory / 'original.nii.gz')), sitk.ReadImage(str(edited_path))

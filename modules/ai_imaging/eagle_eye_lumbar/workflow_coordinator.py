@@ -299,10 +299,11 @@ class EagleEyeWorkflowCoordinator(QObject):
         self._analysis_runner = None
         self._set_status("Eagle Eye analysis complete", active=False)
         self._refresh_result_button()
-        panel = self._get_result_panel()
-        if panel is not None:
-            panel.set_busy(False)
-            panel.show_record(record)
+        if not self._publish_result(record, activate=True):
+            panel = self._get_result_panel()
+            if panel is not None:
+                panel.set_busy(False)
+                panel.show_record(record)
 
     def _on_analysis_failed(self, reason: str) -> None:
         self._analysis_runner = None
@@ -323,6 +324,8 @@ class EagleEyeWorkflowCoordinator(QObject):
         record = self._record()
         if record is None:
             return
+        if record.has_result and self._publish_result(record, activate=True):
+            return
         panel = self._get_result_panel()
         if panel is None:
             return
@@ -332,6 +335,13 @@ class EagleEyeWorkflowCoordinator(QObject):
             return
         panel.set_busy(False)
         panel.show_record(record)
+
+    def _publish_result(self, record: Any, *, activate: bool) -> bool:
+        signal = getattr(self._host, "lumbar_analysis_ready", None)
+        if signal is None or not hasattr(signal, "emit"):
+            return False
+        signal.emit(record, bool(activate))
+        return True
 
     def teardown(self) -> None:
         """Detach in-flight work before the host's child widgets are destroyed."""

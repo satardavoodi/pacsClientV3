@@ -148,11 +148,11 @@ def load_image(path,study_uid,series_uid=None):
                 radiograph_binding=semantic_binding)
 
 
-def predict(image,cancel,root=None):
+def predict(image,cancel,root=None,*,progress=None):
     from ..eagle_eye_remote.settings import remote_required
     if remote_required():
         from ..eagle_eye_remote.routing import radiograph
-        return radiograph('alignment', image, cancel)
+        return radiograph('alignment', image, cancel, progress=progress)
     from modules.mpr.advanced_3d_slicer.owned_process import ProcessJob
     root=Path(root or bundle_root()).resolve()
     validate_bundle(root,cancel)

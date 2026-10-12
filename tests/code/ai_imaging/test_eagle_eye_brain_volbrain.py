@@ -108,3 +108,13 @@ def test_red_measurement_is_escaped_and_science_is_cited():
     assert '#b91c1c' in html and "align='center'" in html
     assert 'Towards a unified analysis' in vr.scientific_reference_page()
     assert '10.1002/hbm.23743' in vr.scientific_reference_page()
+
+
+@pytest.mark.parametrize('value,label,red', [(9.9,'Below reference',False),(12.,'Below median',False),(15.,'At median',False),(18.,'Above median',False),(20.1,'Above reference',False),(25.,'Above reference',False),(25.01,'Above reference',True)])
+def test_reference_position_is_shown_beside_measured_value(value,label,red):
+    from modules.ai_imaging.eagle_eye_brain.organized_report import _cell
+    reference={'rows':[dict(structure='test',observed_cm3=value,lower_cm3=10.,median_cm3=15.,upper_cm3=20.)]}
+    html=_cell(vr.highlight(reference,'test',str(value)))
+    assert label in html
+    assert ('#b91c1c' in html) is red
+    assert "align='center'" in html

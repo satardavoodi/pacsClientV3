@@ -1,0 +1,557 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-09",
+  "platforms": [
+    "windows",
+    "android",
+    "ios"
+  ],
+  "policy": {
+    "one_platform_at_a_time": true,
+    "one_submission_per_case": true,
+    "automatic_replay": false,
+    "patient_data": false,
+    "clinical_writes": false,
+    "execute_proposals": false,
+    "subscribe": "excluded untouched",
+    "speech": "separate existing policy"
+  },
+  "preflight": [
+    "matching reviewed live server source",
+    "central Brain G module present",
+    "two-stage user admission enabled",
+    "valid per-platform private TLS/device provisioning and human session",
+    "module grant",
+    "upstream credential never leaves server"
+  ],
+  "cases": [
+    {
+      "id": "echo-chat",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "chat",
+        "text": "Synthetic connectivity test: reply with EAGLE_TEST_OK.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-standardize",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "standardize",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-report",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "report",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json",
+        "modality": "RADIOLOGY"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-correction",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "correction",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json",
+        "modality": "RADIOLOGY",
+        "correction_note": "Replace no pleural effusion with small left pleural effusion; preserve other findings."
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-translate_text",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "translate_text",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-translate_report",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "translate_report",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-breast",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "breast",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-standardize_assist",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "standardize_assist",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-assistant",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "aipacs",
+        "workflow": "assistant",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-search",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "aipacs",
+        "workflow": "search",
+        "text": "Synthetic test only. Chest radiograph: lungs are clear. No pleural effusion. Impression: no acute finding.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-web_search",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "web_search",
+        "text": "Find the official DICOM standard website; return its source URL.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-organize_template",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "organize_template",
+        "text": "{\"name\": \"Synthetic chest\", \"modality\": \"RADIOLOGY\", \"blocks\": [{\"id\": \"L0000\", \"text\": \"Lungs are clear.\"}]}",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-template_languages",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "template_languages",
+        "text": "Synthetic chest template: lungs are clear.",
+        "response_format": "json"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-add_reference",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "add_reference",
+        "text": "Synthetic chest radiograph: lungs are clear.",
+        "response_format": "json",
+        "modality": "RADIOLOGY"
+      },
+      "checks": [
+        "nonempty workflow result",
+        "request_id/workflow correlation",
+        "server upstream authority",
+        "UI returned result"
+      ],
+      "provider_calls": "one client submission; track actual upstream count",
+      "status": "pending",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-correction-source-txt",
+      "endpoint": "/v1/echomind/process",
+      "body": {
+        "provider": "company",
+        "workflow": "correction",
+        "text": "Apply correction to synthetic saved report.",
+        "correction_note": "Replace clear lungs with mild left basal opacity.",
+        "response_format": "json",
+        "correction_source": {
+          "name": "synthetic-report.txt",
+          "data": "U3ludGhldGljIHRlc3Qgb25seS4gQ2hlc3QgcmFkaW9ncmFwaDogbHVuZ3MgYXJlIGNsZWFyLiBObyBwbGV1cmFsIGVmZnVzaW9uLiBJbXByZXNzaW9uOiBubyBhY3V0ZSBmaW5kaW5nLg=="
+        }
+      },
+      "required_feature": "correction_sources_v1",
+      "status": "pending schema validation",
+      "schema_validated": true
+    },
+    {
+      "id": "echo-report-attachment-txt",
+      "endpoint": "/v1/echomind/process",
+      "fixture": "use existing synthetic source/attachment fixture in focused tests; no clinical file",
+      "required_feature": "report_attachments_v1",
+      "status": "pending platform capability and fixture validation"
+    },
+    {
+      "id": "echo-report-attachment-pdf",
+      "endpoint": "/v1/echomind/process",
+      "fixture": "use existing synthetic source/attachment fixture in focused tests; no clinical file",
+      "required_feature": "report_attachments_v1",
+      "status": "pending platform capability and fixture validation"
+    },
+    {
+      "id": "echo-report-attachment-png",
+      "endpoint": "/v1/echomind/process",
+      "fixture": "use existing synthetic source/attachment fixture in focused tests; no clinical file",
+      "required_feature": "report_attachments_v1",
+      "status": "pending platform capability and fixture validation"
+    },
+    {
+      "id": "echo-correction-source-json",
+      "endpoint": "/v1/echomind/process",
+      "fixture": "use existing synthetic source/attachment fixture in focused tests; no clinical file",
+      "required_feature": "correction_sources_v1",
+      "status": "pending platform capability and fixture validation"
+    },
+    {
+      "id": "echo-correction-source-html",
+      "endpoint": "/v1/echomind/process",
+      "fixture": "use existing synthetic source/attachment fixture in focused tests; no clinical file",
+      "required_feature": "correction_sources_v1",
+      "status": "pending platform capability and fixture validation"
+    },
+    {
+      "id": "echo-correction-source-pdf",
+      "endpoint": "/v1/echomind/process",
+      "fixture": "use existing synthetic source/attachment fixture in focused tests; no clinical file",
+      "required_feature": "correction_sources_v1",
+      "status": "pending platform capability and fixture validation"
+    },
+    {
+      "id": "secretary-ask",
+      "endpoint": "/v1/secretary/plan",
+      "body": {
+        "protocol": 1,
+        "phase": "plan",
+        "interaction_mode": "ask",
+        "text": "Explain which Eagle Eye features are available. Do not access patient records.",
+        "language": "en",
+        "client_time": "runtime timezone-aware ISO8601"
+      },
+      "execution": "never execute proposals",
+      "status": "pending adapter validation"
+    },
+    {
+      "id": "secretary-act",
+      "endpoint": "/v1/secretary/plan",
+      "body": {
+        "protocol": 1,
+        "phase": "plan",
+        "interaction_mode": "act",
+        "text": "Propose opening AI settings. Do not execute any command.",
+        "language": "en",
+        "client_time": "runtime timezone-aware ISO8601"
+      },
+      "execution": "never execute proposals",
+      "status": "pending adapter validation"
+    },
+    {
+      "id": "crm-service-question",
+      "endpoint": "/v1/crm/command",
+      "fixture": "native CRM session and read-only service/capabilities question only; no admissions or patient reads",
+      "status": "pending native adapter and private session"
+    },
+    {
+      "id": "imaging-breast",
+      "module": "breast",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-bone-age",
+      "module": "bone-age",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-brain",
+      "module": "brain",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-brain-lesions",
+      "module": "brain-lesions",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-lumbar",
+      "module": "lumbar",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-lumbar-marrow",
+      "module": "lumbar-marrow",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-alignment",
+      "module": "alignment",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "imaging-total-spine",
+      "module": "total-spine",
+      "fixture": "qualified synthetic or approved deidentified imaging fixture required; do not fabricate clinical qualification",
+      "checks": [
+        "authenticated job admission",
+        "module permission",
+        "job reaches terminal result",
+        "derived output returned/rendered",
+        "classify local-model versus LLM use"
+      ],
+      "status": "blocked until compatible nonclinical fixture and platform entry point verified"
+    },
+    {
+      "id": "admission-no-user-session",
+      "fixture": "synthetic negative test using sanctioned test identity; never weaken grants or alter clinical users",
+      "checks": [
+        "denied before upstream call",
+        "no direct fallback",
+        "no duplicate inference"
+      ],
+      "status": "pending qualified active source"
+    },
+    {
+      "id": "admission-denied-module",
+      "fixture": "synthetic negative test using sanctioned test identity; never weaken grants or alter clinical users",
+      "checks": [
+        "denied before upstream call",
+        "no direct fallback",
+        "no duplicate inference"
+      ],
+      "status": "pending qualified active source"
+    },
+    {
+      "id": "admission-client-provider-override",
+      "fixture": "synthetic negative test using sanctioned test identity; never weaken grants or alter clinical users",
+      "checks": [
+        "denied before upstream call",
+        "no direct fallback",
+        "no duplicate inference"
+      ],
+      "status": "pending qualified active source"
+    },
+    {
+      "id": "admission-duplicate-request-id",
+      "fixture": "synthetic negative test using sanctioned test identity; never weaken grants or alter clinical users",
+      "checks": [
+        "denied before upstream call",
+        "no direct fallback",
+        "no duplicate inference"
+      ],
+      "status": "pending qualified active source"
+    }
+  ],
+  "receipt_fields": [
+    "case_id",
+    "platform",
+    "source_revision",
+    "build_hash",
+    "device",
+    "started_utc",
+    "request_id",
+    "endpoint",
+    "http_status",
+    "latency_ms",
+    "result_check",
+    "server_receipt_correlation",
+    "brain_calls_delta",
+    "brain_tokens_delta",
+    "gui_status",
+    "blocker"
+  ],
+  "status": "blocked by active source mismatch; no provider requests submitted by owner",
+  "schema_validated_echomind_bodies": 15
+}

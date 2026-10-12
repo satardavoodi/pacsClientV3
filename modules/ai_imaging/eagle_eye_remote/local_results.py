@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-MODULES = {'bone-age', 'alignment', 'total-spine', 'brain', 'brain-lesions', 'breast', 'lumbar'}
+MODULES = {'bone-age', 'alignment', 'total-spine', 'brain', 'brain-lesions', 'breast', 'lumbar', 'dental-panorama'}
 
 
 def read_json(path):

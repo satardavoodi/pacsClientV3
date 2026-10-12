@@ -73,7 +73,7 @@ from typing import Any, Dict, List, Optional, Tuple
 CANONICAL_MODALITIES: Tuple[str, ...] = (
     # 2026-08-08: OBSTETRIC ULTRASOUND joined the UI modality list on 2026-08-06
     # but was never added here, so an OB normal template could not be filed at all.
-    "CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND", "RADIOLOGY", "MAMOGRAPHY",
+    "CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND", "RADIOLOGY", "MAMOGRAPHY", "ECHOCARDIOGRAPHY",
 )
 
 _MODALITY_ALIASES: Dict[str, str] = {
@@ -90,7 +90,9 @@ _MODALITY_ALIASES: Dict[str, str] = {
     "us": "SONOGRAPHY", "u/s": "SONOGRAPHY", "sono": "SONOGRAPHY",
     "sonography": "SONOGRAPHY", "ultrasound": "SONOGRAPHY",
     "ultrasonography": "SONOGRAPHY", "doppler": "SONOGRAPHY",
-    "echo": "SONOGRAPHY",
+    "echo": "ECHOCARDIOGRAPHY", "echocardiography": "ECHOCARDIOGRAPHY",
+    "echocardiogram": "ECHOCARDIOGRAPHY", "tte": "ECHOCARDIOGRAPHY",
+    "tee": "ECHOCARDIOGRAPHY",
     "xr": "RADIOLOGY", "x-ray": "RADIOLOGY", "xray": "RADIOLOGY",
     "radiograph": "RADIOLOGY", "radiography": "RADIOLOGY",
     "radiology": "RADIOLOGY", "dr": "RADIOLOGY", "cr": "RADIOLOGY", "dx": "RADIOLOGY",

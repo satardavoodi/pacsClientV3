@@ -1,0 +1,4954 @@
+{
+ "_about": "This centre's department/service configuration, read from the reception software. Department structure is centre POLICY; service identity is the work performed. Never hardcode a concept to a department — resolve it through lexicon.resolve_clinical_concept().",
+ "center": "RAZI",
+ "database": "ClinicWebsite",
+ "service_concepts": [
+  {
+   "id": "lumbar_spine",
+   "label_fa": "ستون فقرات کمری",
+   "aliases": [
+    "کمر",
+    "کمری",
+    "ستون فقرات کمری",
+    "لومبر",
+    "لومبار",
+    "lumbar",
+    "lumbar spine",
+    "lumbosacral",
+    "lumbosacral spine",
+    "LS spine"
+   ],
+   "match_terms": [
+    "کمر",
+    "کمری",
+    "لومبر",
+    "لومبار",
+    "lumbar",
+    "lumbosacral"
+   ]
+  }
+ ],
+ "departments": [
+  {
+   "code": "1",
+   "short": "CT",
+   "name_en": "CT Scan",
+   "name_fa": "سی تی اسکن",
+   "disabled": false,
+   "requires_scheduling": false
+  },
+  {
+   "code": "14",
+   "short": "تخصصی هیسترو",
+   "name_en": "تخصصی هیسترو",
+   "name_fa": "تخصصی هیسترو",
+   "disabled": true,
+   "requires_scheduling": false
+  },
+  {
+   "code": "2",
+   "short": "MR",
+   "name_en": "MRI",
+   "name_fa": "ام آر آی",
+   "disabled": false,
+   "requires_scheduling": false
+  },
+  {
+   "code": "3",
+   "short": "US",
+   "name_en": "Sonography",
+   "name_fa": "سونوگرافی",
+   "disabled": false,
+   "requires_scheduling": false
+  },
+  {
+   "code": "4",
+   "short": "DX",
+   "name_en": "Radiology",
+   "name_fa": "رادیولوژی",
+   "disabled": false,
+   "requires_scheduling": false
+  },
+  {
+   "code": "5",
+   "short": "BD",
+   "name_en": "Bone Density",
+   "name_fa": "سنجش تراکم استخوان",
+   "disabled": false,
+   "requires_scheduling": false
+  },
+  {
+   "code": "9",
+   "short": "Mammography",
+   "name_en": "Mammography",
+   "name_fa": "ماموگرافی",
+   "disabled": true,
+   "requires_scheduling": false
+  }
+ ],
+ "service_groups": [
+  {
+   "id": "69c25bab9aa3dbee2d0c6c95",
+   "department": "1",
+   "name": "test"
+  },
+  {
+   "id": "69c25bab9aa3dbee2d0c6c74",
+   "department": "1",
+   "name": "انجام نمیدم"
+  },
+  {
+   "id": "69c25bab9aa3dbee2d0c6c83",
+   "department": "1",
+   "name": "اینترونشن تحت گاید سی تی اسکن"
+  },
+  {
+   "id": "69c25bab9aa3dbee2d0c6bfe",
+   "department": "1",
+   "name": "سی تی اسکن با تزریق"
+  },
+  {
+   "id": "69c25bab9aa3dbee2d0c6c8c",
+   "department": "1",
+   "name": "سی تی اسکن بدون تزریق با باسازی"
+  },
+  {
+   "id": "69c25bab9aa3dbee2d0c6bba",
+   "department": "1",
+   "name": "سی تی اسکن بدون تزریق ساده"
+  },
+  {
+   "id": "689b1807be32750dac16f7b5",
+   "department": "14",
+   "name": "( تخصصی  خ بلوکی )"
+  },
+  {
+   "id": "69c25aca9aa3dbee2d0c6a96",
+   "department": "2",
+   "name": "D"
+  },
+  {
+   "id": "69c25aca9aa3dbee2d0c6a8a",
+   "department": "2",
+   "name": "ام ار ای تخصصی"
+  },
+  {
+   "id": "69c25ac99aa3dbee2d0c6a64",
+   "department": "2",
+   "name": "با تزریق ماده حاجب"
+  },
+  {
+   "id": "69c25aca9aa3dbee2d0c6a79",
+   "department": "2",
+   "name": "با و بدون تزریق ماده حاجب"
+  },
+  {
+   "id": "69c25ac99aa3dbee2d0c6a5f",
+   "department": "2",
+   "name": "زانو و ارنج و مچ پا "
+  },
+  {
+   "id": "69c25ac99aa3dbee2d0c6a48",
+   "department": "2",
+   "name": "سر و گردن و صورت بدون تزریق"
+  },
+  {
+   "id": "69c25ac99aa3dbee2d0c6a5b",
+   "department": "2",
+   "name": "شانه و مچ دست و بازو و ساعد"
+  },
+  {
+   "id": "69c25ac99aa3dbee2d0c6a4f",
+   "department": "2",
+   "name": "شکم و لگن و قفسه سینه"
+  },
+  {
+   "id": "69c25ac99aa3dbee2d0c6a57",
+   "department": "2",
+   "name": "مهره کمر و پشتی"
+  },
+  {
+   "id": "69c25b4f9aa3dbee2d0c6b6b",
+   "department": "3",
+   "name": "D"
+  },
+  {
+   "id": "69c25b4f9aa3dbee2d0c6b8d",
+   "department": "3",
+   "name": "سونوگرافی اقا"
+  },
+  {
+   "id": "69c25b4e9aa3dbee2d0c6b52",
+   "department": "3",
+   "name": "سونوگرافی تخصصی"
+  },
+  {
+   "id": "69c25b4f9aa3dbee2d0c6b86",
+   "department": "3",
+   "name": "سونوگرافی خانم"
+  },
+  {
+   "id": "69c25b4f9aa3dbee2d0c6b72",
+   "department": "3",
+   "name": "سونوگرافی روتین"
+  },
+  {
+   "id": "69c25b4f9aa3dbee2d0c6ba0",
+   "department": "3",
+   "name": "کالر داپلر تخصصی"
+  },
+  {
+   "id": "69c25b4f9aa3dbee2d0c6b93",
+   "department": "3",
+   "name": "کالر داپلر روتین"
+  },
+  {
+   "id": "69c25b089aa3dbee2d0c6aad",
+   "department": "4",
+   "name": "A"
+  },
+  {
+   "id": "69c25b089aa3dbee2d0c6afd",
+   "department": "4",
+   "name": "B"
+  },
+  {
+   "id": "69c25b089aa3dbee2d0c6b1a",
+   "department": "4",
+   "name": "C"
+  },
+  {
+   "id": "69c25b089aa3dbee2d0c6b32",
+   "department": "4",
+   "name": "D"
+  },
+  {
+   "id": "69c25b309aa3dbee2d0c6b47",
+   "department": "5",
+   "name": "E"
+  },
+  {
+   "id": "6885b2b1f055111ae44df5ab",
+   "department": "6",
+   "name": "عکس دندان ( Cephalogram & OPG)"
+  },
+  {
+   "id": "6886f4edf055111ae44df76c",
+   "department": "6",
+   "name": "کلیشه"
+  },
+  {
+   "id": "6885a56df055111ae44df55a",
+   "department": "9",
+   "name": "ماموگرافی"
+  },
+  {
+   "id": "6885a9d0f055111ae44df599",
+   "department": "9",
+   "name": "ماموگرافی با بزرگنمایی"
+  },
+  {
+   "id": "6885a79cf055111ae44df584",
+   "department": "9",
+   "name": "کلیشه بزرگ"
+  },
+  {
+   "id": "6885a96df055111ae44df593",
+   "department": "9",
+   "name": "کلیشه کوچک"
+  }
+ ],
+ "services": [
+  {
+   "id": "703040",
+   "name": "-",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703042",
+   "name": "-",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "66666",
+   "name": "test",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c95",
+   "group_name": "سی تی اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702340",
+   "name": "آنژیو سی تی اسکن آئورت با بازسازی ها",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702470",
+   "name": "بازسازی متال آرتیفکت (اضافه بر هزینه سی تی اسکن اصلی)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702475",
+   "name": "بازسازی هر ناحیه (اضافه بر هزینه سی تی اسکن اصلی)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "461"
+  },
+  {
+   "id": "702325",
+   "name": "بررسی 2 و 4 میلی متری هر یک از اعضاء شکم - با یا بدون تزریق- هر یک به تنهایی (پانکراس- کلیه ها- طحال)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702335",
+   "name": "بررسی 4 و 2 میلی متری اعضاء انفرادی و اختصاصی شکم- با تزریق دینامیک (کبد)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703060",
+   "name": "بیهوشی برای انجام خدمات CT-Scan یا سی تی آنژیوگرافی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702550",
+   "name": "سی تی آنژیوپورتوگرافی کبد",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702535",
+   "name": "سی تی آنژیوگرافی اندام تحتانی با و بدون ماده حاجب",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702530",
+   "name": "سی تی آنژیوگرافی اندام فوقانی با وبدون ماده حاجب-مقاطع بعدی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702525",
+   "name": "سی تی آنژیوگرافی شکم بدون ماده حاجب وباماده حاجب",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "33333333",
+   "name": "سی تی ارتروگرافی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702915",
+   "name": "سی تی اسپیرال بررسی 2و 4میلی متری اعضاء انفرادی و اختصاصی شکم با تزریق دینامیک(کبد)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702620",
+   "name": "سی تی اسپیرال منطقه ماگزیلو فاشیال بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702540",
+   "name": "سی تی اسکن High Resolution تمام ریه در یک نفس (5 میلی متری )- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702900",
+   "name": "سی تی اسکن اسپیرال 2و4میلی متری هر یک از اعضاء شکم با یا بدون تزریق - هر یک به تنهایی(پانکراس-کلیه ها)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702700",
+   "name": "سی تی اسکن اسپیرال اربیت - سلا- پوستریور فوسا گوش داخلی خارجی یا میانی با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702705",
+   "name": "سی تی اسکن اسپیرال اربیت -سلا پوستریور فوسا با و بدون تزریق گوش داخلی خارجی یا میانی - با یا بدون تز",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702610",
+   "name": "سی تی اسکن اسپیرال اربیت -سلا- پوستریور فوسا گوش داخلی خارجی یا میانی بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703015",
+   "name": "سی تی اسکن اسپیرال اندام تحتانی با و بدون کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703010",
+   "name": "سی تی اسکن اسپیرال اندام تحتانی با کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703005",
+   "name": "سی تی اسکن اسپیرال اندام تحتانی بدون کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702995",
+   "name": "سی تی اسکن اسپیرال اندام فوقانی با کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703000",
+   "name": "سی تی اسکن اسپیرال اندام فوقانی بدون و با کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702990",
+   "name": "سی تی اسکن اسپیرال اندام فوقانی بدون کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702680",
+   "name": "سی تی اسکن اسپیرال اوربیت (هر جهت - با و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702690",
+   "name": "سی تی اسکن اسپیرال اوربیت دو جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702695",
+   "name": "سی تی اسکن اسپیرال اوربیت دو جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702685",
+   "name": "سی تی اسکن اسپیرال اوربیت دو جهت بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702675",
+   "name": "سی تی اسکن اسپیرال اوربیت هر جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702670",
+   "name": "سی تی اسکن اسپیرال اوربیت هر جهت بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702845",
+   "name": "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "373"
+  },
+  {
+   "id": "702850",
+   "name": "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- با وبدون تزری",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "3910"
+  },
+  {
+   "id": "702840",
+   "name": "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "439"
+  },
+  {
+   "id": "702810",
+   "name": "سی تی اسکن اسپیرال حنجره دو جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "369"
+  },
+  {
+   "id": "702805",
+   "name": "سی تی اسکن اسپیرال حنجره یک جهت 2 میلیمتری با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702800",
+   "name": "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "368"
+  },
+  {
+   "id": "702795",
+   "name": "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "367"
+  },
+  {
+   "id": "702665",
+   "name": "سی تی اسکن اسپیرال دینامیک هیپوفیز برای میکروآدنوم",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702790",
+   "name": "سی تی اسکن اسپیرال دینامیک گردن",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702820",
+   "name": "سی تی اسکن اسپیرال ریه و مدیاستن با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "436"
+  },
+  {
+   "id": "702825",
+   "name": "سی تی اسکن اسپیرال ریه و مدیاستن با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "437"
+  },
+  {
+   "id": "702815",
+   "name": "سی تی اسکن اسپیرال ریه و مدیاستن بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "435"
+  },
+  {
+   "id": "702940",
+   "name": "سی تی اسکن اسپیرال سایر ناحیه های ستون فقرات با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702945",
+   "name": "سی تی اسکن اسپیرال سایر ناحیه های ستون فقرات با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702920",
+   "name": "سی تی اسکن اسپیرال سایر ناحیه های ستون فقرات بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702955",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه توراسیک با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702965",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه توراسیک با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702925",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه توراسیک بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "608"
+  },
+  {
+   "id": "702960",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه سرویکال با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702970",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه سرویکال با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702930",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه سرویکال بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702950",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه لومبار با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702975",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه لومبار با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702935",
+   "name": "سی تی اسکن اسپیرال ستون فقرات ناحیه لومبار بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "610"
+  },
+  {
+   "id": "702765",
+   "name": "سی تی اسکن اسپیرال سری کامل TMJ اگزیال وکرونال و ساجیتال",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702770",
+   "name": "سی تی اسکن اسپیرال سری گوش برای پیوند کوکلئه با فیلم های زوم",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702855",
+   "name": "سی تی اسکن اسپیرال شکم با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "441"
+  },
+  {
+   "id": "702865",
+   "name": "سی تی اسکن اسپیرال شکم با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "443"
+  },
+  {
+   "id": "702860",
+   "name": "سی تی اسکن اسپیرال شکم بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "442"
+  },
+  {
+   "id": "702880",
+   "name": "سی تی اسکن اسپیرال شکم و لگن - با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "480"
+  },
+  {
+   "id": "702875",
+   "name": "سی تی اسکن اسپیرال شکم و لگن با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "444"
+  },
+  {
+   "id": "702870",
+   "name": "سی تی اسکن اسپیرال شکم و لگن بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "445"
+  },
+  {
+   "id": "702650",
+   "name": "سی تی اسکن اسپیرال صورت و سینوس -دو جهت- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "410"
+  },
+  {
+   "id": "702655",
+   "name": "سی تی اسکن اسپیرال صورت و سینوس دو جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "409"
+  },
+  {
+   "id": "702635",
+   "name": "سی تی اسکن اسپیرال صورت و سینوس یک جهت -با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "528"
+  },
+  {
+   "id": "702630",
+   "name": "سی تی اسکن اسپیرال صورت و سینوس یک جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "3440"
+  },
+  {
+   "id": "702660",
+   "name": "سی تی اسکن اسپیرال صورت و سینوس- دو جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "526"
+  },
+  {
+   "id": "702615",
+   "name": "سی تی اسکن اسپیرال صورت و سینوس- یک جهت (کرونال یا اگزیال) بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "3420"
+  },
+  {
+   "id": "702760",
+   "name": "سی تی اسکن اسپیرال فک پایین یا بالا- اگزیال با بازسازی ساجیتال وکرونال",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702890",
+   "name": "سی تی اسکن اسپیرال لگن با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "447"
+  },
+  {
+   "id": "702895",
+   "name": "سی تی اسکن اسپیرال لگن با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "449"
+  },
+  {
+   "id": "702885",
+   "name": "سی تی اسکن اسپیرال لگن بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "446"
+  },
+  {
+   "id": "702905",
+   "name": "سی تی اسکن اسپیرال لگن بدون تزریق ماده حاجب یا لگن استخوانی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702835",
+   "name": "سی تی اسکن اسپیرال مدیاستن یا ریه با تزریق دینامیک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702570",
+   "name": "سی تی اسکن اسپیرال مغز با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "401"
+  },
+  {
+   "id": "702575",
+   "name": "سی تی اسکن اسپیرال مغز با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "402"
+  },
+  {
+   "id": "702565",
+   "name": "سی تی اسکن اسپیرال مغز بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "400"
+  },
+  {
+   "id": "702585",
+   "name": "سی تی اسکن اسپیرال مغز کرونال و آگزیال با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702590",
+   "name": "سی تی اسکن اسپیرال مغز کرونال و آگزیال با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702580",
+   "name": "سی تی اسکن اسپیرال مغز کرونال و آگزیال بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702595",
+   "name": "سی تی اسکن اسپیرال مقاطع کرونال ساجیتال یا ابلیک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702640",
+   "name": "سی تی اسکن اسپیرال منطقه ماگزیلو فاشیال با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702645",
+   "name": "سی تی اسکن اسپیرال منطقه ماگزیلو فاشیال با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702985",
+   "name": "سی تی اسکن اسپیرال هر سگمان از اندام",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703025",
+   "name": "سی تی اسکن اسپیرال هر مفصل در یک جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "434"
+  },
+  {
+   "id": "703020",
+   "name": "سی تی اسکن اسپیرال و محاسبه انته ورشن هیپ با زانو",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "455"
+  },
+  {
+   "id": "703030",
+   "name": "سی تی اسکن اسپیرال و محاسبه مینرالیزاسیون استخوان",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702605",
+   "name": "سی تی اسکن اسپیرال پوستریورفوسا با مقاطع ظریف (با و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702600",
+   "name": "سی تی اسکن اسپیرال پوستریورفوسا با مقاطع ظریف (با یا بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702785",
+   "name": "سی تی اسکن اسپیرال گردن -با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "431"
+  },
+  {
+   "id": "702780",
+   "name": "سی تی اسکن اسپیرال گردن با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "430"
+  },
+  {
+   "id": "702775",
+   "name": "سی تی اسکن اسپیرال گردن بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "429"
+  },
+  {
+   "id": "702730",
+   "name": "سی تی اسکن اسپیرال گوش داخلی پوستریورفوسا دو جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702725",
+   "name": "سی تی اسکن اسپیرال گوش داخلی کورونال و اگزیال (استخوان پتروس)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "3540"
+  },
+  {
+   "id": "702710",
+   "name": "سی تی اسکن اسپیرال گوش داخلی یک جهت بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "351"
+  },
+  {
+   "id": "702735",
+   "name": "سی تی اسکن اسپیرال گوش دو جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702740",
+   "name": "سی تی اسکن اسپیرال گوش دو جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702715",
+   "name": "سی تی اسکن اسپیرال گوش یک جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702720",
+   "name": "سی تی اسکن اسپیرال گوش یک جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702445",
+   "name": "سی تی اسکن اندام تحتانی با و بدون کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702440",
+   "name": "سی تی اسکن اندام تحتانی با کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702435",
+   "name": "سی تی اسکن اندام تحتانی بدون کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702425",
+   "name": "سی تی اسکن اندام فوقانی با کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702430",
+   "name": "سی تی اسکن اندام فوقانی بدون و با کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702420",
+   "name": "سی تی اسکن اندام فوقانی بدون کنتراست",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702560",
+   "name": "سی تی اسکن اندوسکوپی- هر ارگان (VirtualEndoscopy)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702090",
+   "name": "سی تی اسکن اوربیت ( هر جهت و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702095",
+   "name": "سی تی اسکن اوربیت ( هر جهت- با تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702100",
+   "name": "سی تی اسکن اوربیت ( هر جهت- با و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702125",
+   "name": "سی تی اسکن اوربیت (دو جهت- با تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702120",
+   "name": "سی تی اسکن اوربیت (دوجهت - بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702490",
+   "name": "سی تی اسکن اوربیت (هر جهت و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702110",
+   "name": "سی تی اسکن اوربیت -سلا- پوستریور فوسا گوش داخلی خارجی یا میانی با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702105",
+   "name": "سی تی اسکن اوربیت -سلا- پوستریور فوسا گوش داخلی خارجی یا میانی بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702130",
+   "name": "سی تی اسکن اوربیت دو جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702115",
+   "name": "سی تی اسکن اوربیت-سلا پوستریور فوسا داخلی خارجی یا میانی باو بدون تزریق گوش",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702265",
+   "name": "سی تی اسکن باقـدرت تفکیک بالا (HRCT ) یا سی تی اسکن با قدرت تفکیک فوق العاده (UHRCT)- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702270",
+   "name": "سی تی اسکن باقـدرت تفکیک بالا(HRCT) یا سی تی اسکن با قدرت تفکیک فوق العاده (UHRCT)- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702260",
+   "name": "سی تی اسکن باقـدرت تفکیک بالا(HRCT) یا سی تی اسکن با قدرت تفکیک فوق العاده (UHRCT)- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702555",
+   "name": "سی تی اسکن جهت بررسی پرفیوژن بافتی- با گاز گزنون (Xenon CT)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702235",
+   "name": "سی تی اسکن حنجره - دو جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702225",
+   "name": "سی تی اسکن حنجره - یک جهت 2 میلیمتری و با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702230",
+   "name": "سی تی اسکن حنجره - یک جهت 2 میلیمتری و با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702220",
+   "name": "سی تی اسکن حنجره- یک جهت 2 میلیمتری و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702370",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه توراسیک)- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702385",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه توراسیک)- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702350",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه توراسیک)- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702375",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه سرویکال)- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702390",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه سرویکال)- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702355",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه سرویکال)- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702365",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه لومبر)- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702395",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه لومبر)- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702360",
+   "name": "سی تی اسکن دو مهره یک دیسک(ناحیه لومبر)- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702380",
+   "name": "سی تی اسکن دو مهره یک دیسک- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702400",
+   "name": "سی تی اسکن دو مهره یک دیسک- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702345",
+   "name": "سی تی اسکن دو مهره یک دیسک- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702085",
+   "name": "سی تی اسکن دینامیک هیپوفیز برای میکروآدنوم",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702485",
+   "name": "سی تی اسکن دینامیک هیپوفیز برای میکروآدنوم",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702215",
+   "name": "سی تی اسکن دینامیک گردن",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702245",
+   "name": "سی تی اسکن ریه و مدیاستن- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702250",
+   "name": "سی تی اسکن ریه و مدیاستن- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702240",
+   "name": "سی تی اسکن ریه و مدیاستن- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702190",
+   "name": "سی تی اسکن سری کامل TMJ اگزیال و کرونال و ساجیتال",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702195",
+   "name": "سی تی اسکن سری گوش برای پیوند کوکلئه با فیلمهای زوم",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702275",
+   "name": "سی تی اسکن سه بعدی هر قسمت از بدن و صورت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "4400"
+  },
+  {
+   "id": "702300",
+   "name": "سی تی اسکن شکم و لگن- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702305",
+   "name": "سی تی اسکن شکم و لگن- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702295",
+   "name": "سی تی اسکن شکم و لگن- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702285",
+   "name": "سی تی اسکن شکم- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702280",
+   "name": "سی تی اسکن شکم- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702290",
+   "name": "سی تی اسکن شکم-با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702075",
+   "name": "سی تی اسکن صورت و سینوس - دو جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702080",
+   "name": "سی تی اسکن صورت و سینوس - دو جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702070",
+   "name": "سی تی اسکن صورت و سینوس - دو جهت بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702045",
+   "name": "سی تی اسکن صورت و سینوس - یک جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702050",
+   "name": "سی تی اسکن صورت و سینوس - یک جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702040",
+   "name": "سی تی اسکن صورت و سینوس- یک جهت (کرونال یا اگزیال) بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702545",
+   "name": "سی تی اسکن فانکشنال ریه با محاسبات ظرفیتهای تنفسی (Pulmo CT)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702405",
+   "name": "سی تی اسکن فضای بین مهره‌ای (سری- گردنی- پشتی- کمری)- هر کدام جداگانه",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702819",
+   "name": "سی تی اسکن قفسه سینه به منظور تشخیص کویید 19",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702315",
+   "name": "سی تی اسکن لگن- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702310",
+   "name": "سی تی اسکن لگن- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702330",
+   "name": "سی تی اسکن لگن- بدون تزریق ماده حاجب یا لگن استخوانی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702320",
+   "name": "سی تی اسکن لگن-با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702980",
+   "name": "سی تی اسکن مایلو اسپیرال یک جهت برای دو مهره و یک دیسک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702410",
+   "name": "سی تی اسکن مایلو یک جهت برای دو مهره و یک دیسک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702255",
+   "name": "سی تی اسکن مدیاستن یا ریه- با تزریق دینامیک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702005",
+   "name": "سی تی اسکن مغز (با تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702010",
+   "name": "سی تی اسکن مغز (با و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702020",
+   "name": "سی تی اسکن مغز کرونال و آگزیال (با تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702025",
+   "name": "سی تی اسکن مغز کرونال و آگزیال (با و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702015",
+   "name": "سی تی اسکن مغز کرونال و آگزیال (بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702030",
+   "name": "سی تی اسکن مقاطع کرونال -ساجیتال یا ابلیک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702060",
+   "name": "سی تی اسکن منطقه ماگزیلو فاشیال با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702065",
+   "name": "سی تی اسکن منطقه ماگزیلو فاشیال با وبدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702415",
+   "name": "سی تی اسکن هر سگمان از اندام",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702455",
+   "name": "سی تی اسکن هر مفصل- در یک جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702450",
+   "name": "سی تی اسکن و محاسبه آنته ورشن هیپ با زانو",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c8c",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702460",
+   "name": "سی تی اسکن و محاسبه مینرالیزاسیون استخوان (دانسیتومتری)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702035",
+   "name": "سی تی اسکن پوستریورفوسا با مقاطع ظریف (با و بدون تزریق)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702205",
+   "name": "سی تی اسکن گردن- با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702210",
+   "name": "سی تی اسکن گردن- با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702200",
+   "name": "سی تی اسکن گردن- بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702155",
+   "name": "سی تی اسکن گوش داخلی پوستریورفوسا (در دو جهت)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702150",
+   "name": "سی تی اسکن گوش داخلی کورونال و آگزیال (استخوان پتروس)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702135",
+   "name": "سی تی اسکن گوش داخلی- یک جهت و بدون تزریق (استخوان پتروس)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bba",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702160",
+   "name": "سی تی اسکن گوش- دو جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702165",
+   "name": "سی تی اسکن گوش- دو جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702140",
+   "name": "سی تی اسکن گوش- یک جهت با تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702145",
+   "name": "سی تی اسکن گوش- یک جهت با و بدون تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702510",
+   "name": "سی تی انژیوگرافی ائورت توراسیک",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "4660"
+  },
+  {
+   "id": "702515",
+   "name": "سی تی انژیوگرافی ائورت شکمی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "467"
+  },
+  {
+   "id": "702520",
+   "name": "سی تی انژیوگرافی سایر ارگان ها",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "4680"
+  },
+  {
+   "id": "702500",
+   "name": "سی تی انژیوگرافی شرائین اینتراکرانیال",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "4640"
+  },
+  {
+   "id": "702495",
+   "name": "سی تی انژیوگرافی کاروتید (اکستراکرانیال)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "463"
+  },
+  {
+   "id": "702505",
+   "name": "سی تی انژیوگرافی کلیه (جهت دهنده کلیه)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": "465"
+  },
+  {
+   "id": "702480",
+   "name": "سیالو سی تی- یک جهت با حق تزریق",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702750",
+   "name": "سیسترنوگرافی اسپیرال مغز در دو جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702745",
+   "name": "سیسترنوگرافی اسپیرال مغز در یک جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702175",
+   "name": "سیسترنوگرافی مغز- در دو جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702170",
+   "name": "سیسترنوگرافی مغز-در یک جهت",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c83",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702465",
+   "name": "پروتکل بررسی همانژیوم کبدی شامل سی تی اسکن (بدون تزریق یا با تزریق دینامیک و تاخیری)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "703035",
+   "name": "پروتکل بررسی همانژیوم کبدی شامل سی تی اسکن اسپیرال (بدون تزریق یا با تزریق دینامیک و تاخیری)",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6bfe",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702180",
+   "name": "گازمه آتوسیسترنوگرافی - دو طرفه برای گوش داخلی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "702755",
+   "name": "گازمه آتوسیسترنوگرافی اسپرال دو طرفه برای گوش داخلی",
+   "department": "1",
+   "group_id": "69c25bab9aa3dbee2d0c6c74",
+   "group_name": "سي تي اسکن",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "173",
+   "name": "Female VCUG",
+   "department": "14",
+   "group_id": "689b1807be32750dac16f7b5",
+   "group_name": null,
+   "internal_name": "Female VCUG",
+   "internal_code": "173"
+  },
+  {
+   "id": "448",
+   "name": "سونو هیستروگرافی ",
+   "department": "14",
+   "group_id": "689b1807be32750dac16f7b5",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "84",
+   "name": "فیستولوگرافی",
+   "department": "14",
+   "group_id": "689b1807be32750dac16f7b5",
+   "group_name": null,
+   "internal_name": "فیستولوگرافی",
+   "internal_code": "84"
+  },
+  {
+   "id": "704215",
+   "name": "MR ارتروگرافی",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a5f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "456"
+  },
+  {
+   "id": "72245",
+   "name": "MR دفکوگرافی ",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "5060"
+  },
+  {
+   "id": "704300",
+   "name": "MR کلانژیوگرافی (MRCP )",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4730"
+  },
+  {
+   "id": "704210",
+   "name": "MR یوروگرافی( MRU دینامیک)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4550"
+  },
+  {
+   "id": "704245",
+   "name": "MRA (آنژیوگرافی) اندام تحتانی با یابدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704240",
+   "name": "MRA (آنژیوگرافی) اندام فوقانی با یا بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704250",
+   "name": "MRA (آنژیوگرافی) شکم با یا بدون مواد حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704235",
+   "name": "MRA (آنژیوگرافی) لگن با یا بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704255",
+   "name": "MRA (آنژیوگرافی) گردن بدون ماده حاجب و بعد از آن با ماده حاجب با سایر سکانس‌ها",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704225",
+   "name": "MRA سر(مغز) بدون ماده حاجب یا با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704145",
+   "name": "MRA قفسه صدری شامل میوکارد با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704230",
+   "name": "MRA کانال spinal و محتویات آن با یا بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704220",
+   "name": "MRA گردن بدون ماده حاجب یا با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704105",
+   "name": "MRI  اندام تحتانی با ماده حاجب (به عنوان مثال proton)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "8888888",
+   "name": "MRI  قلب جهت ارزیابی  میزان اضافه بار اهن",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "777777777",
+   "name": "MRI  کبد جهت ارزیابی  میزان اضافه بار اهن",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704000",
+   "name": "MRI (به عنوان مثال Proton) دوطرفهiTMG",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a48",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4130"
+  },
+  {
+   "id": "704185",
+   "name": "MRI (به عنوان مثال Proton) هر مفصل اندام تحتانی با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704050",
+   "name": "MRI (به عنوان مثال Proton) هر مفصل اندام تحتانی بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a5f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704180",
+   "name": "MRI (به عنوان مثال proton) اندام تحتانی با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704045",
+   "name": "MRI (به عنوان مثال proton) اندام تحتانی بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a5f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "509"
+  },
+  {
+   "id": "704190",
+   "name": "MRI (به عنوان مثال proton) شکم با و بدون مواد حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4510"
+  },
+  {
+   "id": "704055",
+   "name": "MRI (به عنوان مثال proton) شکم بدون مواد حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "510"
+  },
+  {
+   "id": "704090",
+   "name": "MRI (به عنوان مثال proton) لگن با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704165",
+   "name": "MRI (به عنوان مثال proton) لگن با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "533"
+  },
+  {
+   "id": "704030",
+   "name": "MRI (به عنوان مثال proton) لگن بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "506"
+  },
+  {
+   "id": "704025",
+   "name": "MRI (به عنوان مثال proton) کانال Spinal محتویات ان توراسیک بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a57",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "505"
+  },
+  {
+   "id": "704015",
+   "name": "MRI (به عنوان مثال proton) کانال spinal و محتویات ان ناحیه سرویکال بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a48",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "503"
+  },
+  {
+   "id": "704010",
+   "name": "MRI (به عنوان مثالproton ) قفسه صدری (به عنوان مثال برای ارزیابی لنفادنوپاتی میدیاستیال) بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4150"
+  },
+  {
+   "id": "704295",
+   "name": "MRI اسکوپی",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704035",
+   "name": "MRI اندام فوقانی بازو یا ساعد به غیر از مفاصل بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a5b",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704095",
+   "name": "MRI اندام فوقانی به غیر از مفاصل با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704170",
+   "name": "MRI اندام فوقانی به غیر از مفاصل با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704120",
+   "name": "MRI اوربیت- صورت- و یا گردن با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704195",
+   "name": "MRI اوربیت- صورت- و یا گردن با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704060",
+   "name": "MRI اوربیت- صورت- و یا گردن بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a48",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4250"
+  },
+  {
+   "id": "704290",
+   "name": "MRI برای velocity flow mapping",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "3088"
+  },
+  {
+   "id": "704080",
+   "name": "MRI توراسیک با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704155",
+   "name": "MRI توراسیک با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704270",
+   "name": "MRI دینامیک هر قسمت بدن بجز قلب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "602"
+  },
+  {
+   "id": "704075",
+   "name": "MRI سرویکال spinal با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704150",
+   "name": "MRI سرویکال با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704115",
+   "name": "MRI شکم با مواد حاجب  (به عنوان مثال proton)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704070",
+   "name": "MRI قفسه صدری با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704140",
+   "name": "MRI قفسه صدری با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704125",
+   "name": "MRI مغز با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "525"
+  },
+  {
+   "id": "704065",
+   "name": "MRI مغز شامل brainstem با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704085",
+   "name": "MRI ناحیه لومبار با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704160",
+   "name": "MRI ناحیه لومبار با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4450"
+  },
+  {
+   "id": "704100",
+   "name": "MRI هر مفصل اندام فوقانی با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704175",
+   "name": "MRI هر مفصل اندام فوقانی با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704040",
+   "name": "MRI هر مفصل اندام فوقانی بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a5b",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "508"
+  },
+  {
+   "id": "704135",
+   "name": "MRI پستان دو طرفه با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704130",
+   "name": "MRI پستان یک طرفه با و بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a79",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704275",
+   "name": "MRI کاردیاک برای function با و یا بدون مورفولوژی – مطالعه کامل",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "468"
+  },
+  {
+   "id": "704285",
+   "name": "MRI کاردیاک برای مورفولوژی با ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "470"
+  },
+  {
+   "id": "704280",
+   "name": "MRI کاردیاک برای مورفولوژی بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a8a",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4690"
+  },
+  {
+   "id": "704020",
+   "name": "MRI کانال spinal و محتویات ان ناحیه لومبر بدون کنتراست (بدون ماده حاجب )",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a57",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "504"
+  },
+  {
+   "id": "704005",
+   "name": "MRI(به عنوان مثال proton) مغز شامل brainstem بدون ماده حاجب",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a48",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "501"
+  },
+  {
+   "id": "704110",
+   "name": "MRIهر مفصل اندام تحتانی با ماده حاجب  (به عنوان مثال Proton)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704200",
+   "name": "MRM ( MRماموگرافی- دو طرفه )",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4530"
+  },
+  {
+   "id": "704205",
+   "name": "MRM (MR ماموگرافی- یک طرفه)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a4f",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "454"
+  },
+  {
+   "id": "704265",
+   "name": "MRS (اسپکتروسکوپی)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "507"
+  },
+  {
+   "id": "704305",
+   "name": "MRU(MR یوروگرافی استاتیک)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a64",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704260",
+   "name": "MRV (MR ونوگرافی)",
+   "department": "2",
+   "group_id": "69c25ac99aa3dbee2d0c6a48",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": "4650"
+  },
+  {
+   "id": "704350",
+   "name": "بیهوشی برای انجام خدمات- رادیوتراپی- پزشکی هسته ای- PET-CT- MRI",
+   "department": "2",
+   "group_id": "69c25aca9aa3dbee2d0c6a96",
+   "group_name": "ام آر آي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704314",
+   "name": "تصویر برداری MRS شامل پروتکل های مغز با و بدون، SVS، 30-SVS- 135 از نواحی ضایعه و کنترل نرمال و CSI-135",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704310",
+   "name": "تصویر برداری عملکردی BOLD شامل پروتکل های مغز با یا بدون حداقل 4 ناحیه فعالیت به عنوان مثال موتور اندام های مختلف، زبان و حافظه",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704312",
+   "name": "تصویر برداری عملکردی DTI( با تراکتوگرافی( شامل پروتکل های مغز با یا بدون حداقل 60 گرادیان یا 30 جهت باNEXT دو برابر",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704322",
+   "name": "تصویر برداری مغزی SEIZURE MRI MAPPING شامل پروتکلهای مغزی با و بدون؛ FLAIR، ,DWI/ADC، DSC Perfusion )3D-TOF(CE-MRA",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704320",
+   "name": "تصویر برداری مغزی STROKE MRI MAPPING شامل پروتکلهای مغزی با و بدون؛ FLAIR، ,DWI/ADC، DSC Perfusion )3D-TOF(CE-MRA",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704318",
+   "name": "تصویر برداری مغزی TUMOR MRI MAPPING شامل پروتکل های مغزی با و بدون؛ FLAIR، ADC/DWI ،یکی از روشهای MRS یا Perfusion",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "704316",
+   "name": "تصویر برداری مغزی فیزیولوژیک MRI Perfusion شامل پروتکلهای مغزی با و بدون؛ EPI-T2، EPI-T1 دینامیک برای روش DCE یا D",
+   "department": "2",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "7100002",
+   "name": "FNA  از تیروئید ",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "33"
+  },
+  {
+   "id": "701510",
+   "name": "Scan A Quantitative به تنهائی",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b6b",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701505",
+   "name": "Unquantitative A Scan با یا بدون B scan",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b6b",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701546",
+   "name": "الاستوگرافی پستان ",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "7000003",
+   "name": "اکوکاردیوگرافی جنین",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "260"
+  },
+  {
+   "id": "701892",
+   "name": "بستن کمپرسیونی سودوآنوریسم با پروب سونوگرافی",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "7100000",
+   "name": "بیوپسی پستان ",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "3000"
+  },
+  {
+   "id": "701667",
+   "name": "سونوگرافی Infertility در آقایان (بررسی آنومالی مجرای EJ و VD)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b8d",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701731",
+   "name": "سونوگرافی NT و آنومالی سه ماهه اول",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701730",
+   "name": "سونوگرافی NT و یا NB (کدهای مربوط به تعیین حاملگی در این کد لحاظ شده است)",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "903"
+  },
+  {
+   "id": "701870",
+   "name": "سونوگرافی TCCS(اسکن دوبلکس شریان های خارج مغزی شامل کاروتید و ورتبرال دو طرفه و وریدهای گردنی همراه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b6b",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701680",
+   "name": "سونوگرافی آدرنال- یک یا دو طرفه",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701726",
+   "name": "سونوگرافی استنوز هیپرتروفیک پیلور نوزاد",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701666",
+   "name": "سونوگرافی الت ( پنیس )",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b8d",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701696",
+   "name": "سونوگرافی انواژیناسیون روده",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701610",
+   "name": "سونوگرافی اپاندیس",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "319"
+  },
+  {
+   "id": "701716",
+   "name": "سونوگرافی بارداری ترانس واژینال",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b86",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "391"
+  },
+  {
+   "id": "701735",
+   "name": "سونوگرافی برای بررسی وضع جنین های چند قلویی- هر قل اضافه",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "3400"
+  },
+  {
+   "id": "701725",
+   "name": "سونوگرافی برای تشخیص مالفورماسیون های مادرزادی جنین",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "339"
+  },
+  {
+   "id": "701736",
+   "name": "سونوگرافی بررسی رشد جنین و IUGR غیرداپلر",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701717",
+   "name": "سونوگرافی بلوغ ریه ها جنین",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701515",
+   "name": "سونوگرافی به ازای هر چشم (A اسکن و B اسکن با هم )",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b6b",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701665",
+   "name": "سونوگرافی بیضه ها",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b8d",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "329"
+  },
+  {
+   "id": "701670",
+   "name": "سونوگرافی بیضه پایین نیامده",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701720",
+   "name": "سونوگرافی بیوفیزیکال پروفایل (بررسی حرکت- تون- تنفس جنین و مایع امنیوتیک)",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "372"
+  },
+  {
+   "id": "701707",
+   "name": "سونوگرافی تاندون",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701718",
+   "name": "سونوگرافی ترانس واژینال جستجوی حاملگی خارج رحم(EP)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b86",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701520",
+   "name": "سونوگرافی تیروئید یا پاراتیروئید",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "303"
+  },
+  {
+   "id": "701660",
+   "name": "سونوگرافی جستجوی حاملگی خارج از رحم",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701535",
+   "name": "سونوگرافی جستجوی مایع در پلور یا آسیت- هر کدام",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701732",
+   "name": "سونوگرافی جفت از نظر کرتا",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701715",
+   "name": "سونوگرافی حاملگی (شامل سن- وضع جفت- جنین و ضربان قلب)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "371"
+  },
+  {
+   "id": "701835",
+   "name": "سونوگرافی داپلر رنگی پروستات به روش ترانس رکتال",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701887",
+   "name": "سونوگرافی داپلر واریس اندام تحتانی طرفه بررسی وریدهای سطحی و عمقی دریچه صافن و فمورال و صافن و پوپلی",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701886",
+   "name": "سونوگرافی داپلر واریس اندام تحتانی یک طرفه بررسی وریدهای سطحی وعمقی دریچه صافن و فمورال و صافن وپوپل",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701865",
+   "name": "سونوگرافی داپلرترانس کرانیال (TCD)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b6b",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701605",
+   "name": "سونوگرافی رتروپریتوئن یا آئورت شکمی غیر داپلر",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701655",
+   "name": "سونوگرافی رحم و تخمدان از روی شکم",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "326"
+  },
+  {
+   "id": "701690",
+   "name": "سونوگرافی رحم و تخمدان ها (ترانس واژینال)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b86",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "327"
+  },
+  {
+   "id": "701695",
+   "name": "سونوگرافی ریفلاکس معده به مری",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "333"
+  },
+  {
+   "id": "701825",
+   "name": "سونوگرافی شانه یا زانو",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701555",
+   "name": "سونوگرافی شکم (کبد- کیسه صفرا- طحال- کلیه ها- پانکراس)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "310"
+  },
+  {
+   "id": "701600",
+   "name": "سونوگرافی طحال",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "317"
+  },
+  {
+   "id": "701530",
+   "name": "سونوگرافی غدد بزاقی (پاروتید تحت فکی)",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701550",
+   "name": "سونوگرافی قفسه سینه",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701727",
+   "name": "سونوگرافی لومبوساکرال نوزاد",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701500",
+   "name": "سونوگرافی مغز نوزادان",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "300"
+  },
+  {
+   "id": "701705",
+   "name": "سونوگرافی نسج نرم سطحی یا عمقی هر جای بدن با ذکر ناحیه مورد درخواست",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "335"
+  },
+  {
+   "id": "701706",
+   "name": "سونوگرافی هر مفصل",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701700",
+   "name": "سونوگرافی هیپ نوزادان یک یا دو طرفه",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "334"
+  },
+  {
+   "id": "701595",
+   "name": "سونوگرافی پانکراس",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "316"
+  },
+  {
+   "id": "701685",
+   "name": "سونوگرافی پروستات (ترانس رکتال)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b8d",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701545",
+   "name": "سونوگرافی پستان به همراه فضاهای اگزیلاری با پروب مخصوص – یک یا دو طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b86",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "307"
+  },
+  {
+   "id": "701882",
+   "name": "سونوگرافی کالر داپلر آئورت و شریان های ایلیاک",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701826",
+   "name": "سونوگرافی کالر داپلر توده های نسج نرم",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701750",
+   "name": "سونوگرافی کالر داپلر شرایین اندام تحتانی دو طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701745",
+   "name": "سونوگرافی کالر داپلر شرایین اندام تحتانی یک طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701760",
+   "name": "سونوگرافی کالر داپلر شرایین اندام فوقانی دو طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701755",
+   "name": "سونوگرافی کالر داپلر شرایین اندام فوقانی یک طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701740",
+   "name": "سونوگرافی کالر داپلر شرایین گردن (دوکاروتید و دو ورتبرال و وریدهای ژوگولار)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701775",
+   "name": "سونوگرافی کالر داپلر شریانی وریدی- یک اندام",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701884",
+   "name": "سونوگرافی کالر داپلر فیستول دیالیز",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701770",
+   "name": "سونوگرافی کالر داپلر وریدی انتهایی دو طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701765",
+   "name": "سونوگرافی کالر داپلر وریدی انتهایی یک طرفه",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701880",
+   "name": "سونوگرافی کالرداپلر IVC و وریدهای ایلیاک",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701810",
+   "name": "سونوگرافی کالرداپلر رحم حامله (رحم- جفت و جنین)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "357"
+  },
+  {
+   "id": "701805",
+   "name": "سونوگرافی کالرداپلر رحم و تخمدان از طریق واژینال",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b86",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701780",
+   "name": "سونوگرافی کالرداپلر شریانی وریدی دو اندام",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b93",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701785",
+   "name": "سونوگرافی کالرداپلر هر عضو شکمی یا تومورهای شکمی یا لگن هر کدام",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701827",
+   "name": "سونوگرافی کالرداپلر پورت- ورید طحالی و بررسی کولترال‌ها",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701800",
+   "name": "سونوگرافی کالرداپلر کبد یا ضایعات تومور",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701795",
+   "name": "سونوگرافی کالرداپلر کلیه پیوندی",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701790",
+   "name": "سونوگرافی کالرداپلر کلیه‌ها یا بیضه‌ها",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "353"
+  },
+  {
+   "id": "701820",
+   "name": "سونوگرافی کالرداپلرآلت (penis) بدون تزریق پاپاورین",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701815",
+   "name": "سونوگرافی کالرداپلرالت (penis) شامل کلیه مراحل مورد نیاز و تزریق پاپاورین",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6ba0",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "358"
+  },
+  {
+   "id": "701626",
+   "name": "سونوگرافی کامل شکم و لگن",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "70162"
+  },
+  {
+   "id": "701611",
+   "name": "سونوگرافی کامل لگن شامل مثانه پر و خالی- پروستات و وزیکول سمینال و یا رحم و تخمدان",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "71"
+  },
+  {
+   "id": "701560",
+   "name": "سونوگرافی کبد- کیسه صفرا و مجاری صفراوی",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "311"
+  },
+  {
+   "id": "701590",
+   "name": "سونوگرافی کلیتین",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "315"
+  },
+  {
+   "id": "701615",
+   "name": "سونوگرافی کلیه ها و مجاری ادراری (شامل مثانه پر)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "320"
+  },
+  {
+   "id": "701620",
+   "name": "سونوگرافی کلیه ها و مجاری ادراری و مثانه پر و خالی ( با تعیین رزیجوی ادراری)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "321"
+  },
+  {
+   "id": "701625",
+   "name": "سونوگرافی کلیه ها و مجاری ادراری و پروستات و مثانه- پر و خالی ( با تعیین رزیجوی ادراری)",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "322"
+  },
+  {
+   "id": "701570",
+   "name": "سونوگرافی کیسه صفرا و مجاری صفراوی خارج کبدی",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "701661",
+   "name": "طول سرویکس از روی شکم",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "3266"
+  },
+  {
+   "id": "701691",
+   "name": "طول سرویکس ترانس واژینال",
+   "department": "3",
+   "group_id": "69c25b4f9aa3dbee2d0c6b72",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "3277"
+  },
+  {
+   "id": "70000003",
+   "name": "فیبرواسکن",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "24"
+  },
+  {
+   "id": "701830",
+   "name": "هیستروسونوگرافی",
+   "department": "3",
+   "group_id": "69c25b4e9aa3dbee2d0c6b52",
+   "group_name": "سونوگرافي",
+   "internal_name": null,
+   "internal_code": "448"
+  },
+  {
+   "id": "700400",
+   "name": "Defecography",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700640",
+   "name": "آرتروگرافی زانو با هوا و ماده حاجب",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700495",
+   "name": "آرتروگرافی شانه با هوا و ماده حاجب",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700560",
+   "name": "آرتروگرافی مچ دست",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700310",
+   "name": "اوروگرافی ترشحی فیلم با هر تعداد کلیشه لازم و کامل (با یا بدون PVC)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "67"
+  },
+  {
+   "id": "700315",
+   "name": "اوروگرافی سریع برای فشار خون (حداقل برای 6 کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700160",
+   "name": "برونکوگرافی یک طرفه",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b32",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700345",
+   "name": "در صورت انجام پیلوگرافی یا نفروگرافی یا نفروستومی قبلی از کدهای 700335 و 700340 استفاده میگردد",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700466",
+   "name": "رادیوگرافی EOS تمام ستون فقرات در پوزیشن های مختلف",
+   "department": "4",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700500",
+   "name": "رادیوگرافی استخوان بازو ( 2 جهت روی یک فیلم )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "102"
+  },
+  {
+   "id": "700505",
+   "name": "رادیوگرافی استخوان بازو یا ساعد یا آرنج یک جهت (یک فیلم )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700180",
+   "name": "رادیوگرافی استخوان جناغ (نمای ابلیک و نیمرخ به طور هم زمان- 2 فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "135"
+  },
+  {
+   "id": "700175",
+   "name": "رادیوگرافی استخوان جناغ (نمای ابلیک یا نیمرخ - یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "134"
+  },
+  {
+   "id": "700570",
+   "name": "رادیوگرافی استخوان ران (دو اکسپوز- روی یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "212"
+  },
+  {
+   "id": "700565",
+   "name": "رادیوگرافی استخوان ران (روبرو و نیمرخ - روی دو فیلم )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "211"
+  },
+  {
+   "id": "700515",
+   "name": "رادیوگرافی استخوان ساعد ( دو جهت- روی یک فیلم )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "105"
+  },
+  {
+   "id": "700240",
+   "name": "رادیوگرافی استخوان ساکروم و مهره های دنبالچه- دوجهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "52"
+  },
+  {
+   "id": "700060",
+   "name": "رادیوگرافی استخوان فک (نمای ابلیک یا روبرو یا نیمرخ هر طرف)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "111"
+  },
+  {
+   "id": "700540",
+   "name": "رادیوگرافی استخوانهای کف دست – دو جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "110"
+  },
+  {
+   "id": "700535",
+   "name": "رادیوگرافی استخوانهای کف دست- یک جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "205"
+  },
+  {
+   "id": "700035",
+   "name": "رادیوگرافی استخوان‌های صورت (نمای روبرو )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700040",
+   "name": "رادیوگرافی استخوان‌های صورت (نمای روبرو و نیمرخ )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700045",
+   "name": "رادیوگرافی استخوان‌های مخصوص بینی (نمای نیمرخ راست و چپ روی یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "11"
+  },
+  {
+   "id": "700575",
+   "name": "رادیوگرافی اسکنوگرام (برای تعیین کوتاهی اندام با خط کش مدرج)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700555",
+   "name": "رادیوگرافی انگشتان هر دست - دو جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "112"
+  },
+  {
+   "id": "700550",
+   "name": "رادیوگرافی انگشتان هر دست - یک جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "208"
+  },
+  {
+   "id": "700650",
+   "name": "رادیوگرافی انگشتان هر پا - دو جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "229"
+  },
+  {
+   "id": "700645",
+   "name": "رادیوگرافی انگشتان هر پا - یک جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "228"
+  },
+  {
+   "id": "700445",
+   "name": "رادیوگرافی ایستاده فقرات (روبرو و نیمرخ - روی2 فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "93"
+  },
+  {
+   "id": "700280",
+   "name": "رادیوگرافی باریم انما (حداقل 4 کلیشه )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "61"
+  },
+  {
+   "id": "700285",
+   "name": "رادیوگرافی باریم انما دوبل کنتراست (حداقل 6 کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "62"
+  },
+  {
+   "id": "700275",
+   "name": "رادیوگرافی ترانزیت روده های کوچک (حداقل4 کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "60"
+  },
+  {
+   "id": "700395",
+   "name": "رادیوگرافی ترانزیت کولون Colon Transit Time (CTT)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "60"
+  },
+  {
+   "id": "700545",
+   "name": "رادیوگرافی تعیین سن استخوانی- هر کلیشه",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "100"
+  },
+  {
+   "id": "700385",
+   "name": "رادیوگرافی توموگرافی (هر عضو- هر کلیشه فیلم کوچک)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700390",
+   "name": "رادیوگرافی توموگرافی( هر عضو- هر کلیشه فیلم بزرگ)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700005",
+   "name": "رادیوگرافی جمجمه رخ و نیمرخ",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "1"
+  },
+  {
+   "id": "700010",
+   "name": "رادیوگرافی جمجمه نمای تاون- هیرتز یا هر نمای دیگر(هراکسپوز)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700130",
+   "name": "رادیوگرافی داکریوسیستوگرافی",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700065",
+   "name": "رادیوگرافی دندان هر فیلم (پری اپیکال یا بایت وینگ)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "14"
+  },
+  {
+   "id": "700170",
+   "name": "رادیوگرافی دنده ها (یک طرف- دو نما -2 فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "133"
+  },
+  {
+   "id": "700165",
+   "name": "رادیوگرافی دنده ها نمای ابلیک یا روبرو یک فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "132"
+  },
+  {
+   "id": "700455",
+   "name": "رادیوگرافی دورسولومبار- روبرو و نیمرخ",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "191"
+  },
+  {
+   "id": "700120",
+   "name": "رادیوگرافی ساده جهت غدد بزاقی (هر کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700255",
+   "name": "رادیوگرافی ساده شکم ایستاده- یک فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "54"
+  },
+  {
+   "id": "700370",
+   "name": "رادیوگرافی ساده شکم جهت تعیین سن و یا وضعیت جنین هر اکسپوز",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700245",
+   "name": "رادیوگرافی ساده شکم خوابیده - یک فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "53"
+  },
+  {
+   "id": "700250",
+   "name": "رادیوگرافی ساده شکم خوابیده و ایستاده دو فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "55"
+  },
+  {
+   "id": "700605",
+   "name": "رادیوگرافی ساق پا (دو اکسپوز - روی یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "219"
+  },
+  {
+   "id": "700600",
+   "name": "رادیوگرافی ساق پا یک اکسپوز روی- یک فیلم (گچ یا تراکشن)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700410",
+   "name": "رادیوگرافی ستون فقرات گردن (دو جهت رخ و نیمرخ )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "85"
+  },
+  {
+   "id": "700075",
+   "name": "رادیوگرافی سری کامل دندان (در صورتی که 14 فیلم تقاضا شده باشد)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700070",
+   "name": "رادیوگرافی سری کامل دندان(10 فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700090",
+   "name": "رادیوگرافی سفالوگرام",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "117"
+  },
+  {
+   "id": "700015",
+   "name": "رادیوگرافی سل تورسیک (زین ترکی) لوکالیزه نیمرخ",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700125",
+   "name": "رادیوگرافی سیالوگرافی یک طرفه هر غده بزاقی (حداقل 4 کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700350",
+   "name": "رادیوگرافی سیستوگرافی با ماده حاجب رتروگراد",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700055",
+   "name": "رادیوگرافی سینوس‌های قدامی صورت (نمای واترز و نیمرخ)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700050",
+   "name": "رادیوگرافی سینوس‌های قدامی صورت (نمای واترز یا کالدول)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "10"
+  },
+  {
+   "id": "700135",
+   "name": "رادیوگرافی شانه یک جهت (استخوان اسکاپولا- ترقوه- مفصل اکرومیوکلاویکولار با نمای اگزیلار یا نیمرخ )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "26"
+  },
+  {
+   "id": "700430",
+   "name": "رادیوگرافی فقرات پشتی روبرو و نیمرخ",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "90"
+  },
+  {
+   "id": "700440",
+   "name": "رادیوگرافی فقرات کمری 4 فیلم روبرو- نیمرخ و ابلیک چپ و راست",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "188"
+  },
+  {
+   "id": "700435",
+   "name": "رادیوگرافی فقرات کمری روبرو و نیمرخ",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "91"
+  },
+  {
+   "id": "700415",
+   "name": "رادیوگرافی فقرات گردن (4 فیلم روبرو- نیمرخ و ابلیک چپ و راست )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "86"
+  },
+  {
+   "id": "700420",
+   "name": "رادیوگرافی فقرات گردن (فلکسیون- اکستانسیون- مایل) هر اکسپوز",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700380",
+   "name": "رادیوگرافی فیستولوگرافی با حق تزریق",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "84"
+  },
+  {
+   "id": "700080",
+   "name": "رادیوگرافی فیلم اکلوزال",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700145",
+   "name": "رادیوگرافی قفسه صدری نمای روبرو و نیمرخ به طور هم زمان",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "28"
+  },
+  {
+   "id": "700140",
+   "name": "رادیوگرافی قفسه صدری نمای روبرو یا نیمرخ و یا هر نمای دیگر (یک فیلم )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "27"
+  },
+  {
+   "id": "700115",
+   "name": "رادیوگرافی لارنگوگرافی (حداقل 4 اکسپوز)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700460",
+   "name": "رادیوگرافی لومبوساکرال - دو جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700465",
+   "name": "رادیوگرافی لوکالیزه - هر ناحیه به تنهائی",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700230",
+   "name": "رادیوگرافی لگن خاصره (هرفیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "50"
+  },
+  {
+   "id": "700030",
+   "name": "رادیوگرافی ماستوئید یک طرفه نمای شولر یا استنورس یا ترانس اوربیتال (هر اکسپوز)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700025",
+   "name": "رادیوگرافی مجرای گوش داخلی (هر فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700425",
+   "name": "رادیوگرافی مخصوص ادونتوئید",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700260",
+   "name": "رادیوگرافی مری با بلع ماده حاجب (حداقل 4 اکسپوز)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "57"
+  },
+  {
+   "id": "700270",
+   "name": "رادیوگرافی مری- معده و اثنی عشر (حداقل 6 کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "59"
+  },
+  {
+   "id": "700265",
+   "name": "رادیوگرافی معده و اثنی عشر (حداقل 4 کلیشه )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "58"
+  },
+  {
+   "id": "700510",
+   "name": "رادیوگرافی مفصل ارنج (دو جهت- روی یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "104"
+  },
+  {
+   "id": "700095",
+   "name": "رادیوگرافی مفصل تمپرو مندیبولر (هر طرف یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700105",
+   "name": "رادیوگرافی مفصل تمپرو مندیبولر - دو طرف با دهان باز و بسته (4 اکسپوز)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700100",
+   "name": "رادیوگرافی مفصل تمپرو مندیبولر- هر طرف با دهان باز و بسته (دو فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700585",
+   "name": "رادیوگرافی مفصل زانو ایستاده (روبرو و نیمرخ - روی دو فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "215"
+  },
+  {
+   "id": "700590",
+   "name": "رادیوگرافی مفصل زانو روبرو ایستاده - روی یک فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "216"
+  },
+  {
+   "id": "700580",
+   "name": "رادیوگرافی مفصل زانو( دو جهت- روی یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "214"
+  },
+  {
+   "id": "700235",
+   "name": "رادیوگرافی مفصل ساکروایلیاک هر اکسپوز(اعم از رخ و مایل )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700220",
+   "name": "رادیوگرافی مفصل هیپ دو طرفه یا نمای فراک (لگن)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700225",
+   "name": "رادیوگرافی مفصل هیپ نمای روبرو یا مایل (هرکلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "48"
+  },
+  {
+   "id": "700525",
+   "name": "رادیوگرافی مچ دست - دو جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "107"
+  },
+  {
+   "id": "700520",
+   "name": "رادیوگرافی مچ دست- یک جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "106"
+  },
+  {
+   "id": "700615",
+   "name": "رادیوگرافی مچ پا - دو جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "221"
+  },
+  {
+   "id": "700610",
+   "name": "رادیوگرافی مچ پا- یک جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "220"
+  },
+  {
+   "id": "700110",
+   "name": "رادیوگرافی نسوج نرم گردن یا نازوفارنکس- یک جهت",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "21"
+  },
+  {
+   "id": "700595",
+   "name": "رادیوگرافی نمای اینترکندیلار یا نمای مخصوص کشکک- یک فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "217"
+  },
+  {
+   "id": "700375",
+   "name": "رادیوگرافی هیستروسالپنگوگرافی",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "178"
+  },
+  {
+   "id": "700620",
+   "name": "رادیوگرافی پاشنه پا",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "222"
+  },
+  {
+   "id": "700085",
+   "name": "رادیوگرافی پانورکس",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "184"
+  },
+  {
+   "id": "700215",
+   "name": "رادیوگرافی پرتابل درمنزل(هرکلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b32",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700150",
+   "name": "رادیوگرافی کاردیاک سری با بلع ماده حاجب(4 فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700020",
+   "name": "رادیوگرافی کانال اپتیک هر طرف",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "سر وگردن راديولوژی",
+   "internal_name": null,
+   "internal_code": "103"
+  },
+  {
+   "id": "700625",
+   "name": "رادیوگرافی کف پا",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "223"
+  },
+  {
+   "id": "700635",
+   "name": "رادیوگرافی کف پا (روبرو و نیم رخ - روی یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "225"
+  },
+  {
+   "id": "700630",
+   "name": "رادیوگرافی کف پا ایستاده( روبرو یا نیم رخ - یک فیلم)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "224"
+  },
+  {
+   "id": "700295",
+   "name": "رادیوگرافی کلانژیوگرافی (تی تیوب ) هر فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "64"
+  },
+  {
+   "id": "700300",
+   "name": "رادیوگرافی کلانژیوگرافی از راه پوست- هر فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "163"
+  },
+  {
+   "id": "700290",
+   "name": "رادیوگرافی کله سیستوگرافی اورال (حداقل 2 کلیشه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700360",
+   "name": "رادیوگرافی یورتروسیستوگرافی با ماده حاجب رتروگراد ",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "172"
+  },
+  {
+   "id": "700355",
+   "name": "رادیوگرافی یورتروگرافی با ماده حاجب رتروگراد",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "78"
+  },
+  {
+   "id": "700660",
+   "name": "رادیوگرافی(Alignment view) دو طرفه",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "7007"
+  },
+  {
+   "id": "700655",
+   "name": "رادیوگرافی(Alignment view) یک طرفه",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "اندام تحتاني راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "70000000",
+   "name": "فقرات کمری اکستانسیون",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "7000001",
+   "name": "فقرات کمری فلکسیون",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700155",
+   "name": "فلوروسکوپی تنها",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b32",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700190",
+   "name": "ماموگرافی بابزرگنمایی (Magnified view)یک ناحیه",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "137"
+  },
+  {
+   "id": "700195",
+   "name": "ماموگرافی دو طرفه (روی4 فیلم مخصوص ماموگرافی)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "36"
+  },
+  {
+   "id": "700200",
+   "name": "ماموگرافی هر فیلم اضافه جهت لوکالیزاسیون",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700205",
+   "name": "ماموگرافی گالاکتوگرافی(یک طرفه)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700185",
+   "name": "ماموگرافی یک طرفه (روی2 فیلم مخصوص ماموگرافی)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": "136"
+  },
+  {
+   "id": "700485",
+   "name": "میلوگرافی از دورسولومبار - با هم کامل",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700475",
+   "name": "میلوگرافی از هر ناحیه ستون مهره‌ای (توراسیک)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700470",
+   "name": "میلوگرافی از هر ناحیه ستون مهره‌ای (سرویکال)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700480",
+   "name": "میلوگرافی از هر ناحیه ستون مهره‌ای (لومبار)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700490",
+   "name": "میلوگرافی فقرات گردنی پشتی کمری – کامل",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700320",
+   "name": "نفروتوموگرافی هر کلیشه",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700530",
+   "name": "هر فیلم اضافی مچ دست (اسکافوئید و…)",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "اندام فوقاني راديولوژي",
+   "internal_name": null,
+   "internal_code": "204"
+  },
+  {
+   "id": "700450",
+   "name": "هر کلیشه اضافی (Bending) یا ابلیک و… هر فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6aad",
+   "group_name": "ستون فقرات راديولوژي",
+   "internal_name": null,
+   "internal_code": "190"
+  },
+  {
+   "id": "700405",
+   "name": "وازوگرافی",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b32",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700210",
+   "name": "پنوموسیستوگرافی از یک پستان با هزینه تزریق",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b32",
+   "group_name": "قفسه سينه راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700325",
+   "name": "پیلوگرافی رتروگراد دو طرفه (هر کلیشه )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700330",
+   "name": "پیلوگرافی رتروگراد یک طرفه (هر کلیشه )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700340",
+   "name": "پیلوگرافی یا نفروگرافی آنتی گراد دو طرفه (با هر تعدادکلیشه لازم و کامل )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700335",
+   "name": "پیلوگرافی یا نفروگرافی آنتی گراد یک طرفه (با هر تعدادکلیشه لازم و کامل )",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700305",
+   "name": "کلانژیوپانکراتوگرافی رتروگراد از طریق اندوسکوپ (ERCP)- هر فیلم",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6b1a",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700365",
+   "name": "یورتروسیستوگرافی در حال ادرار کردن با اسکوپی V.C.U.G",
+   "department": "4",
+   "group_id": "69c25b089aa3dbee2d0c6afd",
+   "group_name": "لگن و شکم راديولوژي",
+   "internal_name": null,
+   "internal_code": "173"
+  },
+  {
+   "id": "700920",
+   "name": "Bone Densitometry تراکم سنجی استخوان(یک یا دو منطقه) رادیوگرافی",
+   "department": "5",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700925",
+   "name": "Bone Densitometry تراکم سنجی استخوانهای تمام بدن",
+   "department": "5",
+   "group_id": "69c25b309aa3dbee2d0c6b47",
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": "774"
+  },
+  {
+   "id": "700915",
+   "name": "Bone Survey(بالای سن 10 سالگی) با دو کلیشه اضافه (رخ و نیمرخ کمر)",
+   "department": "5",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700910",
+   "name": "Bone Survey(تا سن 10 سالگی) ",
+   "department": "5",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "7",
+   "name": "test",
+   "department": "5",
+   "group_id": "69c25b309aa3dbee2d0c6b47",
+   "group_name": "سنجش تراکم استخوان",
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700905",
+   "name": "سنجش تراکم استخوان (Dual Photon)",
+   "department": "5",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "700900",
+   "name": "سنجش تراکم استخوان (Single Photon)",
+   "department": "5",
+   "group_id": null,
+   "group_name": null,
+   "internal_name": null,
+   "internal_code": null
+  },
+  {
+   "id": "117",
+   "name": "عکس سفالوگرام دندان",
+   "department": "6",
+   "group_id": "6885b2b1f055111ae44df5ab",
+   "group_name": null,
+   "internal_name": "cephalogram",
+   "internal_code": "117"
+  },
+  {
+   "id": "137",
+   "name": "ماموگرافی با بزرگنمایی ",
+   "department": "9",
+   "group_id": "6885a56df055111ae44df55a",
+   "group_name": null,
+   "internal_name": "بزرگنمایی",
+   "internal_code": "137"
+  },
+  {
+   "id": "36",
+   "name": "ماموگرافی دو طرفه",
+   "department": "9",
+   "group_id": "6885a56df055111ae44df55a",
+   "group_name": null,
+   "internal_name": "Mammography",
+   "internal_code": null
+  },
+  {
+   "id": "136",
+   "name": "ماموگرافی یک طرفه",
+   "department": "9",
+   "group_id": "6885a56df055111ae44df55a",
+   "group_name": null,
+   "internal_name": "ماموگرافی یک طرفه",
+   "internal_code": "136"
+  },
+  {
+   "id": "1015",
+   "name": "کلیشه بزرگ",
+   "department": "9",
+   "group_id": "6885a79cf055111ae44df584",
+   "group_name": null,
+   "internal_name": "فیلم بزرگ",
+   "internal_code": "1015"
+  },
+  {
+   "id": "1007",
+   "name": "کلیشه کوچک",
+   "department": "9",
+   "group_id": "6885a96df055111ae44df593",
+   "group_name": null,
+   "internal_name": "کلیشه کوچک",
+   "internal_code": "1007"
+  }
+ ],
+ "orphan_departments": [
+  "6"
+ ],
+ "counts": {
+  "departments": 7,
+  "disabled_departments": 2,
+  "service_groups": 34,
+  "services": 519,
+  "services_per_department": {
+   "9": 5,
+   "6": 1,
+   "14": 3,
+   "2": 73,
+   "4": 135,
+   "5": 7,
+   "3": 87,
+   "1": 208
+  },
+  "orphan_departments": 1
+ }
+}

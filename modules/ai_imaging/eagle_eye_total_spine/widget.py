@@ -28,6 +28,31 @@ class SpineCanvas(AlignmentCanvas):
     candidateChanged = Signal(int, object)
     regionChanged = Signal(object)
 
+    def _sync_hit_targets(self):
+        # View transforms do not notify the scene about item-local bounds.
+        # Retain the full item list while updating its spatial index.
+        scene = self.scene()
+        if scene is not None:
+            for item in scene.items():
+                if isinstance(item, EditableSegment) or isinstance(item, CandidateBody) and item.region:
+                    item.sync_hit_target()
+
+    def scale(self, sx, sy):
+        super().scale(sx, sy)
+        self._sync_hit_targets()
+
+    def setTransform(self, matrix, combine=False):
+        super().setTransform(matrix, combine)
+        self._sync_hit_targets()
+
+    def resetTransform(self):
+        super().resetTransform()
+        self._sync_hit_targets()
+
+    def fitInView(self, *args):
+        super().fitInView(*args)
+        self._sync_hit_targets()
+
     def fit(self):
         self.setTransform(QTransform.fromScale(getattr(self, 'pixel_aspect', 1.), 1.))
         self.fitInView(self.sceneRect(), Qt.KeepAspectRatio)
@@ -1084,6 +1109,41 @@ class TotalSpineWidget(QWidget):
     def scan_study(self):
         self._submit('scan', service.study_images, self.study_uid)
 
+    def restore_saved_result(self, result):
+        """Read original pixels and retained geometry in the existing worker."""
+        from ..eagle_eye_brain.saved_results import _same_study
+        from .saved_review import prepare
+        if not _same_study(result, self.study_uid):
+            raise ValueError('Saved spine result belongs to another examination.')
+        if self._future is not None or any(e.image is not None for e in self.editors):
+            raise ValueError('Finish the active spine review before opening another result.')
+        self._restoring_saved = True
+        self._submit('restore', prepare, deepcopy(result), self.study_uid)
+
+    def _apply_saved_review(self, result):
+        for view in result['views']:
+            editor = next(e for e in self.editors if e.projection == view['image']['projection'])
+            editor.accept_image(view['image'])
+            for key in ('points', 'markers', 'pedicles', 'curves', 'rotations', 'provenance'):
+                setattr(editor, key, deepcopy(view[key]))
+            editor.orientation.setCurrentIndex(1 if view['positive_image_right'] else 0)
+            editor.confirm.setChecked(view['acquisition_confirmed'])
+            editor.review.setChecked(view['landmarks_reviewed'])
+            if view.get('region') is not None:
+                editor.region = list(view['region']); editor._draw_region()
+            editor.canvas.set_points(editor.points, editor.markers, editor.pedicles)
+            if view.get('candidates'):
+                editor.accept_candidates(dict(result['provenance'], candidates=view['candidates']))
+            editor.recalculate()
+        self.notes.setText(result.get('notes') or '')
+        self.report_result = result['report_result']
+        self._server_report_parent = result['parent_job_id']
+        self._server_report_sources = [(v['image']['identity']['series_uid'], v['image']['identity']['sop_uid'])
+                                       for v in result['views']]
+        self.status.setText('Saved Total Spine result restored. No new analysis was submitted.')
+        self.fit_loaded_images()
+        self.resultsReady.emit()
+
     def load_image(self, editor):
         path, series = editor.files.currentData(), editor.series.currentData()
         if not path or not series: return
@@ -1157,7 +1217,9 @@ class TotalSpineWidget(QWidget):
             result = future.result()
             if self._disposed or self._cancel.is_set():
                 self.status.setText('Task cancelled; result was not applied.'); return
-            if kind == 'scan':
+            if kind == 'restore':
+                self._apply_saved_review(result)
+            elif kind == 'scan':
                 for editor in self.editors: editor.set_inventory(result)
                 self.status.setText(f'{len(result)} eligible images found. Choose and load the coronal image, then mark two corners enclosing the spine. Analysis will start automatically.' if self._automatic else f'{len(result)} eligible images found. Assign each projection explicitly.')
                 self._load_preferred_series(result)
@@ -1207,6 +1269,8 @@ class TotalSpineWidget(QWidget):
             logger.warning('Total Spine task failed: kind=%s error_type=%s', kind, type(exc).__name__)
             self.status.setText(str(exc) if isinstance(exc, (ValueError, KeyError)) else 'Task failed. Check image/model availability and retry.')
         finally:
+            if kind == 'restore':
+                self._restoring_saved = False
             if hasattr(self, 'analysis_bar'):
                 progress = self.analysis_progress.snapshot()
                 if progress is not None and progress[0] == progress[1]:

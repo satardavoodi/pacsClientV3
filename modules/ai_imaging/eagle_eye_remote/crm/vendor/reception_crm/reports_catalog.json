@@ -1,0 +1,3781 @@
+{
+ "source": "D:\\api\\routes\\ReportsRouter.js",
+ "extracted_by": "scripts/extract_report_catalog.py",
+ "route_count": 63,
+ "distinct_routes": 62,
+ "shadowed_routes": 1,
+ "summary": {
+  "date_basis": {
+   "reception_date": 36,
+   "transaction_date": 9,
+   "not_dated": 7,
+   "patient_created_at": 5,
+   "mixed": 4,
+   "warehouse_movement_date": 1,
+   "deletion_date": 1
+  },
+  "default_when_no_dates": {
+   "all_time": 45,
+   "today": 9,
+   "not_applicable": 8,
+   "rejects_request": 1
+  },
+  "date_coverage": {
+   "all_queries_visibly_dated": 44,
+   "some_queries_not_visible": 18,
+   "no_queries": 1
+  },
+  "date_fields_seen": {
+   "Date -> reception_date": 40,
+   "date -> transaction_date": 11,
+   "createdAt -> patient_created_at": 4,
+   "createdAt -> record_created_at": 2,
+   "PersianDate -> warehouse_movement_date": 1,
+   "deletedAt -> deletion_date": 1,
+   "_id -> patient_created_at": 1
+  },
+  "vendor_documentation": {
+   "with_title_fa": 62,
+   "with_description_fa": 22,
+   "with_field_labels_fa": 22,
+   "total_field_labels": 420,
+   "documented_by_neither": 0
+  }
+ },
+ "reports": [
+  {
+   "method": "GET",
+   "path": "/dashboard",
+   "endpoint": "/api/Reports/dashboard",
+   "title_fa": null,
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آمار کلی سیستم برای داشبورد مدیریت",
+   "field_labels_fa": {
+    "description": "خلاصه آمار کلی سیستم برای داشبورد مدیریت",
+    "totalPatients": "تعداد کل بیماران ثبت شده در سیستم",
+    "todayPatients": "تعداد بیماران جدید امروز (بر اساس createdAt)",
+    "monthlyPatients": "تعداد بیماران جدید ماه جاری",
+    "totalUsers": "تعداد کل کاربران فعال سیستم (adminUsersModel با Deactive=false)",
+    "totalPersonnel": "تعداد کل پرسنل ثبت شده",
+    "totalRooms": "تعداد کل اتاق‌های موجود",
+    "todayReceptions": "تعداد پذیرش‌های امروز (بر اساس فیلد Date فارسی)",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "currentPersianTime": "زمان فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش",
+    "patientsToUsersRatio": "نسبت بیمار به کاربر - میانگین تعداد بیمار به ازای هر کاربر",
+    "dailyReceptionRate": "نرخ پذیرش روزانه - درصد بیمارانی که امروز پذیرش شده‌اند",
+    "monthlyGrowthRate": "نرخ رشد ماهانه - درصد بیماران جدید ماه جاری",
+    "todayVsYesterday": "مقایسه امروز با دیروز",
+    "thisMonthVsLastMonth": "مقایسه ماه جاری با ماه گذشته"
+   },
+   "parameters": [],
+   "takes_date_params": false,
+   "date_basis": "mixed",
+   "date_bases": [
+    "reception_date",
+    "record_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "eq"
+     ],
+     "evidence": [
+      "{ Date: todayPersian"
+     ]
+    },
+    {
+     "field": "createdAt",
+     "basis": "record_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      "{ createdAt: { $gte: todayStart, $lte: todayEnd",
+      "{ createdAt: { $gte: startOfMonth, $lte: endOfMonth"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 7,
+    "visible_date_constraint": 7,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "ClinicUsersModel",
+    "PatientModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel"
+   ],
+   "response_keys": [
+    "data",
+    "description",
+    "error",
+    "fields",
+    "message",
+    "success",
+    "todayPatients"
+   ],
+   "body_chars": 4618
+  },
+  {
+   "method": "GET",
+   "path": "/reception",
+   "endpoint": "/api/Reports/reception",
+   "title_fa": "گزارش پذیرش - آمار جامع پذیرش‌ها شامل بیمه، تخفیف، بخش‌ها با تاریخ فارسی",
+   "title_detail_fa": [],
+   "description_fa": "آمار کلی پذیرش‌ها شامل تعداد کل، مبالغ، تسویه و میانگین‌ها",
+   "field_labels_fa": {
+    "description": "آمار کلی پذیرش‌ها شامل تعداد کل، مبالغ، تسویه و میانگین‌ها",
+    "totalReceptions": "تعداد کل پذیرش‌های ثبت شده در بازه زمانی مشخص",
+    "uniquePatients": "تعداد بیماران منحصر به فرد که پذیرش شده‌اند",
+    "totalAmount": "مجموع کل مبلغ پذیرش‌ها (قبل از کسر بیمه و تخفیف)",
+    "totalPatientAmount": "مجموع سهم بیمار (مبلغ قابل پرداخت توسط بیمار)",
+    "totalSalamatInsurance": "مجموع سهم بیمه سلامت",
+    "totalTaminInsurance": "مجموع سهم بیمه تامین اجتماعی",
+    "totalInsuranceAmount": "مجموع کل سهم بیمه‌ها (سلامت + تامین)",
+    "totalDiscounts": "مجموع کل تخفیفات اعمال شده",
+    "totalCashDeskDiscounts": "تخفیفات اعمال شده در صندوق",
+    "totalPaidAmount": "مبلغ کل دریافت شده از بیماران",
+    "totalDuration": "مجموع زمان صرف شده برای پذیرش‌ها (دقیقه)",
+    "settledCount": "تعداد پذیرش‌های تسویه شده",
+    "unsettledCount": "تعداد پذیرش‌های تسویه نشده",
+    "averageReceptionAmount": "میانگین مبلغ هر پذیرش (ریال)",
+    "averageDuration": "میانگین زمان هر پذیرش (دقیقه)",
+    "insuranceType": "نوع بیمه (سلامت، تامین، آزاد و...)",
+    "count": "تعداد پذیرش با این نوع بیمه",
+    "averageAmount": "میانگین مبلغ هر پذیرش",
+    "settlementRate": "درصد تسویه (settledCount/count * 100)",
+    "modalityId": "شناسه بخش/مودالیتی",
+    "modalityName": "نام کامل بخش/مودالیتی (فارسی/انگلیسی)",
+    "modalityShortName": "نام کوتاه بخش/مودالیتی",
+    "persianDate": "تاریخ فارسی (YYYY/MM/DD)",
+    "receptionCount": "تعداد پذیرش در این روز",
+    "uniqueModalities": "تعداد بخش‌های مختلف فعال",
+    "serviceCode": "کد خدمت (شناسه اصلی خدمت در سیستم)",
+    "service": "نام خدمت",
+    "serviceGroup": "گروه خدمت",
+    "checkCode": "کد بررسی خدمت (فیلد checkCode)",
+    "internalCode": "کد داخلی خدمت (از جدول ServicesInfo)",
+    "totalRevenue": "مجموع درآمد از این خدمت",
+    "averagePrice": "میانگین قیمت هر واحد خدمت",
+    "taminServices": "تعداد انجام با بیمه تامین",
+    "salamatServices": "تعداد انجام با بیمه سلامت",
+    "privateServices": "تعداد انجام آزاد (بدون بیمه)",
+    "discountedServices": "تعداد انجام با تخفیف",
+    "totalDiscount": "مجموع مبلغ تخفیف",
+    "discountRate": "درصد تخفیف (discountedServices/count * 100)",
+    "settledReceptions": "تعداد پذیرش‌های تسویه شده",
+    "unsettledReceptions": "تعداد پذیرش‌های تسویه نشده",
+    "totalReceivableAmount": "مجموع مبلغ قابل دریافت",
+    "remainingAmount": "مانده طلب (totalReceivableAmount - totalPaidAmount)",
+    "paymentRate": "درصد وصولی (totalPaidAmount/totalReceivableAmount * 100)",
+    "totalPatientShare": "مجموع سهم بیماران",
+    "totalInsuranceShare": "مجموع سهم بیمه‌ها",
+    "patientSharePercentage": "درصد سهم بیمار از کل",
+    "insuranceSharePercentage": "درصد سهم بیمه از کل",
+    "userId": "شناسه کاربر (registeredBy)",
+    "fullName": "نام کامل کاربر",
+    "userName": "نام کاربری (User)",
+    "nickName": "نام مستعار (NickName)",
+    "collectionRate": "درصد وصولی (totalPaidAmount/totalAmount * 100)",
+    "data": "آمار خام ماه قبل",
+    "receptionGrowth": "درصد رشد تعداد پذیرش نسبت به ماه قبل",
+    "revenueGrowth": "درصد رشد درآمد نسبت به ماه قبل",
+    "hour": "ساعت (فرمت ۲ رقمی ۰۰-۲۳)",
+    "averageRevenue": "میانگین درآمد هر پذیرش در این ساعت",
+    "patientShare": "مجموع مبلغ قابل پرداخت توسط بیماران (ریال)",
+    "insuranceShare": "مجموع مبلغ قابل پرداخت توسط بیمه‌ها (ریال)",
+    "patientPercentage": "درصد سهم بیمار از کل مبلغ",
+    "insurancePercentage": "درصد سهم بیمه از کل مبلغ",
+    "cashDeskDiscounts": "تخفیفات اعمال شده در صندوق (ریال)",
+    "serviceDiscounts": "تخفیفات اعمال شده روی خدمات (ریال)",
+    "discountPercentage": "درصد تخفیف از کل مبلغ",
+    "averageReceptionTime": "میانگین زمان هر پذیرش (دقیقه)",
+    "paymentCollectionRate": "درصد وصولی - نشان‌دهنده کارایی وصول مطالبات",
+    "dailyAverageReceptions": "میانگین تعداد پذیرش در روز",
+    "filters": "فیلترهای اعمال شده برای تولید گزارش",
+    "period": "بازه زمانی گزارش",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش",
+    "startDate": "تاریخ شروع بازه (فرمت YYYY/MM/DD)",
+    "endDate": "تاریخ پایان بازه (فرمت YYYY/MM/DD)",
+    "type": "نوع گزارش (daily, monthly)"
+   },
+   "parameters": [
+    "endDate",
+    "startDate",
+    "type"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "regex",
+      "eq"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = { $regex: `^${currentMonth",
+      "{ Date: { $in: lastMonthDates",
+      "{ Date: { $in: lastYearDates",
+      ".Date = todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 10,
+    "visible_date_constraint": 10,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": false,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "description",
+    "error",
+    "fields",
+    "message",
+    "stack",
+    "success",
+    "uniquePatients"
+   ],
+   "body_chars": 44983
+  },
+  {
+   "method": "GET",
+   "path": "/patients",
+   "endpoint": "/api/Reports/patients",
+   "title_fa": "گزارش بیماران - آمار بیماران بر اساس جنسیت، سن و ...",
+   "title_detail_fa": [],
+   "description_fa": "آمار کلی بیماران در بازه زمانی مشخص",
+   "field_labels_fa": {
+    "description": "آمار کلی بیماران در بازه زمانی مشخص",
+    "totalPatients": "تعداد کل بیماران ثبت شده در بازه زمانی",
+    "_id": "جنسیت (مرد، زن، نامشخص)",
+    "count": "تعداد بیماران با این جنسیت",
+    "period": "بازه زمانی گزارش",
+    "startDate": "تاریخ شروع (بر اساس createdAt بیماران)",
+    "endDate": "تاریخ پایان (بر اساس createdAt بیماران)",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش"
+   },
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "patient_created_at",
+   "date_bases": [
+    "patient_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "createdAt",
+     "basis": "patient_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".createdAt = { $gte: start, $lte: end"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 6,
+    "visible_date_constraint": 6,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel"
+   ],
+   "response_keys": [
+    "data",
+    "description",
+    "details",
+    "error",
+    "fields",
+    "message",
+    "success",
+    "timestamp"
+   ],
+   "body_chars": 8739
+  },
+  {
+   "method": "GET",
+   "path": "/financial",
+   "endpoint": "/api/Reports/financial",
+   "title_fa": "گزارش مالی - آمار صندوق و درآمد با تاریخ فارسی",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه وضعیت مالی کلینیک",
+   "field_labels_fa": {
+    "description": "خلاصه وضعیت مالی کلینیک",
+    "totalIncome": "مجموع کل درآمدها - شامل پذیرش، پرداخت‌ها و شارژ کیف پول (ریال)",
+    "totalExpense": "مجموع هزینه‌های عملیاتی - حقوق، تجهیزات، اجاره و سایر هزینه‌ها (ریال)",
+    "totalReceivables": "مجموع مطالبات - خدمات انجام شده اما تسویه نشده (ریال)",
+    "netIncome": "سود خالص - درآمد منهای هزینه بدون در نظر گیری مطالبات (ریال)",
+    "netCashFlow": "جریان نقدی خالص - پول واقعی در دست (درآمد - هزینه - مطالبات) (ریال)",
+    "profitMargin": "حاشیه سود - درصد سود نسبت به کل درآمد",
+    "reception": "درآمد از پذیرش‌های ثبت شده - کل مبلغ پذیرش‌ها (ReceptionModel.totalAmount)",
+    "payments": "پرداخت‌های نقدی دریافتی - پول نقد دریافت شده از بیماران (PaymentModel.Price)",
+    "total": "مجموع کل درآمدها",
+    "receptionPercentage": "درصد سهم درآمد پذیرش از کل درآمد",
+    "paymentsPercentage": "درصد سهم پرداخت‌های نقدی از کل درآمد",
+    "walletCreditPercentage": "درصد سهم شارژ کیف پول از کل درآمد",
+    "costs": "هزینه‌های عملیاتی ثبت شده - حقوق، تجهیزات، اجاره (CostModel.Cost)",
+    "expenseRatio": "نسبت هزینه به درآمد - درصد هزینه‌ها نسبت به کل درآمد",
+    "receivableRatio": "نسبت مطالبات به درآمد - درصد مطالبات نسبت به کل درآمد",
+    "paymentCount": "تعداد تراکنش‌های پرداخت نقدی دریافتی",
+    "expenseCount": "تعداد هزینه‌های ثبت شده",
+    "walletCreditCount": "تعداد تراکنش‌های شارژ کیف پول",
+    "walletDebtCount": "تعداد تراکنش‌های بدهی کیف پول",
+    "totalTransactionCount": "مجموع تعداد همه تراکنش‌ها",
+    "averagePayment": "میانگین مبلغ هر پرداخت دریافتی",
+    "averageExpense": "میانگین مبلغ هر هزینه",
+    "cashPosition": "وضعیت نقدینگی - آیا جریان نقدی مثبت است یا منفی",
+    "profitability": "سودآوری - آیا کلینیک سودآور است یا زیان‌ده",
+    "liquidityRatio": "نسبت نقدینگی - درصد درآمد قابل دسترس (بدون مطالبات)",
+    "operatingEfficiency": "کارایی عملیاتی - درصد سود عملیاتی نسبت به درآمد",
+    "currency": "ریال",
+    "period": "بازه زمانی گزارش",
+    "startDate": "تاریخ شروع - برای ReceptionModel بر اساس فیلد Date (فارسی) و برای سایر مدل‌ها بر اساس createdAt",
+    "endDate": "تاریخ پایان - برای ReceptionModel بر اساس فیلد Date (فارسی) و برای سایر مدل‌ها بر اساس createdAt",
+    "reportDate": "تاریخ و زمان تولید گزارش"
+   },
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "mixed",
+   "date_bases": [
+    "reception_date",
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ Date: { $in: dates"
+     ]
+    },
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 4,
+    "visible_date_constraint": 4,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": false,
+   "collections": [
+    "CostModel",
+    "PaymentModel",
+    "ReceptionModel",
+    "Transaction"
+   ],
+   "response_keys": [
+    "data",
+    "description",
+    "error",
+    "message",
+    "netCashFlow",
+    "netIncome",
+    "profitMargin",
+    "success",
+    "totalExpense",
+    "totalReceivables"
+   ],
+   "body_chars": 12867
+  },
+  {
+   "method": "GET",
+   "path": "/personnel",
+   "endpoint": "/api/Reports/personnel",
+   "title_fa": "گزارش پرسنل - آمار پرسنل و کارکرد",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آمار پرسنل کلینیک",
+   "field_labels_fa": {
+    "description": "خلاصه آمار پرسنل کلینیک",
+    "totalPersonnel": "تعداد کل پرسنل ثبت شده در سیستم",
+    "activePersonnel": "تعداد پرسنل فعال (active=true)",
+    "inactivePersonnel": "تعداد پرسنل غیرفعال (active=false یا null)",
+    "activeRate": "درصد پرسنل فعال از کل پرسنل",
+    "_id": "نامشخص",
+    "count": "تعداد پرسنل در این دسته",
+    "totalTypes": "تعداد کل انواع پرسنل موجود",
+    "mostCommonType": "رایج‌ترین نوع پرسنل",
+    "personnelUtilization": "میزان بهره‌وری پرسنل (در نسخه‌های آتی محاسبه خواهد شد)",
+    "averageExperience": "میانگین سابقه کار (در نسخه‌های آتی محاسبه خواهد شد)",
+    "reportDate": "تاریخ و زمان تولید گزارش",
+    "currentPersianDate": "تاریخ فارسی فعلی"
+   },
+   "parameters": [],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "PersonnelModel"
+   ],
+   "response_keys": [
+    "activePersonnel",
+    "activeRate",
+    "data",
+    "description",
+    "error",
+    "inactivePersonnel",
+    "message",
+    "success"
+   ],
+   "body_chars": 3097
+  },
+  {
+   "method": "GET",
+   "path": "/medical-services",
+   "endpoint": "/api/Reports/medical-services",
+   "title_fa": "گزارش خدمات پزشکی - آمار خدمات ارائه شده با تاریخ فارسی",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آمار خدمات پزشکی ارائه شده",
+   "field_labels_fa": {
+    "_id": "نامشخص",
+    "description": "خلاصه آمار خدمات پزشکی ارائه شده",
+    "totalServices": "تعداد کل خدمات انجام شده (مجموع Qty همه خدمات)",
+    "uniqueServices": "تعداد انواع خدمات مختلف ارائه شده",
+    "totalRevenue": "مجموع درآمد از خدمات (بر اساس PrivateTariff × Qty)",
+    "averageServiceValue": "میانگین ارزش هر خدمت (ریال)",
+    "serviceCode": "کد خدمت (شناسه اصلی خدمت در سیستم)",
+    "serviceName": "نام خدمت",
+    "checkCode": "کد بررسی خدمت",
+    "internalCode": "کد داخلی خدمت (از جدول ServicesInfo)",
+    "count": "تعداد دفعات انجام (مجموع Qty)",
+    "totalPrice": "مجموع درآمد از این خدمت",
+    "avgPrice": "میانگین قیمت هر واحد خدمت",
+    "uniqueServicesCount": "تعداد خدمات منحصر به فرد در این گروه",
+    "modalityId": "شناسه بخش/مودالیتی",
+    "modalityName": "نام کامل بخش/مودالیتی (فارسی/انگلیسی)",
+    "modalityShortName": "نام کوتاه بخش/مودالیتی",
+    "persianDate": "تاریخ فارسی (YYYY/MM/DD)",
+    "totalReceptions": "تعداد پذیرش‌های منحصر به فرد",
+    "topServiceGroup": "پرکارترین گروه خدمت",
+    "topModality": "پرکارترین بخش/مودالیتی (نام کامل)",
+    "topModalityId": "شناسه پرکارترین بخش/مودالیتی",
+    "averageDailyServices": "میانگین تعداد خدمات روزانه",
+    "period": "بازه زمانی گزارش",
+    "startDate": "تاریخ شروع (فارسی)",
+    "endDate": "تاریخ پایان (فارسی)",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش"
+   },
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 5,
+    "visible_date_constraint": 5,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "averageServiceValue",
+    "data",
+    "error",
+    "message",
+    "success",
+    "totalRevenue",
+    "uniqueServices"
+   ],
+   "body_chars": 12027
+  },
+  {
+   "method": "GET",
+   "path": "/rooms",
+   "endpoint": "/api/Reports/rooms",
+   "title_fa": "گزارش اتاق‌ها - آمار استفاده از اتاق‌ها",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آمار اتاق‌های کلینیک",
+   "field_labels_fa": {
+    "description": "خلاصه آمار اتاق‌های کلینیک",
+    "totalRooms": "تعداد کل اتاق‌های ثبت شده در سیستم",
+    "activeRooms": "تعداد اتاق‌های فعال (isActive=true)",
+    "inactiveRooms": "تعداد اتاق‌های غیرفعال (isActive=false)",
+    "activeRate": "درصد اتاق‌های فعال از کل اتاق‌ها",
+    "modalityId": "شناسه بخش/مودالیتی",
+    "modalityName": "نام کامل بخش/مودالیتی (فارسی/انگلیسی)",
+    "modalityShortName": "نام کوتاه بخش/مودالیتی",
+    "count": "تعداد کل اتاق‌های این بخش",
+    "active": "تعداد اتاق‌های فعال این بخش",
+    "inactive": "تعداد اتاق‌های غیرفعال این بخش",
+    "totalCapacity": "مجموع ظرفیت همه اتاق‌ها",
+    "averageCapacity": "میانگین ظرفیت هر اتاق",
+    "roomsWithEquipment": "تعداد اتاق‌هایی که تجهیزات دارند",
+    "equipmentRate": "درصد اتاق‌های دارای تجهیزات",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش"
+   },
+   "parameters": [],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 5,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "RoomsModel"
+   ],
+   "response_keys": [
+    "activeRate",
+    "activeRooms",
+    "data",
+    "description",
+    "error",
+    "fields",
+    "inactiveRooms",
+    "message",
+    "success"
+   ],
+   "body_chars": 6690
+  },
+  {
+   "method": "GET",
+   "path": "/warehouse",
+   "endpoint": "/api/Reports/warehouse",
+   "title_fa": "گزارش انبار - آمار موجودی و تراکنش‌های انبار با تاریخ فارسی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "warehouse_movement_date",
+   "date_bases": [
+    "warehouse_movement_date"
+   ],
+   "date_fields": [
+    {
+     "field": "PersianDate",
+     "basis": "warehouse_movement_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".PersianDate = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "WarehouseProductModel",
+    "WarehouseTransactionModel"
+   ],
+   "response_keys": [
+    "currentPersianDate",
+    "data",
+    "error",
+    "itemsByCategory",
+    "message",
+    "reportDate",
+    "success"
+   ],
+   "body_chars": 3117
+  },
+  {
+   "method": "GET",
+   "path": "/imaging-workflow",
+   "endpoint": "/api/Reports/imaging-workflow",
+   "title_fa": "گزارش تصویربرداری - آمار workflow های تصویربرداری با تاریخ فارسی",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آمار workflow های تصویربرداری",
+   "field_labels_fa": {
+    "description": "خلاصه آمار workflow های تصویربرداری",
+    "totalWorkflows": "تعداد کل workflow های تصویربرداری در بازه زمانی",
+    "totalModalitiesWithWorkflow": "تعداد بخش‌هایی که workflow تصویربرداری دارند",
+    "averageWorkflowsPerDay": "میانگین تعداد workflow در روز",
+    "_id": "وضعیت workflow (waiting_appointment, scheduled, inProgress, completed, reported, archived)",
+    "count": "تعداد workflow در این وضعیت",
+    "modalityId": "شناسه بخش/مودالیتی",
+    "modalityName": "نام کامل بخش/مودالیتی (فارسی/انگلیسی)",
+    "modalityShortName": "نام کوتاه بخش/مودالیتی",
+    "statusBreakdown": "تفکیک بر اساس وضعیت (آرایه‌ای از {status, count})",
+    "persianDate": "تاریخ فارسی (YYYY/MM/DD)",
+    "workflows": "تعداد کل workflow ها",
+    "completed": "تعداد workflow های تکمیل شده",
+    "inProgress": "تعداد workflow های در حال انجام",
+    "scheduled": "تعداد workflow های زمان‌بندی شده",
+    "waiting": "تعداد workflow های در انتظار نوبت",
+    "uniqueModalities": "تعداد بخش‌های منحصر به فرد فعال",
+    "modalityList": "لیست اطلاعات بخش‌های فعال",
+    "mostActiveModality": "پرکارترین بخش از نظر تعداد workflow",
+    "completionRate": "درصد workflow های تکمیل شده",
+    "pendingWorkflows": "تعداد workflow های در انتظار نوبت‌دهی",
+    "searchDateRange": "بازه زمانی جستجو (null = همه تاریخ‌ها)",
+    "startDate": "تاریخ شروع (فارسی)",
+    "endDate": "تاریخ پایان (فارسی)",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش"
+   },
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 7,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "averageWorkflowsPerDay",
+    "data",
+    "description",
+    "error",
+    "message",
+    "success",
+    "totalModalitiesWithWorkflow"
+   ],
+   "body_chars": 11921
+  },
+  {
+   "method": "POST",
+   "path": "/custom",
+   "endpoint": "/api/Reports/custom",
+   "title_fa": "گزارش سفارشی - امکان ترکیب گزارش‌های مختلف با تاریخ فارسی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [],
+   "takes_date_params": false,
+   "date_basis": "mixed",
+   "date_bases": [
+    "reception_date",
+    "record_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    },
+    {
+     "field": "createdAt",
+     "basis": "record_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      "{ createdAt: { $gte: start, $lte: end"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 6,
+    "visible_date_constraint": 4,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel",
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success"
+   ],
+   "body_chars": 4000
+  },
+  {
+   "method": "GET",
+   "path": "/deleted-items",
+   "endpoint": "/api/Reports/deleted-items",
+   "title_fa": "گزارش آیتم‌های حذف شده - گزارش جامع آیتم‌های حذف شده در سیستم",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آیتم‌های حذف شده در سیستم",
+   "field_labels_fa": {
+    "description": "خلاصه آیتم‌های حذف شده در سیستم",
+    "totalDeletedItems": "تعداد کل آیتم‌های حذف شده در همه جداول",
+    "count": "تعداد کل بیماران حذف شده",
+    "recentPatients": "لیست آخرین 10 بیمار حذف شده",
+    "totalAmount": "مجموع مبلغ پذیرش‌های حذف شده",
+    "recentReceptions": "لیست آخرین 10 پذیرش حذف شده",
+    "recentPersonnel": "لیست آخرین 10 پرسنل حذف شده",
+    "recentRooms": "لیست آخرین 10 اتاق حذف شده",
+    "recentProducts": "لیست آخرین 10 محصول حذف شده",
+    "period": "بازه زمانی گزارش (بر اساس deletedAt)",
+    "startDate": "تاریخ شروع بازه",
+    "endDate": "تاریخ پایان بازه",
+    "currentPersianDate": "تاریخ فارسی فعلی",
+    "reportDate": "تاریخ و زمان تولید گزارش"
+   },
+   "parameters": [
+    "endDate",
+    "startDate",
+    "type"
+   ],
+   "takes_date_params": true,
+   "date_basis": "deletion_date",
+   "date_bases": [
+    "deletion_date"
+   ],
+   "date_fields": [
+    {
+     "field": "deletedAt",
+     "basis": "deletion_date",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      "{ deletedAt: { $gte: start, $lte: end"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 5,
+    "visible_date_constraint": 5,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": false,
+   "collections": [
+    "PatientModel",
+    "PersonnelModel",
+    "ReceptionModel",
+    "RoomsModel",
+    "WarehouseProductModel"
+   ],
+   "response_keys": [
+    "data",
+    "description",
+    "error",
+    "fields",
+    "message",
+    "success"
+   ],
+   "body_chars": 10725
+  },
+  {
+   "method": "GET",
+   "path": "/cashier-report",
+   "endpoint": "/api/Reports/cashier-report",
+   "title_fa": "گزارش صندوق و دریافتی کاربران - بر اساس Transaction model از WalletModel",
+   "title_detail_fa": [],
+   "description_fa": "آمار تفکیک شده هر کاربر (creditDetails و debtDetails)",
+   "field_labels_fa": {
+    "description": "آمار تفکیک شده هر کاربر (creditDetails و debtDetails)",
+    "explanation": "اختلاف بین credit خام و credit از aggregation (احتمالاً به دلیل فیلتر بیمه/تخفیف)",
+    "paymentType": "نقدی"
+   },
+   "parameters": [
+    "endDate",
+    "endTime",
+    "startDate",
+    "startTime",
+    "transactionType",
+    "userId"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      "{ date: { $in: dates",
+      "{ date: todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 14,
+    "visible_date_constraint": 14,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "averageAmount",
+    "cashPayment",
+    "data",
+    "error",
+    "message",
+    "paymentsByCard",
+    "stack",
+    "success",
+    "totalAmount",
+    "transactionCount"
+   ],
+   "body_chars": 55901
+  },
+  {
+   "method": "GET",
+   "path": "/cashier-report/category-details",
+   "endpoint": "/api/Reports/cashier-report/category-details",
+   "title_fa": "جزئیات تراکنش‌های هر دسته از گزارش صندوق",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "category",
+    "endDate",
+    "endTime",
+    "limit",
+    "page",
+    "startDate",
+    "userId"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      "{ date: { $in: dates",
+      "{ date: todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 3,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "averageAmount",
+    "categoryLabel",
+    "data",
+    "error",
+    "message",
+    "stats",
+    "success",
+    "totalAmount",
+    "transactionCount",
+    "validCategories"
+   ],
+   "body_chars": 15221
+  },
+  {
+   "method": "GET",
+   "path": "/cashier-report/deleted-details",
+   "endpoint": "/api/Reports/cashier-report/deleted-details",
+   "title_fa": "جزئیات تراکنش‌های حذف شده با تفکیک دسته‌بندی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "category",
+    "endDate",
+    "endTime",
+    "limit",
+    "page",
+    "startDate",
+    "userId"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      "{ date: { $in: dates",
+      "{ date: todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 4,
+    "visible_date_constraint": 4,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": false,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "averageAmount",
+    "data",
+    "error",
+    "message",
+    "minAmount",
+    "stats",
+    "success",
+    "transactionCount"
+   ],
+   "body_chars": 17800
+  },
+  {
+   "method": "GET",
+   "path": "/cashier-report/insurance-details",
+   "endpoint": "/api/Reports/cashier-report/insurance-details",
+   "title_fa": "جزئیات پرداخت‌های بیمه (بر اساس نوع بیمه)",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "endTime",
+    "insuranceType",
+    "limit",
+    "page",
+    "startDate",
+    "userId"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      "{ date: { $in: dates",
+      "{ date: todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 4,
+    "visible_date_constraint": 4,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "averageAmount",
+    "data",
+    "error",
+    "message",
+    "minAmount",
+    "stats",
+    "success",
+    "transactionCount"
+   ],
+   "body_chars": 11543
+  },
+  {
+   "method": "GET",
+   "path": "/reception-list",
+   "endpoint": "/api/Reports/reception-list",
+   "title_fa": "لیست تفصیلی پذیرش‌ها با فیلترهای مختلف",
+   "title_detail_fa": [],
+   "description_fa": "لیست تفصیلی پذیرش‌ها با قابلیت فیلتر و مرتب‌سازی",
+   "field_labels_fa": {
+    "description": "لیست تفصیلی پذیرش‌ها با قابلیت فیلتر و مرتب‌سازی",
+    "startDate": "تاریخ شروع (فرمت: YYYY/MM/DD)",
+    "endDate": "تاریخ پایان (فرمت: YYYY/MM/DD)",
+    "settled": "وضعیت تسویه (true/false/all)",
+    "insuranceType": "نوع بیمه (1=سلامت، 2=تامین، 3=ارتش، 4=آزاد، all=همه)",
+    "modality": "شناسه مودالیتی (ObjectId یا all)",
+    "registeredBy": "شناسه پذیرش‌کننده (ObjectId یا all)",
+    "patient": "شناسه بیمار (ObjectId یا all)",
+    "page": "شماره صفحه (پیش‌فرض: 1)",
+    "limit": "تعداد رکورد در هر صفحه (پیش‌فرض: 50)",
+    "sortBy": "فیلد مرتب‌سازی (Date/totalAmount/createdAt)",
+    "sortOrder": "نحوه مرتب‌سازی (asc/desc)"
+   },
+   "parameters": [
+    "desc",
+    "endDate",
+    "limit",
+    "page",
+    "patient",
+    "registeredBy",
+    "settled",
+    "sortBy",
+    "startDate",
+    "totalAmount"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "lte"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = { $lte: endDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "hasNextPage",
+    "hasPrevPage",
+    "limit",
+    "message",
+    "nextPage",
+    "pagination",
+    "stack",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 10872
+  },
+  {
+   "method": "GET",
+   "path": "/service-patients",
+   "endpoint": "/api/Reports/service-patients",
+   "title_fa": "گزارش بیماران انجام‌دهنده یک سرویس خاص",
+   "title_detail_fa": [],
+   "description_fa": "خلاصه آمار استفاده از سرویس",
+   "field_labels_fa": {
+    "description": "خلاصه آمار استفاده از سرویس",
+    "serviceId": "شناسه سرویس",
+    "serviceName": "نام سرویس",
+    "serviceGroup": "گروه سرویس",
+    "totalUsage": "تعداد کل دفعات انجام سرویس",
+    "uniquePatients": "تعداد بیماران منحصر به فرد",
+    "totalQuantity": "مجموع تعداد (Qty)",
+    "totalRevenue": "مجموع درآمد از این سرویس",
+    "averageQuantityPerReception": "میانگین تعداد در هر پذیرش",
+    "averageRevenuePerReception": "میانگین درآمد هر پذیرش",
+    "averageUsagePerPatient": "میانگین استفاده هر بیمار",
+    "patient": "اطلاعات بیمار (نام، کد ملی، موبایل، جنسیت، سن)",
+    "receptions": "لیست پذیرش‌های شامل این سرویس",
+    "gender": "جنسیت بیمار",
+    "insuranceType": "نوع بیمه",
+    "modalityName": "نام مودالیتی",
+    "count": "تعداد دفعات استفاده",
+    "quantity": "مجموع تعداد",
+    "revenue": "مجموع درآمد",
+    "date": "تاریخ فارسی",
+    "ReceptionID": "شماره پذیرش",
+    "Date": "تاریخ",
+    "Time": "ساعت",
+    "service": "اطلاعات سرویس (نام، تعداد، قیمت)",
+    "registeredBy": "اطلاعات پذیرش‌کننده",
+    "modality": "اطلاعات مودالیتی",
+    "financial": "اطلاعات مالی پذیرش",
+    "startDate": "تاریخ شروع (فرمت: YYYY/MM/DD، اختیاری)",
+    "endDate": "تاریخ پایان (فرمت: YYYY/MM/DD، اختیاری)"
+   },
+   "parameters": [
+    "endDate",
+    "serviceId",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "lte"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = { $lte: endDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "serviceGroup",
+    "serviceName",
+    "stack",
+    "success",
+    "totalQuantity",
+    "totalUsage",
+    "uniquePatients"
+   ],
+   "body_chars": 16606
+  },
+  {
+   "method": "GET",
+   "path": "/insurance",
+   "endpoint": "/api/Reports/insurance",
+   "title_fa": "گزارش بیمه جامع - آمار تفصیلی بیمه‌ها شامل سلامت، تامین، ارتش و تحلیل پردازش",
+   "title_detail_fa": [],
+   "description_fa": "آمار کلی بیمه‌ها در بازه زمانی مشخص",
+   "field_labels_fa": {
+    "description": "آمار کلی بیمه‌ها در بازه زمانی مشخص",
+    "totalReceptions": "تعداد کل پذیرش‌های بیمه‌ای",
+    "totalAmount": "مجموع کل مبلغ پذیرش‌ها",
+    "totalPatientAmount": "مجموع سهم بیماران",
+    "totalSalamatInsurance": "مجموع سهم بیمه سلامت",
+    "totalTaminInsurance": "مجموع سهم بیمه تامین اجتماعی",
+    "totalArmyInsurance": "مجموع سهم بیمه ارتش",
+    "totalInsuranceAmount": "مجموع کل سهم بیمه‌ها",
+    "totalDiscounts": "مجموع کل تخفیفات",
+    "totalPaidAmount": "مجموع مبلغ پرداخت شده",
+    "settledCount": "تعداد پذیرش‌های تسویه شده",
+    "unsettledCount": "تعداد پذیرش‌های تسویه نشده",
+    "settlementRate": "درصد تسویه",
+    "patientSharePercentage": "درصد سهم بیمار",
+    "insuranceSharePercentage": "درصد سهم بیمه",
+    "insuranceType": "نوع بیمه (سلامت، تامین، ارتش، آزاد)",
+    "count": "تعداد پذیرش با این نوع بیمه",
+    "discountPercentage": "درصد تخفیف",
+    "status": "وضعیت پردازش (pending, processing, success, failed)",
+    "processedCount": "تعداد پردازش شده",
+    "successCount": "تعداد موفق",
+    "failedCount": "تعداد ناموفق",
+    "averageRetryCount": "میانگین تعداد تلاش مجدد",
+    "successRate": "درصد موفقیت",
+    "processingRate": "درصد پردازش",
+    "modality": "نام مودالیتی/بخش",
+    "averageAmount": "میانگین مبلغ هر پذیرش",
+    "persianDate": "تاریخ شمسی",
+    "uniquePatients": "تعداد بیماران منحصر به فرد",
+    "averagePatientAmount": "میانگین سهم بیمار",
+    "averageInsuranceAmount": "میانگین سهم بیمه",
+    "marketShare": "سهم بازار (درصد)",
+    "mostUsedService": "نامشخص",
+    "serviceName": "نام خدمت"
+   },
+   "parameters": [
+    "endDate",
+    "insuranceType",
+    "modality",
+    "startDate",
+    "status"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 7,
+    "visible_date_constraint": 7,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "description",
+    "error",
+    "fields",
+    "message",
+    "stack",
+    "success",
+    "totalAmount",
+    "totalPatientAmount"
+   ],
+   "body_chars": 37518
+  },
+  {
+   "method": "GET",
+   "path": "/reception/general",
+   "endpoint": "/api/Reports/reception/general",
+   "title_fa": "آمار کلی پذیرش",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2586
+  },
+  {
+   "method": "GET",
+   "path": "/reception/insurance-stats",
+   "endpoint": "/api/Reports/reception/insurance-stats",
+   "title_fa": "آمار بیمه در پذیرش‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2699
+  },
+  {
+   "method": "GET",
+   "path": "/reception/modality-stats",
+   "endpoint": "/api/Reports/reception/modality-stats",
+   "title_fa": "آمار مودالیتی در پذیرش‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2550
+  },
+  {
+   "method": "GET",
+   "path": "/reception/daily-stats",
+   "endpoint": "/api/Reports/reception/daily-stats",
+   "title_fa": "آمار روزانه پذیرش‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2265
+  },
+  {
+   "method": "GET",
+   "path": "/reception/top-services",
+   "endpoint": "/api/Reports/reception/top-services",
+   "title_fa": "خدمات پربیننده در پذیرش‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "limit",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 1751
+  },
+  {
+   "method": "GET",
+   "path": "/reception/by-user",
+   "endpoint": "/api/Reports/reception/by-user",
+   "title_fa": "آمار پذیرش‌کنندگان",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2717
+  },
+  {
+   "method": "GET",
+   "path": "/financial/reception-income",
+   "endpoint": "/api/Reports/financial/reception-income",
+   "title_fa": "درآمد از پذیرش‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ Date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "averageIncome",
+    "data",
+    "error",
+    "message",
+    "paidAmount",
+    "receptionCount",
+    "success"
+   ],
+   "body_chars": 1512
+  },
+  {
+   "method": "GET",
+   "path": "/financial/expenses",
+   "endpoint": "/api/Reports/financial/expenses",
+   "title_fa": "هزینه‌های ثبت شده",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ Date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": false,
+   "collections": [
+    "CostModel"
+   ],
+   "response_keys": [
+    "byType",
+    "data",
+    "error",
+    "expenseCount",
+    "message",
+    "success"
+   ],
+   "body_chars": 1939
+  },
+  {
+   "method": "GET",
+   "path": "/financial/wallet-transactions",
+   "endpoint": "/api/Reports/financial/wallet-transactions",
+   "title_fa": "تراکنش‌های کیف پول",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate",
+    "type"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 1996
+  },
+  {
+   "method": "GET",
+   "path": "/financial/summary",
+   "endpoint": "/api/Reports/financial/summary",
+   "title_fa": "خلاصه مالی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "mixed",
+   "date_bases": [
+    "reception_date",
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ Date: { $in: dates"
+     ]
+    },
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 5,
+    "visible_date_constraint": 4,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "CostModel",
+    "ReceptionModel",
+    "Transaction"
+   ],
+   "response_keys": [
+    "breakdown",
+    "data",
+    "error",
+    "expenses",
+    "message",
+    "netProfit",
+    "profitMargin",
+    "success",
+    "totalExpense",
+    "walletCredit",
+    "walletDebt"
+   ],
+   "body_chars": 2507
+  },
+  {
+   "method": "GET",
+   "path": "/insurance/general",
+   "endpoint": "/api/Reports/insurance/general",
+   "title_fa": "آمار کلی بیمه",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success"
+   ],
+   "body_chars": 2597
+  },
+  {
+   "method": "GET",
+   "path": "/insurance/by-type",
+   "endpoint": "/api/Reports/insurance/by-type",
+   "title_fa": "آمار بر اساس نوع بیمه",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2469
+  },
+  {
+   "method": "GET",
+   "path": "/insurance/by-modality",
+   "endpoint": "/api/Reports/insurance/by-modality",
+   "title_fa": "آمار بیمه بر اساس مودالیتی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2631
+  },
+  {
+   "method": "GET",
+   "path": "/patients/by-gender",
+   "endpoint": "/api/Reports/patients/by-gender",
+   "title_fa": "آمار جنسیت بیماران",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "patient_created_at",
+   "date_bases": [
+    "patient_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "createdAt",
+     "basis": "patient_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".createdAt = { $gte: start, $lte: end"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success",
+    "total"
+   ],
+   "body_chars": 1474
+  },
+  {
+   "method": "GET",
+   "path": "/patients/by-age",
+   "endpoint": "/api/Reports/patients/by-age",
+   "title_fa": "آمار سنی بیماران",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "patient_created_at",
+   "date_bases": [
+    "patient_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "createdAt",
+     "basis": "patient_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".createdAt = { $gte: start, $lte: end"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success",
+    "total"
+   ],
+   "body_chars": 2229
+  },
+  {
+   "method": "GET",
+   "path": "/patients/by-insurance",
+   "endpoint": "/api/Reports/patients/by-insurance",
+   "title_fa": "آمار بیماران بر اساس بیمه",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "patient_created_at",
+   "date_bases": [
+    "patient_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "createdAt",
+     "basis": "patient_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".createdAt = { $gte: start, $lte: end"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success",
+    "total"
+   ],
+   "body_chars": 1671
+  },
+  {
+   "method": "GET",
+   "path": "/services/general",
+   "endpoint": "/api/Reports/services/general",
+   "title_fa": "آمار کلی خدمات",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success",
+    "totalRevenue",
+    "uniqueServices"
+   ],
+   "body_chars": 1298
+  },
+  {
+   "method": "GET",
+   "path": "/services/by-group",
+   "endpoint": "/api/Reports/services/by-group",
+   "title_fa": "آمار خدمات بر اساس گروه",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 1593
+  },
+  {
+   "method": "GET",
+   "path": "/services/by-modality",
+   "endpoint": "/api/Reports/services/by-modality",
+   "title_fa": "آمار خدمات بر اساس مودالیتی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 2136
+  },
+  {
+   "method": "GET",
+   "path": "/cashier/by-user",
+   "endpoint": "/api/Reports/cashier/by-user",
+   "title_fa": "دریافتی هر کاربر",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "endTime",
+    "startDate",
+    "startTime",
+    "userId"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "endTime",
+    "error",
+    "message",
+    "metadata",
+    "startTime",
+    "success"
+   ],
+   "body_chars": 4514
+  },
+  {
+   "method": "GET",
+   "path": "/cashier/summary",
+   "endpoint": "/api/Reports/cashier/summary",
+   "title_fa": "خلاصه صندوق",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "endTime",
+    "startDate",
+    "startTime"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "netAmount",
+    "success",
+    "totalDebt",
+    "totalTransactions",
+    "uniqueUsers"
+   ],
+   "body_chars": 3803
+  },
+  {
+   "method": "GET",
+   "path": "/cashier/summary",
+   "endpoint": "/api/Reports/cashier/summary",
+   "title_fa": "خلاصه صندوق",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "endTime",
+    "startDate",
+    "startTime"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "netAmount",
+    "success",
+    "totalDebt",
+    "totalTransactions",
+    "uniqueUsers"
+   ],
+   "body_chars": 3963,
+   "shadowed_by_earlier_route": true,
+   "shadows_index": 38
+  },
+  {
+   "method": "GET",
+   "path": "/reception/detailed-list",
+   "endpoint": "/api/Reports/reception/detailed-list",
+   "title_fa": "لیست تفصیلی پذیرش‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "insuranceType",
+    "limit",
+    "modality",
+    "page",
+    "settled",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 6441
+  },
+  {
+   "method": "GET",
+   "path": "/reception/details/:receptionId",
+   "endpoint": "/api/Reports/reception/details/:receptionId",
+   "title_fa": "جزئیات یک پذیرش خاص",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 0,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": false,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 5055
+  },
+  {
+   "method": "GET",
+   "path": "/financial/transactions-list",
+   "endpoint": "/api/Reports/financial/transactions-list",
+   "title_fa": "لیست تفصیلی تراکنش‌های مالی",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "limit",
+    "paymentMethod",
+    "startDate",
+    "type",
+    "userId"
+   ],
+   "takes_date_params": true,
+   "date_basis": "transaction_date",
+   "date_bases": [
+    "transaction_date"
+   ],
+   "date_fields": [
+    {
+     "field": "date",
+     "basis": "transaction_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      "{ date: { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "Transaction"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 6680
+  },
+  {
+   "method": "GET",
+   "path": "/financial/expenses-list",
+   "endpoint": "/api/Reports/financial/expenses-list",
+   "title_fa": "لیست تفصیلی هزینه‌ها",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "costType",
+    "endDate",
+    "limit",
+    "page",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": false,
+   "collections": [
+    "CostModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 1713
+  },
+  {
+   "method": "GET",
+   "path": "/patients/detailed-list",
+   "endpoint": "/api/Reports/patients/detailed-list",
+   "title_fa": "لیست تفصیلی بیماران",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "gender",
+    "insuranceType",
+    "limit",
+    "page",
+    "search",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "patient_created_at",
+   "date_bases": [
+    "patient_created_at"
+   ],
+   "date_fields": [
+    {
+     "field": "_id",
+     "basis": "patient_created_at",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      "._id = { $gte: startObjectId, $lte: endObjectId"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 2897
+  },
+  {
+   "method": "GET",
+   "path": "/patients/details/:patientId",
+   "endpoint": "/api/Reports/patients/details/:patientId",
+   "title_fa": "جزئیات یک بیمار خاص",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel",
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "stats",
+    "success",
+    "totalAmount",
+    "totalPaidAmount"
+   ],
+   "body_chars": 1681
+  },
+  {
+   "method": "GET",
+   "path": "/patients/:patientId/receptions",
+   "endpoint": "/api/Reports/patients/:patientId/receptions",
+   "title_fa": "تاریخچه پذیرش‌های یک بیمار",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "limit",
+    "page"
+   ],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 1672
+  },
+  {
+   "method": "GET",
+   "path": "/services/detailed-list",
+   "endpoint": "/api/Reports/services/detailed-list",
+   "title_fa": "لیست تفصیلی خدمات انجام شده",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "limit",
+    "modality",
+    "page",
+    "serviceGroup",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 3169
+  },
+  {
+   "method": "GET",
+   "path": "/services/details/:serviceId",
+   "endpoint": "/api/Reports/services/details/:serviceId",
+   "title_fa": "جزئیات یک خدمت خاص",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success"
+   ],
+   "body_chars": 1991
+  },
+  {
+   "method": "GET",
+   "path": "/physician-performance/summary",
+   "endpoint": "/api/Reports/physician-performance/summary",
+   "title_fa": "گزارش خلاصه کارکرد پزشک (رادیولوژیست)",
+   "title_detail_fa": [
+    "شامل: بخش‌های مختلف، تعداد بیمار، مبلغ، نام پزشک"
+   ],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "radiologistId",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = startDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success",
+    "summary"
+   ],
+   "body_chars": 10524
+  },
+  {
+   "method": "GET",
+   "path": "/physician-performance/by-department",
+   "endpoint": "/api/Reports/physician-performance/by-department",
+   "title_fa": "گزارش درآمد بر اساس بخش‌های مختلف",
+   "title_detail_fa": [
+    "هر بخش چه درآمدی داشته و چه پزشک‌هایی در آن فعالیت کرده‌اند"
+   ],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "modality",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = startDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "message",
+    "metadata",
+    "success",
+    "summary"
+   ],
+   "body_chars": 6808
+  },
+  {
+   "method": "GET",
+   "path": "/physician-performance/patients/:radiologistId",
+   "endpoint": "/api/Reports/physician-performance/patients/:radiologistId",
+   "title_fa": "لیست تفصیلی بیماران یک رادیولوژیست با تقسیم‌بندی بیمه",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "insuranceType",
+    "limit",
+    "modality",
+    "page",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = startDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 3,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "insuranceBreakdown",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 8001
+  },
+  {
+   "method": "GET",
+   "path": "/physician-performance/search",
+   "endpoint": "/api/Reports/physician-performance/search",
+   "title_fa": "جستجوی بیمار در گزارش رادیولوژیست",
+   "title_detail_fa": [],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "limit",
+    "nationalCode",
+    "page",
+    "patientName",
+    "radiologistId",
+    "receptionId",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      ".Date = { $in: dates",
+      ".Date = startDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 8718
+  },
+  {
+   "method": "GET",
+   "path": "/personnel-performance/summary",
+   "endpoint": "/api/Reports/personnel-performance/summary",
+   "title_fa": "گزارش خلاصه عملکرد پرسنل",
+   "title_detail_fa": [
+    "- startDate (اختیاری): تاریخ شروع (شمسی - مثال: 1403/01/01)",
+    "- endDate (اختیاری): تاریخ پایان (شمسی - مثال: 1403/12/29)",
+    "- personnelId (اختیاری): شناسه پرسنل خاص"
+   ],
+   "description_fa": "گزارش خلاصه عملکرد پرسنل",
+   "field_labels_fa": {
+    "reportTitle": "گزارش خلاصه عملکرد پرسنل"
+   },
+   "parameters": [
+    "department",
+    "endDate",
+    "modality",
+    "personnelId",
+    "personnelType",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".Date = { $gte: startDate, $lte: endDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 2,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PersonnelModel",
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "activePersonnel",
+    "data",
+    "error",
+    "message",
+    "success",
+    "totalAmount",
+    "totalReceptions",
+    "totalServices"
+   ],
+   "body_chars": 8968
+  },
+  {
+   "method": "GET",
+   "path": "/personnel-performance/detailed/:personnelId",
+   "endpoint": "/api/Reports/personnel-performance/detailed/:personnelId",
+   "title_fa": "گزارش تفصیلی عملکرد یک پرسنل خاص",
+   "title_detail_fa": [
+    "- startDate (اختیاری): تاریخ شروع (شمسی)",
+    "- endDate (اختیاری): تاریخ پایان (شمسی)",
+    "- modality (اختیاری): مدالیتی خاص"
+   ],
+   "description_fa": null,
+   "field_labels_fa": {},
+   "parameters": [
+    "endDate",
+    "limit",
+    "modality",
+    "page",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".Date = { $gte: startDate, $lte: endDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "PersonnelModel",
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "fullName",
+    "message",
+    "personnelCode",
+    "success"
+   ],
+   "body_chars": 8379
+  },
+  {
+   "method": "GET",
+   "path": "/personnel-performance/comparison",
+   "endpoint": "/api/Reports/personnel-performance/comparison",
+   "title_fa": "گزارش مقایسه‌ای عملکرد پرسنل",
+   "title_detail_fa": [
+    "- startDate (اختیاری): تاریخ شروع (شمسی)",
+    "- endDate (اختیاری): تاریخ پایان (شمسی)",
+    "- personnelIds (اختیاری): لیست شناسه پرسنل‌ها (با کاما جدا شده)"
+   ],
+   "description_fa": "گزارش مقایسه‌ای عملکرد پرسنل",
+   "field_labels_fa": {
+    "reportTitle": "گزارش مقایسه‌ای عملکرد پرسنل"
+   },
+   "parameters": [
+    "endDate",
+    "groupBy",
+    "personnelIds",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ".Date = { $gte: startDate, $lte: endDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success",
+    "totalAmount",
+    "totalPersonnel",
+    "totalReceptions",
+    "totalServices"
+   ],
+   "body_chars": 6590
+  },
+  {
+   "method": "GET",
+   "path": "/personnel-performance/daily",
+   "endpoint": "/api/Reports/personnel-performance/daily",
+   "title_fa": "گزارش روزانه عملکرد پرسنل",
+   "title_detail_fa": [
+    "- startDate (الزامی): تاریخ شروع (شمسی)",
+    "- endDate (الزامی): تاریخ پایان (شمسی)",
+    "- personnelId (اختیاری): شناسه پرسنل خاص"
+   ],
+   "description_fa": "گزارش روزانه عملکرد پرسنل",
+   "field_labels_fa": {
+    "reportTitle": "گزارش روزانه عملکرد پرسنل"
+   },
+   "parameters": [
+    "endDate",
+    "personnelId",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "gte"
+     ],
+     "evidence": [
+      ", Date: { $gte: startDate, $lte: endDate"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "rejects_request",
+   "excludes_deleted": true,
+   "collections": [
+    "PersonnelModel",
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "endDate",
+    "error",
+    "filters",
+    "message",
+    "personnelId",
+    "radiologist",
+    "success",
+    "updatedAt"
+   ],
+   "body_chars": 9758
+  },
+  {
+   "method": "GET",
+   "path": "/patients-by-service-insurance",
+   "endpoint": "/api/Reports/patients-by-service-insurance",
+   "title_fa": "گزارش بیماران به تفکیک خدمت (بخش) و بیمه",
+   "title_detail_fa": [
+    "این گزارش لیست بیماران را به تفکیک خدمت (بخش/مودالیتی) و نوع بیمه نمایش می‌دهد",
+    "و شامل سهم سازمان، سهم بیمار و جمع کل است",
+    "مثال استفاده:"
+   ],
+   "description_fa": "گزارش بیماران به تفکیک خدمت و بیمه",
+   "field_labels_fa": {
+    "reportName": "گزارش بیماران به تفکیک خدمت و بیمه",
+    "description": "این گزارش لیست بیماران را به تفکیک خدمت (بخش) و نوع بیمه نمایش می‌دهد و شامل سهم سازمان، سهم بیمار و جمع کل است",
+    "ReceptionID": "شماره پذیرش",
+    "Date": "تاریخ پذیرش",
+    "Time": "ساعت پذیرش",
+    "insuranceTypeLabel": "نوع بیمه",
+    "totalAmount": "جمع کل مبلغ",
+    "patientTotal": "سهم بیمار",
+    "organizationShare": "سهم سازمان (مجموع بیمه‌ها)",
+    "patientDetails": "اطلاعات بیمار",
+    "modalityDetails": "اطلاعات بخش/خدمت",
+    "services": "لیست خدمات ارائه شده",
+    "totalReceptions": "تعداد کل پذیرش‌ها",
+    "uniquePatients": "تعداد بیماران منحصر به فرد",
+    "totalPatientShare": "مجموع سهم بیماران",
+    "totalOrganizationShare": "مجموع سهم سازمان",
+    "byInsurance": "آمار به تفکیک نوع بیمه",
+    "byModality": "آمار به تفکیک بخش/خدمت",
+    "byModalityAndInsurance": "آمار ترکیبی خدمت و بیمه",
+    "startDate": "تاریخ شروع (فرمت: YYYY/MM/DD)",
+    "endDate": "تاریخ پایان (فرمت: YYYY/MM/DD)",
+    "modality": "کد بخش/مودالیتی (مثل MRI, CT, US)",
+    "insuranceType": "نوع بیمه (1=سلامت، 2=تامین، 3=ارتش، 4=آزاد)",
+    "page": "شماره صفحه",
+    "limit": "تعداد در هر صفحه",
+    "sortBy": "فیلد مرتب‌سازی (Date, totalAmount, ReceptionID)",
+    "sortOrder": "ترتیب مرتب‌سازی (asc, desc)"
+   },
+   "parameters": [
+    "endDate",
+    "limit",
+    "modality",
+    "sortBy",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      "{ Date: { $in: dates",
+      "{ Date: todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 6,
+    "visible_date_constraint": 6,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success"
+   ],
+   "body_chars": 64555
+  },
+  {
+   "method": "GET",
+   "path": "/patients-by-service-insurance/summary",
+   "endpoint": "/api/Reports/patients-by-service-insurance/summary",
+   "title_fa": "گزارش خلاصه ترکیبی خدمت و بیمه (بدون لیست تفصیلی بیماران)",
+   "title_detail_fa": [
+    "این endpoint فقط آمار خلاصه را برمی‌گرداند و برای دیدن کلی مناسب است"
+   ],
+   "description_fa": "خلاصه گزارش بیماران به تفکیک خدمت و بیمه",
+   "field_labels_fa": {
+    "reportName": "خلاصه گزارش بیماران به تفکیک خدمت و بیمه",
+    "description": "این گزارش خلاصه آمار را به تفکیک خدمت (بخش) و نوع بیمه نمایش می‌دهد"
+   },
+   "parameters": [
+    "endDate",
+    "insuranceType",
+    "modality",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in",
+      "eq"
+     ],
+     "evidence": [
+      "{ Date: { $in: dates",
+      "{ Date: todayPersian"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "today",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success"
+   ],
+   "body_chars": 15382
+  },
+  {
+   "method": "GET",
+   "path": "/debtors",
+   "endpoint": "/api/Reports/debtors",
+   "title_fa": "گزارش بیماران بدهکار - لیست کلی",
+   "title_detail_fa": [
+    "این endpoint لیست بیمارانی که بدهی دارند را نمایش می‌دهد",
+    "مثال استفاده:"
+   ],
+   "description_fa": "گزارش بیماران بدهکار",
+   "field_labels_fa": {
+    "reportName": "گزارش بیماران بدهکار",
+    "description": "لیست بیمارانی که بدهی دارند به همراه مبلغ کل بدهی و تعداد پذیرش‌های بدهکار",
+    "patient": "اطلاعات بیمار",
+    "totalDebt": "کل مبلغ بدهی (ریال)",
+    "receptionCount": "تعداد پذیرش‌های بدهکار",
+    "oldestDebtDate": "تاریخ قدیمی‌ترین بدهی",
+    "newestDebtDate": "تاریخ جدیدترین بدهی",
+    "totalReceptionAmount": "جمع کل مبلغ پذیرش‌ها",
+    "totalPaidAmount": "جمع کل مبلغ پرداخت شده",
+    "receptionIds": "لیست شماره پذیرش‌های بدهکار",
+    "totalDebtors": "تعداد کل بیماران بدهکار",
+    "totalReceptions": "تعداد کل پذیرش‌های بدهکار",
+    "averageDebt": "میانگین بدهی هر بیمار",
+    "minDebt": "کمترین بدهی",
+    "maxDebt": "بیشترین بدهی"
+   },
+   "parameters": [
+    "limit",
+    "minDebt",
+    "page",
+    "patientName"
+   ],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "hasNextPage",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "summary",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 10329
+  },
+  {
+   "method": "GET",
+   "path": "/debtors/:patientId",
+   "endpoint": "/api/Reports/debtors/:patientId",
+   "title_fa": "گزارش جزئیات بدهی یک بیمار خاص",
+   "title_detail_fa": [
+    "این endpoint جزئیات کامل بدهی یک بیمار را نمایش می‌دهد",
+    "مثال استفاده:"
+   ],
+   "description_fa": "جزئیات بدهی بیمار",
+   "field_labels_fa": {
+    "reportName": "جزئیات بدهی بیمار",
+    "description": "جزئیات کامل بدهی یک بیمار شامل لیست پذیرش‌های بدهکار و مبلغ باقیمانده هر پذیرش",
+    "patient": "اطلاعات بیمار",
+    "totalDebt": "کل مبلغ بدهی باقیمانده",
+    "totalReceptionAmount": "جمع کل مبلغ همه پذیرش‌های بدهکار",
+    "totalPaidAmount": "جمع کل مبلغ پرداخت شده",
+    "totalPatientShare": "جمع کل سهم بیمار",
+    "receptionCount": "تعداد پذیرش‌های بدهکار",
+    "oldestDebtDate": "تاریخ قدیمی‌ترین بدهی",
+    "newestDebtDate": "تاریخ جدیدترین بدهی",
+    "averageDebt": "میانگین بدهی هر پذیرش",
+    "debtPercentage": "درصد بدهی از کل سهم بیمار",
+    "ReceptionID": "شماره پذیرش",
+    "Date": "تاریخ پذیرش",
+    "remainingDebt": "مبلغ بدهی باقیمانده",
+    "totalAmount": "جمع کل مبلغ پذیرش",
+    "patientTotal": "سهم بیمار",
+    "paidAmount": "مبلغ پرداخت شده"
+   },
+   "parameters": [
+    "limit",
+    "page",
+    "sortBy",
+    "sortOrder"
+   ],
+   "takes_date_params": false,
+   "date_basis": "not_dated",
+   "date_bases": [],
+   "date_fields": [],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 0,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "not_applicable",
+   "excludes_deleted": true,
+   "collections": [
+    "PatientModel",
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "age",
+    "data",
+    "error",
+    "gender",
+    "insuranceType",
+    "message",
+    "mobile",
+    "name",
+    "nationalCode",
+    "success"
+   ],
+   "body_chars": 12674
+  },
+  {
+   "method": "GET",
+   "path": "/referring-physicians/stats",
+   "endpoint": "/api/Reports/referring-physicians/stats",
+   "title_fa": "@description آمار تعداد و کلی پزشک‌های ارجاع دهنده در پذیرش‌ها",
+   "title_detail_fa": [
+    "@query { startDate?, endDate? } - تاریخ شروع و پایان (فرمت شمسی: YYYY/MM/DD)"
+   ],
+   "description_fa": "آمار پزشک‌های ارجاع دهنده",
+   "field_labels_fa": {
+    "reportName": "آمار پزشک‌های ارجاع دهنده",
+    "description": "آمار کلی و تعداد پذیرش‌های هر پزشک ارجاع دهنده",
+    "totalPhysicians": "تعداد کل پزشک‌های ارجاع دهنده",
+    "totalReceptions": "تعداد کل پذیرش‌ها",
+    "totalAmount": "جمع کل مبلغ پذیرش‌ها",
+    "totalPatientAmount": "جمع کل سهم بیمار",
+    "totalInsuranceAmount": "جمع کل مبلغ بیمه",
+    "totalDiscounts": "جمع کل تخفیف‌ها",
+    "totalPaidAmount": "جمع کل مبلغ پرداخت شده",
+    "totalSettled": "تعداد پذیرش‌های تسویه شده",
+    "totalUnsettled": "تعداد پذیرش‌های تسویه نشده",
+    "averageReceptionsPerPhysician": "میانگین تعداد پذیرش به ازای هر پزشک",
+    "settlementRate": "نرخ تسویه (درصد)",
+    "physicianName": "نام پزشک",
+    "physicianMSID": "کد نظام پزشکی",
+    "physicianExpertise": "تخصص",
+    "receptionCount": "تعداد پذیرش‌ها",
+    "uniquePatientsCount": "تعداد بیماران منحصر به فرد",
+    "averageAmount": "میانگین مبلغ هر پذیرش"
+   },
+   "parameters": [
+    "endDate",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 1,
+    "visible_date_constraint": 1,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "message",
+    "success",
+    "totalAmount",
+    "totalInsuranceAmount",
+    "totalPatientAmount",
+    "totalReceptions"
+   ],
+   "body_chars": 7631
+  },
+  {
+   "method": "GET",
+   "path": "/referring-physicians/details",
+   "endpoint": "/api/Reports/referring-physicians/details",
+   "title_fa": "@description لیست پزشک‌های ارجاع دهنده با جزئیات پذیرش‌های هر پزشک",
+   "title_detail_fa": [
+    "} - فیلترها و صفحه‌بندی"
+   ],
+   "description_fa": "جزئیات پذیرش‌های پزشک‌های ارجاع دهنده",
+   "field_labels_fa": {
+    "reportName": "جزئیات پذیرش‌های پزشک‌های ارجاع دهنده",
+    "description": "لیست پزشک‌های ارجاع دهنده با جزئیات کامل پذیرش‌های هر پزشک",
+    "physicianId": "شناسه پزشک",
+    "physicianName": "نام پزشک",
+    "physicianMSID": "کد نظام پزشکی",
+    "physicianExpertise": "تخصص",
+    "physicianTel": "تلفن",
+    "physicianAddress": "آدرس",
+    "physicianLocation": "موقعیت",
+    "receptionCount": "تعداد پذیرش‌ها",
+    "totalAmount": "جمع کل مبلغ",
+    "totalPatientAmount": "جمع کل سهم بیمار",
+    "totalInsuranceAmount": "جمع کل مبلغ بیمه",
+    "totalDiscounts": "جمع کل تخفیف‌ها",
+    "totalPaidAmount": "جمع کل مبلغ پرداخت شده",
+    "settledCount": "تعداد پذیرش‌های تسویه شده",
+    "unsettledCount": "تعداد پذیرش‌های تسویه نشده",
+    "averageAmount": "میانگین مبلغ هر پذیرش",
+    "settlementRate": "نرخ تسویه (درصد)",
+    "receptions": "لیست پذیرش‌های این پزشک",
+    "ReceptionID": "شماره پذیرش",
+    "Date": "تاریخ پذیرش",
+    "Time": "زمان پذیرش",
+    "patient": "اطلاعات بیمار",
+    "modality": "مودالیتی",
+    "patientTotal": "سهم بیمار",
+    "remainingDebt": "بدهی باقیمانده",
+    "settled": "وضعیت تسویه"
+   },
+   "parameters": [
+    "endDate",
+    "limit",
+    "page",
+    "physicianId",
+    "startDate"
+   ],
+   "takes_date_params": true,
+   "date_basis": "reception_date",
+   "date_bases": [
+    "reception_date"
+   ],
+   "date_fields": [
+    {
+     "field": "Date",
+     "basis": "reception_date",
+     "operators": [
+      "in"
+     ],
+     "evidence": [
+      ".Date = { $in: dates"
+     ]
+    }
+   ],
+   "date_coverage": {
+    "query_sites": 3,
+    "visible_date_constraint": 2,
+    "verified_by_hand": null
+   },
+   "default_when_no_dates": "all_time",
+   "excludes_deleted": true,
+   "collections": [
+    "ReceptionModel"
+   ],
+   "response_keys": [
+    "data",
+    "error",
+    "hasNextPage",
+    "limit",
+    "message",
+    "pagination",
+    "success",
+    "totalCount",
+    "totalPages"
+   ],
+   "body_chars": 11908
+  }
+ ]
+}

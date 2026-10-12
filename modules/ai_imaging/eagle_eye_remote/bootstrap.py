@@ -4,10 +4,13 @@ from pathlib import Path
 
 
 COMMANDS = ('--eagle-eye-server', '--eagle-eye-worker',
-            '--eagle-eye-windows-service', '--eagle-eye-service-child')
+            '--eagle-eye-windows-service', '--eagle-eye-service-child', '--eagle-eye-crm-worker')
 
 
 def dispatch(argv):
+    from .installer_entry import dispatch as dispatch_installer
+    if dispatch_installer(argv):
+        return True
     if len(argv) < 2 or argv[1] not in COMMANDS:
         return False
     if len(argv) != 3:
@@ -16,7 +19,10 @@ def dispatch(argv):
     if is_frozen():
         if load_installation_profile().get('distribution_edition') != 'eagle-eye':
             raise ValueError('Model hosting requires the Eagle Eye server edition.')
-    if argv[1] == '--eagle-eye-windows-service':
+    if argv[1] == '--eagle-eye-crm-worker':
+        from .crm.worker import main
+        main()
+    elif argv[1] == '--eagle-eye-windows-service':
         from .service_host import run_windows_service
         run_windows_service(Path(argv[2]))
     elif argv[1] == '--eagle-eye-service-child':

@@ -225,21 +225,35 @@ class _HPModulesMixin:
         (EducationCommandAdapter) — can navigate its tabs programmatically.
         Returns None on failure.
         """
+        from PacsClient.utils.diagnostic_logging import ContentDiagnosticTrace
+        from PySide6.QtCore import QTimer
+        trace = ContentDiagnosticTrace('education_open', self)
+        trace.emit('requested')
+        created = [False]
         try:
-            from modules.education.education_module_redesigned import EducationModuleRedesigned
-            return activate_or_create_module_tab(
+            with trace.measure('module_import'):
+                from modules.education.education_module_redesigned import EducationModuleRedesigned
+            def create():
+                created[0] = True
+                with trace.bind(), trace.measure('module_construct'):
+                    widget = EducationModuleRedesigned(
+                        parent=self, host_tab_widget=self.tab_widget,
+                        host_custom_tab_manager=self.custom_tab_manager, host_parent=self)
+                return widget
+            widget = activate_or_create_module_tab(
                 self.tab_widget, self.custom_tab_manager,
                 tab_flag_key='is_education_tab',
-                widget_factory=lambda: EducationModuleRedesigned(
-                    parent=self,
-                    host_tab_widget=self.tab_widget,
-                    host_custom_tab_manager=self.custom_tab_manager,
-                    host_parent=self,
-                ),
+                widget_factory=create,
                 add_tab_method_name='add_education_module_tab',
                 fallback_label='Educational Module',
             )
+            trace.emit('tab_activated', created=created[0], widget_returned=widget is not None)
+            # This is an event-loop boundary, not proof of first paint or DICOM readiness.
+            QTimer.singleShot(0, lambda: trace.finish('completed' if widget is not None else 'failed',
+                event_loop_ready=True, created=created[0], widget_returned=widget is not None))
+            return widget
         except Exception as e:
+            trace.finish('failed', error_kind=trace.error_kind(e))
             print(f"[HomePanelWidget] Error opening education module: {e}")
             import traceback; traceback.print_exc()
             return None

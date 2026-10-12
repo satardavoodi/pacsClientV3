@@ -10,7 +10,7 @@ The design contract:
   so the name match catches them.
 
 * On SHUTDOWN (normal close, not just takeover), the process must GUARANTEE it dies:
-  kill in-flight download subprocesses explicitly, then a guarded ``os._exit`` so a
+  kill in-flight download subprocesses explicitly, then a guarded ``hard_exit`` so a
   lingering non-daemon thread (native audio callback, Qt Multimedia backend, stuck
   VTK teardown) cannot keep the whole process + child tree alive in Task Manager.
 
@@ -92,19 +92,19 @@ def test_normal_shutdown_kills_download_subprocesses_explicitly():
 def test_normal_shutdown_has_a_hard_exit_failsafe():
     src = _src("main.py")
     fin = src.split("loop.run_forever()", 1)[1]
-    assert "os._exit(0)" in fin, (
+    assert "hard_exit(0)" in fin, (
         "a lingering non-daemon thread must not keep the process alive after close")
     assert "AIPACS_NO_HARD_EXIT" in fin, "the failsafe needs an escape hatch"
 
 
 def test_hard_exit_comes_after_the_cleanup():
-    """os._exit skips the rest of teardown, so it MUST run last — after the lock
+    """hard_exit skips the rest of teardown, so it MUST run last — after the lock
     release, decode-service stop, subprocess kill and log flush."""
     src = _src("main.py")
     fin = src.split("loop.run_forever()", 1)[1]
-    assert fin.index("terminate_all_download_subprocesses()") < fin.index("os._exit(0)")
-    assert fin.index("shutdown_diagnostic_logging()") < fin.index("os._exit(0)")
-    assert fin.index("instance_lock.release()") < fin.index("os._exit(0)")
+    assert fin.index("terminate_all_download_subprocesses()") < fin.index("hard_exit(0)")
+    assert fin.index("shutdown_diagnostic_logging()") < fin.index("hard_exit(0)")
+    assert fin.index("instance_lock.release()") < fin.index("hard_exit(0)")
 
 
 def test_finalization_breadcrumb_precedes_log_shutdown_and_is_not_drain_proof():
@@ -119,7 +119,7 @@ def test_takeover_path_also_has_a_hard_exit_failsafe():
     guaranteed to die (it had this already — pin it so it can't regress)."""
     src = _src("PacsClient", "utils", "single_instance_lock.py")
     body = src.split("def _initiate_shutdown", 1)[1].split("\n    def ", 1)[0]
-    assert "os._exit(0)" in body
+    assert "hard_exit(0)" in body
     assert "AIPACS_NO_HARD_EXIT" in body
 
 

@@ -54,7 +54,7 @@ def test_the_constant_holds_the_offered_modalities():
     (2026-08-06), which activates the dedicated ISUOG branch."""
     offered = _offered_modalities()
     assert offered == ["CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND",
-                       "RADIOLOGY", "MAMOGRAPHY"]
+                       "RADIOLOGY", "MAMOGRAPHY", "ECHOCARDIOGRAPHY"]
     # the five originals are all still present and unrenamed
     for original in ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]:
         assert original in offered
@@ -109,7 +109,10 @@ def test_every_offered_modality_hits_a_real_branch(modality):
     sp = prompt(modality, "")
     generic = prompt("NoSuchModalityValue", "")
     assert sp != generic, f"{modality!r} falls through to the GENERIC prompt"
-    assert len(sp) > len(generic), f"{modality!r} did not reach a modality branch"
+    if modality == "ECHOCARDIOGRAPHY":
+        assert "ECHOCARDIOGRAPHY - dedicated cardiac reporting contract" in sp
+    else:
+        assert len(sp) > len(generic), f"{modality!r} did not reach a modality branch"
     # and it carries the shared organization work
     assert "REPORT ORGANIZATION — group" in sp
 

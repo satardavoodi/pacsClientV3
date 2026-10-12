@@ -17,6 +17,102 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
+_CONTENT_TRACE = contextvars.ContextVar("content_diagnostic_trace", default=None)
+
+
+@contextmanager
+def content_diagnostic_phase(stage):
+    trace = _CONTENT_TRACE.get()
+    if trace is None:
+        yield
+    else:
+        with trace.measure(stage):
+            yield
+
+
+def content_diagnostic_work(stage, function, *args):
+    """Aggregate repeated synchronous work; no per-card log records."""
+    trace = _CONTENT_TRACE.get()
+    if trace is None:
+        return function(*args)
+    started = time.perf_counter()
+    try:
+        return function(*args)
+    finally:
+        trace.fields[stage + "_ms"] = trace.fields.get(stage + "_ms", 0.0) + (time.perf_counter()-started)*1000
+        trace.fields[stage + "_count"] = trace.fields.get(stage + "_count", 0) + 1
+
+
+class ContentDiagnosticTrace:
+    """Bounded numeric diagnostics; never inherit clinical logging context.
+
+    Call sites supply constant stage names, never content, paths or identifiers.
+    Terminal emission is idempotent, including cancellation before coroutine entry.
+    """
+
+    _PHASES = frozenset({'scheduled', 'setup', 'visibility', 'plan_queued',
+        'plan_worker', 'image_worker', 'completeness_worker', 'card_queued',
+        'applying', 'module_import', 'module_construct', 'library_construct',
+        'my_courses_construct', 'build_course_construct', 'case_of_day_import',
+        'case_of_day_construct', 'consultation_construct'})
+
+    @staticmethod
+    def error_kind(error):
+        """Stable classification: OS=1, value=2, runtime=3, memory=4, other=5."""
+        for code, error_type in enumerate((OSError, ValueError, RuntimeError, MemoryError), 1):
+            if isinstance(error, error_type):
+                return code
+        return 5
+
+    def __init__(self, kind, owner=None, **fields):
+        self.kind = kind
+        self.trace = uuid.uuid4().hex[:12]
+        self.started = time.perf_counter()
+        self.terminal = False
+        self.phase = "scheduled"
+        self.fields = {k: v for k, v in fields.items() if type(v) in (int, float, bool)}
+        self.owner = getattr(owner, "_content_diag_owner", None) if owner is not None else None
+        if self.owner is None:
+            self.owner = uuid.uuid4().hex[:12]
+            if owner is not None:
+                owner._content_diag_owner = self.owner
+
+    def emit(self, stage, **fields):
+        values = dict(self.fields)
+        values.update({k: v for k, v in fields.items() if type(v) in (int, float, bool)})
+        extra = dict(component="content_diagnostics", stage=stage,
+                     action_session_id="-", study_uid="-", series_uid="-",
+                     download_job_id="-", viewer_event_id="-")
+        phase = self.phase if self.phase in self._PHASES else 'other'
+        logging.getLogger(__name__).info(
+            "[CONTENT-DIAG] kind=%s owner=%s trace=%s stage=%s phase=%s elapsed_ms=%.2f metrics=%s",
+            self.kind, self.owner, self.trace, stage, phase,
+            (time.perf_counter() - self.started) * 1000, values, extra=extra)
+
+    def finish(self, stage, **fields):
+        if not self.terminal:
+            self.terminal = True
+            self.emit(stage, **fields)
+
+    @contextmanager
+    def bind(self):
+        token = _CONTENT_TRACE.set(self)
+        try:
+            yield
+        finally:
+            _CONTENT_TRACE.reset(token)
+
+    @contextmanager
+    def measure(self, stage):
+        self.phase = stage
+        self.emit(stage + "_start")
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.emit(stage + "_end", duration_ms=(time.perf_counter() - started) * 1000)
+
+
 _LOG_CONTEXT: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar("aipacs_log_context", default={})
 _COMPONENT_LEVELS: Dict[str, int] = {}
 _COMPONENT_LEVEL_LOCK = threading.Lock()

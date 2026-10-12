@@ -1,5 +1,12 @@
 # Server purpose and architecture
 
+## Superseding connection contract - 2026-10-12
+
+[Canonical connection boundaries](../../../architecture/EAGLE_EYE_CONNECTION_BOUNDARIES_2026-10-12.md) supersedes historical pairing/TLS prerequisites in this document. Ordinary Eagle Eye ingress uses HTTP IP:port and username/password. The server verifies PACS first, tries Reception only on credential rejection (401), then independently enforces internal feature/module grants. Caller-provided PACS/provider tokens and device pairing are not required. A server-issued opaque password-login session is an implementation detail.
+
+QR/device pairing and HTTPS are reserved for mobile Android/iOS remote Agent PACS to Windows DICOM Client. Windows uses native Secretary; mobile has no imaging AI feature. Optional legacy TLS and provider-token code remain implementation compatibility, not prerequisites under this contract. Documentation does not activate a source change or certify unresolved client login/CRM identity gaps; see the canonical audit.
+
+
 Eagle Eye Server centralizes heavyweight AI execution. Standard remains a complete
 DICOM workstation for local viewing, navigation and interaction, but sends references
 for Eagle Eye computation. It must not download model weights or silently fall back

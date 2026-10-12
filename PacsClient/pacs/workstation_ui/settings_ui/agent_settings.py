@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from .advanced_settings import AdvancedSettingsPanel
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -91,8 +92,23 @@ def _resolve_service():
 
 
 class AgentSettingsWidget(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, separate_connections=False):
         super().__init__(parent)
+        self._separate_connections = separate_connections
+        self.connection_page = None
+        from modules.ai_imaging.eagle_eye_remote.administration import settings_role
+        if settings_role() == 'server':
+            self._service = None
+            layout = QVBoxLayout(self)
+            note = QLabel('Secretary commands, EchoMind and CRM use the shared Eagle Eye HTTP connection '
+                          '(default port 8002), username/password and approved user permissions. '
+                          'Phone pairing belongs to the Windows Client execution gateway.')
+            note.setWordWrap(True)
+            layout.addWidget(note)
+            from .ai_usage_settings import AIUsageWidget
+            self.usage_widget = AIUsageWidget('agent', self)
+            layout.addWidget(self.usage_widget)
+            return
         self._service = _resolve_service()
         self._build_ui()
         self._load_initial_state()
@@ -119,11 +135,25 @@ class AgentSettingsWidget(QWidget):
         self._root.setContentsMargins(14, 14, 14, 14)
         self._root.setSpacing(14)
 
+        functional_root = self._root
+        if self._separate_connections:
+            self.connection_page = QWidget(self)
+            self.connection_page.setObjectName("AgentSettingsWidget")
+            self.connection_page.setStyleSheet(self.styleSheet())
+            self.connection_page.hide()
+            self._root = QVBoxLayout(self.connection_page)
+            functional_root.addWidget(self._note(
+                "AI requests use the shared Eagle Eye Server connection. "
+                "Gateway, mobile pairing and MCP transport settings are in AI > Connection."))
         self._build_status_group()
         self._build_pairing_group()
         self._build_mcp_group()
         self._build_relay_group()
+        self._root = functional_root
         self._build_devices_group()
+        from .ai_usage_settings import AIUsageWidget
+        self.usage_widget = AIUsageWidget('agent', self)
+        self._root.addWidget(self.usage_widget)
         self._build_docs_group()
         self._root.addStretch(1)
 
@@ -135,7 +165,7 @@ class AgentSettingsWidget(QWidget):
 
     # ── status / enable ───────────────────────────────────────────────
     def _build_status_group(self):
-        g = QGroupBox("Agent Connection")
+        g = QGroupBox("Mobile access to this workstation")
         lay = QVBoxLayout(g)
         lay.setSpacing(10)
 
@@ -145,9 +175,13 @@ class AgentSettingsWidget(QWidget):
             "or tokens to type. Disabled by default; nothing listens until enabled."
         ))
 
-        self._chk_enabled = QCheckBox("Enable Agent Gateway")
+        self._chk_enabled = QCheckBox("Enable mobile access")
         lay.addWidget(self._chk_enabled)
 
+        basic_layout = lay
+        self._advanced_connection = AdvancedSettingsPanel('Advanced mobile connection settings')
+        basic_layout.addWidget(self._advanced_connection)
+        lay = self._advanced_connection.content.layout()
         row = QHBoxLayout()
         row.addWidget(QLabel("Reachability:"))
         self._cmb_transport = QComboBox()
@@ -210,7 +244,7 @@ class AgentSettingsWidget(QWidget):
         lay.addWidget(self._note(
             "Open the AI-PACS agent app on your phone and scan this code. The code "
             "carries the connection endpoints, a single-use pairing code (expires "
-            "in a few minutes), and the server's certificate fingerprint. Generate "
+            "in a few minutes), and this workstation's certificate fingerprint. Generate "
             "a fresh code for each new device."
         ))
 
@@ -243,20 +277,19 @@ class AgentSettingsWidget(QWidget):
 
     # ── MCP ───────────────────────────────────────────────────────────
     def _build_mcp_group(self):
-        g = QGroupBox("MCP Service")
+        g = QGroupBox("Built-in workstation control (MCP)")
         lay = QVBoxLayout(g)
         lay.setSpacing(10)
         lay.addWidget(self._note(
-            "AI clients (the mobile agent, Claude, etc.) connect to this "
-            "workstation's MCP endpoint over the paired connection. Every "
-            "workstation function is exposed as an MCP tool; the operational "
-            "docs are exposed as MCP resources. Authentication uses the device "
-            "token issued during pairing (HTTP Authorization: Bearer)."
+            "MCP is included in this workstation; no separate MCP server address is required. "
+            "Paired mobile and AI clients use this built-in control endpoint with their "
+            "device permissions. AI processing uses the shared Eagle Eye Server connection."
         ))
 
         grid = QGridLayout()
-        grid.addWidget(QLabel("MCP endpoint path:"), 0, 0)
+        grid.addWidget(QLabel("Built-in endpoint:"), 0, 0)
         self._ed_mcp_path = QLineEdit("/mcp")
+        self._ed_mcp_path.setReadOnly(True)
         grid.addWidget(self._ed_mcp_path, 0, 1)
 
         grid.addWidget(QLabel("Default device mode:"), 1, 0)
@@ -279,7 +312,7 @@ class AgentSettingsWidget(QWidget):
         self._lbl_mcp_url.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(self._lbl_mcp_url)
 
-        self._root.addWidget(g)
+        self._advanced_connection.content.layout().addWidget(g)
 
     # ── relay ─────────────────────────────────────────────────────────
     def _build_relay_group(self):
@@ -306,11 +339,12 @@ class AgentSettingsWidget(QWidget):
         self._ed_relay_token.setEchoMode(QLineEdit.Password)
         grid.addWidget(self._ed_relay_token, 2, 1)
         lay.addLayout(grid)
-        self._root.addWidget(g)
+        self._advanced_connection.content.layout().addWidget(g)
 
     # ── devices ───────────────────────────────────────────────────────
     def _build_devices_group(self):
         g = QGroupBox("Paired Devices")
+        self._devices_group = g
         lay = QVBoxLayout(g)
         lay.setSpacing(8)
         lay.addWidget(self._note(

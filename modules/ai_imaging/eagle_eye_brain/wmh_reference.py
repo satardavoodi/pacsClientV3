@@ -73,6 +73,8 @@ def reference_html(result):
             q = status['quantiles_percent']
             text += (f'<p>Age/sex graphical band: <b>{escape(status["band"])}</b>. '
                      f'Approximate P5-P95 reference interval: {q[5]:.4f}-{q[95]:.4f}% of ICV.</p>')
+            if status.get('percentile_upper', 100) <= 5 or status.get('percentile_lower', 0) >= 95:
+                text += '<p><font color="#b91c1c"><b>Outside approximate P5-P95 band.</b></font></p>'
             if status['boundary_sensitive']:
                 text += '<p>Close to a plotted percentile boundary; the displayed band spans the reading allowance.</p>'
         else:

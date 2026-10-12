@@ -1396,7 +1396,7 @@ def test_the_real_dispatch_forwards_each_stages_temperature(session, monkeypatch
     monkeypatch.setattr(backend, "_backend_module", lambda _name: FakeModule)
 
     for stage in package.analysis.stages:
-        backend._dispatch(package, "company", stage.model_default, stage, "header")
+        backend._dispatch(package, "openai", stage.model_default, stage, "header")
 
     assert [item["temperature"] for item in captured] == [1.0, 1.0, 1.0]
 
@@ -1525,6 +1525,9 @@ def test_every_stage_is_preserved_for_evaluation(session):
 def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
     session, monkeypatch, selected_backend,
 ):
+    import threading
+    import time
+
     from modules.ai_imaging.eagle_eye_lumbar import (
         anatomy_cards, atomic_pipeline, focus_evidence, screening_evidence,
     )
@@ -1656,8 +1659,11 @@ def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
     )
 
     calls = []
+    active_calls = 0
+    maximum_active_calls = 0
+    concurrency_lock = threading.Lock()
 
-    def call(_package, _backend_name, _model, stage, _header):
+    def answer(_package, _backend_name, _model, stage, _header):
         calls.append((stage.name, _package.image_count))
         if _backend_name == "company":
             assert _model == (
@@ -1738,11 +1744,27 @@ def test_default_v5_dispatches_atomic_screens_and_one_diagnosis_per_card(
             })}
         raise AssertionError(f"unexpected model call: {stage.name}")
 
+    def call(_package, _backend_name, _model, stage, _header):
+        nonlocal active_calls, maximum_active_calls
+        with concurrency_lock:
+            active_calls += 1
+            maximum_active_calls = max(maximum_active_calls, active_calls)
+        try:
+            time.sleep(0.02)
+            return answer(_package, _backend_name, _model, stage, _header)
+        finally:
+            with concurrency_lock:
+                active_calls -= 1
+
     record = backend.run_analysis(
         session, backend=selected_backend, call=call, package=base,
     )
 
     assert record.state == astore.STATE_COMPLETE
+    if selected_backend == "company":
+        assert maximum_active_calls == 1
+    else:
+        assert maximum_active_calls >= 2
     assert sorted(name for name, _count in calls if name.startswith("screening_")) == sorted([
         "screening_disc", "screening_canal_neural", "screening_foraminal",
         "screening_endplate_marrow", "screening_posterior_elements",
@@ -2332,6 +2354,7 @@ def test_screening_and_clinical_context_run_in_parallel_before_verification(
 
     record = backend.run_analysis(
         session,
+        backend="openai",
         call=call,
         context_package=context_package,
     )
@@ -2344,9 +2367,9 @@ def test_screening_and_clinical_context_run_in_parallel_before_verification(
     assert calls[-1][0] == "verification"
     call_map = {name: (model, count) for name, model, count in calls}
     assert call_map == {
-        "screening": ("gpt-6-astra", 7),
-        "clinical_context": ("gemini-3.1-pro-preview", 1),
-        "verification": ("gpt-6-astra", 7),
+        "screening": ("synthetic-screening-model", 7),
+        "clinical_context": ("synthetic-screening-model", 1),
+        "verification": ("synthetic-diagnosis-model", 7),
     }
     assert "broad_based_disc_bulge" not in verification_headers[0]
     assert '"structure": "disc"' in verification_headers[0]

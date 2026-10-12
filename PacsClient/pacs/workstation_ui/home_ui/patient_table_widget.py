@@ -3197,12 +3197,20 @@ class PatientTableWidget(QWidget):
         except Exception:
             theme_bg = '#0f1419'
 
-        if flags.get('voice', False):
-            layout.addWidget(_chip(
-                'Local voice files',
+        container = layout.parentWidget()
+        server_voice_count = int(container.property('serverVoiceCount') or 0) if container else 0
+        local_voice = bool(flags.get('voice', False))
+        if local_voice or server_voice_count:
+            tip = ('Local and server voice files' if local_voice else 'Server voice files') if server_voice_count else 'Local voice files'
+            if server_voice_count:
+                tip += f' ({server_voice_count} on server)'
+            voice_chip = _chip(
+                tip,
                 icon='fa5s.microphone',
-                color=self._contrast_safe_color('voice', theme_bg),
-            ))
+                color='#60a5fa' if server_voice_count else self._contrast_safe_color('voice', theme_bg),
+            )
+            voice_chip.setObjectName('patientVoiceAvailability')
+            layout.addWidget(voice_chip)
         if flags.get('ai', False):
             layout.addWidget(_chip('Local AI results', text='AI'))
         # Case of the Day — graduation cap. Tooltip includes the count so a
@@ -3714,6 +3722,8 @@ class PatientTableWidget(QWidget):
             # Disable button and show animation
             self.refresh_btn.setEnabled(False)
             original_icon = self.refresh_btn.icon()
+            animation_token = getattr(self, "_refresh_animation_token", 0) + 1
+            self._refresh_animation_token = animation_token
             
             # Spinner ONLY — it must not decide the outcome. It used to end on a
             # green tick unconditionally, so a refresh that silently did nothing
@@ -3721,6 +3731,8 @@ class PatientTableWidget(QWidget):
             # worked. The real result is painted by _set_refresh_result() when the
             # server actually answers.
             def animate_refresh(step=0):
+                if getattr(self, "_refresh_animation_token", 0) != animation_token:
+                    return
                 if step < 8:  # 8 steps animation
                     # Alternate between two icons for animation effect
                     if step % 2 == 0:
@@ -6670,82 +6682,19 @@ class PatientTableWidget(QWidget):
             )
             return
 
-        # RED in the Report column means EXACTLY ONE thing:
-        #   this reception has an ACTIVE internal assignment AND the name shown is
-        #   the assignee.
-        # It is derived from the persisted, server_ok-gated assignment RECORD —
-        # never from the report's reporting-physician field.
-        #
-        # BUG THIS REPLACES (49868 / 49836): the old code called
-        # `reporter_display(report_status, physician_text)`, which returned RED for
-        # ANY non-completed report that merely had a reporting physician set in the
-        # RIS workflow — no assignment required. Once the feature became default-ON
-        # every such patient turned red (with a tooltip falsely claiming "Assigned
-        # to"). Do NOT colour this cell from `physician_text` again.
-        #
-        # Anything that is not an active assignment falls through to the ORIGINAL
-        # (pre-feature) status-icon colour scheme below.
-        #
-        # ── THE RULE (2026-07-14) ────────────────────────────────────────────────
-        # RED name in Report  ⇔  the Assign column's icon is RED (an ACTIVE internal
-        # assignment). Same reception, same source, same predicate — the two columns
-        # are two views of ONE state and can never disagree. The name shown is the
-        # ASSIGNED PERSON's, from the server.
-        #
-        # "Active" is the EFFECTIVE status (`effective_assign_status`), so an
-        # assignment whose report is already finished is *completed* — it renders
-        # green above/below, never red. That is what stopped the "everything is red"
-        # regression, and it is enforced here rather than by extra local guards.
-        #
-        # TWO GATES DELIBERATELY REMOVED — each silently suppressed the red name:
-        #   1. `mine` (an ID match against the logged-in user). The socket Login
-        #      response does not reliably carry the user's id / personnel_id (see
-        #      socket_client.py: the fallback user dict is only full_name/username/
-        #      role), while the server's assignee_id is a Mongo ObjectId — so `mine`
-        #      was effectively ALWAYS False and the red name never appeared at all.
-        #      It is also not what is wanted: the column must show the ASSIGNED
-        #      PERSON, whoever that is. `mine` now only decorates the tooltip.
-        #   2. `same_person_name(assignee, physician_text)`. When the reception's
-        #      reporting physician differed from the assignee, the assignment was
-        #      hidden — exactly the case an assignment exists to make visible.
-        try:
-            from modules.network.ino_assignment import is_enabled as _ino_assign_enabled
-            _rid = str(getattr(report_label, 'reception_id', '') or '').strip()
-            if (workflow_assignment is not None or _ino_assign_enabled()) and _rid:
-                from modules.network import ino_assignment_models as _ino_m
-                _merged = workflow_assignment if workflow_assignment is not None else (self.assignment_display_for(_rid) or {})
-                # The SAME effective status the Assign icon paints.
-                _status = _ino_m.effective_assign_status(
-                    str(_merged.get('status') or ''), report_status)
-                if _status == _ino_m.STATUS_ACTIVE:
-                    _assignee = str(_merged.get('assignee_name') or '').strip()
-                    if _assignee:
-                        _mine = bool(_merged.get('mine'))
-                        report_label.clear()
-                        report_label.setText(_assignee)
-                        report_label.setAlignment(Qt.AlignCenter)
-                        report_label.setStyleSheet(
-                            "background: transparent; border: none; color: #ef4444; "
-                            "font-size: 11px; font-weight: 600;"
-                        )
-                        try:
-                            if workflow_assignment is not None:
-                                _tip = f"Assigned to: {_assignee}"
-                            else:
-                                from modules.network import ino_assignment_details as _ino_d
-                                _tip = _ino_d.format_tooltip(_ino_d.get_assignment_details(
-                                    _rid, report_status=report_status, resolve_names=False))
-                        except Exception:
-                            _tip = f"Assigned to: {_assignee}"
-                        report_label.setToolTip(
-                            f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
-                            + _tip
-                            + ("\n(Assigned to you)" if _mine else "")
-                            + "\n(Click to change)"
-                        )
-                        return
-        except Exception:
-            pass
+        # Report identifies the reporting physician; Assign owns assignee display.
+        # An assignment must never substitute its doctor for the report author.
+        if physician_text:
+            report_label.clear()
+            report_label.setText(physician_text)
+            report_label.setAlignment(Qt.AlignCenter)
+            color = STATUS_COLORS.get(report_status, '#f59e0b')
+            report_label.setStyleSheet(
+                f"background: transparent; border: none; color: {color}; font-size: 11px; font-weight: 600;")
+            report_label.setToolTip(
+                f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
+                f"Reporting Physician: {physician_text}\n(Click to change)")
+            return
 
         icon_name = status_icon_map.get(report_status, 'fa5s.file-alt')
         color = STATUS_COLORS.get(report_status, '#f59e0b')
@@ -7666,6 +7615,8 @@ class PatientTableWidget(QWidget):
         circuit breaker had silently swallowed every call — so a refresh that did
         nothing looked identical to one that worked.
         """
+        # Terminal results own the button; queued animation callbacks must yield.
+        self._refresh_animation_token = getattr(self, "_refresh_animation_token", 0) + 1
         try:
             from modules.network.reception_api_config import reception_api_breaker_open
             breaker = reception_api_breaker_open()

@@ -1,21 +1,25 @@
 """Dedicated, bounded workflow notifications. No Qt, DB, files or download pool.
 
 Events invalidate a small visible-study snapshot; they never become clinical truth.
-Old servers must explicitly negotiate v1 before any snapshot calls are made.
+V1 snapshots require negotiation; explicit legacy opt-in verifies the held session.
 """
 from collections import OrderedDict
 import json
+import logging
 import random
 import select
 import socket
 import threading
 import time
 import uuid
+from .home_legacy_workflow import CompatibilityReadError
 
 EVENTS = ("study_assigned", "report_status_changed", "audio_uploaded", "patient_list_updated", "attachment_uploaded")
 BASE_EVENTS = EVENTS[:-1]
 MAX_FRAME = 1024 * 1024
 MAX_STUDIES = 100
+LEGACY_HEARTBEAT_SECONDS = 20
+LEGACY_VERIFY_SECONDS = 60
 
 
 def receive(sock, timeout=5.0, *, max_frame=MAX_FRAME):
@@ -74,6 +78,12 @@ def validated_states(states, requested):
                 clean_assignment[role] = {k: str(person.get(k) or "")[:240] for k in ("id", "name", "source")}
         result.append(dict(study_uid=state["study_uid"], patient_id=state["patient_id"],
                            report_status=status[:80], assignment=clean_assignment, audio_count=count))
+        if isinstance(state.get('reporting_physician'), str):
+            result[-1]['reporting_physician'] = state['reporting_physician'][:240]
+        if type(state.get('assignment_known')) is bool:
+            result[-1]['assignment_known'] = state['assignment_known']
+        if isinstance(state.get('latest_study_uid'), str) and len(state['latest_study_uid']) <= 64:
+            result[-1]['latest_study_uid'] = state['latest_study_uid']
         for key, limit in (('image_count', 10000000), ('series_count', 100000)):
             if type(state.get(key)) is int and 0 <= state[key] <= limit:
                 result[-1][key] = state[key]
@@ -97,14 +107,17 @@ def prepare_display(states):
     for state in states:
         assignment = state["assignment"]
         people = [assignment.get(role) for role in ("radiologist", "typist")]
-        person = next((p for p in people if isinstance(p, dict) and p.get("id")), {})
+        person = next((p for p in people if isinstance(p, dict) and (p.get("id") or p.get("name"))), {})
         local = (current_assignment_details(state["patient_id"]) or {}) if enabled else {}
-        state["assignment_enabled"] = enabled
+        state["assignment_enabled"] = enabled or bool(assignment)
         state["display_assignment"] = merge_assignment_status(
-            bool(person.get("id")), str(person.get("name") or ""),
+            bool(person.get("id") or person.get("name")), str(person.get("name") or ""),
             str(local.get("assignment_status") or ""), str(local.get("assignee_name") or ""))
-        if not enabled:
+        if not state["assignment_enabled"]:
             state["display_assignment"] = {}
+        if state.get('assignment_known') is False:
+            state['assignment_enabled'] = False
+            state['display_assignment'] = {}
     return states
 
 
@@ -131,10 +144,16 @@ class Mailbox:
 
 
 class WorkflowReceiver(threading.Thread):
-    def __init__(self, host, port, token, *, transform=None):
+    def __init__(self, host, port, token, *, transform=None, allow_legacy=False,
+                 allow_legacy_events=False, enrich=None, invalidate=None):
         super().__init__(name="workflow-events", daemon=True)
         self.address = (host, int(port))
         self.token = token
+        self.allow_legacy = allow_legacy
+        self.allow_legacy_events = allow_legacy_events
+        self.invalidate = invalidate
+        self.patient_ids = {}
+        self.observation = 0
         self.transform = transform or prepare_display
         self.stopped = threading.Event()
         self.lock = threading.Lock()
@@ -142,13 +161,26 @@ class WorkflowReceiver(threading.Thread):
         self.mailbox = Mailbox()
         self.sockets = set()
         self.status = "connecting"
+        self.failure = None
+        self.denied = threading.Event()
+        self.legacy_snapshots = None
+        self.enrichment = None
+        if enrich:
+            from .home_live_workflow import EnrichmentWorker
+            self.enrichment = EnrichmentWorker(enrich)
 
     def watch(self, uids):
         with self.lock:
+            if isinstance(uids, dict):
+                self.patient_ids = {uid: (value[1] if isinstance(value, tuple) else value) for uid, value in uids.items()}
             self.watched = tuple(dict.fromkeys(u for u in uids if isinstance(u, str) and 0 < len(u) <= 64))[:MAX_STUDIES]
 
     def stop(self):
         self.stopped.set()
+        if self.enrichment:
+            self.enrichment.stop()
+        if self.legacy_snapshots:
+            self.legacy_snapshots.stop()
         with self.lock:
             sockets = tuple(self.sockets)
         for sock in sockets:
@@ -182,11 +214,176 @@ class WorkflowReceiver(threading.Thread):
             data = reply.get("data", {})
             if data.get("realtime_version") != 1:
                 raise ValueError("Workflow snapshot version")
-            self.mailbox.publish(self.transform(validated_states(data.get("states"), watched)))
+            self._deliver(data.get('states'), watched)
         finally:
             self._close(sock)
 
+    def _deliver(self, states, watched, *, voice_only=False):
+        if self.stopped.is_set() or self.denied.is_set():
+            return
+        states = validated_states(states, watched)
+        if not voice_only:
+            states = self.transform(states)
+        with self.lock:
+            for state in states:
+                self.observation += 1
+                state['_observation'] = self.observation
+        self.mailbox.publish([dict(state, _voice_only=True) for state in states] if voice_only else states)
+        if self.enrichment and states:
+            self.enrichment.submit(states)
+
+    def drain_enrichment(self):
+        return self.enrichment.drain() if self.enrichment else []
+
+    def _legacy_failed(self, endpoint, error):
+        reason = error.reason if isinstance(error, CompatibilityReadError) else (
+            'timeout' if isinstance(error, TimeoutError) else
+            'transport' if isinstance(error, OSError) else 'invalid_response')
+        if reason == 'authorization':
+            self.denied.set()
+        self._record_failure((endpoint, reason))
+
+    def _legacy_exchange(self, sock, endpoint, params):
+        rid = send(sock, endpoint, params, self.token)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            reply = receive(sock, timeout=max(.01, deadline - time.monotonic()))
+            if reply.get('type') == 'broadcast':
+                if self.legacy_snapshots:
+                    self.legacy_snapshots.invalidate(reply.get('data'))
+                    if self.invalidate:
+                        self.invalidate(reply.get('data'))
+                continue
+            if reply.get('request_id') != rid:
+                raise CompatibilityReadError('correlation')
+            return reply
+        raise TimeoutError('Legacy control response')
+
+    def _legacy_live(self, sock):
+        """Keep the installed event stream; require server-verified session and pong."""
+        reply = self._legacy_exchange(sock, 'VerifyToken', {'token':self.token})
+        if reply.get('status') != 'success' or reply.get('valid') is not True:
+            if 'unknown endpoint' in str(reply.get('error') or '').lower():
+                return False
+            raise CompatibilityReadError('authorization')
+        if self._legacy_exchange(sock, 'ping', {}).get('status') != 'success':
+            return False
+        from .home_live_workflow import LegacySnapshots
+        worker = self.legacy_snapshots = LegacySnapshots(self)
+        worker.start()
+        self.status = 'connected_legacy'
+        last_ping = last_verify = time.monotonic()
+        try:
+            while not self.stopped.is_set():
+                if self.denied.is_set():
+                    raise CompatibilityReadError('authorization')
+                now = time.monotonic()
+                if now - last_verify >= LEGACY_VERIFY_SECONDS:
+                    reply = self._legacy_exchange(sock, 'VerifyToken', {'token':self.token})
+                    if reply.get('status') != 'success' or reply.get('valid') is not True:
+                        raise CompatibilityReadError('authorization')
+                    last_verify = time.monotonic()
+                if now - last_ping >= LEGACY_HEARTBEAT_SECONDS:
+                    if self._legacy_exchange(sock, 'ping', {}).get('status') != 'success':
+                        raise ConnectionError('Legacy heartbeat rejected')
+                    last_ping = time.monotonic()
+                if select.select([sock], [], [], .2)[0]:
+                    event = receive(sock)
+                    if event.get('type') == 'broadcast':
+                        # Older servers send additional mutation event names.
+                        worker.invalidate(event.get('data'))
+                        if self.invalidate:
+                            self.invalidate(event.get('data'))
+        finally:
+            worker.stop()
+            # Receiver thread only: retain ownership through connect/read deadlines.
+            # Qt stop stays nonblocking; reconnect cannot orphan an inventory pool.
+            worker.join()
+            self.legacy_snapshots = None
+        return True
+
+    def _legacy_request(self, endpoint, params):
+        from .home_legacy_workflow import CompatibilityReadError
+        if not self.token:
+            raise ValueError('Compatibility reads require the signed-in socket token.')
+        sock = self._connect()
+        try:
+            rid = send(sock, endpoint, params, self.token)
+            reply = receive(sock)
+            if reply.get('request_id') != rid:
+                raise CompatibilityReadError('correlation')
+            if reply.get('status') != 'success':
+                from .socket_client import _is_sortarray_compat_error
+                message = str(reply.get('error') or '').lower()
+                reason = 'authorization' if any(word in message for word in
+                    ('unauthorized', 'forbidden', 'token', 'authentication', 'permission')) else (
+                    'mongo_sortarray' if endpoint == 'GetPatientList' and _is_sortarray_compat_error(reply) else
+                    'not_found' if 'not found' in message else 'rejected')
+                raise CompatibilityReadError(reason)
+            data = reply.get('data') or {}
+            if not isinstance(data, dict):
+                raise ValueError('Invalid compatibility response.')
+            return data
+        finally:
+            self._close(sock)
+
+    def _legacy_loop(self):
+        from .home_legacy_workflow import read_rows, CompatibilityReadError
+        next_read = 0.0
+        previous = None
+        offset = 0
+        while not self.stopped.wait(.2):
+            with self.lock:
+                watched = {uid:self.patient_ids.get(uid, '') for uid in self.watched}
+            now = time.monotonic()
+            if watched != previous:
+                next_read, offset = 0.0, 0
+                previous = dict(watched)
+            if not watched or now < next_read:
+                continue
+            batch = dict(list(watched.items())[offset:offset + 20])
+            offset = (offset + 20) if offset + 20 < len(watched) else 0
+            try:
+                failures = []
+                def failed(endpoint, error):
+                    reason = error.reason if isinstance(error, CompatibilityReadError) else (
+                        'timeout' if isinstance(error, TimeoutError) else
+                        'transport' if isinstance(error, OSError) else 'invalid_response')
+                    failures.append((endpoint, reason))
+                states = read_rows(self._legacy_request, batch, stopped=self.stopped.is_set, failed=failed)
+                self._deliver(states, batch)
+                self.status = 'compatibility_partial' if failures and states else (
+                    'compatibility_reconnecting' if failures else 'compatibility')
+                self._record_failure(failures[0] if failures else None)
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                if isinstance(error, CompatibilityReadError) and error.reason == 'authorization':
+                    self.status = 'unavailable'
+                    self._record_failure(('compatibility', 'authorization'))
+                    return
+                self.status = 'compatibility_reconnecting'
+                self._record_failure(('compatibility', 'transform' if not isinstance(error, OSError) else 'transport'))
+            next_read = time.monotonic() + 15
+
+    def _record_failure(self, failure):
+        if failure != self.failure:
+            self.failure = failure
+            if failure:
+                logging.getLogger(__name__).warning('Workflow compatibility failure: endpoint=%s reason=%s', *failure)
+
     def run(self):
+        if self.enrichment:
+            self.enrichment.start()
+        try:
+            self._run()
+        finally:
+            if self.enrichment:
+                self.enrichment.stop()
+                # Qt switches sources only after this receiver has quiesced.
+                # Joining here keeps slow bounded HTTP reads off the GUI thread
+                # and prevents one abandoned enrichment worker per search.
+                self.enrichment.join()
+
+    def _run(self):
         backoff = 1.0
         while not self.stopped.is_set():
             sock = None
@@ -201,6 +398,21 @@ class WorkflowReceiver(threading.Thread):
                         'event_types': list(BASE_EVENTS)}, self.token)
                     reply = receive(sock)
                 if reply.get("request_id") != rid or reply.get("status") != "success" or reply.get("data", {}).get("realtime_version") != 1:
+                    unsupported = reply.get('request_id') == rid and (
+                        reply.get('status') == 'success' and reply.get('data', {}).get('realtime_version') != 1
+                        or reply.get('status') == 'error' and any(message in str(reply.get('error', '')).lower() for message in ('unknown endpoint', 'unsupported protocol')))
+                    if (self.allow_legacy or self.allow_legacy_events) and unsupported and self.token:
+                        if (self.allow_legacy_events and reply.get('status') == 'success'
+                                and self._legacy_live(sock)):
+                            return
+                        if not self.allow_legacy:
+                            self.status = 'unavailable'
+                            return
+                        self._close(sock)
+                        sock = None
+                        self.status = 'compatibility'
+                        self._legacy_loop()
+                        return
                     self.status = "unavailable"
                     # No repeated probe load on an old or unauthorized server.
                     return
@@ -237,6 +449,14 @@ class WorkflowReceiver(threading.Thread):
                         uid = data.get("study_uid") if isinstance(data, dict) else None
                         if not uid or uid in watched:
                             dirty = True
+                            if self.invalidate:
+                                self.invalidate(data)
+            except CompatibilityReadError as error:
+                if error.reason == 'authorization':
+                    self.status = 'unavailable'
+                    self._record_failure(('events', 'authorization'))
+                    return
+                self.status = 'reconnecting'
             except (OSError, ValueError, TypeError):
                 self.status = "reconnecting"
             finally:

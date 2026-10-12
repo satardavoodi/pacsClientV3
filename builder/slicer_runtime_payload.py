@@ -13,6 +13,7 @@ STARTUP_SOURCE = Path("modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_
 STARTUP_RUNTIME = Path("bin/Python/startup_script.py")
 PRESENTATION_COMPANIONS = (
     STARTUP_SOURCE.parent / "presentation.py",
+    STARTUP_SOURCE.parent / "viewer_chrome.py",
     STARTUP_SOURCE.parent / "unified_logging.py",
     Path("Qss/numeric_controls.py"),
 )

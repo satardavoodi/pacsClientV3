@@ -176,3 +176,82 @@ def test_write_adapter_errors_without_tab(qapp):
         assert res2["ok"] is False and res2["error_code"] == "NOT_IMPLEMENTED"
     finally:
         server.close()
+
+
+def test_aggregate_interceptor_missing_callback_never_dispatches_bus():
+    import json
+    from modules.EchoMind.secretary.test_server import TestControlServer
+    server = object.__new__(TestControlServer)
+    server._get_native_runtime = None
+    server._get_bus = lambda: (_ for _ in ()).throw(AssertionError('Must not dispatch'))
+    result = json.loads(server._execute({'id': 1, 'action': 'secretary_terminal_receipt',
+                                        'entities': {'request_id': 'invalid'}}))
+    assert result == {'id': 1, 'action': 'secretary_terminal_receipt', 'ok': False, 'error_code': 'NOT_FOUND'}
+
+
+def test_aggregate_interceptor_callback_failure_is_sanitized():
+    import json
+    from modules.EchoMind.secretary.test_server import TestControlServer
+    server = object.__new__(TestControlServer)
+    server._get_native_runtime = lambda: (_ for _ in ()).throw(RuntimeError('SYNTHETIC_PRIVATE_VALUE'))
+    result = json.loads(server._execute({'id': 2, 'action': 'secretary_terminal_receipt'}))
+    assert result['error_code'] == 'NOT_FOUND'
+    assert 'SYNTHETIC_PRIVATE_VALUE' not in str(result)
+
+
+def test_lifecycle_inspection_uses_only_existing_attachment():
+    import json
+    from types import SimpleNamespace
+    from modules.EchoMind.secretary.test_server import TestControlServer
+    server = object.__new__(TestControlServer)
+    server._get_bus = lambda: (_ for _ in ()).throw(AssertionError('No mutation'))
+    server._get_native_lifecycle = lambda:SimpleNamespace(diagnostics=lambda:{
+        'stage':'human_session','category':'authentication','closed':True})
+    request={'action':'secretary_lifecycle','entities':{}}
+    assert json.loads(server._execute(request))['data']['stage']=='human_session'
+    assert json.loads(server._execute(dict(request,entities={'extra':True})))['error_code']=='NOT_FOUND'
+    server._get_native_lifecycle=None
+    assert json.loads(server._execute(request))['error_code']=='NOT_FOUND'
+
+
+def test_runtime_binding_is_existing_owner_bound_and_read_only():
+    import json
+    import threading
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from modules.EchoMind.secretary.test_server import TestControlServer
+    runtime_id, session_id = str(uuid4()), str(uuid4())
+    runtime = SimpleNamespace(gui_thread_id=threading.get_ident(), closed=False,
+        owner='synthetic-owner', owner_getter=lambda:'synthetic-owner',
+        runtime_instance=runtime_id, widget=SimpleNamespace(_secretary_orchestrator=
+        SimpleNamespace(_memory_store=SimpleNamespace(_conversation={'id':session_id}))))
+    server = object.__new__(TestControlServer)
+    server._get_bus = lambda: (_ for _ in ()).throw(AssertionError('No bus dispatch'))
+    server._get_native_runtime = lambda:runtime
+    request = {'action':'secretary_runtime_binding','entities':{}}
+    result = json.loads(server._execute(request))
+    assert result['data'] == {'runtime_instance':runtime_id,'current_session':session_id}
+    for field, value in [('closed',True),('gui_thread_id',-1),('owner','different')]:
+        original = getattr(runtime,field)
+        setattr(runtime,field,value)
+        assert json.loads(server._execute(request))['error_code']=='NOT_FOUND'
+        setattr(runtime,field,original)
+    assert json.loads(server._execute(dict(request,entities={'extra':True})))['error_code']=='NOT_FOUND'
+    server._get_native_runtime = None
+    assert json.loads(server._execute(request))['error_code']=='NOT_FOUND'
+
+
+def test_terminal_diagnostic_interceptor_never_initializes_or_dispatches_bus():
+    import json
+    from types import SimpleNamespace
+    from modules.EchoMind.secretary.test_server import TestControlServer
+    server=object.__new__(TestControlServer)
+    server._get_bus=lambda:(_ for _ in ()).throw(AssertionError('No bus'))
+    server._get_native_runtime=None
+    request={'id':1,'action':'secretary_terminal_diagnostic','entities':{}}
+    assert json.loads(server._execute(request))['error_code']=='NOT_FOUND'
+    calls=[]
+    server._get_native_runtime=lambda:SimpleNamespace(test_terminal_diagnostic=lambda entities:
+        calls.append(entities) or {'ok':True,'data':{'action':'unknown'}})
+    assert json.loads(server._execute(request))['data']=={'action':'unknown'}
+    assert calls==[{}]

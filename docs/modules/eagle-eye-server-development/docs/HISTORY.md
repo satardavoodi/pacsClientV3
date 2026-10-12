@@ -1,5 +1,68 @@
 # Decisions and history
 
+## 2026-10-09: One Send action; server-owned report fallback
+
+Remove separate report Turbo controls from Windows/mobile. Company Send submits
+one normal report; server tries existing Turbo/ChatGPT first, then native company
+LLM once on upstream error/timeout/empty output. Preserve modality/template/profile,
+user grants, history/request identity and personal API isolation. Capability
+metadata advertises report with `report_policy=turbo_then_company`; legacy Turbo
+requests remain compatibility aliases. Attached reports fail explicitly if the
+native fallback cannot consume their attachments. Live acceptance is separate.
+
+## 2026-10-09: Shared AI connection and separate speech routing
+
+One approved Eagle Eye Server address/port/pairing serves company imaging,
+EchoMind, Secretary and CRM with per-user/module authorization. Personal direct
+API remains an own-credentials plus own-prompt option. Voice to Text is a separate
+exception: default Auto orders Google, GapGPT Whisper, then company speech.
+Ordinary client login is unchanged; connection success does not grant modules.
+
+## 2026-10-09: Preserve ordinary client login; server resolves authority
+
+Owner clarified that Windows, Android and iOS retain their existing login UI/UX.
+No provider choice or separate Eagle Eye login is added. The first protected
+request exchanges the current logged-in user's credentials automatically. Eagle
+Eye tries PACS first, then Reception after credential rejection, and checks its
+local grants only after identity resolution. A local denial never falls through
+to another identity provider. CRM workflow credentials do not replace the current
+AI principal. Earlier Reception-specific entry/workspace proposals are superseded.
+
+## 2026-10-09: Two independent human access gates
+
+Owner requires each Windows/mobile sender to have a signed-in PACS or Reception
+user. Eagle Eye verifies that upstream identity and independently checks its own
+user/module grants before proceeding. Either configured provider suffices; no
+local-only remote identity is allowed. Credentials are exchanged transiently for
+an opaque device-bound, expiring process-local user session; upstream verification
+and local grants are checked again on protected requests. No password is persisted
+or repeated on every inference request. User approvals and request audit metadata
+live in an Eagle Eye-owned SQLite database separate from clinical MongoDB.
+
+Windows, mobile and CRM conversations received the owner-authorized protocol and
+implementation requests. Reception fixed-route adapter uses primary JavaScript
+contract evidence; token-time Deactive enforcement and compiled parity remain
+unverified. No production service transition or build is implied.
+
+Combined verification: 142 local security/startup guards and 134 legacy HTTP/TLS/
+CRM/Secretary guards pass; the inactive Razi candidate passes 138 security guards.
+The Secretary owner reviewed a 39-file supplement and repaired its stale snapshot
+hash receipt. Completed Education source was reconciled against the remote source:
+no remote-only Python definitions or documentation headings were discarded; local
+cover-fit/zoom/navigation updates retain their 210 passing tests and one existing
+xfail. Only source, tests, docs and mirrors are staged; course content databases,
+patient files, credentials and host configuration are excluded. These source checks
+do not qualify production model payloads, GUI acceptance or iOS.
+
+## 2026-10-09: Server console administrator and same-host architecture
+
+Owner specifies co-installed Reception, PACS Server and Eagle Eye Server.
+Server console must reject unauthenticated offline access and use its own
+privately provisioned superadministrator. Client offline behavior is unchanged.
+The local verifier uses salted PBKDF2 and Windows user-bound DPAPI, never an
+embedded password. See [scope, gates and deployment](SERVER_CONSOLE_AUTH.md).
+No service restart, release build or full parity claim accompanies this slice.
+
 ## 2026-09-30: EchoMind moved to the Eagle Eye service
 
 Added a headless server-owned prompt core and strict text endpoint; removed the
@@ -241,3 +304,288 @@ were changed. This supersedes the earlier floating popup/toolbar UI decision.
 - Next build MUST use BUILD.md and its isolated candidate workflow after release prerequisites are satisfied. Check the installed modules/ai_imaging/eagle_eye_brain/manual_slicer.py hash against the exact candidate source. Ensure newly added saved_results.py and saved_results_widget.py are included through modules.ai_imaging collection. Existing installers have not changed.
 - Artifact acceptance pending: on another PC without this development checkout, in normal operation, retrieve a saved brain result, load source image and all segments, verify the correction panel is embedded (no floating popup), exercise Paint/Erase/Draw, save correction, apply mask on server and reopen the revised report. Verify both volumetry and lesion editing, DPI/layout usability and writable user-data paths. Preserve unsaved sessions. TEMP paths containing spaces require a working Windows short-path alias under the current launcher workaround; test this explicitly before calling portability complete.
 - Source full GUI/save/server roundtrip and actual installer/second-PC acceptance remain pending. The earlier native Slicer parent/layout probe verifies embedding only. No installer was built or deployed in this change.
+
+
+## 2026-10-07: Patient case synchronization staged, activation pending
+
+Candidate 20261007-case-realtime is based on active 20261004-secretary-help-ticket.
+It adds authenticated same-center case/history reads and PACS invalidation bridging.
+Eighty target tests and pip check pass; 16 overlay files have verified hashes.
+The prior service remains active and has no case_realtime capability. Local
+Patient/case selection has 59 passes; adjacent server/TLS has 45 passes.
+Restricted config and prior SCM command are backed up. Activation helper verifies
+ownership, hashes and empty queues and restores the prior command on failed
+post-start acceptance. Manual approval and actual Patient red availability/saved
+result retrieval/second-client GUI acceptance are pending. No PACS/CRM restart,
+model replacement, installer, clinical qualification or activation is claimed.
+Receipts: validation/case-realtime-20261007-stage.json; immutable prior revision.
+
+## 2026-10-07: Razi Eagle Eye case synchronization activated
+
+Owner-approved activation completed. AIPacsEagleEye runs 20261007-case-realtime
+under LocalService with existing private configuration. Authenticated paired-TLS
+acceptance passed: protocol 1, case_realtime enabled, seven model routes and
+fourteen EchoMind workflows. PACS 50052/8000, DICOM 105 and CRM 8770 retained
+prior process owners. Restricted rollback backup and prior baseline are retained.
+Receipt: validation/case-realtime-20261007-cutover.json (activated=true).
+Actual Patient red availability, saved-result retrieval and second-client GUI
+acceptance remain pending. Eighty candidate tests passed before activation.
+
+## 2026-10-07: Echocardiography and reference review activated
+
+Razi AIPacsEagleEye now runs `20261007-echo-reference-r2`, derived from the
+active case-realtime baseline. It adds the ECHOCARDIOGRAPHY Report/Turbo prompt
+and server-owned `add_reference` workflow. Registry 2026-10-07.2 provides
+INTERGROWTH fetal centiles and ASE adult echo limits; missing context and
+unsupported parameters remain unclassified. Signed unsupported values (GLS)
+remain in the review. It is a measurement review, not automatic clinical grading.
+
+The target passed 28 reference/history and 22 adjacent case/TLS tests; pip check
+passed. Four actual-provider synthetic examples passed. Authenticated activation
+retained seven model routes, case synchronization and 15 EchoMind workflows;
+PACS, DICOM and CRM listener owners were unchanged. Workstation-to-Razi requests
+for echo reports and both reference families passed; the final request confirmed
+registry .2 and retained negative GLS. Restricted rollback configuration/SCM
+backup and immutable prior source are retained. Receipts are server validation/
+reference-r2-20261007-stage.json, reference-r2-20261007-provider.json and
+reference-r2-20261007-cutover.json. Actual fresh-source client GUI and reception
+export acceptance remain pending. No installer or full clinical qualification.
+See docs/echomind/REFERENCE_REPORTS.md in the canonical workstation repository.
+
+Final local verification: 260 passed, two frozen-stage checks skipped (no build); 513 plugin mirror pairs matched.
+
+## 2026-10-08: Lumbar marrow Development pilot
+
+Canonical source adds the Lumbar Bone Marrow experimental T1 function, bounded
+remote module and server-owned signal draft. Whole-vertebra erosion is explicitly
+not validated marrow/body segmentation or red marrow fraction. New guards: 24;
+adjacent: 219 plus five scheduler; builder/runtime: 56, two frozen-stage skips.
+Razi r3 server guards: 48 passes (one client-menu deselection and one rerun);
+pip check passes. 515 plugin mirror pairs match.
+
+Owner authorized a separate Development route. Revision 20261008-lumbar-marrow-r3
+runs through the manual-only AI-PACS Lumbar Marrow Development 20261008 task,
+existing Supervisor ownership, isolated job root, paired TLS loopback 8042 and
+an authenticated workstation SSH tunnel on 18042. Capabilities advertise the new
+module. Shared AIPacsEagleEye SCM path/state are verified preserved. No firewall
+change occurred. Automatic review rejected the initial direct LAN/firewall command
+with blocked by policy; the loopback alternative succeeded. No PHI in this record.
+Source GUI, actual patient/model inference and clinical qualification remain open.
+See docs/modules/LUMBAR_BONE_MARROW.md in the canonical repository. Server receipts:
+marrow-stage.json, marrow-tests-server.json, marrow-development-task.json and
+marrow-transition-plan.json in the r3 revision. No production cutover or installer.
+
+Actual portable-model preflight passed on Razi: full manifest/file/weight hashes,
+TotalSegmentator import and PyTorch 2.6.0+cpu, status ready. One network attempt
+was blocked by the existing audit guard. Inference explicitly was not executed.
+Receipt: validation/marrow-preflight-20261008/result.json. Human-run source
+launcher: tools/eagle_eye/open_marrow_development.ps1 in the canonical repository.
+
+## Shared Razi activation 2026-10-08
+Owner explicitly requested the existing server update. The shared AIPacsEagleEye
+service now uses the hash-verified 20261008-lumbar-marrow-r3 candidate and unchanged
+paired HTTPS8002 configuration. All durable client jobs were terminal before restart.
+Authenticated normal workstation capabilities advertise lumbar-marrow and eight routes;
+jobs API succeeded. Exact SCM/config backup: server backups/marrow-service-20261008.
+Initial sc.exe update failed and restored baseline; structured CIM Change succeeded.
+Real patient inference and GUI acceptance remain pending; experimental measurements
+are not clinically qualified. Normal clients require no tunnel/config change.
+
+## Review UX, PDF and Slicer revisions 2026-10-08
+The report-only browser caused cramped numeric cells and poor image navigation.
+MarrowReview now separates Image and measurements, Structured report and Physician
+notes. The scrollable/pannable preview has Fit, Zoom and 100% controls. Measurement
+cells use two decimals, volume in cm3, fixed readable header spacing and level colors
+matching the existing overlay palette. Colors identify anatomy, not severity.
+Definitions explain arbitrary SI, ROI, mean/median/SD and QC. Physician notes are
+included in the exported draft but do not overwrite server measurements.
+PDF uses the existing Eagle Eye paged A4 renderer with marrow title/footer; synthetic
+PDF was rendered with bundled Poppler and visually checked. No patient artifact
+was copied into documentation. Source identity unavailable is explicit, not invented.
+Slicer uses existing isolated prepare_review/manual_slicer controls. Server now
+exports owned reference image, full labelmap and label names. Saved edits use the
+bounded label correction protocol: same source/owner/parent, mask hash, geometry,
+allowed labels, size/decompression limits and revision-conflict checks. Signal
+remeasurement occurs only on the server without rerunning inference; original job
+is retained. Interrupted submissions retain a resumable client handle. Earlier
+results without review assets require a new analysis. Corrected labels are whole
+vertebrae followed by the same 2 mm erosion, not a validated marrow-body segmentation.
+Razi scoped R4 candidate is active on the existing paired HTTPS8002 service. The
+all-client durable queue was idle; exact prior SCM/config backup is on server at
+backups/marrow-review-20261008. Normal client capabilities confirm marrow analysis
+and correction. Candidate synthetic guards:22 passed,1 old client-menu deselected.
+Canonical tests and UI/PDF synthetic checks pass; fresh source GUI/Slicer/native
+patient correction acceptance pending. No installed Client or full build was created.
+515 mirrors match; no affected plugin mirror. Client PyInstaller/Nuitka package
+whole ai_imaging; server correction source is included in existing full-core tree.
+Rollback: after queue drain restore prior SCM binpath from activation receipt and
+start only AIPacsEagleEye; revert client review changes separately if necessary.
+
+## 2026-10-08: Complete Developer source reconciliation
+
+Reviewed all 201 historical content differences and staged the complete source/resource closure in the non-running reconciled revision. Optional PortAudio import and isolated Breast native-runtime fixes passed targeted guards. Bone weight selection matches the authoritative A100 source. Both model synthetic smokes pass on Razi. See [full evidence and remaining acceptance](SOURCE_PARITY_RECONCILIATION_2026-10-08.md). Active SCM remains r4; licensing and GUI acceptance are pending.
+
+## 2026-10-08: Mandatory two-way Developer parity
+
+The owner requires all changes from either host to be reconciled and applied to
+the other in the same work session. Local and Razi AGENTS entry points now enforce
+this completion/build gate. See [the contract](DEVELOPER_SYNC_POLICY.md). Host
+private state and running-service activation remain distinct.
+
+## 2026-10-08: Client shared AI Connection page
+
+Client-only fourth AI subtab now hosts existing connection controls from EchoMind,
+Eagle Eye and Agent. Server keeps its original page layout. Local focused gate: 100
+passed; live GUI acceptance pending human source launch/MCP attachment. See
+[scope and verification](CLIENT_AI_CONNECTION_SETTINGS_2026-10-08.md).
+
+## 2026-10-08: Simplified embedded MCP/mobile and local PACS settings
+
+Connection uses collapsed advanced pairing/network controls. Embedded MCP is
+read-only; mobile pairing uses the existing gateway. Server PACS presets read
+the active profile in a worker without saving/migrating settings. Four guards
+failed before the change; 104 focused and 19 gateway wiring guards pass locally.
+[Scope and limitations](CLIENT_AI_CONNECTION_SETTINGS_2026-10-08.md#follow-up-simplified-embedded-control-and-colocated-pacs).
+
+
+## 2026-10-08: retained AI usage panels
+
+Owner-scoped shared usage endpoint and worker-backed panels were added to Eagle
+Eye, EchoMind and Agent. Unknown tokens and unavailable histories stay explicit.
+106 local guards pass; staged source parity and GUI/runtime activation are distinct.
+See CLIENT_AI_CONNECTION_SETTINGS_2026-10-08.md for scope and limits.
+
+
+## 2026-10-08: named usage breakdown
+
+Per-module/workflow/Agent-function rows now show separate request and token
+counters. Canonical catalogs, owner isolation and unknown values are guarded.
+143 local passes; source Developer synchronization does not activate r4.
+
+
+## 2026-10-08: authenticated sender usage and request matrix
+
+Server usage now separates client/function rows with a cached client selector.
+178 local guards pass, including all 29 function dispatches for two authenticated
+synthetic clients, failed usage and rejected spoofing. Human user attribution,
+active service activation and live GUI remain separate open gates.
+
+
+### 2026-10-08: Automatically restore separate brain result tabs
+
+Opening the workspace discovered only results with server_module; legacy brain results without that field remained hidden until explicit Brain selection exposed the history widget. Discovery now recognizes the existing brain analysis_type / posterior_rows / manual_rows / normative contracts when server_module is absent. Exact-study and artifact ownership checks remain mandatory. Brain Volumetry and Brain Lesions each receive their own saved-result tab and a Review / correct segmentation action. The first restored brain tab is selected only while the user remains on Imaging Tools; a user-selected tab is preserved and repeated restoration does not duplicate tabs. No analysis is submitted by restoration.
+
+Two synthetic regressions failed before the change; 43 discovery/history/workspace tests pass after it (exit 0). All 517 plugin mirror pairs match. Runtime sources are collected through modules.ai_imaging in both backend builds; no new dependency, component or flag. Applies to Client Standard/ARM and workstation-enabled Server; no headless inference change. Live source GUI remains pending because the documented control listener is unavailable. Next artifact acceptance: open an exact-study case with both saved result types without Choose Function, verify both tabs, PDF access and correction, and verify another study does not inherit them. No build or service activation was performed. Developer parity receipt is recorded separately; pending parity prohibits completion/build handoff.
+
+
+### 2026-10-08: Saved report reader contrast and readability
+
+Print HTML inherited a dark QTextBrowser base, leaving dark report text unreadable. The client reader now uses white paper, dark text, a 24-pixel document margin, minimum 11-point text, 135% line spacing and paragraph spacing. Clinical text, alignment and explicit warning colors remain intact. PDF and correction actions move to a top action row with text zoom controls. No stored HTML/PDF or measured values are changed. A synthetic dark-palette regression fails before and passes after; 44 local history/workspace guards pass. A synthetic Qt rendering was inspected with the system Segoe UI font registered for the offscreen renderer. Full source GUI acceptance remains pending: control listener unavailable. Runtime/test changes synchronized to the inactive Razi Developer candidate; concurrent documentation/source deltas still block full parity and build handoff. Both builders collect the existing module; no dependency/component added.
+
+
+### 2026-10-08: Compact saved report layout and section navigation
+
+The saved-report page now centers a maximum 1120-logical-pixel reading column instead of stretching tables across the display. The column shrinks with the available layout. A Report section selector navigates existing level-1/2 headings without changing clinical content. Short PDF action keeps the top bar compact. Extended behavioral guard failed before the change; 44 local saved-result/workspace guards pass afterward. Runtime/test delta is hash-checked against the inactive Razi Developer candidate before synchronization; full parity remains blocked by the previously recorded concurrent documentation changes. Live GUI and installed artifact acceptance remain pending. Existing modules.ai_imaging collection covers both builders; no added dependency or flag.
+
+
+### 2026-10-08: Shared client brain report presentation standard
+
+The saved client report reader is shared by Brain Volumetry and Brain Lesions, including small-vessel/white-matter and MS contexts. No context-specific duplicate renderer is needed. Standard: centered 1120px maximum reading column, light report paper, minimum 11pt text, 135% line height, section navigation, zoom, PDF action and correction action. Clinical headings, numerical content, reference limitations and warning colors remain report-owned. This standard concerns client presentation; it does not rewrite stored PDFs or change disease classification. Three parameterized context guards exercise the same restored page and correction binding. The focused history/reader suite passes 14 tests locally. Live source GUI and complete Developer parity remain pending under the existing recorded blockers; no activation or build.
+
+
+### 2026-10-08: Breast classification and calcium delivery (B93)
+
+The normal Breast adapter now starts server-owned tissue and calcium branches.
+The existing corrected classifier bundle resolves the active r4 schema mismatch;
+no classifier weight or threshold changed. The calcium result is source-bound in
+the authenticated envelope, persisted per detection run and loaded asynchronously
+into a separate client overlay. Branch completion is explicit in the dialog.
+MONOCHROME1 polarity/padding handling has synthetic equivalent-pixel guards and
+retains research-only qualification. The earlier sealed candidate is preserved.
+See docs/modules/breast-ai/B93_DUAL_RESULT_DELIVERY_2026-10-08.md in the workstation
+root for evidence, failed attempts and pending gates. Active r4 is not modified.
+
+
+### 2026-10-08: Reference position labels beside brain measurements
+
+Numeric regional volume cells now show Below/Above reference or Below/At/Above median when the reference supplies a median. Values outside available bounds are red; this supersedes the previous >25% display threshold, not a clinical diagnosis. Shared cells cover medial temporal measurements too. Atlas analogues remain unclassified. No exact percentile is invented from endpoints. WMH keeps its separate approximate age/sex curve band and explicitly marks bands wholly beyond P5-P95; method uncertainty remains visible. Five position guards failed before and 48 focused guards pass after. Reference loading on the active service remains unresolved; these labels do not repair unavailable tables. Private comparison of two independently tagged original 3D acquisitions used existing results, not new inference: full rows are in a private local CSV, not repository fixtures. Full GUI, document parity and active-service activation remain pending.
+
+
+## Hosted reception CRM source integration (2026-10-08)
+
+Verified CRM 1.32.6 against the installed server receipt, compared every prompt and retained newer assess/interpretation prompts. Imported the existing brain instead of rewriting it. Added shared-pairing client/UI, private configuration attachment, reception-session ownership and a server-owned read-only process. Worker smoke uncovered and corrected missing PDFium/Mongo dependencies, virtualenv child PID ownership and HTTPStatus transport. Developer parity, automated tests, live GUI and active service state are separate gates; see CRM_INTEGRATION_2026-10-08.md.
+
+## 2026-10-09: Developer test/build ownership and former Client role migration
+
+Recorded the standing Razi function-test/local integration/local dual-product-build
+workflow in AGENTS.md, CLAUDE.md and the synchronization runbook. Diagnosis: the
+existing valid legacy Client license was not a signed Server entitlement. Official
+same-device internal Developer Server issuance is bounded by existing verified
+remaining whole-day validity; Client state is preserved and no runtime guard is
+weakened. Private receipts track role provisioning and controlled activation
+separately from full function/GUI/build acceptance. No release build is requested.
+
+## 2026-10-09: Secretary content assets (source candidate)
+
+Added shared end-user course edits, public research/download/image delivery and complete PACS course imports. See `docs/agent_control/SECRETARY_CONTENT_WEB_ASSETS_2026-10-09.md` in the full source snapshot. Default static retrieval; optional Playwright and administrator-configured image provider. No production activation or live acceptance claimed.
+
+- 2026-10-09: Added the server shared Connection presentation foundation;
+  details and unresolved provider/configuration boundaries are recorded in
+  SHARED_AI_CONNECTION_2026-10-09.md. No backend activation or release qualification.
+
+Eagle AI Brain naming correction: Server 1 - GapGPT selects the existing company backend; models/prompts remain unchanged. Local settings tests: 5 passed. Razi activation and native acceptance remain pending.
+
+Shared Brain accounting update: private Server 1 center-code administration and per-source upstream call/token ledger implemented. 88 focused local guards passed. Dental request-usage fixture fails separately. Razi source staging, complete parity, activation and native/provider acceptance remain separate gates. See SHARED_AI_CONNECTION_2026-10-09.md.
+
+Brain authority update: shared company identity now gates hosted provider calls and CRM diagnostics; see BRAIN_AUTHORITY_2026-10-09.md and BRAIN_DEPLOYMENT_GATE_2026-10-09.md. Active clinical service is unchanged; complete parity/native/provider acceptance block activation.
+
+Four Brain routes: LLM G/A/V and Custom API implemented; see BRAIN_PROFILES_2026-10-09.md. V100 public LLM API port awaits owner input; A/V have no qualified inference adapter. Custom API chat-completions only; native/provider acceptance and full parity pending.
+
+## 2026-10-10: Preserve Client behavior during server migration
+
+The owner requires the latest Windows Client prompts, model selectors, templates,
+study context and command instructions to survive migration to Eagle Eye Server.
+Do not replace models or change clinical prompt policy to make synthetic examples
+pass. Existing native Assistant/Search routes and next-day Agent acceptance are
+outside this repair slice.
+
+The report Send worker lost its previous Turbo study-profile forwarding; the
+worker fix and regression are recorded in
+`docs/echomind/REPORT_MIGRATION_PARITY_2026-10-10.md`. Existing normal-finding
+generation instructions are preserved; response wording variability alone is not
+evidence of changed prompts.
+
+The active Developer export retained fourteen engine source files but omitted
+the complete model bindings. Read-only resolution failed for eight advertised
+imaging modules. Restore complete approved model directories in a NEW immutable
+source revision, including the Brain parent runtime probe and shared Alignment
+runtime dependency; never copy only runners/weights or modify executing source.
+Verify full manifest hashes using extended Windows paths before binding. Local
+and Razi runtime layouts may differ; source and weight identity must match.
+
+The protected acceptance and model-integrity receipts are retained under
+`generated-files/eagle-eye/activation-20261010` and the corresponding Razi staging
+directory. Source/model parity, activation, inference and native GUI acceptance
+are separate gates. No release build or clinical qualification is implied.
+
+## 2026-10-10: Current-request narrative language
+
+The original current request determines Persian/English response language; positive explicit targets win and ambiguous input uses the selected preference. Machine schemas and authority remain unchanged. Secretary legacy requests remain accepted, new preferences are negotiated, and deterministic narrative/errors follow the scoped selection. Local helper/Secretary suite: 110 passed. No Razi activation, full parity or live provider/native acceptance is claimed. See [contract](REQUEST_LANGUAGE_2026-10-10.md).
+
+## 2026-10-10: Private admission and cooperative transition
+
+Added process-local inflight accounting, bounded drain with automatic abort/resume, sticky uncertain-completion refusal and zero-only cooperative commit. Model leases outlive HTTP202 until Future cleanup. Private owning-parent control requires an explicit new-child handshake and correlated zero receipt plus successful process exit. Synthetic scoped suite: 164 passed. Existing emergency stop semantics remain separate; old-active bootstrap and full Developer parity are not solved by new counters. No activation. See [contract](SAFE_TRANSITION_2026-10-10.md).
+
+
+## Lumbar marrow full-volume candidate — 2026-10-11
+
+Development record: see [implementation and acceptance gates](LUMBAR_MARROW_MULTISEQUENCE_2026-10-11.md). Canonical implementation and isolated Razi calculation pass; active source parity, authenticated route and live result-tab acceptance remain pending.
+
+
+### Marrow input protocol 2 (2026-10-12)
+
+Required sagittal T1/T2 and Dixon in/opposed-phase; STIR and multi-echo optional.
+Unique editable automatic suggestions, descriptive signal-drop fallback, native
+signal features and corrected-mask recalculation implemented. 44 focused guards
+pass; live GUI, full Developer parity and authenticated Razi activation remain
+pending. See LUMBAR_MARROW_MULTISEQUENCE_2026-10-11.md, protocol 2 section.

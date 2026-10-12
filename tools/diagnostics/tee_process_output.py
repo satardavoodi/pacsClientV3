@@ -46,13 +46,23 @@ def main() -> int:
         )
 
         assert process.stdout is not None
+        console = sys.stdout
         for line in process.stdout:
-            sys.stdout.write(line)
-            sys.stdout.flush()
             log_file.write(line)
             log_file.flush()
+            if console is not None:
+                try:
+                    console.write(line)
+                    console.flush()
+                except (OSError, ValueError):
+                    # The console belongs to the launching host. Its closure
+                    # must not stop draining the child or abandon its log.
+                    console = None
 
-        return process.wait()
+        exit_code = process.wait()
+        log_file.write(f"[tee_process_output] ChildExitCode={exit_code}\n")
+        log_file.flush()
+        return exit_code
 
 
 if __name__ == "__main__":

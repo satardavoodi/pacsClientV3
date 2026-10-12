@@ -222,7 +222,17 @@ class VoiceTranscriptionService:
     def test_connection(self) -> Dict[str, Any]:
         """Probe the configured server. Never raises."""
         cfg = self._cfg()
-        provider = cfg.get("provider", STT_PROVIDER_AIPACS_2)
+        provider = cfg.get("provider") or STT_PROVIDER_AUTO
+        if provider == STT_PROVIDER_AUTO:
+            attempts = []
+            for candidate in (STT_PROVIDER_GOOGLE, STT_PROVIDER_AIPACS_3,
+                              STT_PROVIDER_AIPACS_1, STT_PROVIDER_AIPACS_2):
+                result = VoiceTranscriptionService(dict(cfg, provider=candidate)).test_connection()
+                attempts.append({'provider': candidate, 'ok': bool(result.get('ok'))})
+                if result.get('ok'):
+                    return dict(ok=True, detail='Automatic speech routing is configured: Google, GapGPT Whisper, then company speech services. '
+                                'This connectivity check does not transcribe audio.', attempts=attempts)
+            return dict(ok=False, detail='No automatic speech route is available. Review Voice to Text settings.', attempts=attempts)
         if provider == STT_PROVIDER_GOOGLE:
             try:
                 import speech_recognition  # noqa: F401
@@ -316,7 +326,7 @@ class VoiceTranscriptionService:
         timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         cfg = self._cfg()
-        provider = cfg.get("provider", STT_PROVIDER_AUTO)
+        provider = cfg.get("provider") or STT_PROVIDER_AUTO
         if provider == STT_PROVIDER_AUTO:
             attempts = []
             for candidate in (STT_PROVIDER_GOOGLE, STT_PROVIDER_AIPACS_3,

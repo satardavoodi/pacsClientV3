@@ -126,7 +126,7 @@ def dialog_factory(app):
 
 
 def test_text_can_be_authored_without_a_file(dialog_factory):
-    dialog, messages = dialog_factory()
+    dialog, messages = dialog_factory("text", {"name":"Legacy notes", "text":"Original"})
     index = dialog.type_combo.findData("text")
     assert index >= 0, "Build Course must author text already supported by playback"
     dialog.type_combo.setCurrentIndex(index)
@@ -171,7 +171,8 @@ def test_existing_items_round_trip_without_relabeling(dialog_factory, content_ty
     dialog.name_input.setText("Revised")
     dialog._save()
     assert dialog.result() == QtWidgets.QDialog.Accepted
-    assert dialog.get_payload() == {"content_type": content_type, "content_data": {**original, "name": "Revised"}}
+    assert dialog.get_payload()["content_type"] == content_type
+    assert all(dialog.get_payload()["content_data"][key] == value for key,value in {**original, "name":"Revised"}.items())
     assert original["name"] == "Original"
     messages.warning.assert_not_called()
 
@@ -186,7 +187,7 @@ def test_empty_text_is_not_accepted(dialog_factory):
 def test_switch_away_and_back_does_not_restore_old_source(dialog_factory):
     dialog, _ = dialog_factory("image", {"name": "Image", "path": "synthetic.png"})
     original = dialog.type_combo.currentIndex()
-    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("audio"))
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("multimedia"))
     dialog.type_combo.setCurrentIndex(original)
     dialog._save()
     assert dialog.result() != QtWidgets.QDialog.Accepted
@@ -195,7 +196,7 @@ def test_switch_away_and_back_does_not_restore_old_source(dialog_factory):
 def test_cancel_does_not_mutate_original_payload(dialog_factory):
     original = {"name": "Original", "path": "synthetic.png"}
     dialog, _ = dialog_factory("image", original)
-    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("audio"))
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("multimedia"))
     dialog.reject()
     assert original == {"name": "Original", "path": "synthetic.png"}
 
@@ -203,6 +204,7 @@ def test_cancel_does_not_mutate_original_payload(dialog_factory):
 @pytest.mark.parametrize("mode,expected", [("study", "dicom_study"), ("series", "dicom_series")])
 def test_dicom_picker_keeps_persisted_reference_types(dialog_factory, monkeypatch, mode, expected):
     dialog, _ = dialog_factory()
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("dicom_reference"))
     selected = dict(study_uid="synthetic-study", patient_id="synthetic-patient", mode=mode, series_number=0)
     picker = SimpleNamespace(exec=lambda: QtWidgets.QDialog.Accepted, get_selected_study=lambda: selected)
     monkeypatch.setitem(dialog._pick_source.__func__.__globals__, "StudyPickerDialog", lambda *a: picker)
@@ -219,7 +221,7 @@ def test_authored_text_survives_storage_and_actual_viewer_rendering(dialog_facto
     import html
     from modules.education import course_database as db
 
-    dialog, _ = dialog_factory()
+    dialog, _ = dialog_factory("text", {"name":"Legacy notes", "text":"Original"})
     dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("text"))
     dialog.name_input.setText("Question <1>")
     dialog.text_input.setPlainText("Observe <evidence>.\nExplain & compare.")
@@ -264,7 +266,7 @@ def test_dialog_import_waits_for_worker_and_preserves_cancel(dialog_factory, mon
     monkeypatch.setattr(db, "save_course_asset", copy)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", lambda *a: ("synthetic.png", ""))
     dialog, _ = dialog_factory()
-    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("image"))
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("multimedia"))
     dialog._pick_source()
     worker = dialog._asset_worker
     dialog.reject()

@@ -55,11 +55,23 @@ class SegmentEndpoint(LandmarkItem):
             self.segment.setLine(a.x(), a.y(), b.x(), b.y())
 
 
-class EditableSegment(QGraphicsLineItem):
+class ZoomHitTarget:
+    """Keep virtual geometry stable until Qt receives a geometry notification."""
+    def sync_hit_target(self):
+        width = self._hit_pixels / max(abs(self.view.transform().m11()), .01)
+        if width != self._hit_width:
+            self.prepareGeometryChange()
+            self._hit_width = width
+            self.update()
+
+
+class EditableSegment(ZoomHitTarget, QGraphicsLineItem):
     """Drag the segment to translate both endpoints without changing its angle."""
     def __init__(self, level, plate, handles, color, view):
         super().__init__()
         self.level, self.plate, self.handles, self.view = level, plate, handles, view
+        self._hit_pixels = 12
+        self._hit_width = 12 / max(abs(view.transform().m11()), .01)
         self.setZValue(2); self.setCursor(Qt.SizeAllCursor)
         self.setToolTip(f'{level} {plate}: drag line to move; drag endpoints to rotate')
         pen = QPen(QColor(color), 2); pen.setCosmetic(True); self.setPen(pen)
@@ -70,7 +82,7 @@ class EditableSegment(QGraphicsLineItem):
     def shape(self):
         path = QPainterPath(); path.moveTo(self.line().p1()); path.lineTo(self.line().p2())
         stroke = QPainterPathStroker()
-        stroke.setWidth(12/max(abs(self.view.transform().m11()), .01))
+        stroke.setWidth(self._hit_width)
         return stroke.createStroke(path)
 
     def boundingRect(self):
@@ -117,11 +129,13 @@ class LevelBadge(QGraphicsSimpleTextItem):
         event.accept(); self.view.levelRequested.emit(self.level)
 
 
-class CandidateBody(QGraphicsPolygonItem):
+class CandidateBody(ZoomHitTarget, QGraphicsPolygonItem):
     """Select or translate an unnumbered body without inventing an anatomical level."""
     def __init__(self, index, corners, view, selected=False, region=False):
         super().__init__(QPolygonF([QPointF(*corners[i]) for i in (0, 1, 3, 2)]))
         self.index, self.corners, self.view, self.region = index, corners, view, region
+        self._hit_pixels = 10
+        self._hit_width = 10 / max(abs(view.transform().m11()), .01)
         self.setZValue(1 if not region else .5)
         self.setCursor(Qt.SizeAllCursor); self.setAcceptHoverEvents(True)
         color = '#fb923c' if region else '#38bdf8'
@@ -134,7 +148,7 @@ class CandidateBody(QGraphicsPolygonItem):
         if not self.region:
             return super().shape()
         path=QPainterPath(); path.addPolygon(self.polygon()); path.closeSubpath()
-        stroke=QPainterPathStroker(); stroke.setWidth(10/max(abs(self.view.transform().m11()),.01))
+        stroke=QPainterPathStroker(); stroke.setWidth(self._hit_width)
         return stroke.createStroke(path)
 
     def boundingRect(self):

@@ -37,19 +37,14 @@ MAX_RESPONSE = 8 * 1024 * 1024
 
 
 class RemoteError(RuntimeError):
-    pass
+    def __init__(self, message, *, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 def selected():
-    from .api_manager import APIKeyManager
-    from .settings_store import get_echomind_api_key
-    from .credential_envelope import access_code_lookup
-    from .api_manager import _KEY_TO_CENTER_CODE
-    manager = APIKeyManager.instance()
-    if manager.is_validated():
-        return manager.get_current_center() == CENTER_CODE
-    key = get_echomind_api_key()
-    return bool(key and _KEY_TO_CENTER_CODE.get(access_code_lookup(key)) == CENTER_CODE)
+    from .settings_store import get_llm_backend
+    return get_llm_backend() != 'openai'
 
 
 def _login_credentials(code):
@@ -73,7 +68,7 @@ def _login_credentials(code):
 
 def _request(workflow, text, *, provider='company', **fields):
     if not selected():
-        raise RemoteError('The Razi Server test center is no longer selected. Submit again.')
+        raise RemoteError('Select AI-PACS via Eagle Eye Server for this company workflow.')
     if not isinstance(text, str) or not text.strip() or len(text) > 200000:
         raise RemoteError('Enter nonempty text of at most 200,000 characters.')
     payload = dict(text=text, provider=provider, workflow=workflow, response_format='json', **fields)
@@ -90,7 +85,8 @@ def _request(workflow, text, *, provider='company', **fields):
             raise RemoteError('EchoMind local history is unavailable. No request was sent.') from None
     from modules.ai_imaging.eagle_eye_remote.client import Client, ServerHTTPError
     try:
-        with Client().open('/v1/echomind/process', payload, timeout=360) as response:
+        with Client().open('/v1/echomind/process', payload,
+                           timeout=480 if workflow == 'report' else 360) as response:
             body = response.read(MAX_RESPONSE + 1)
         if len(body) > MAX_RESPONSE:
             raise RemoteError('EchoMind Server response is too large.')
@@ -106,12 +102,13 @@ def _request(workflow, text, *, provider='company', **fields):
                 raise RemoteError('EchoMind returned a response but local history could not be saved. Do not resubmit automatically.') from None
         return result
     except ServerHTTPError as exc:
-        messages = {401:'Eagle Eye authentication failed.', 403:'Eagle Eye client pairing was rejected.',
+        messages = {401:'Sign in to PACS or Reception before using EchoMind.',
+            403:'Your Eagle Eye user or EchoMind access has not been approved. Contact the server administrator.',
             422:'The server does not support this request or its fields.',
             429:'EchoMind Server is busy. Try again later.',
             502:'EchoMind Server could not complete the provider request.',
             503:'EchoMind is not configured on this Eagle Eye server.'}
-        raise RemoteError(messages.get(exc.status, 'EchoMind Server request failed.')) from None
+        raise RemoteError(messages.get(exc.status, 'EchoMind Server request failed.'), status=exc.status) from None
     except RemoteError:
         raise
     except (RuntimeError, OSError, ValueError, TypeError):
@@ -119,15 +116,24 @@ def _request(workflow, text, *, provider='company', **fields):
 
 
 def reporter(user_msg, modality='', normal_template=None, CENTER_Key=None, model=None,
-             system_prompt_override=None, *, workflow='report', study_profile=None):
+             system_prompt_override=None, *, study_profile=None, attachment_paths=()):
     if system_prompt_override:
         raise RemoteError('Custom local prompts are not supported by the server route.')
-    if workflow not in ('report', 'turbo'):
-        raise RemoteError('Unsupported reporting workflow.')
     fields = {'modality': modality or '', 'normal_template': normal_template or ''}
     if study_profile is not None:
         fields['study_profile'] = _profile(study_profile)
-    result = _request(workflow, user_msg, **fields)
+    if attachment_paths:
+        from .report_attachments import encode_attachments
+        fields['attachments'] = encode_attachments(attachment_paths)
+        user_msg = user_msg.strip() or 'Analyze the attached source material and prepare the report.'
+    try:
+        result = _request('report', user_msg, **fields)
+    except RemoteError as exc:
+        if attachment_paths and exc.status == 502:
+            raise RemoteError('The server could not process the report attachments. '
+                              'Your attachments remain in the composer; try Send again. '
+                              'No text-only fallback was used.', status=502) from None
+        raise
     from .normal_templates import remember_report_template
     content = result['content']
     remember_report_template(content if isinstance(content, str) else json.dumps(content), normal_template or '')
@@ -154,15 +160,17 @@ def _profile(profile):
 
 
 def correction(user_report, correction_note, CENTER_Key=None, model=None,
-               target_section='', system_prompt_prefix='', *, turbo=False, study_profile=None):
+               target_section='', system_prompt_prefix=''):
     if system_prompt_prefix:
         raise RemoteError('Local correction prompts must not be sent to EchoMind Server.')
     fields = dict(correction_note=correction_note, target_section=target_section,
                   normal_template=_template_for(user_report))
-    if turbo:
-        fields['turbo_correction'] = True
-        fields['study_profile'] = _profile(study_profile) if study_profile is not None else None
-        fields['modality'] = study_profile.get('modality', '') if isinstance(study_profile, dict) else ''
+    from .correction_source import unpack
+    source = unpack(user_report)
+    if source is not None:
+        fields['correction_source'] = source
+        fields['normal_template'] = ''
+        user_report = 'Apply the correction note to the uploaded saved report.'
     result = _request('correction', user_report, **fields)
     from .normal_templates import inherit_report_template
     return inherit_report_template(user_report, result)
@@ -239,3 +247,8 @@ def prepare_template_languages(text):
 
 def ImageQualityAnalyzer(*args, **kwargs):
     raise RemoteError('Image uploads are not supported by the text-only reporting pilot.')
+
+
+def add_reference(text, modality, context):
+    """Send the displayed report and explicit context; server owns all references."""
+    return _request("add_reference", text, modality=modality, reference_context=context)

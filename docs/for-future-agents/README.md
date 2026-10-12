@@ -1,10 +1,24 @@
 # For Future Agents — Working in the AI-PACS Repository
 
+## Connection boundaries: read before mobile/Server work
+
+The [2026-10-12 owner contract](../architecture/EAGLE_EYE_CONNECTION_BOUNDARIES_2026-10-12.md)
+separates ordinary Eagle Server HTTP/password ingress from mobile-to-Windows-Client
+QR/HTTPS Agent PACS pairing. It defines the feature matrix, two authorization gates
+and known implementation deltas. Do not merge these workstreams or count absent
+mobile imaging as a defect. Contract documentation is not runtime acceptance.
+
 If you're an AI agent (Claude Code, GitHub Copilot, Devin, etc.) opening this repo for the first time, **read this page top to bottom before touching code**. It will save you and the user a lot of time.
 
 ---
 
 ## 0. The framework's discipline
+
+**Mandatory local/Razi Developer parity (owner decision, 2026-10-08):** every change
+on either host must be reconciled and applied to the other in the same work session.
+Completion and build handoff require a current hash-verified parity receipt. Read
+[the synchronization contract](../modules/eagle-eye-server-development/docs/DEVELOPER_SYNC_POLICY.md);
+unavailable synchronization is an explicit blocker, not permission to omit it.
 
 **Workstream ownership (user decision, 2026-09-16):** Unify owns shared coordination,
 identity/catalog/thumbnail presentation and data handoff, not viewer-specific decoding,
@@ -228,3 +242,12 @@ The user has invested significant time in this framework's discipline. When you 
 This matches the rhythm of the existing audit reports. Read three of them — Stage 2 / Stage 9 / Stage 10 are good representative samples — to internalize the format.
 
 Welcome aboard.
+
+
+## Function-specific Advanced Image Analysis presentations
+
+Before changing customized Slicer launch/layout behavior, read the
+[startup profile contract](../modules/ADVANCED_IMAGE_ANALYSIS_STARTUP_PROFILES.md).
+Use early off-desktop preparation rather than hiding after the first native show;
+retain independent resident-viewer and headless-computation ownership. Both build
+backends need physical startup files and installed-candidate acceptance.

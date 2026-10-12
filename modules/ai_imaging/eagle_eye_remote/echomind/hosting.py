@@ -1,4 +1,5 @@
 """Bounded, authenticated text workflows on the Eagle Eye server listener."""
+from ..usage import collect_tokens, result_tokens
 from pathlib import Path
 import threading
 import sqlite3
@@ -39,15 +40,71 @@ class EchoMind:
             raise ValueError('Invalid EchoMind request limits.')
         self.slots = threading.BoundedSemaphore(count)
         self.clients = {owner: threading.BoundedSemaphore(per_client) for owner in clients}
-        self.capabilities = {'protocol': 1, 'input_mode': 'text',
-            'workflows': list(WORKFLOWS), 'server_owned_prompts': True,
-            'features': ['turbo_correction', 'cited_web_search', 'private_request_history']}
+        self._capabilities = {'protocol': 1, 'input_mode': 'text',
+            'workflows': [name for name in WORKFLOWS if name != 'turbo'],
+            'report_policy': 'turbo_then_company', 'server_owned_prompts': True,
+            'features': ['turbo_correction', 'cited_web_search', 'private_request_history', 'reference_comparison_v1', 'report_attachments_v1', 'correction_sources_v1', 'lumbar_derived_cards_v1']}
+
+    @property
+    def capabilities(self):
+        from .runtime import configuration, server_settings
+        with configuration(self.directory):
+            custom = server_settings().get('brain_server', 'server_1') == 'custom'
+        value = dict(self._capabilities)
+        value['workflows'] = [name for name in self._capabilities['workflows']
+                              if not custom or name not in ('assistant', 'search', 'web_search')]
+        value['features'] = [name for name in self._capabilities['features']
+                             if not custom or name != 'cited_web_search']
+        return value
+
+    def process_lumbar_vision(self, owner, body):
+        """Run one server-owned lumbar image stage without persisting pixels."""
+        from .. import lumbar_vision
+
+        if self.verify_case:
+            try:
+                self.verify_case(owner, body.get('study_uid', ''))
+            except Exception:
+                raise RequestFailed(403, 'Lumbar vision case access could not be verified.') from None
+        client_slot = self.clients[owner]
+        if not client_slot.acquire(blocking=False):
+            raise RequestFailed(429, 'Eagle Eye imaging is busy for this client. Try again later.')
+        acquired = self.slots.acquire(blocking=False)
+        try:
+            if not acquired:
+                raise RequestFailed(429, 'Eagle Eye imaging is busy. Try again later.')
+            from .runtime import request_context
+            from ..brain_connection import source as brain_source
+            with (
+                brain_source('eagle_eye'),
+                configuration(self.directory),
+                request_context(),
+                collect_tokens() as accounting,
+            ):
+                result = lumbar_vision.process(body)
+                result['request_id'] = body['request_id']
+                result['accounting'] = (
+                    accounting.snapshot() if accounting.events else result_tokens(result)
+                )
+            if self.case_events is not None:
+                self.case_events.publish(body['study_uid'], 'eagle_eye')
+            return result
+        except RequestFailed:
+            raise
+        except lumbar_vision.LumbarVisionError:
+            raise RequestFailed(422, 'Invalid or incompatible lumbar vision request.') from None
+        except Exception:
+            raise RequestFailed(502, 'Lumbar vision provider request failed.') from None
+        finally:
+            if acquired:
+                self.slots.release()
+            client_slot.release()
 
     def process(self, owner, body):
         # Client tokens select access; callers cannot select keys, prompts or destinations.
         allowed = {'text', 'provider', 'workflow', 'response_format', 'modality',
                    'normal_template', 'correction_note', 'target_section',
-                   'study_profile', 'turbo_correction', 'request_id', 'case_context'}
+                   'study_profile', 'reference_context', 'attachments', 'correction_source', 'turbo_correction', 'request_id', 'case_context'}
         if not isinstance(body, dict) or set(body) - allowed or body.get('provider', 'company') not in ('company', 'aipacs'):
             raise RequestFailed(422, 'Invalid EchoMind request fields.')
         try:
@@ -75,11 +132,12 @@ class EchoMind:
                 raise RequestFailed(409, 'This EchoMind request identifier already exists. No repeat was sent.') from None
             except (OSError, sqlite3.Error):
                 raise RequestFailed(503, 'EchoMind private history is unavailable. No provider request was sent.') from None
-            with configuration(self.directory):
+            with configuration(self.directory), collect_tokens() as accounting:
                 try:
                     result = dict(service.process(request), request_id=rid)
+                    result['accounting'] = accounting.snapshot() if accounting.events else result_tokens(result)
                 except Exception:
-                    self.history.finish(rid, owner, failed=True)
+                    self.history.finish(rid, owner, {'accounting': accounting.snapshot()}, failed=True)
                     raise
             try:
                 self.history.finish(rid, owner, result)
@@ -90,6 +148,10 @@ class EchoMind:
             return result
         except RequestFailed:
             raise
+        except service.AttachmentFallbackUnavailable:
+            raise RequestFailed(502, 'Turbo is unavailable and the company fallback cannot process report attachments. Retry later.') from None
+        except service.ReportUnavailable:
+            raise RequestFailed(502, 'Report providers are unavailable. Try again later.') from None
         except service.WorkflowError:
             raise RequestFailed(422, 'EchoMind does not support this workflow or its fields.') from None
         except Exception:

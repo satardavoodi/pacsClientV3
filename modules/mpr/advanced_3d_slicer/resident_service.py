@@ -39,6 +39,8 @@ class LocalRuntime:
         self.token = secrets.token_hex(32)
         self.diagnostic_log = diagnostic_log
         self._log = None
+        self._identity_stop = threading.Event()
+        self._identity_thread = None
 
     def start(self):
         from .slicer_custom_app import launch_slicer
@@ -125,7 +127,30 @@ class LocalRuntime:
             raise RuntimeError("Unexpected runtime readiness contract")
         self.connection = connection
         response = self.exchange({"operation": "ping"})
+        if connection.get('user_identity_version') == 1 and self._identity_thread is None:
+            self._identity_stop.clear()
+            self._identity_thread = threading.Thread(target=self._identity_worker,
+                name='Slicer-parent-human-identity', daemon=True)
+            self._identity_thread.start()
         return response.get("ready") is True and response.get("role") == self.role
+
+    def _identity_worker(self):
+        from modules.ai_imaging.eagle_eye_remote.human_session_ipc import HumanSessionBroker
+        broker = HumanSessionBroker()
+        try:
+            while not self._identity_stop.wait(0.025) and self.alive():
+                receipt = self.exchange({'operation': 'identity_poll'})
+                for item in receipt.get('requests', []):
+                    if self._identity_stop.is_set():
+                        return
+                    result = broker.handle(item.get('payload'))
+                    if self._identity_stop.is_set():
+                        return
+                    self.exchange({'operation': 'identity_reply', 'id': item.get('id'), 'result': result})
+        except Exception:
+            LOGGER.warning('Advanced Analysis human identity channel stopped')
+        finally:
+            broker.close()
 
     def exchange(self, message):
         request = dict(message, token=self.token)
@@ -173,6 +198,7 @@ class LocalRuntime:
         raise RuntimeError("Advanced Analysis is stopping")
 
     def close(self):
+        self._identity_stop.set()
         if self.job:
             self.job.close()
         if self.process:

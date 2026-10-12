@@ -367,7 +367,8 @@ def _send(verb, url: str, kwargs: Dict[str, Any]) -> "requests.Response":
 
 def post(url: str, *, read_timeout: Optional[float] = None, **kwargs: Any) -> "requests.Response":
     """``requests.post`` with EchoMind's proxy + timeout + retry policy."""
-    return _server_send("POST", url, read_timeout, kwargs)
+    from modules.ai_imaging.eagle_eye_remote.brain_connection import send
+    return send(url, lambda: _server_send("POST", kwargs.pop("_brain_url", url), read_timeout, kwargs), options=kwargs)
 
 
 def get(url: str, *, read_timeout: Optional[float] = None, **kwargs: Any) -> "requests.Response":

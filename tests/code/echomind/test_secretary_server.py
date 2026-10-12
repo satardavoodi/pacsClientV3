@@ -4,6 +4,49 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from tests.code.ai_imaging.human_access_fixture import human_access
+
+
+@pytest.mark.parametrize('native_path,hosted_path,index,count,safety_hash', [
+    ('prompts/agent_phase2_prompt.txt', 'agent_phase2_prompt.txt', 155, 36,
+     '00f2e70bfa30c3d14b97b0f26845b257cdc20b91f6d873737374bce8d2048204'),
+    ('catalog/modules/patient_viewer.md', 'modules/patient_viewer.md', 298, 18,
+     '231fb8d8c03064c771a47615ed67c901b9d0a2b8564cad409a8b3c59f8c8707d'),
+])
+def test_hosted_assets_preserve_native_unicode_and_existing_safety(native_path, hosted_path, index, count, safety_hash):
+    import hashlib
+    root = Path(__file__).resolve().parents[3]
+    native = (root / 'modules/EchoMind/secretary' / native_path).read_text(encoding='utf-8')
+    hosted = (root / 'modules/ai_imaging/eagle_eye_remote/secretary/assets' / hosted_path).read_text(encoding='utf-8').splitlines(keepends=True)
+    assert hashlib.sha256(''.join(hosted[index:index+count]).encode()).hexdigest() == safety_hash
+    assert ''.join(hosted[:index] + hosted[index+count:]) == native
+
+
+@pytest.mark.parametrize('raw', [
+    'Here is the guidance: {"answer":"Choose Google in Voice to Text."}',
+    'Guidance follows:\n```json\n{"answer":"A brace } inside a string is data."}\n```',
+])
+def test_hosted_completion_preserves_native_json_extraction(hosted, monkeypatch, raw):
+    from modules.EchoMind.secretary.parser_llm import _extract_json_block
+    from modules.ai_imaging.eagle_eye_remote.secretary import service
+    calls = []
+    monkeypatch.setattr(service.llm_client, 'gapgpt_chat', lambda **kwargs: calls.append(kwargs) or raw)
+    expected = json.loads(_extract_json_block(raw))
+    assert hosted._completion('Unchanged synthetic instruction', {}) == expected
+    assert len(calls) == 1
+    assert calls[0]['messages'][0]['content'].startswith('Unchanged synthetic instruction')
+    assert 'response_format' not in calls[0]
+
+
+@pytest.mark.parametrize('raw', ['Guidance: {"answer":"unfinished', 'No JSON guidance', '["not an object"]'])
+def test_hosted_completion_rejects_invalid_extracted_content(hosted, monkeypatch, raw):
+    from modules.ai_imaging.eagle_eye_remote.secretary import service
+    from modules.ai_imaging.eagle_eye_remote.echomind.hosting import RequestFailed
+    calls = []
+    monkeypatch.setattr(service.llm_client, 'gapgpt_chat', lambda **kwargs: calls.append(kwargs) or raw)
+    with pytest.raises(RequestFailed):
+        hosted._completion('Synthetic instruction', {})
+    assert len(calls) == 1
 
 
 @pytest.fixture
@@ -20,10 +63,35 @@ def body(phase='route', **fields):
                 text='List today\'s patients.', language='en', client_time='2026-09-30T15:00:00+03:30', **fields)
 
 
+def test_company_model_defaults_preserve_native_secretary(hosted):
+    from modules.EchoMind.secretary.config import SECRETARY_LLM_MODEL
+    assert hosted.model == SECRETARY_LLM_MODEL
+    assert hosted.reasoning_effort is None
+
+
+@pytest.mark.parametrize('route,payload,tokens,timeout', [
+    (True, {}, 256, 20),
+    (True, {'quoted_conversation': {'title': 'Synthetic'}}, 1024, 20),
+    (False, {}, 512, 30),
+    (False, {'invalid_plan': {}}, 512, 25),
+    (False, {'question': 'Synthetic Guide question'}, 2000, 30),
+])
+def test_hosted_native_phase_budgets_and_documented_extensions(hosted, monkeypatch, route, payload, tokens, timeout):
+    from modules.ai_imaging.eagle_eye_remote.secretary import service
+    calls = []
+    monkeypatch.setattr(service.llm_client, 'gapgpt_chat', lambda **kwargs: calls.append(kwargs) or '{}')
+    hosted._completion('Synthetic', payload, route)
+    assert calls[0]['max_tokens'] == tokens
+    assert calls[0]['timeout'] == timeout
+
+
 def test_route_uses_server_catalog_and_returns_shared_id(hosted, monkeypatch):
     monkeypatch.setattr(hosted, '_completion', lambda *args: {'modules': ['homepage'], 'reason': 'Patient list.'})
     request = body()
     response = hosted.process('client', request)
+    accounting = response.pop('accounting')
+    assert accounting['input_tokens'] is None
+    assert accounting['output_tokens'] is None
     assert response == {'protocol': 1, 'request_id': request['request_id'], 'phase': 'route',
                         'route': {'modules': ['homepage'], 'reason': 'Patient list.'}, 'plan': None}
 
@@ -137,6 +205,41 @@ def test_existing_listener_authenticates_secretary_before_processing(hosted):
         assert exc.value.code == 401
     finally:
         http.shutdown(); http.server_close(); thread.join(3)
+
+
+def test_assets_listener_preserves_authentication_license_and_session(hosted,monkeypatch,human_access):
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    from modules.ai_imaging.eagle_eye_remote import server
+    from types import SimpleNamespace
+    permitted=[False]
+    calls=[]
+    monkeypatch.setattr(hosted.assets,'run',lambda owner,value:(calls.append(owner) or {'session_id':value['session_id'],'text':'Synthetic'}))
+    http=ThreadingHTTPServer(('127.0.0.1',0),server.handler(SimpleNamespace(),{'client':'test-token'},
+        secretary=hosted,license_guard=lambda:permitted[0],user_authority=human_access))
+    thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start()
+    from tests.code.ai_imaging.human_access_fixture import session_headers
+    headers=session_headers(f'http://127.0.0.1:{http.server_port}','test-token')
+    payload={'action':'server_web_read','session_id':'00000000-0000-0000-0000-000000000001','url':'https://example.org'}
+    def send(token):
+        request=urllib.request.Request(f'http://127.0.0.1:{http.server_port}/v1/secretary/assets',
+            data=json.dumps(payload).encode(),headers={**headers,'Authorization':'Bearer '+token})
+        return urllib.request.urlopen(request,timeout=3)
+    try:
+        for token,code in [('incorrect',401),('test-token',403)]:
+            with pytest.raises(urllib.error.HTTPError) as exc:send(token)
+            assert exc.value.code==code
+        assert not calls
+        permitted[0]=True
+        with send('test-token') as response:
+            assert json.load(response)['session_id']==payload['session_id']
+        import hashlib
+        principal = human_access.store.users()[0]['principal']
+        assert calls == ['human:' + hashlib.sha256(principal.encode()).hexdigest()]
+    finally:
+        http.shutdown();http.server_close();thread.join(3)
 
 
 def test_unknown_intent_returns_nonexecuting_clarification(hosted, monkeypatch):

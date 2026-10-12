@@ -1,17 +1,34 @@
 """Presenter shell around the existing Education viewer, without reparenting it."""
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser, QApplication, QInputDialog
 
 from modules.education.authoring_tasks import CoursePreflightTask
 
 
+class AudienceViewerWindow(QMainWindow):
+    """An audience host that returns the existing viewer on close."""
+    def __init__(self, controller):
+        super().__init__(controller, Qt.Window)
+        self.controller = controller
+        self.setWindowTitle("Course Presentation")
+        self.escape_shortcut = QShortcut(QKeySequence("Esc"), self)
+        self.escape_shortcut.activated.connect(self.close)
+
+    def closeEvent(self, event):
+        self.controller._restore_single_screen()
+        event.accept()
+
+
 class CoursePresentationWindow(QMainWindow):
-    def __init__(self, course, parent=None):
+    def __init__(self, course, parent=None, auto_start=False):
         super().__init__(parent, Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle(str(course.get("course_name") or "Course Presentation"))
-        self.resize(1280, 800)
+        self.resize(640, 320)
+        self.auto_start = auto_start
+        self.audience_window = None
+        self._footer_home = None
         self.course = course
         self.viewer = None
         self._close_requested = False
@@ -19,15 +36,19 @@ class CoursePresentationWindow(QMainWindow):
         host = QWidget(self)
         self.layout = QVBoxLayout(host)
         self.setCentralWidget(host)
-        controls = QHBoxLayout()
+        self.navigation = QWidget()
+        controls = QHBoxLayout(self.navigation)
+        controls.setContentsMargins(0, 0, 0, 0)
         for text, callback in (("Previous (Page Up)", lambda: self._step(-1)),
                                ("Next (Page Down)", lambda: self._step(1)),
                                ("Full Screen (F11)", self._toggle_fullscreen),
+                               ("Display Mode", self.choose_display_mode),
                                ("Close", self.close)):
             button = QPushButton(text)
             button.clicked.connect(callback)
             controls.addWidget(button)
-        self.layout.addLayout(controls)
+        self.layout.addWidget(self.navigation)
+        self.navigation.hide()
         self.position = QLabel("Checking saved course and local resources...")
         self.layout.addWidget(self.position)
         self.check_results = QTextBrowser()
@@ -63,6 +84,8 @@ class CoursePresentationWindow(QMainWindow):
         self.check_results.setPlainText(message)
         self.position.setText("Ready to preview" if not issues else "Review the resource check")
         self.start_button.setEnabled(any(s.get("content") for s in self.course.get("slides", [])))
+        if self.auto_start and not issues and self.start_button.isEnabled():
+            self._start()
 
     def _start(self):
         if self.viewer is not None:
@@ -76,9 +99,74 @@ class CoursePresentationWindow(QMainWindow):
         self.check_results.hide()
         self.start_button.hide()
         self.layout.addWidget(self.viewer, 1)
+        self.navigation.show()
+        self.showMaximized()
         self.viewer.slides_list.currentRowChanged.connect(self._update_position)
         self.viewer.items_list.currentRowChanged.connect(self._update_position)
         self._update_position()
+
+    def choose_display_mode(self):
+        if self.viewer is None:
+            return
+        screens = QApplication.screens()
+        current = self.screen() or QApplication.primaryScreen()
+        targets = [screen for screen in screens if screen is not current]
+        choices = ["Single monitor"] + [f"Two monitors: {screen.name()} ({i + 1})" for i, screen in enumerate(targets)]
+        choice, accepted = QInputDialog.getItem(self, "Presentation Display", "Presentation mode", choices, 0, False)
+        if accepted:
+            index = choices.index(choice)
+            self.present_on_screen(None if index == 0 else targets[index - 1])
+
+    def present_on_screen(self, screen):
+        if self.viewer is None:
+            return
+        self._restore_single_screen()
+        if screen is None:
+            self.showFullScreen()
+            return
+        self.showNormal()
+        self.resize(900, 450)
+        audience = AudienceViewerWindow(self)
+        self.audience_window = audience
+        # Keep the existing live viewer and its decoding domain; do not create a
+        # second DICOM session. Navigation stays on the controller display.
+        self.layout.removeWidget(self.viewer)
+        footer = getattr(self.viewer, "education_footer", None)
+        if footer is not None:
+            home = footer.parentWidget().layout()
+            self._footer_home = (home, home.indexOf(footer), footer.parentWidget())
+            home.removeWidget(footer)
+            self.layout.addWidget(footer, 1)
+        audience.setCentralWidget(self.viewer)
+        audience.winId()
+        audience.windowHandle().setScreen(screen)
+        audience.setGeometry(screen.geometry())
+        QApplication.instance().screenRemoved.connect(self._screen_removed)
+        audience.showFullScreen()
+
+    def _screen_removed(self, screen):
+        if self.audience_window is not None and self.audience_window.screen() is screen:
+            self._restore_single_screen()
+
+    def _restore_single_screen(self):
+        audience = self.audience_window
+        if audience is None:
+            return
+        self.audience_window = None
+        QApplication.instance().screenRemoved.disconnect(self._screen_removed)
+        audience.takeCentralWidget()
+        if self._footer_home is not None:
+            home, index, parent = self._footer_home
+            footer = self.viewer.education_footer
+            self.layout.removeWidget(footer)
+            footer.setParent(parent)
+            home.insertWidget(index, footer)
+            self._footer_home = None
+        self.layout.addWidget(self.viewer, 1)
+        self.viewer.show()
+        audience.hide()
+        audience.deleteLater()
+        self.showMaximized()
 
     def _step(self, direction):
         if self.viewer is None:
@@ -111,6 +199,7 @@ class CoursePresentationWindow(QMainWindow):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
     def _escape(self):
+        self._restore_single_screen()
         if self.isFullScreen():
             self.showNormal()
 
@@ -120,6 +209,7 @@ class CoursePresentationWindow(QMainWindow):
             self.hide()
             event.ignore()
             return
+        self._restore_single_screen()
         if self.viewer is not None and not self.viewer.close():
             event.ignore()
             return

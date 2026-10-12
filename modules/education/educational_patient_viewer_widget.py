@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import QDateTime, QEvent, QPointF, QRectF, QSize, QTimer, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFrame,
     QGraphicsScene,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QSlider,
     QStackedWidget,
     QTextBrowser,
@@ -52,7 +54,6 @@ except Exception:
 
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget import PatientWidget
 from PacsClient.pacs.patient_tab.utils import get_study_source_path
-from PacsClient.utils import CallerTypes
 
 import logging
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ class _ZoomPanGraphicsView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setRenderHints(QPainter.RenderHint.Antialiasing
                             | QPainter.RenderHint.SmoothPixmapTransform)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setStyleSheet("background:#0f141b;border:1px solid #2f3c4d;")
         self.setMinimumSize(0, 0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
@@ -80,7 +82,9 @@ class _ZoomPanGraphicsView(QGraphicsView):
     def set_pixmap(self, pm: QPixmap) -> None:
         self._scene.clear()
         self._item = self._scene.addPixmap(pm)
-        self._scene.setSceneRect(QRectF(pm.rect()))
+        # Pixmap items otherwise override the view's smooth transform hint.
+        self._item.setTransformationMode(Qt.SmoothTransformation)
+        self._scene.setSceneRect(self._item.boundingRect())
         self.fit()
 
     def has_image(self) -> bool:
@@ -136,22 +140,15 @@ class EducationalPatientViewerWidget(PatientWidget):
 
         self._current_image_path: Optional[str] = None
 
-        initial = self._find_first_dicom_source()
-        initial_study_uid = initial.get("study_uid") if initial else None
-        initial_patient_id = initial.get("patient_id") if initial else None
-        initial_study_path = None
-
-        if initial_study_uid:
-            study_path, _ = get_study_source_path(str(initial_study_uid))
-            initial_study_path = str(study_path)
-
+        # Create an empty viewer shell. DICOM selection supplies the study
+        # inventory later; opening a course must not preload a future case.
         super().__init__(
             parent=parent,
-            import_folder_path=initial_study_path,
+            import_folder_path=None,
             size_init_viewers=(1, 1),
-            caller=CallerTypes.SERVER if initial_study_uid else None,
-            study_uid=initial_study_uid,
-            patient_id=initial_patient_id,
+            caller=None,
+            study_uid=None,
+            patient_id=None,
             enable_progressive_mode=False,
         )
 
@@ -191,23 +188,21 @@ class EducationalPatientViewerWidget(PatientWidget):
 
         # Content-type header: tells the user exactly what the viewport is
         # showing (DICOM / Image / PDF / Presentation / Notes + details).
-        self.content_type_label = QLabel("")
+        self.content_type_label = QLabel("", center_widget)
         self.content_type_label.setStyleSheet(
             "color:#9ecbff; font-size:12px; font-weight:600; padding:1px 4px;")
-        content_header = QHBoxLayout()
         self.content_type_label.setMinimumWidth(0)
         self.content_type_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        content_header.addWidget(self.content_type_label, 1)
         author = str(self.course_data.get("author_name") or "").strip()
-        self.presenter_label = QLabel("Presenter: " + (author or "Not specified"))
+        self.presenter_label = QLabel("Presenter: " + (author or "Not specified"), center_widget)
         self.presenter_label.setTextFormat(Qt.PlainText)
         self.presenter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.presenter_label.setWordWrap(True)
         self.presenter_label.setMaximumWidth(380)
         self.presenter_label.setToolTip(self.presenter_label.text())
         self.presenter_label.setStyleSheet("color:#d7dfeb; font-size:12px; font-weight:600;")
-        content_header.addWidget(self.presenter_label, 0)
-        center_layout.addLayout(content_header)
+        self.content_type_label.hide()
+        self.presenter_label.hide()
 
         # Content row: a compact vertical slide-nav beside the viewer/media, which
         # now own the full height (course metadata no longer lives in the dock).
@@ -251,8 +246,8 @@ class EducationalPatientViewerWidget(PatientWidget):
         self.education_footer = footer
         # Guarantee a roomy resource browser (the teaching workflow's focus):
         # a minimum height so the dock can't collapse, with a sensible ceiling.
-        footer.setMinimumHeight(196)
-        footer.setMaximumHeight(240)
+        footer.setMinimumHeight(240)
+        footer.setMaximumHeight(280)
         center_layout.addWidget(footer, 0)
 
         return center_widget
@@ -279,6 +274,12 @@ class EducationalPatientViewerWidget(PatientWidget):
                 border: 1px solid #2f6c90;
                 border-radius: 4px;
                 padding: 4px 10px;
+            }
+            QPushButton:disabled {
+                background-color: #182b3a; color: #7890a6; border-color: #294154;
+            }
+            QPushButton:checked {
+                background-color: #174653; border-color: #42c7c3;
             }
             QPushButton:hover {
                 background-color: #2d5f82;
@@ -310,23 +311,32 @@ class EducationalPatientViewerWidget(PatientWidget):
         header_row.setContentsMargins(10, 6, 10, 2)
         header_row.setSpacing(8)
         # Metadata is referenced occasionally -> two on-demand Review popups.
-        self.course_review_btn = QPushButton("ⓘ  Course Review")
+        self.course_review_btn = QPushButton("Course Review")
         self.course_review_btn.setCursor(Qt.PointingHandCursor)
         self.course_review_btn.clicked.connect(self._show_course_overview)
-        self.slide_review_btn = QPushButton("⧉  Slide Review")
+        self.slide_review_btn = QPushButton("Slide Review")
         self.slide_review_btn.setCursor(Qt.PointingHandCursor)
         self.slide_review_btn.clicked.connect(self._show_slide_review)
+        for button in (self.course_review_btn, self.slide_review_btn):
+            button.setStyleSheet("QPushButton{background:#192d3f;border:1px solid #37566e;color:#d4e2ef;} QPushButton:hover{background:#28475f;}")
         # Quick item stepper + position indicator.
-        prev_item_btn = QPushButton("◀")
+        prev_item_btn = QPushButton("<")
+        prev_item_btn.setObjectName("previousSlide")
+        prev_item_btn.setAccessibleName("Previous slide")
         prev_item_btn.setFixedWidth(30)
         prev_item_btn.setToolTip("Previous item")
         prev_item_btn.clicked.connect(self._previous_slide)
-        self.header_item_label = QLabel("Item – / –")
+        self.header_item_label = QLabel("Slide - / -")
         self.header_item_label.setStyleSheet("color:#cfe0f2; font-size:12px; font-weight:600;")
-        next_item_btn = QPushButton("▶")
+        next_item_btn = QPushButton(">")
+        next_item_btn.setObjectName("nextSlide")
+        next_item_btn.setAccessibleName("Next slide")
         next_item_btn.setFixedWidth(30)
         next_item_btn.setToolTip("Next item")
         next_item_btn.clicked.connect(self._next_slide)
+        self.presentation_btn = QPushButton("Present")
+        self.presentation_btn.setToolTip("Show teaching media full screen on a second display, or this display. Escape returns to the workstation. DICOM stays in its viewer.")
+        self.presentation_btn.clicked.connect(self._toggle_presentation)
         # Session controls.
         self.clock_label = QLabel("--:--:--")
         self.clock_label.setStyleSheet("font-size: 11px; color:#6f7f93;")
@@ -349,6 +359,7 @@ class EducationalPatientViewerWidget(PatientWidget):
         header_row.addWidget(prev_item_btn, 0)
         header_row.addWidget(self.header_item_label, 0)
         header_row.addWidget(next_item_btn, 0)
+        header_row.addWidget(self.presentation_btn, 0)
         header_row.addStretch(1)
         header_row.addWidget(self.clock_label, 0)
         header_row.addWidget(self.session_label, 0)
@@ -367,24 +378,33 @@ class EducationalPatientViewerWidget(PatientWidget):
         sel_layout.setContentsMargins(6, 2, 6, 2)
         sel_layout.setSpacing(4)
         sel_label = QLabel("Items")
-        sel_label.setStyleSheet("font-size: 11px; color:#8ea1b7; font-weight:600;")
-        self.slides_list = QListWidget()
+        sel_label.setStyleSheet("font-size: 14px; color:#b8c8da; font-weight:600;")
+        from modules.education.slide_selector import SlideSelector
+        self.slides_list = SlideSelector()
+        item_font = self.slides_list.font()
+        item_font.setPixelSize(18)
+        self.slides_list.setFont(item_font)
+        self.slides_list.setWordWrap(True)
+        self.slides_list.setTextElideMode(Qt.ElideNone)
         self.slides_list.setStyleSheet(
-            "QListWidget::item{ padding:5px 6px; } "
+            "QListWidget::item{ background:#142637; border:1px solid #30485e; border-radius:6px; padding:6px; margin:4px; } "
             "QListWidget::item:selected{ background:#1f4a67; }")
         self.slides_list.currentRowChanged.connect(self._on_slide_selected)
-        sel_layout.addWidget(sel_label)
+        items_heading = QHBoxLayout()
+        items_heading.addWidget(sel_label)
+        items_heading.addWidget(self.presenter_label, 1)
+        sel_layout.addLayout(items_heading)
+        self.presenter_label.show()
         sel_layout.addWidget(self.slides_list, 1)
-        sel_col.setFixedWidth(432)  # ~80% wider so full item titles are readable
+        sel_col.setMinimumWidth(320)
 
-        # Resource browser (right): the current item's resources -- the focus of
-        # the teaching workflow, so it takes the lion's share of the dock.
+        # Resources stay accessible while the slide list receives most dock space.
         res_col = QFrame()
         res_layout = QVBoxLayout(res_col)
         res_layout.setContentsMargins(6, 2, 6, 2)
         res_layout.setSpacing(4)
         res_label = QLabel("Resources")
-        res_label.setStyleSheet("font-size: 11px; color:#8ea1b7; font-weight:600;")
+        res_label.setStyleSheet("font-size: 14px; color:#b8c8da; font-weight:600;")
         self.items_list = QListWidget()
         self.items_list.setViewMode(QListView.IconMode)
         self.items_list.setFlow(QListView.LeftToRight)
@@ -399,18 +419,79 @@ class EducationalPatientViewerWidget(PatientWidget):
         res_layout.addWidget(res_label)
         res_layout.addWidget(self.items_list, 1)
 
-        root.addWidget(sel_col, 0)
-        root.addWidget(res_col, 1)
+        # A dedicated footer row keeps branding clear of resource hit targets.
+        from PacsClient.utils.config import IMAGES_LOGIN_PATH
+        brand = QFrame()
+        brand.setObjectName("educationBrand")
+        brand.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        brand.setStyleSheet(
+            "QFrame#educationBrand{background:#142637;border:1px solid #30485e;"
+            "border-radius:6px;}"
+            "QLabel{background:transparent;border:none;color:#dcecf8;}")
+        brand_row = QHBoxLayout(brand)
+        brand_row.setContentsMargins(9, 3, 12, 3)
+        brand_row.setSpacing(8)
+        brand_logo = QLabel()
+        brand_logo.setObjectName("educationBrandLogo")
+        brand_logo.setFixedSize(36, 28)
+        brand_logo.setAlignment(Qt.AlignCenter)
+        brand_logo.setPixmap(QIcon(str(IMAGES_LOGIN_PATH / "ai_pacs_logo.svg")).pixmap(QSize(36, 28)))
+        brand_row.addWidget(brand_logo)
+        brand_name = QLabel("AI-PACS")
+        brand_name.setObjectName("educationBrandName")
+        brand_name.setStyleSheet("font-size:16px;font-weight:600;color:#dcecf8;")
+        brand_row.addWidget(brand_name)
+        brand.setAccessibleName("AI-PACS")
+        brand.setAttribute(Qt.WA_TransparentForMouseEvents)
+        res_layout.addWidget(brand, 0, Qt.AlignRight | Qt.AlignBottom)
+
+
+        res_col.setMinimumWidth(220)
+        self.dock_splitter = QSplitter(Qt.Horizontal)
+        self.dock_splitter.setObjectName("educationDockSplitter")
+        self.dock_splitter.setChildrenCollapsible(False)
+        self.dock_splitter.setHandleWidth(8)
+        self.dock_splitter.addWidget(sel_col)
+        self.dock_splitter.addWidget(res_col)
+        self.dock_splitter.setStretchFactor(0, 3)
+        self.dock_splitter.setStretchFactor(1, 2)
+        self.dock_splitter.setSizes([600, 400])
+        self.dock_splitter.setToolTip("Drag the divider to resize Items and Resources")
+        root.addWidget(self.dock_splitter, 1)
         footer_v.addWidget(self.dock_body)
+        from modules.education.media_navigation import MediaNavigation
+        self._media_navigation = MediaNavigation(self)
+        self.slides_list.setToolTip("Media navigation: Left/Right changes slides; Up/Down changes resources. DICOM keeps its viewer keys.")
 
         return footer
 
     def _set_dock_collapsed(self, collapsed: bool) -> None:
         self.dock_body.setVisible(not collapsed)
-        self.education_footer.setMinimumHeight(0 if collapsed else 196)
-        self.education_footer.setMaximumHeight(16777215 if collapsed else 240)
+        self.education_footer.setMinimumHeight(0 if collapsed else 240)
+        self.education_footer.setMaximumHeight(16777215 if collapsed else 280)
         self.dock_toggle_btn.setText("Show slides" if collapsed else "Hide slides")
         self.education_footer.updateGeometry()
+
+    def _toggle_presentation(self) -> None:
+        from modules.education.presentation_window import CoursePresentationWindow
+        host = self.window()
+        if isinstance(host, CoursePresentationWindow):
+            host.choose_display_mode()
+            return
+        controller = getattr(host, "controller", None)
+        if isinstance(controller, CoursePresentationWindow):
+            controller.choose_display_mode()
+            return
+        window = CoursePresentationWindow(self.course_data, self, auto_start=True)
+        window.show()
+
+    def _presentation_finished(self) -> None:
+        audience = self._audience_presentation
+        self._audience_presentation = None
+        self.audience_placeholder.hide()
+        self.presentation_btn.setText("Present")
+        audience.deleteLater()
+        self._media_fit()
 
     def _show_slide_review(self) -> None:
         """Current item's information, on demand (kept out of the persistent UI)."""
@@ -436,7 +517,7 @@ class EducationalPatientViewerWidget(PatientWidget):
             meta.append(f"Level: {level}")
         meta.append(f"Resources: {len(content)}")
         parts = [f"<h3 style='margin:0 0 6px'>{_html.escape(title)}</h3>",
-                 f"<p style='color:#9ecbff;margin:0 0 8px'>{_html.escape('   ·   '.join(meta))}</p>"]
+                 f"<p style='color:#9ecbff;margin:0 0 8px'>{_html.escape(' | '.join(meta))}</p>"]
         if notes:
             parts.append(f"<div>{_html.escape(notes).replace(chr(10), '<br>')}</div>")
         else:
@@ -481,12 +562,12 @@ class EducationalPatientViewerWidget(PatientWidget):
     def _build_media_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
 
-        self.media_title = QLabel("Educational Media")
+        self.media_title = QLabel("Educational Media", page)
         self.media_title.setStyleSheet("color: #f0f4f8; font-size: 14px; font-weight: 700;")
-        layout.addWidget(self.media_title)
+        self.media_title.hide()
 
         # ---- Adaptive media control bar (shows controls relevant to the content) ----
         self.media_controls = QFrame()
@@ -506,13 +587,13 @@ class EducationalPatientViewerWidget(PatientWidget):
             b.clicked.connect(slot)
             return b
 
-        self.btn_zoom_out = _ctl("−", "Zoom out", self._media_zoom_out)
+        self.btn_zoom_out = _ctl("-", "Zoom out", self._media_zoom_out)
         self.btn_zoom_in = _ctl("+", "Zoom in", self._media_zoom_in)
         self.btn_fit = _ctl("Fit", "Fit to viewport", self._media_fit)
         self.btn_reset = _ctl("Reset", "Reset view", self._media_fit)
-        self.btn_prev_page = _ctl("◀", "Previous page", self._media_prev_page)
-        self.btn_next_page = _ctl("▶", "Next page", self._media_next_page)
-        self.btn_font_dec = _ctl("A−", "Smaller text", self._media_font_dec)
+        self.btn_prev_page = _ctl("<", "Previous page", self._media_prev_page)
+        self.btn_next_page = _ctl(">", "Next page", self._media_next_page)
+        self.btn_font_dec = _ctl("A-", "Smaller text", self._media_font_dec)
         self.btn_font_inc = _ctl("A+", "Larger text", self._media_font_inc)
         self._media_control_buttons = [
             self.btn_zoom_out, self.btn_zoom_in, self.btn_fit, self.btn_reset,
@@ -523,6 +604,11 @@ class EducationalPatientViewerWidget(PatientWidget):
         mc.addStretch(1)
         self.media_controls.setVisible(False)
         layout.addWidget(self.media_controls)
+        self.audience_placeholder = QLabel("Presentation is on the audience display. Use the slide controls below; press Escape on the presentation to return.")
+        self.audience_placeholder.setAlignment(Qt.AlignCenter)
+        self.audience_placeholder.setWordWrap(True)
+        self.audience_placeholder.hide()
+        layout.addWidget(self.audience_placeholder, 1)
 
         self._current_media_kind: Optional[str] = None
         self.media_stack = QStackedWidget()
@@ -624,7 +710,9 @@ class EducationalPatientViewerWidget(PatientWidget):
         word_layout.addWidget(self.word_open_external_btn, 0)
         self.media_stack.addWidget(self.media_word_page)
 
-        layout.addWidget(self.media_stack, 1)
+        from modules.education.slide_content import SlideContentFrame
+        self.slide_content_frame = SlideContentFrame(self.media_stack)
+        layout.addWidget(self.slide_content_frame, 1)
 
         self._current_media_path: Optional[str] = None
         return page
@@ -663,14 +751,16 @@ class EducationalPatientViewerWidget(PatientWidget):
         self.slides_list.clear()
         for idx, slide in enumerate(self.slides, start=1):
             title = str(slide.get("slide_title") or f"Slide {idx}").strip()
-            QListWidgetItem(f"{idx}.  {title}", self.slides_list)
+            self.slides_list.add_slide(idx, title)
         self.slides_list.blockSignals(False)
 
     def _set_current_slide(self, slide_index: int) -> None:
-        if not self.slides:
-            return
         self._item_generation = getattr(self, "_item_generation", 0) + 1
         self._teardown_media()
+        self._clear_education_selection()
+        if not self.slides:
+            self.items_list.clear()
+            return
 
         slide_index = max(0, min(slide_index, len(self.slides) - 1))
         self.current_slide_index = slide_index
@@ -752,8 +842,6 @@ class EducationalPatientViewerWidget(PatientWidget):
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
         payload = item.data(Qt.UserRole)
-        if not payload:
-            return
         self._item_generation = getattr(self, "_item_generation", 0) + 1
         generation = self._item_generation
 
@@ -765,6 +853,9 @@ class EducationalPatientViewerWidget(PatientWidget):
         # study -- doing both in one call stack freezes / crashes the backend.
         media_was_active = getattr(self, "_current_media_kind", None) in ("video", "audio")
         self._teardown_media()
+        self._clear_education_selection()
+        if not payload:
+            return
         if media_was_active:
             def deliver():
                 if generation == self._item_generation and not getattr(self, "_education_closing", False):
@@ -772,6 +863,55 @@ class EducationalPatientViewerWidget(PatientWidget):
             QTimer.singleShot(0, deliver)
         else:
             self._dispatch_item_payload(payload)
+
+    def _clear_education_selection(self) -> None:
+        """Retire the previous presentation without changing stored course data."""
+        from PacsClient.utils.diagnostic_logging import ContentDiagnosticTrace
+        trace = ContentDiagnosticTrace('education_selection', self,
+            item_generation=getattr(self, '_item_generation', 0),
+            token=getattr(self, '_sidebar_build_token', 0))
+        trace.emit('selection_clear')
+        frame = getattr(self, "slide_content_frame", None)
+        if frame is not None:
+            frame.reset()
+        self._show_media_message("No media item selected")
+        self._set_content_header("", "")
+        task = getattr(self, "_sidebar_build_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._sidebar_build_token = getattr(self, "_sidebar_build_token", 0) + 1
+        self.thumbnail_manager.reset_all_states()
+        while self.thumb_grid.count():
+            entry = self.thumb_grid.takeAt(0)
+            widget = entry.widget() if entry else None
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        self._education_rail_identity = None
+        self._sidebar_slots = []
+        self._sidebar_reserved_rows = set()
+        self._sidebar_expected_count = None
+        self._thumbnails_shown = False
+        self._is_multistudy_hint = False
+        self._studies_series = {}
+        self._server_series_info = {}
+        controller = getattr(self, "viewer_controller", None)
+        if controller is not None:
+            # Invalidate queued applies before the existing viewer teardown.
+            registry = getattr(controller, "_cancel_registry", None)
+            if registry is not None:
+                registry.cancel_all()
+            tokens = {key: value + 1 for key, value in
+                      getattr(controller, "_viewer_request_token", {}).items()}
+            if getattr(controller, "lst_nodes_viewer", None):
+                controller.cleanup_all_viewers()
+                controller._current_layout = None
+                controller.selected_widget = None
+            controller._viewer_request_token = tokens
+        self.lst_thumbnails_data = []
+        self.study_uid = ""
+        self.patient_id = ""
+        self.import_folder_path = ""
 
     def _dispatch_item_payload(self, payload: Dict[str, Any]) -> None:
         try:
@@ -793,7 +933,7 @@ class EducationalPatientViewerWidget(PatientWidget):
         self._show_media_message("Loading the selected DICOM resource...")
         _dname = str(content_data.get("name") or content_data.get("study_uid") or "Study")
         _ddesc = str(content_data.get("description") or "").strip()
-        self._set_content_header("DICOM", f"{_dname}  ·  {_ddesc}" if _ddesc else _dname)
+        self._set_content_header("DICOM", f"{_dname}: {_ddesc}" if _ddesc else _dname)
 
         if content_type == "dicom":
             raw_path = str(content_data.get("path") or "").strip()
@@ -815,14 +955,13 @@ class EducationalPatientViewerWidget(PatientWidget):
             self.study_uid = str(content_data.get("study_uid") or "").strip()
             self.import_folder_path = study_path
             # Course viewers are hosted outside the main patient-tab manager.
-            # Activate their own controller before using the normal asynchronous
-            # interactive switch; a synchronous preload rejects inactive tabs.
+            # Activate the controller for later user-triggered series loading.
             self.on_tab_activated()
             self.education_content_stack.setCurrentIndex(0)
             self._apply_default_education_layout()
             self._populate_education_series_rail()
             self.switch_right_panel("series", force=True)
-            self.change_series_on_viewer(str(series_number))
+            # Leave all viewports empty until an explicit thumbnail action.
             return
 
         study_uid = str(content_data.get("study_uid") or "").strip()
@@ -839,31 +978,10 @@ class EducationalPatientViewerWidget(PatientWidget):
         self.patient_id = content_data.get("patient_id") or ""
         self.import_folder_path = str(study_path)
 
-        loaded = False
-
-        if content_type == "dicom_series":
-            raw_series_number = content_data.get("series_number")
-            if raw_series_number is not None:
-                try:
-                    series_number = int(raw_series_number)
-                    loaded = bool(self._load_single_series_on_demand(series_number, study_path=str(study_path)))
-                    if loaded:
-                        self.change_series_on_viewer(str(series_number))
-                except Exception:
-                    loaded = False
-
-        if not loaded and content_type == "dicom_study":
-            first_series = self._find_first_series_number(study_path)
-            if first_series is not None:
-                loaded = bool(self._load_single_series_on_demand(first_series, study_path=str(study_path)))
-                if loaded:
-                    self.change_series_on_viewer(str(first_series))
-
-        if not loaded:
-            self._show_media_message("The selected DICOM study or series could not be loaded. No substitute series was selected.")
-            return
-
+        self.on_tab_activated()
         self.education_content_stack.setCurrentIndex(0)
+        self._apply_default_education_layout()
+        self._populate_education_series_rail()
         self.switch_right_panel("series", force=True)
 
     def _populate_education_series_rail(self) -> int:
@@ -875,6 +993,11 @@ class EducationalPatientViewerWidget(PatientWidget):
         tools/migration/generate_education_thumbnails.py).  Returns the number of
         series thumbnails shown.
         """
+        from PacsClient.utils.diagnostic_logging import ContentDiagnosticTrace
+        trace = ContentDiagnosticTrace('education_selection', self,
+            item_generation=getattr(self, '_item_generation', 0),
+            token=getattr(self, '_sidebar_build_token', 0))
+        trace.emit('rail_requested')
         identity = (str(self.study_uid or ""), str(self.import_folder_path or ""))
         manager = self.thumbnail_manager
         if identity == getattr(self, "_education_rail_identity", None):
@@ -886,6 +1009,7 @@ class EducationalPatientViewerWidget(PatientWidget):
             if ((pending is not None and not pending.done())
                     or (cards and all(isValid(card) and self.thumb_grid.indexOf(card) >= 0
                                      for card in cards))):
+                trace.emit('rail_reused', cards=len(cards), pending=pending is not None and not pending.done())
                 return int(getattr(self, "_sidebar_expected_count", None) or len(cards))
 
         # Retire the old generation before deleting any of its Qt cards. The
@@ -908,6 +1032,8 @@ class EducationalPatientViewerWidget(PatientWidget):
         self._is_multistudy_hint = False
         self._studies_series = {}
         count = int(self.show_exist_thumbnails() or 0)
+        trace.emit('rail_inventory', inventory=count,
+            next_token=getattr(self, '_sidebar_build_token', 0))
         self._education_rail_identity = identity if count else None
         return count
 
@@ -1118,6 +1244,27 @@ class EducationalPatientViewerWidget(PatientWidget):
                 pass
 
     def _load_media_content_impl(self, content_type: str, content_data: Dict[str, Any]) -> None:
+        frame = getattr(self, 'slide_content_frame', None)
+        if frame is not None:
+            frame.reset()
+        if content_type == 'multimedia':
+            if frame is None:
+                self._show_text(content_data)
+                return
+            kind = content_data.get('media_type')
+            if content_data.get('path') and kind in {'image','audio','video'}:
+                self._load_media_content_impl(kind, {'path':content_data['path']})
+            else:
+                self._stop_media_playback()
+                self._current_media_path = None
+                self._set_media_controls('text')
+            frame.present(content_data)
+            self._set_media_controls(self._current_media_kind)
+            self.education_content_stack.setCurrentIndex(1)
+            self._set_content_header('Multimedia',str(content_data.get('name') or ''))
+            return
+        if content_type in {'pdf','presentation'} and frame is not None:
+            frame.present(content_data, document=True)
         content_type = (content_type or "").lower()
         name = str(content_data.get("name") or content_data.get("source_name") or "").strip()
         logger.info("[EDU_MEDIA] load type=%s name=%s", content_type,
@@ -1126,6 +1273,8 @@ class EducationalPatientViewerWidget(PatientWidget):
         from modules.education.document_preview import TEXT_SUFFIXES
         path = str(content_data.get("path") or "").strip()
         from modules.education.presentation_conversion import PRESENTATION_SUFFIXES
+        if content_type == 'presentation' and path and Path(path).suffix.lower() == '.pdf':
+            content_type = 'pdf'
         if path and Path(path).suffix.lower() in PRESENTATION_SUFFIXES:
             self._show_presentation(path)
             return
@@ -1142,7 +1291,7 @@ class EducationalPatientViewerWidget(PatientWidget):
             return
 
         media_path = str(content_data.get("path") or "").strip()
-        fname = Path(media_path).name if media_path else (name or "—")
+        fname = Path(media_path).name if media_path else (name or "Resource")
         if not media_path or not Path(media_path).exists():
             self._set_content_header("Unavailable", fname)
             self._show_media_message(f"File not found: {media_path or 'N/A'}")
@@ -1179,9 +1328,12 @@ class EducationalPatientViewerWidget(PatientWidget):
             self._show_media_message(f"Unsupported content type: {content_type}")
 
     def _set_content_header(self, kind: str, detail: str = "") -> None:
-        """Update the viewport's content-type indicator (e.g. 'PDF · file.pdf')."""
+        """Update hidden metadata and audience routing without duplicating the slide title."""
         if hasattr(self, "content_type_label"):
-            self.content_type_label.setText(f"{kind}  ·  {detail}" if detail else kind)
+            self.content_type_label.setText(f"{kind}: {detail}" if detail else kind)
+        audience = getattr(self, "_audience_presentation", None)
+        if audience is not None and audience.active:
+            audience.set_media_active(kind != "DICOM")
 
     def _show_external_resource(self, label: str, file_path: str) -> None:
         """Offer an explicit external action without interrupting a lecture."""
@@ -1266,7 +1418,8 @@ class EducationalPatientViewerWidget(PatientWidget):
         self._current_media_kind = kind
         zoomable = kind in ("image", "pdf")
         pageable = kind == "pdf"
-        fontable = kind in ("text", "word")
+        frame = getattr(self, "slide_content_frame", None)
+        fontable = kind in ("text", "word") or bool(frame and frame.can_zoom_text())
         for b in (self.btn_zoom_out, self.btn_zoom_in, self.btn_fit, self.btn_reset):
             b.setVisible(zoomable)
         for b in (self.btn_prev_page, self.btn_next_page):
@@ -1294,7 +1447,7 @@ class EducationalPatientViewerWidget(PatientWidget):
             self.image_view.fit()
         elif k == "pdf" and _HAS_PDF:
             try:
-                self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
+                self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
             except Exception:
                 pass
 
@@ -1332,6 +1485,10 @@ class EducationalPatientViewerWidget(PatientWidget):
         self._font_zoom(-1)
 
     def _font_zoom(self, step: int) -> None:
+        frame = getattr(self, "slide_content_frame", None)
+        if frame and frame.can_zoom_text():
+            frame.zoom_text(step)
+            return
         target = (self.media_word
                   if getattr(self, "_current_media_kind", None) == "word"
                   else self.media_text)
@@ -1481,7 +1638,7 @@ class EducationalPatientViewerWidget(PatientWidget):
             if error == QPdfDocument.Error.None_:
                 # Fit the page to the viewport so it scales to the pane size.
                 try:
-                    self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
+                    self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
                 except Exception:
                     pass
                 self.media_stack.setCurrentWidget(self.pdf_page)
@@ -1567,6 +1724,9 @@ class EducationalPatientViewerWidget(PatientWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
+        audience = getattr(self, "_audience_presentation", None)
+        if audience is not None:
+            audience.close()
         self._education_closing = True
         self._item_generation = getattr(self, "_item_generation", 0) + 1
         self._stop_media_playback()

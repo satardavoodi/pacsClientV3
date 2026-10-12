@@ -39,7 +39,7 @@ def test_nuitka_avoids_comprehensions_in_async_finally_cleanup():
     tree = ast.parse(source.read_text(encoding="utf-8"))
     start = next(
         node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "start_sidebar_build"
+        if isinstance(node, ast.FunctionDef) and node.name == "_start_sidebar_build"
     )
     run = next(
         node for node in ast.walk(start)

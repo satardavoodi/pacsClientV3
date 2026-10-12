@@ -1,0 +1,9 @@
+# Legacy patient-list plans use canonical Home receipts
+
+The Secretary legacy `list_patients` action previously returned a row list, while the orchestrator verifier requires a structured source-bound list/search identity. A successful search therefore failed verification before a terminal aggregate receipt could be issued.
+
+After existing source/date validation, the executor now prefers the registered canonical Home CommandBus action and forwards the existing confirmation state. Its source/list or search identity is verified by the existing exact `read_patients` probe without repeating the initiating search. Bus rejection is final; an unavailable bus/action retains the legacy fallback. The orchestrator resolves legacy relative/range dates once before execution, so verified provenance uses the actual same search bounds. No workflow verifier, authority, provider, model or prompt was changed.
+
+Synthetic guards exercise the real CommandBus, HomeCommandAdapter and orchestrator chain for zero and nonzero counts, today/range dates, changed list identity, absence of a bus and bus denial. Four positive cases failed before implementation; the stale-list case already failed closed. Two older ordinal workflow fixtures also failed with the archived pre-fix executor because they supplied legacy row lists to the structured verifier. They now use actual canonical Home receipts and reference the verified list identity, preserving exact opened-study and wrong-study assertions. No fabricated receipt or verifier bypass was added.
+
+Final adjacent suite: 102 passed, zero failures/errors/skips, no reruns. Canonical executor/orchestrator packaged mirrors are synchronized by the scoped mirror tool. Active Razi deployment, native GUI and real patient-list business acceptance remain pending coordinator gates; no live operation was performed here.

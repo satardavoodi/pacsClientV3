@@ -11,7 +11,14 @@ def test_server_ui_has_loopback_preset_and_masked_service_password(monkeypatch):
     from modules.ai_imaging.eagle_eye_remote import administration as admin
     from PacsClient.pacs.workstation_ui.settings_ui.eagle_eye_settings import EagleEyeSettingsWidget
     monkeypatch.setattr(admin, 'load_settings', lambda: {
-        'role': 'standard', 'path': 'synthetic.json', 'revision': None, 'value': {}})
+        'role': 'server', 'path': 'synthetic.json', 'revision': None, 'value': {}})
+    from PacsClient.utils import server_profiles
+    profile_threads = []
+    def read_profiles(**kwargs):
+        assert kwargs == {'migrate_if_missing': False}
+        profile_threads.append(threading.get_ident())
+        return {'active_profile_id': '', 'profiles': []}
+    monkeypatch.setattr(server_profiles, 'load_profiles_document', read_profiles)
     app = QApplication.instance() or QApplication([])
     widget = EagleEyeSettingsWidget()
     try:
@@ -22,6 +29,12 @@ def test_server_ui_has_loopback_preset_and_masked_service_password(monkeypatch):
             app.processEvents()
             QTest.qWait(10)
         widget.local_pacs_button.click()
+        deadline = time.monotonic() + 3
+        while widget._future is not None and time.monotonic() < deadline:
+            app.processEvents()
+            QTest.qWait(10)
+        assert profile_threads and profile_threads[0] != threading.get_ident()
+        assert 'no configuration was changed' in widget.status.text()
         assert widget.pacs_url.text() == 'http://127.0.0.1:8000'
         assert widget.dicom_port.value() == 105
         assert widget.socket_port.value() == 50052
@@ -42,13 +55,14 @@ def test_connection_save_preserves_extensions_and_checks_stale_edits(tmp_path, m
     saved = json.loads(path.read_text())
     assert saved['extension'] == {'keep': True}
     assert saved['schema_version'] == 1
-    assert saved['url'] == 'https://new.invalid'
+    assert saved['url'] == 'http://new.invalid'
+    assert 'token_file' not in saved and 'ca_file' not in saved
     with pytest.raises(ValueError, match='changed'):
         admin.save_connection(path, snapshot['revision'], {'url': 'https://stale.invalid'})
     assert json.loads(path.read_text()) == saved
 
 
-@pytest.mark.parametrize('url', ['http://lan.invalid', 'https://user:secret@host.invalid',
+@pytest.mark.parametrize('url', ['ftp://lan.invalid', 'https://user:secret@host.invalid',
                                 'https://host.invalid?token=x', 'file:///tmp/server'])
 def test_invalid_connection_does_not_overwrite_saved_file(tmp_path, url):
     from modules.ai_imaging.eagle_eye_remote import administration as admin
@@ -90,12 +104,14 @@ def test_saved_connection_probe_uses_existing_authenticated_protocol(http_servic
     assert 'brain' in response['modules']
 
 
-def test_job_monitor_never_lists_another_clients_jobs(http_service):
+def test_job_monitor_never_lists_another_clients_jobs(http_service, human_access):
     from modules.ai_imaging.eagle_eye_remote.client import Client
     from tests.code.ai_imaging.test_eagle_eye_remote import request
     jobs, configuration = http_service
-    own = jobs.submit('first', request())['job_id']
-    other = jobs.submit('second', request())['job_id']
+    import hashlib
+    principal = human_access.store.users()[0]['principal']
+    own = jobs.submit('human:' + hashlib.sha256(principal.encode()).hexdigest(), request())['job_id']
+    other = jobs.submit('human:' + hashlib.sha256(b'synthetic-other-verified-principal').hexdigest(), request())['job_id']
     response = Client(configuration).json('/v1/jobs')
     assert [item['job_id'] for item in response['jobs']] == [own]
     assert other not in json.dumps(response)

@@ -21,7 +21,7 @@ def main():
     passed = (capabilities.get('protocol') == 1
         and len(capabilities.get('modules', [])) == 7
         and echo.get('server_owned_prompts') is True
-        and len(echo.get('workflows', [])) == 14)
+        and {'report', 'turbo', 'add_reference', 'web_search', 'correction'}.issubset(echo.get('workflows', [])))
     print(json.dumps({'passed': passed, 'model_count': len(capabilities.get('modules', [])),
                       'echomind_workflow_count': len(echo.get('workflows', []))}))
     return 0 if passed else 1

@@ -2,6 +2,18 @@
 from urllib.parse import quote
 
 
+def viewer_identity(viewer):
+    """Resolve the same current identity for request setup and review callbacks."""
+    fixed = getattr(viewer, 'metadata_fixed', None)
+    fixed = fixed if isinstance(fixed, dict) else {}
+    metadata = getattr(viewer, 'metadata', None)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    study_uid = fixed.get('study_uid') or fixed.get('study_instance_uid')
+    patient_id = (fixed.get('patient_id') or fixed.get('patient_code')
+                  or metadata.get('patient_id') or metadata.get('PatientID') or '')
+    return study_uid, str(patient_id)
+
+
 def normalize(value):
     return {'m': 'M', 'male': 'M', 'f': 'F', 'female': 'F'}.get(str(value or '').strip().lower())
 

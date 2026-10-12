@@ -897,3 +897,37 @@ def test_grouped_sidebar_orders_history_within_each_study_and_counts_cards(monke
         owner.close()
         owner.deleteLater()
         asyncio.set_event_loop(None)
+
+
+def test_next_image_prepares_while_first_card_is_admitted(monkeypatch):
+    """Overlap worker I/O with GUI construction without dropping/reordering cards."""
+    from PacsClient.pacs.patient_tab.utils.thumbnail_image_source_service import ThumbnailImageSourceService
+    app = QApplication.instance() or QApplication([])
+    loop = QEventLoop(app); asyncio.set_event_loop(loop)
+    owner = make_owner(7)
+    second_started = threading.Event()
+    prepared = []
+    def prepare(su, key, path):
+        prepared.append(key)
+        if len(prepared) == 2:
+            second_started.set()
+        image = QImage(8, 8, QImage.Format_RGB32); image.fill(Qt.white)
+        return image
+    monkeypatch.setattr(ThumbnailImageSourceService, 'prepare_image', prepare)
+    original = owner.add_thumbnail_to_thumbnail_layout
+    def admit(*args, **kwargs):
+        if not owner.added:
+            assert second_started.wait(.3), 'Next image must overlap GUI admission'
+        return original(*args, **kwargs)
+    owner.add_thumbnail_to_thumbnail_layout = admit
+    async def run():
+        owner.show_exist_thumbnails(thumbnail_files=[Path(f'{i}.png') for i in range(1,8)])
+        await owner._sidebar_build_task
+        assert owner.added == [str(i) for i in range(1,8)]
+        assert len(owner.thumbnail_manager.series_widgets) == 7
+        assert owner.thumb_count_label.text() == '7 series'
+    try:
+        with loop: loop.run_until_complete(run())
+    finally:
+        owner.thumbnail_manager.dispose(); owner.close(); owner.deleteLater()
+        asyncio.set_event_loop(None)

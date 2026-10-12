@@ -25,7 +25,7 @@ import uuid
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Tuple, Dict, List
 
 # --------------------------------------------------------------------------- #
@@ -385,18 +385,7 @@ class LicenseManager:
         parts = [hardware_id[i:i + 4] for i in range(0, len(hardware_id), 4)]
         return "-".join(parts)
 
-    # ----- key generation (company/manager side) --------------------------- #
-
-    def generate_license_key(self, hardware_id: str, days: int = 365) -> str:
-        """Generate Key 2 for a given Key 1 (hardware_id) and duration.
-
-        The generator hashes exactly the hardware_id string it is given; it does
-        NOT recompute the fingerprint. Deterministic for a fixed
-        (hardware_id, expiry_date)."""
-        expiry_date = (datetime.now() + timedelta(days=days)).strftime("%Y%m%d")
-        data = f"{hardware_id}|{expiry_date}|{SECRET_KEY}"
-        license_hash = hashlib.sha256(data.encode()).hexdigest()[:24].upper()
-        return f"{expiry_date}-{license_hash}"
+    # ----- legacy display formatting (verification only) ------------------ #
 
     def format_license_key(self, license_key: str) -> str:
         """Format Key 2 as EXPIRY-ABCD-EFGH-... for readability."""

@@ -122,3 +122,45 @@ def test_close_during_preflight_retires_worker(app, monkeypatch):
     assert window._close_requested
     assert worker.wait(4000)
     settle(app, lambda: window._preflight is None)
+
+
+def test_preflight_is_compact_and_navigation_waits(app):
+    window = CoursePresentationWindow({"slides": []})
+    window.show()
+    settle(app, lambda: window._preflight is None)
+    assert window.height() <= 420
+    assert not window.navigation.isVisible()
+    window.close()
+
+
+def test_single_screen_uses_full_viewer_shell(app, monkeypatch):
+    monkeypatch.setitem(sys.modules, "modules.education.educational_patient_viewer_widget",
+                        SimpleNamespace(EducationalCourseViewerWidget=FakeViewer))
+    window = CoursePresentationWindow({"slides": [{"content": [{"content_type": "text", "content_data": {"text": "A"}}]}]})
+    window.show()
+    settle(app, lambda: window._preflight is None)
+    window._start()
+    window.present_on_screen(None)
+    assert window.isFullScreen()
+    assert window.viewer.parentWidget() is window.centralWidget()
+    window._escape()
+    window.close()
+
+
+def test_audience_host_returns_same_viewer_and_navigation(app, monkeypatch):
+    monkeypatch.setitem(sys.modules, "modules.education.educational_patient_viewer_widget",
+                        SimpleNamespace(EducationalCourseViewerWidget=FakeViewer))
+    window = CoursePresentationWindow({"slides": [{"content": [{"content_type": "text", "content_data": {"text": "A"}}]}]})
+    window.show()
+    settle(app, lambda: window._preflight is None)
+    window._start()
+    viewer = window.viewer
+    window.present_on_screen(app.primaryScreen())
+    assert window.audience_window.centralWidget() is viewer
+    assert window.navigation.window() is window
+    window.audience_window.close()
+    app.processEvents()
+    assert window.audience_window is None
+    assert window.viewer is viewer
+    assert viewer.parentWidget() is window.centralWidget()
+    window.close()

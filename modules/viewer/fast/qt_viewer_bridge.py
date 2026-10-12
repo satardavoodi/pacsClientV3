@@ -604,6 +604,7 @@ class QtViewerBridge:
         self._initial_display_facts = initial_display_facts
         self._initial_identity_context = None
         self.qt_viewer = qt_viewer
+        self._retired = False
         self.pipeline = pipeline
         self.vtk_widget = vtk_widget
         self.metadata = metadata or {}
@@ -1487,6 +1488,10 @@ class QtViewerBridge:
         We must always re-render the exact final slice here, not just when
         filter is enabled.
         """
+        # A queued settle can arrive after cleanup, including when a replacement
+        # bridge already owns the viewport. Do not touch its former series/UI.
+        if getattr(self, '_retired', False) or not self.pipeline.slice_count:
+            return
         logger.debug("[B3.4_DIAG] END_FAST_INTERACTION slice=%d", self._current_slice)
         _force_present = getattr(self, '_force_present_pending_on_settle', None)
         if callable(_force_present):
@@ -1710,6 +1715,7 @@ class QtViewerBridge:
 
     def cleanup(self) -> None:
         """Clean up resources."""
+        self._retired = True  # Retire admission before timers/signals/native cleanup.
         self._initial_display_facts = None
         self._initial_identity_context = None
         _settle_active = False
@@ -3681,6 +3687,8 @@ class QtViewerBridge:
 
     def _on_interaction_settled(self) -> None:
         """B3.4: Unified settle — 200ms after last scroll/drag event."""
+        if getattr(self, '_retired', False) or not self.pipeline.slice_count:
+            return
         self._stack_drag_active = False
         self._protected_drag_active = False
         self._last_stack_target_slice = None

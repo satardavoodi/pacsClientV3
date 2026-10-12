@@ -143,6 +143,17 @@ hiddenimports = load_hiddenimports(
         "PacsClient.pacs.workstation_ui.settings_ui.server_settings",
         "PacsClient.pacs.workstation_ui.settings_ui.eagle_eye_settings",
         "modules.ai_imaging.eagle_eye_remote.administration",
+        "modules.ai_imaging.eagle_eye_remote.installer_entry",
+        "modules.ai_imaging.eagle_eye_remote.startup_barrier",
+        "tools.eagle_eye.installed_release_host",
+        "tools.eagle_eye.fresh_server_install",
+        "tools.eagle_eye.fresh_install_driver",
+        "modules.ai_imaging.eagle_eye_remote.installed_layout",
+        "modules.ai_imaging.eagle_eye_remote.service_control",
+        "modules.ai_imaging.eagle_eye_remote.crm.worker",
+        "modules.ai_imaging.eagle_eye_remote.crm.provider",
+        "PacsClient.pacs.workstation_ui.settings_ui.crm_settings",
+        "PacsClient.pacs.workstation_ui.settings_ui.crm_connections",
         # INO internal-assignment + report-status modules are imported LAZILY
         # (inside functions) from core UI, so PyInstaller's static analysis of
         # main.py never discovers them — they must be pinned as hidden imports or
@@ -198,6 +209,8 @@ def _keep_runtime_module_hiddenimport(name: str) -> bool:
     if name.endswith(deny_suffixes):
         return False
     optional_prefixes = (
+        "modules.LicenseGenerator.license_generator",
+        "modules.LicenseGenerator.license_generator_gui",
         "modules.printing",
         "modules.cd_burner",
         "modules.web_browser",
@@ -259,9 +272,16 @@ _safe_extend(datas, codec_resource_datas())
 
 
 datas = list(dict.fromkeys(datas))
+import sys
+crm_vendor = PROJECT_ROOT / "modules/ai_imaging/eagle_eye_remote/crm/vendor"
+sys.path.insert(0, str(crm_vendor))
+_safe_extend(hiddenimports, collect_submodules("reception_crm"))
 hiddenimports = sorted(dict.fromkeys(hiddenimports))
 
 excludes = [
+    "tools.licensing",
+    "modules.LicenseGenerator.license_generator",
+    "modules.LicenseGenerator.license_generator_gui",
     "libjpeg",
     "PyQt5",
     "PyQt6",
@@ -276,7 +296,7 @@ excludes = [
 
 a = Analysis(
     [str(PROJECT_ROOT / "main.py")],
-    pathex=[str(PROJECT_ROOT)],
+    pathex=[str(PROJECT_ROOT), str(crm_vendor)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

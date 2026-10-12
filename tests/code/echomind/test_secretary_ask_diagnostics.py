@@ -69,6 +69,7 @@ def test_question_preplanning_failure_survives_to_response_without_control_execu
     from modules.EchoMind.secretary.orchestrator import SecretaryOrchestrator
     from modules.EchoMind.secretary import remote_planner
     instance=object.__new__(SecretaryOrchestrator)
+    instance._get_memory_store_safe=lambda:None
     instance.executor=SimpleNamespace(_resolve_bus=lambda:None)
     instance._get_memory_store_safe=lambda:None
     monkeypatch.setattr(remote_planner,'uses_server',lambda:True)
@@ -87,6 +88,7 @@ def test_fast_transient_answer_error_retries_once_on_same_server(monkeypatch):
     from modules.EchoMind.secretary.orchestrator import SecretaryOrchestrator
     from modules.EchoMind.secretary import remote_planner
     instance=object.__new__(SecretaryOrchestrator)
+    instance._get_memory_store_safe=lambda:None
     instance.executor=SimpleNamespace(_resolve_bus=lambda:None)
     monkeypatch.setattr(remote_planner,'uses_server',lambda:True)
     calls=[]
@@ -110,13 +112,15 @@ def test_fast_transient_answer_error_retries_once_on_same_server(monkeypatch):
     ('Secretary server could not complete planning.','SERVER_UPSTREAM_FAILED'),
     ('Synthetic private provider detail',None),
 ])
-def test_http_error_exports_only_fixed_safe_codes(message,expected):
+def test_http_error_exports_only_fixed_safe_codes(message,expected,monkeypatch):
     import io,json,urllib.error
     from modules.ai_imaging.eagle_eye_remote.client import Client,ServerHTTPError
     class Opener:
         def open(self,*a,**k):
             raise urllib.error.HTTPError('https://synthetic.invalid',422,'Synthetic',{},
                 io.BytesIO(json.dumps({'error':message}).encode()))
+    from modules.ai_imaging.eagle_eye_remote import user_session
+    monkeypatch.setattr(user_session,'session',lambda client:('synthetic','synthetic',(0,0)))
     client=object.__new__(Client)
     client.url='https://synthetic.invalid'; client.token='synthetic-token'; client.opener=Opener()
     with pytest.raises(ServerHTTPError) as ended: client.open('/v1/secretary/plan',{})
@@ -128,6 +132,7 @@ def test_repeated_failure_is_bounded_and_never_switches_provider(monkeypatch):
     from modules.EchoMind.secretary.orchestrator import SecretaryOrchestrator
     from modules.EchoMind.secretary import remote_planner
     instance=object.__new__(SecretaryOrchestrator)
+    instance._get_memory_store_safe=lambda:None
     instance.executor=SimpleNamespace(_resolve_bus=lambda:None)
     monkeypatch.setattr(remote_planner,'uses_server',lambda:True)
     calls=[]

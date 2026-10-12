@@ -59,7 +59,7 @@ class History:
         with closing(self._open()) as db, db:
             db.execute('UPDATE requests SET state=?, response_json=?, completed_at=? WHERE request_id=? AND owner=?',
                 ('failed' if failed else 'succeeded',
-                 None if failed else json.dumps(result, ensure_ascii=False), time.time(), rid, owner))
+                 None if result is None else json.dumps(result, ensure_ascii=False), time.time(), rid, owner))
 
     def case_list(self, owners, study_uid, *, offset=0):
         if not owners:

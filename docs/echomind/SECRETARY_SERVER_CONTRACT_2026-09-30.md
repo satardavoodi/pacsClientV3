@@ -1,5 +1,14 @@
 # Secretary client / Eagle Eye Server contract - 2026-09-30
 
+Current ordinary connection authority (owner clarification, 2026-10-12):
+[Eagle connection boundaries](../architecture/EAGLE_EYE_CONNECTION_BOUNDARIES_2026-10-12.md).
+Use configured HTTP host/port and the existing username/password, followed by
+PACS-first/Reception-on-definitive-rejection authentication and Eagle grants.
+Device pairing, certificates and caller provider tokens are not prerequisites.
+The internal opaque session is implementation-owned. Historical paired/TLS
+receipts below describe earlier deployments, not the current admission contract.
+Mobile-to-Windows Client Agent PACS QR/HTTPS is a separate connection.
+
 Owner authorization: the echomind chat owns the client migration; the
 mammography eagle eye chat owns the headless server implementation and target
 deployment prerequisites. Preserve other shared work. This document is the
@@ -7,9 +16,9 @@ coordination surface; append separate CLIENT RECEIPT and SERVER RECEIPT sections
 
 ## Wire protocol
 
-POST `/v1/secretary/plan` on the existing authenticated Eagle Eye TLS listener.
-Reuse paired certificate/token checks and worker-only client transport. No new
-port, credentials, provider fallback or GUI execution service.
+POST `/v1/secretary/plan` on the configured ordinary Eagle Eye HTTP endpoint.
+Reuse authenticated human admission, Eagle permissions and worker-only client
+transport. No separate device identity, provider fallback or GUI execution service.
 
 Required fields: `protocol: 1`, canonical UUID `request_id`, `phase` (`route`,
 `plan`, `repair`), raw `text` (nonempty, max 20000 characters), `language`

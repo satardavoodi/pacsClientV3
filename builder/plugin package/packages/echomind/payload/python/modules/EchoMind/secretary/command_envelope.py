@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal, Annotated
 from pydantic import BaseModel, ConfigDict, Field, AliasChoices, model_validator
 from modules.ai_imaging.eagle_eye_remote.secretary.validation.ui_controls import UI_CONTROL_MODELS
+from modules.ai_imaging.eagle_eye_remote.secretary.validation.course_authoring import COURSE_AUTHORING_MODELS
 
 SourceScope = Literal["active_tab", "local", "server"]
 SttRoute = Literal["native", "v2t"]
@@ -22,6 +23,18 @@ class HomeSearchEntities(BaseModel):
     date_from: str = ""
     date_to: str = ""
     limit: int = Field(default=25, ge=1, le=200)
+
+
+class HomeReadEntities(HomeSearchEntities):
+    search_id: str | None = Field(default=None, max_length=36)
+    list_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode='after')
+    def validate_search_handle(self):
+        from uuid import UUID
+        if self.search_id is not None and str(UUID(self.search_id)) != self.search_id:
+            raise ValueError('Canonical search identifier required')
+        return self
 
 
 class AdvancedHomeSearchEntities(HomeSearchEntities):
@@ -117,7 +130,7 @@ ACTION_ENTITY_MODELS = {
     "list_patients": HomeSearchEntities,
     "search_patients": HomeSearchEntities,
     "advanced_search_patients": AdvancedHomeSearchEntities,
-    "read_patients": HomeSearchEntities,
+    "read_patients": HomeReadEntities,
     "open_patient": HomeOpenEntities,
 }
 
@@ -241,6 +254,13 @@ ACTION_ENTITY_MODELS.update({
         'start_patient_voice', 'pause_patient_voice', 'resume_patient_voice',
         'stop_patient_voice', 'patient_voice_status', 'send_patient_voice')},
 })
+
+
+ACTION_ENTITY_MODELS.update(COURSE_AUTHORING_MODELS)
+from modules.ai_imaging.eagle_eye_remote.secretary.validation.content_assets import CONTENT_ASSET_MODELS
+ACTION_ENTITY_MODELS.update(CONTENT_ASSET_MODELS)
+from modules.ai_imaging.eagle_eye_remote.secretary.validation.session_files import SESSION_FILE_MODELS
+ACTION_ENTITY_MODELS.update(SESSION_FILE_MODELS)
 
 
 def action_entity_schema(action: str) -> dict:

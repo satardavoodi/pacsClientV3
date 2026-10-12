@@ -945,6 +945,23 @@ def create_nuitka_command(
             "PacsClient.pacs.workstation_ui.settings_ui.server_settings",
             "PacsClient.pacs.workstation_ui.settings_ui.eagle_eye_settings",
             "modules.ai_imaging.eagle_eye_remote.administration",
+            "modules.ai_imaging.eagle_eye_remote.admin_auth",
+            "modules.ai_imaging.eagle_eye_remote.user_access",
+            "modules.ai_imaging.eagle_eye_remote.pacs_identity",
+            "modules.ai_imaging.eagle_eye_remote.reception_identity",
+            "modules.ai_imaging.eagle_eye_remote.user_administration",
+            "modules.ai_imaging.eagle_eye_remote.user_session",
+            "modules.ai_imaging.eagle_eye_remote.client_login",
+            "modules.ai_imaging.eagle_eye_remote.human_session_ipc",
+            "modules.ai_imaging.eagle_eye_remote.parent_ipc",
+            "modules.ai_imaging.eagle_eye_remote.session_revocation",
+            "modules.ai_imaging.eagle_eye_remote.speech",
+            "modules.ai_imaging.eagle_eye_remote.user_usage",
+            "PacsClient.pacs.workstation_ui.settings_ui.user_settings",
+            "modules.ai_imaging.eagle_eye_remote.crm.worker",
+            "modules.ai_imaging.eagle_eye_remote.crm.provider",
+            "PacsClient.pacs.workstation_ui.settings_ui.crm_settings",
+            "PacsClient.pacs.workstation_ui.settings_ui.crm_connections",
         })
         nofollow = set(filtered_nofollow_from_spec)
         append_mesa_runtime_flags(cmd)
@@ -989,6 +1006,8 @@ def create_nuitka_command(
         cmd.append(f"--include-module={item}")
     for item in sorted(include_packages):
         cmd.append(f"--include-package={item}")
+    if profile == "full_core":
+        cmd.append("--include-package=reception_crm")
 
     if profile in {"full_core", "heavy_native"}:
         for src, dst in get_spec_list(ctx.spec, "OPTIONAL_DATA"):
@@ -1078,6 +1097,9 @@ def run_nuitka_stage(ctx: BuildContext, stage: Stage, log_path: Path, profile: s
         else:
             append_log(log_path, "[INFO] PATH Zig not detected; Nuitka-managed Zig toolchain will be used")
 
+    if profile == "full_core":
+        vendor = str(PROJECT_ROOT / "modules/ai_imaging/eagle_eye_remote/crm/vendor")
+        env["PYTHONPATH"] = vendor + os.pathsep + env.get("PYTHONPATH", "")
     rc = run_command_with_log(cmd, cwd=PROJECT_ROOT, log_path=log_path, env=env)
     if rc != 0:
         text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""

@@ -142,3 +142,29 @@ native C++ build. See the corrected diagnosis in the VTK owner report.
 Latest receipt: 43 focused tests and six actual native resident socket/DICOM
 loads pass (three per workspace), both commands exit 0. Preserve the opt-in native
 probe in release verification; widget-only tests do not cover this startup bug.
+
+## Shared Advanced Image Analysis appearance (2026-10-11)
+
+Include the canonical `viewer_chrome.py` companion alongside `presentation.py`
+and `startup_script.py`, the Brain review scripts and their physical installer
+data mappings. Use the current source during runtime materialization; an older
+cached Python payload must not replace these files. Both PyInstaller and Nuitka
+must retain the physical companion, including when the installation path contains
+spaces. See [startup profiles](../modules/ADVANCED_IMAGE_ANALYSIS_STARTUP_PROFILES.md)
+and [source evidence](../reports/BRAIN_PAIRED_REVIEW_UI_2026-10-11.md).
+
+Shared icons, hover states, compact viewport controls, readable slice positions,
+module navigation and menu suppression apply to general MPR and every interactive
+function profile. Brain alone selects paired raw/segmented views and anatomical
+grouping. No native C++ rebuild is required for this presentation update.
+
+Before customer installation, qualify the exact locally built candidate on the
+designated WinA100 target under BUILD.md. Record the artifact hash, edition and
+backend separately. Open MPR from the Advanced tab and toolbar, switch modules,
+exercise viewport controls, then open Brain correction, edit/save, close and
+immediately reopen without restarting PACS. Check the first visible frame,
+stable window geometry and source image/mask loading. Verify server mask apply
+through the authenticated server. Test without Developer paths or copied user
+settings; retain each profile's own layout. Source guards and mirror parity do
+not prove installed acceptance. Full local/Razi Developer parity and these
+artifact gates remain required before build handoff/customer installation.

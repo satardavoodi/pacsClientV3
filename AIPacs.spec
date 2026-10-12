@@ -334,6 +334,9 @@ except Exception as e:
 
 # Packages to exclude
 excludes = [
+    'tools.licensing',
+    'modules.LicenseGenerator.license_generator',
+    'modules.LicenseGenerator.license_generator_gui',
     'libjpeg',  # GPL-3.0 codec replaced by GDCM/pyjpegls
     'PyQt5',
     'PyQt6',

@@ -165,7 +165,7 @@ def _edition_copy_ignore(package_root, edition):
     return ignore
 
 
-def stage_edition(source, destination, edition, *, for_distribution=True):
+def stage_edition(source, destination, edition, *, for_distribution=True, release_version="development"):
     """Create a new isolated view; never write through linked core or package files."""
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if destination == source or source.is_relative_to(destination) or destination.is_relative_to(source):
@@ -231,6 +231,11 @@ def stage_edition(source, destination, edition, *, for_distribution=True):
         data.setdefault("modules", {})["advanced_mpr"] = edition.include_slicer
         profile.write_text(json.dumps(data, indent=2), encoding="utf-8")
     validate_edition(destination, edition, for_distribution=for_distribution)
+    if edition.name == 'eagle-eye':
+        from modules.ai_imaging.eagle_eye_remote.release_package import stamp
+        from modules.ai_imaging.eagle_eye_remote.installed_layout import seal
+        seal(destination / 'core', destination / 'plugin_packages')
+        stamp(destination / 'core', release_version)
     return destination
 
 
@@ -311,6 +316,7 @@ def compile_editions(builder, version, selection="all", *, stage_only=False,
             destination,
             edition,
             for_distribution=for_distribution,
+            release_version=version,
         )
         if not stage_only:
             validate_compiler_paths(stage, destination)
@@ -319,9 +325,14 @@ def compile_editions(builder, version, selection="all", *, stage_only=False,
             backend = getattr(builder, "BACKEND", "python")
             name = f"{edition.filename} v{version}"
             installer = (builder.INSTALLER_SCRIPT_WOA if edition.name == "arm" else builder.INSTALLER_SCRIPT)
+            release_id = ''
+            if edition.name == 'eagle-eye':
+                from modules.ai_imaging.eagle_eye_remote.release_package import read
+                release_id = read(stage / 'core')['release_id']
             builder.run_command([str(compiler), f"/DMyAppVersion={version}", f"/DStageDir={stage}",
                                  f"/DInstallerOutputDir={compiler_output}", f"/DInstallerBaseName={name}",
                                  f"/DDistributionEdition={edition.name}",
+                                 f"/DEagleEyeReleaseId={release_id}",
                                  f"/DRequireDistributionApproval={int(for_distribution)}",
                                  f"/DIncludeAdvancedMpr={int(edition.include_slicer)}",
                                  f"/DIncludeOfflineLumbar={int(edition.include_offline_lumbar)}", str(installer)],

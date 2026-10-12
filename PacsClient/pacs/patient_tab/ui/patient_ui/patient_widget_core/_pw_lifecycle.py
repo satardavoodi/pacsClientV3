@@ -97,7 +97,11 @@ def _run_deferred_close_gc():
     _CLOSE_GC_PENDING[0] = False
     with _close_step("deferred_close_gc"):
         try:
-            gc.collect()
+            reclaimed = gc.collect()
+            logger.info(
+                "[CLOSE_GC_YIELD] reclaimed=%d generation_counters=%s",
+                reclaimed, gc.get_count(),
+            )
         except Exception:
             pass
 

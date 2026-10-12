@@ -6,11 +6,11 @@ echo ==========================================
 echo.
 
 cd /d "%~dp0"
-python PacsClient\utils\license_generator_gui.py
+"%~dp0.venv\Scripts\python.exe" "%~dp0modules\LicenseGenerator\license_generator.py"
 
 if errorlevel 1 (
     echo.
     echo Error running the program!
-    echo Please make sure Python is installed.
+    echo Please verify the company signing store and the project Python environment.
     pause
 )

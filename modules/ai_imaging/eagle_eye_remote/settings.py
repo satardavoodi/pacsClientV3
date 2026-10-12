@@ -14,13 +14,28 @@ def config_path():
     return Path(__file__).resolve().parents[3] / 'config/eagle_eye_client.json'
 
 
+def ordinary_connection(value):
+    """Normalize only ordinary Eagle profiles; remote Agent pairing is separate."""
+    from urllib.parse import urlsplit, urlunsplit
+    result = dict(value)
+    url = result.get('url', '').strip().rstrip('/')
+    parsed = urlsplit(url)
+    if parsed.scheme == 'https':
+        url = urlunsplit(('http', parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+    if url:
+        result['url'] = url
+    for key in ('token_file', 'ca_file', 'client_certificate', 'client_private_key'):
+        result.pop(key, None)
+    return result
+
+
 def client_settings():
     # A deployment setting, not a test flag. No hardcoded credential or endpoint.
     source = config_path()
     if not source.is_file():
         return {}
     value = json.loads(source.read_text(encoding='utf-8-sig'))
-    return value
+    return ordinary_connection(value)
 
 
 def remote_required():

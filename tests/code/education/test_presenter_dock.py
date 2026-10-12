@@ -16,6 +16,7 @@ def test_presenter_and_collapse_reclaim_height_without_losing_selection():
         def noop(self, *args): pass
         _show_course_overview=noop;_show_slide_review=noop;_previous_slide=noop;_next_slide=noop
         _toggle_session_timer=noop;_reset_session_timer=noop;_on_slide_selected=noop;_on_item_clicked=noop
+        _toggle_presentation=noop
     ns={'Host':Host}
     for module in (QtCore,QtGui,QtWidgets):ns.update({k:getattr(module,k) for k in dir(module) if not k.startswith('__')})
     cls=ast.ClassDef(name='TestHost',bases=[ast.Name(id='Host',ctx=ast.Load())],keywords=[],body=methods,decorator_list=[])
@@ -25,7 +26,37 @@ def test_presenter_and_collapse_reclaim_height_without_losing_selection():
     host.resize(1500,850);host.show()
     for _ in range(3):app.processEvents()
     expanded=host.education_content_stack.height()
+    brand = host.findChild(QtWidgets.QFrame, 'educationBrand')
+    assert brand is not None and brand.isVisible()
+    assert brand.parentWidget() is host.items_list.parentWidget()
+    assert brand.geometry().top() >= host.items_list.geometry().bottom()
+    assert host.findChild(QtWidgets.QLabel, 'educationBrandName').text() == 'AI-PACS'
+    assert not host.findChild(QtWidgets.QLabel, 'educationBrandLogo').pixmap().isNull()
+
     assert 'Dr. Synthetic Teacher, MD' in host.presenter_label.text()
+    assert host.presenter_label.isVisible()
+    assert host.presenter_label.parentWidget() is host.slides_list.parentWidget()
+    assert host.slides_list.width() > host.items_list.width()
+    assert host.slides_list.font().pixelSize() >= 16
+    assert host.slides_list.visualItemRect(host.slides_list.item(0)).height() >= 34
+    first = host.slides_list.visualItemRect(host.slides_list.item(0))
+    second = host.slides_list.visualItemRect(host.slides_list.item(1))
+    assert first.top() == second.top() and second.left() > first.right()
+    assert first.height() >= 80
+    splitter = host.findChild(QtWidgets.QSplitter, 'educationDockSplitter')
+    assert splitter is not None and not splitter.childrenCollapsible()
+    host.resize(1050,850)
+    for _ in range(3):app.processEvents()
+    assert host.slides_list.width() > host.items_list.width()
+    assert host.items_list.width() >= 200
+    host.resize(1500,850)
+    for _ in range(3):app.processEvents()
+    expanded = host.education_content_stack.height()
+    assert host.course_review_btn.text() == 'Course Review'
+    assert host.slide_review_btn.text() == 'Slide Review'
+    assert not host.content_type_label.isVisible()
+    assert host.findChild(QtWidgets.QPushButton, 'previousSlide').text() == '<'
+    assert host.findChild(QtWidgets.QPushButton, 'nextSlide').text() == '>'
     host.dock_toggle_btn.click()
     for _ in range(3):app.processEvents()
     assert host.dock_body.isHidden()

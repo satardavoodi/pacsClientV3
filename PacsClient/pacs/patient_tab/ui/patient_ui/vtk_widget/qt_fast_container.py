@@ -1217,10 +1217,18 @@ class QtFastContainer(_DropHoverDwellMixin, QWidget):
 
     # ── Resize handling for drop hint label positioning ───────────────────
 
+    def showEvent(self, event):
+        """Reconcile final layout geometry without enabling a hidden hint."""
+        super().showEvent(event)
+        if self._empty_drop_hint_label is not None and not self._empty_drop_hint_label.isHidden():
+            self._layout_empty_drop_hint_label()
+
     def resizeEvent(self, event):
         """Reposition drop hint label on resize."""
         super().resizeEvent(event)
-        if self._empty_drop_hint_label is not None and self._empty_drop_hint_label.isVisible():
+        # Ancestor visibility is false during pre-show layout resizing. Only
+        # explicit label hiding should suppress this geometry reconciliation.
+        if self._empty_drop_hint_label is not None and not self._empty_drop_hint_label.isHidden():
             self._layout_empty_drop_hint_label()
         if self._drop_overlay is not None:
             self._drop_overlay.setGeometry(self.rect())

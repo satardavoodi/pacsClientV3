@@ -49,66 +49,121 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class ServerHTTPError(RuntimeError):
-    def __init__(self, status, message, *, error_code=None):
+    def __init__(self, status, message, *, error_code=None, rejection=None):
         super().__init__(message)
         self.status = status
         self.error_code = error_code
+        from .secretary_errors import safe_rejection
+        self.rejection = safe_rejection(rejection) if error_code == 'SERVER_PLAN_INVALID' else None
 
 
 class Client:
     def __init__(self, settings=None):
         cfg = client_settings() if settings is None else settings
+        self._connection_snapshot = dict(cfg) if settings is None else None
+        self._profile_key = hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()
         self.url = str(cfg.get('url', '')).rstrip('/')
         parsed = urllib.parse.urlsplit(self.url)
         if (parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username
-                or parsed.password or parsed.query or parsed.fragment
-                or (parsed.scheme == 'http' and parsed.hostname not in ('127.0.0.1', 'localhost', '::1'))):
-            raise ValueError('Configure an HTTPS Eagle Eye server address in Eagle Eye connection settings.')
-        self.token = os.environ.get(cfg.get('token_env', 'AIPACS_EAGLE_EYE_TOKEN'), '')
-        if not self.token and cfg.get('token_file'):
-            self.token = Path(cfg['token_file']).read_text(encoding='utf-8').strip()
-        if len(self.token) < 32:
-            raise ValueError('Configure the Eagle Eye server access token.')
-        context = ssl.create_default_context(cafile=cfg.get('ca_file') or None)
-        certificate, key = cfg.get('client_certificate'), cfg.get('client_private_key')
-        if bool(certificate) != bool(key):
-            raise ValueError('Configure both the client certificate and private key.')
-        if certificate:
-            if parsed.scheme != 'https':
-                raise ValueError('Paired clients require HTTPS.')
-            context.load_cert_chain(certificate, key)
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
-                                                 urllib.request.HTTPSHandler(context=context))
+                or parsed.password or parsed.query or parsed.fragment):
+            raise ValueError('Configure an HTTP or HTTPS Eagle Eye server address in Eagle Eye connection settings.')
+        # Ordinary Eagle access uses the current human password exchange only.
+        # Keep the attribute for saved-handle/cache compatibility, never load a
+        # legacy paired-device bearer or present a device certificate here.
+        self.token = ''
+        handlers = [urllib.request.ProxyHandler({}), NoRedirect()]
+        if parsed.scheme == 'https':
+            ca_file = cfg.get('ca_file')
+            context = ssl.create_default_context(cafile=ca_file if ca_file and Path(ca_file).is_file() else None)
+            handlers.append(urllib.request.HTTPSHandler(context=context))
+        self.opener = urllib.request.build_opener(*handlers)
 
-    def open(self, path, body=None, method=None, *, timeout=30):
+    def _check_profile(self):
+        from . import user_session
+        snapshot = getattr(self, '_connection_snapshot', None)
+        if snapshot is not None and client_settings() != snapshot:
+            user_session.clear()
+            raise ServerHTTPError(401, 'The Eagle Eye connection profile changed. Reopen the request with the current profile.',
+                                  error_code='USER_SESSION_CHANGED')
+
+    def authenticate_user(self, provider, username, password):
+        """Legacy worker entry; the server resolves authority, never a UI choice."""
+        from . import user_session
+        return user_session.authenticate(self, provider, username, password)
+
+    def refresh_human_session(self, opaque, generation):
+        """Worker-only refresh of an already captured, current native lease."""
+        with self.open('/v1/auth/session/refresh', {}, _native_session=(opaque, generation)) as response:
+            raw = response.read(32769)
+        if len(raw) > 32768:
+            raise ValueError('Session refresh response exceeds the limit.')
+        return json.loads(raw)
+
+    def open(self, path, body=None, method=None, *, timeout=30, extra_headers=None, _native_session=None):
+        from . import user_session
+        self._check_profile()
+        headers = {'Content-Type': 'application/json'}
+        if extra_headers:
+            if set(extra_headers) != {'X-CRM-Session'}:
+                raise ValueError('Unsupported protected request headers.')
+            headers.update(extra_headers)
+        generation = None
+        if _native_session is not None:
+            if path != '/v1/auth/session/refresh' or body != {} or method not in (None, 'POST'):
+                raise ValueError('Captured native session is restricted to lease refresh.')
+            opaque, generation = _native_session
+            user_session.require_native_session(self, opaque, generation)
+            headers['X-Eagle-User-Session'] = opaque
+        elif path not in ('/v1/capabilities', '/v1/auth/session'):
+            opaque, _principal, generation = user_session.session(self)
+            headers['X-Eagle-User-Session'] = opaque
         raw = None if body is None else json.dumps(body, allow_nan=False).encode()
         req = urllib.request.Request(self.url + path, data=raw, method=method,
-            headers={'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json'})
+                                     headers=headers)
+        request_generation = generation if generation is not None else user_session.identity()[0]
         try:
-            return self.opener.open(req, timeout=timeout)
+            response = self.opener.open(req, timeout=timeout)
+            if generation is not None:
+                try:
+                    user_session.require_generation(generation)
+                except ServerHTTPError:
+                    response.close()
+                    raise
+                return user_session.BoundResponse(response, generation, self._check_profile)
+            return response
         except urllib.error.HTTPError as exc:
             status = exc.code
             error_code = None
+            rejection = None
             if path == '/v1/secretary/plan':
                 # Only fixed server messages become safe codes; never export the
                 # response body, generated text, provider details or credentials.
-                messages = {
-                    'Secretary returned invalid JSON.':'SERVER_INVALID_JSON',
-                    'Secretary returned an invalid route.':'SERVER_ROUTE_INVALID',
-                    'Unsupported Secretary module.':'SERVER_ROUTE_INVALID',
-                    'Secretary answer mode returned an executable or unsupported response.':'SERVER_ANSWER_INVALID',
-                    'Invalid Secretary answer.':'SERVER_ANSWER_INVALID',
-                    'Secretary server could not complete planning.':'SERVER_UPSTREAM_FAILED',
-                }
+                from .secretary_errors import MESSAGES, safe_code, safe_rejection
                 try:
                     data = json.loads(exc.read(4097))
                     if isinstance(data, dict) and isinstance(data.get('error'), str):
-                        error_code = messages.get(data['error'])
+                        error_code = safe_code(data.get('error_code')) or MESSAGES.get(data['error'])
+                        rejection = safe_rejection(data.get('rejection'))
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass
             exc.close()
-            if path in ('/v1/echomind/process', '/v1/secretary/plan'):
-                raise ServerHTTPError(status, 'EchoMind server request failed.', error_code=error_code) from None
+            if path in ('/v1/auth/session', '/v1/auth/session/refresh') and status in (429, 503):
+                message = ('Eagle Eye sign-in is busy. Try again later.' if status == 429 else
+                           'The selected PACS or Reception identity service is unavailable. Contact the server administrator.')
+                raise ServerHTTPError(status, message, error_code=(
+                    'USER_SIGN_IN_BUSY' if status == 429 else 'USER_IDENTITY_UNAVAILABLE')) from None
+            if status in (401, 403):
+                if status == 401:
+                    if _native_session is not None:
+                        user_session.invalidate_native_session(self, *_native_session)
+                    else:
+                        user_session.clear_if_current(request_generation)
+                message = ('Sign in to PACS or Reception before using Eagle Eye.' if status == 401 else
+                           'Your Eagle Eye user or module access has not been approved. Contact the server administrator.')
+                raise ServerHTTPError(status, message, error_code=(
+                    'USER_SIGN_IN_REQUIRED' if status == 401 else 'USER_ACCESS_DENIED')) from None
+            if path in ('/v1/echomind/process', '/v1/secretary/plan', '/v1/imaging/lumbar-vision'):
+                raise ServerHTTPError(status, 'EchoMind server request failed.', error_code=error_code, rejection=rejection) from None
             if status == 429:
                 raise RuntimeError('The Eagle Eye server or this client has reached its job limit. Try again later.') from None
             if status == 409 and path == '/v1/jobs':
@@ -118,6 +173,9 @@ class Client:
                 raise ValueError('The server rejected this analysis or correction. Verify its source and access.') from None
             raise RuntimeError('Eagle Eye server request failed. Check the connection and server job status.') from None
         except (urllib.error.URLError, OSError):
+            if _native_session is not None and path == '/v1/auth/session/refresh':
+                raise ServerHTTPError(503, 'The native session renewal connection is unavailable.',
+                                      error_code='USER_IDENTITY_UNAVAILABLE') from None
             raise RuntimeError('Eagle Eye server request failed. Check the connection and server job status.') from None
 
     def json(self, path, body=None, method=None):
@@ -132,13 +190,17 @@ class Client:
                                 study_uid=study_uid, series=series, parameters=parameters))
         if cancel is not None and cancel.is_set():
             raise RuntimeError('Analysis cancelled.')
+        from . import user_session
+        _, principal, generation = user_session.session(self)
         directory = Path(destination).resolve() / '.eagle-eye-jobs'
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / (request['request_id'] + '.json')
         handle = {'version': 1, 'server': self.url,
                   'credential_binding': hashlib.sha256(self.token.encode()).hexdigest(),
+                  'human_binding': hashlib.sha256(principal.encode()).hexdigest(),
                   'request': request, 'job_id': None}
         save_handle(path, handle)  # Before POST: a lost acknowledgement is reconcilable.
+        user_session.require_generation(generation)
         return self._observe(handle, path, destination, cancel=cancel, progress=progress, timeout=timeout)
 
     def case_snapshot(self, reference, *, offset=0):
@@ -203,6 +265,9 @@ class Client:
             if size != state['artifact_bytes'] or digest(archive) != state['artifact_sha256']:
                 raise ValueError('Saved artifacts are incomplete or changed.')
             result = unpack(archive, temporary / 'result', request)
+            from . import user_session
+            user_session.require_generation(self._human_generation)
+            self._check_profile()
             if cancel and cancel.is_set():
                 raise RuntimeError('Saved result retrieval cancelled.')
             (temporary / 'result').rename(target)
@@ -227,6 +292,10 @@ class Client:
         if (handle.get('version') != 1 or handle.get('server') != self.url or
                 handle.get('credential_binding') != hashlib.sha256(self.token.encode()).hexdigest()):
             raise ValueError('Saved analysis belongs to another server or credential.')
+        from . import user_session
+        _, principal, _generation = user_session.session(self)
+        if handle.get('human_binding') != hashlib.sha256(principal.encode()).hexdigest():
+            raise ValueError('Saved analysis belongs to another user or has no verified human binding.')
         handle['request'] = validate(handle['request'])
         return self._observe(handle, path, destination, cancel=cancel, progress=progress, timeout=timeout)
 
@@ -240,6 +309,8 @@ class Client:
         try:
             # Repeating the same owner/request ID reconciles an uncertain POST.
             job = self.json('/v1/jobs', request)
+        except ServerHTTPError:
+            raise
         except RuntimeError:
             raise DetachedAnalysis(handle_path) from None
         job_id = job.get('job_id', '')
@@ -260,6 +331,8 @@ class Client:
                     raise DetachedAnalysis(handle_path)
                 try:
                     state = self.json(endpoint)
+                except ServerHTTPError:
+                    raise
                 except RuntimeError:
                     raise DetachedAnalysis(handle_path) from None
                 if state.get('study_uid') != study_uid or state.get('module') != module:
@@ -298,6 +371,9 @@ class Client:
                 if size != state['artifact_bytes'] or digest(archive) != state['artifact_sha256']:
                     raise ValueError('Downloaded analysis artifacts are incomplete or changed.')
                 result = unpack(archive, temporary / 'result', request)
+                from . import user_session
+                user_session.require_generation(self._human_generation)
+                self._check_profile()
                 if cancel.is_set():
                     raise RuntimeError('Analysis cancelled.')
                 (temporary / 'result').rename(target)
@@ -307,6 +383,8 @@ class Client:
                 (target / 'result.json').write_text(json.dumps(result, allow_nan=False), encoding='utf-8')
                 completed = True
                 return result
+            except ServerHTTPError:
+                raise
             except (OSError, RuntimeError):
                 if cancel.is_set():
                     raise

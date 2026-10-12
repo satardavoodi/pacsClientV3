@@ -664,3 +664,302 @@ and preserving selected slide. Live source GUI remains unverified: local control
 ping unavailable. No running app was restarted or live database modified. Startup
 migration takes effect on the next normal source launch. Bounded source backup:
 C:/Users/Dr.Alizadeh/AppData/Local/AI-PACS/task-backups/education-slide-covers-20260929.
+
+
+### 2026-10-09 - Shared Secretary/MCP text course authoring (OPT-61)
+
+Eight typed commands prepare, inspect, revise, load, save, check operation status,
+open Build Course and preview a local text course. Actual draft handles and optimistic
+revisions preserve corrections in the same course. SQLite writes and snapshot reads
+run on a bounded worker; an atomic transaction and durable request receipt prevent
+partial courses and duplicate successful retries. Existing media and unknown metadata
+are retained. External/manual edits and unsaved human editor changes block overwrite.
+Initial command editor loading consumes a prepared snapshot without GUI database reads.
+Failed UI completion remains failed when polled again.
+
+Planning and course-writing instructions remain in the Eagle Eye Server catalog;
+the local shared CommandBus executes validated proposals. MCP advertises the same
+registered actions and schemas. The test-control tool redacts authoring bodies from
+generic receipts. No client-direct AI route, generated code execution, DICOM import,
+patient matching, medical image interpretation or publishing is added by this slice.
+
+Synthetic regression suites: tests/code/education/test_command_authoring.py and
+tests/code/echomind/test_course_authoring_commands.py. Initial service guards failed
+before implementation because the service did not exist. The first broad verification
+passed 277 tests with one pre-existing quarantined xfail; final verification is recorded
+in the protected session receipt. Production voice acceptance and source live GUI are
+pending: the existing local Test Control Server ping was unavailable. The human has
+been asked to launch and sign in to one source TestServer instance outside clinical work.
+No running application or active Eagle Eye service is restarted by this work.
+
+Developer backup and synchronization evidence is protected outside the repository at
+C:/Users/Dr.Alizadeh/Documents/AI-PACS Courses/ICR41-OCD-Staging/developer-backup-20261009.
+Source parity and activation are separate gates; do not infer active deployment from
+an updated non-running Developer candidate.
+
+
+Final session state (2026-10-09): local broad verification passed 294 tests,
+with two skipped staged-build checks and one existing quarantined xfail.
+After catalog line-ending correction, the focused selection passed 37 tests.
+The non-running server candidate initially passed 71 tests and a declared
+8,392-file / 14-engine-file audit. Concurrent local Secretary conversation work
+then changed service.py and introduced conversation.py while parity was being
+verified. A repeated copy exposed the missing conversation dependency on the
+candidate. That incidental service copy is backed up and the candidate is restored
+to the independently tested course-authoring service overlay; unrelated local work
+is preserved. The protected final receipt records the repeated candidate test.
+
+Full two-way Developer parity and build handoff are BLOCKED until the concurrent
+Secretary conversation slice and its dependencies/mirrors are reconciled by its
+owner. This slice does not claim completed synchronization, live GUI acceptance,
+active server catalog deployment or end-to-end spoken-command acceptance.
+The global plugin verifier additionally reports three unrelated existing/in-progress
+mismatches (memory_store.py, orchestrator.py, remote_planner.py); owned course-authoring
+mirrors match. No unrelated payloads are synchronized to resolve that gate.
+
+
+### 2026-10-09 - Unified Add Item and composed multimedia (OPT-61)
+
+New items expose four choices: Multimedia, PDF, PowerPoint and DICOM Image Set.
+Multimedia stores optional formatted teaching text plus one optional image/audio/video
+source in a single content_data object. Six layouts (text, media right/left, text
+above/below media, media only), three color themes, custom background color, title
+position, font family/size, headings, bold/italic, alignment, text color and bullet/
+numbered lists are available. Layout changes retain content; clearing media retains
+text. Background-image authoring and arbitrary multi-object canvas editing are not
+implemented in this slice.
+
+PDF uses the full content width and FitToWidth, with an optional item title above or
+below. PowerPoint import uses the existing isolated LibreOffice converter on an owned
+QThread, then copies both the original and resulting PDF into managed course assets.
+The accepted payload points to the PDF and nests the original under original.path
+so existing portable asset traversal retains both. Conversion failure publishes no
+payload; the dialog remains editable. This is a static preview, not animation playback.
+Legacy individual text/image/audio/video and imported resource types retain their
+saved type and metadata when reopened; only the new-item picker is simplified.
+DICOM references and folder imports retain the existing separate pipeline.
+
+The current educational viewer composes its existing media stack with a formatted
+text region. Formatting is allowlisted; embedded HTML files, images, scripts and links
+are not accepted through rich-text paste. Actual media uses managed file selection.
+The shared Secretary/MCP course service creates Multimedia for new text items and
+updates existing Multimedia text in place, preserving media/layout metadata. A changed
+plain-text command clears obsolete rich_text so stale formatting cannot conceal its
+correction. Formatting-only commands and media-path transport are not added to the
+server action schema by this slice.
+
+Verification: four initial guards failed before implementation. The final local
+Education/authoring-command/builder selection passed 218 tests, with two skipped
+staged-build checks and one existing quarantined xfail. Ten focused new guards passed,
+including real Qt composition geometry, the actual viewer dispatch method, rich-text
+reopening, worker import failure and retained media under command correction.
+All 520 canonical/plugin mirror pairs matched after owned-file synchronization.
+A synthetic actual LibreOffice conversion and PDF readback receipt is recorded in the
+protected session folder when available. The standalone Qt composition was visually
+inspected; this does not replace the required live source acceptance.
+
+Source GUI acceptance remains pending: the documented test-control ping cannot reach
+AIPACS_TEST_Dr_Alizadeh. The human has been asked to launch one source TestServer and
+sign in outside clinical work; no installed app, clinical service or recording is
+restarted. Developer parity and remote verification are tracked separately in
+C:/Users/Dr.Alizadeh/Documents/AI-PACS Courses/multimedia-backup-20261009.
+No installer/build acceptance is claimed.
+
+
+Multimedia final Developer evidence: the previously selected Developer source is now
+executing, so it was not modified. A separate non-activated Education candidate was
+staged from its current verified source inventory plus the owned delta. Both sides
+matched 8,398 declared source files and 14 required engine assets before the final
+document-receipt update. The server feature suite passed 206 tests with one existing
+quarantined xfail; the two owned plugin/file-set guards passed. The broader server
+selection had four config-template failures, 213 passes, three skips and one xfail:
+config/ was intentionally excluded to preserve host-private runtime state, so those
+release-template checks cannot qualify this isolated candidate for a build. Source
+parity excludes host config, identities, databases, logs and the shared interpreter
+environment; it does not assert installer/config-template readiness.
+
+Actual LibreOffice conversion of a one-slide synthetic presentation passed, including
+PDF text/page readback and retention of the original file. Actual Qt dialog and
+composition captures were inspected with an explicitly loaded font because the
+standalone offscreen platform has no default system-font inventory. This is synthetic
+rendering evidence, not the pending live source application gate. The final acceptance
+state remains: code and owned payloads verified; Developer snapshot parity recorded;
+active server unchanged; live Client workflow and build handoff pending.
+
+
+### 2026-10-09 - Compact teaching viewport and audience display (OPT-61)
+
+The instructor photograph exposed UTF-8 mojibake in Review, navigation and zoom
+labels, plus three redundant title/header rows above composed teaching content.
+Review/navigation controls now use ASCII labels, secondary Review buttons have
+subdued contrast, and duplicate content/presenter/media headings no longer reserve
+viewport height. The slide's authored title remains visible. Existing slide/resource
+selection and collapse behavior are preserved.
+
+Present moves the existing composed media surface into a full-screen audience
+window on the first other screen (or the current screen when only one is present).
+It does not create another player, PDF decoder, course database or clinical viewer.
+The workstation retains slide/resource selection, reviews, timer and media toolbar;
+Escape, End presentation, output-screen removal and owner close restore the surface.
+Arrow/Page keys use the existing slide navigation. DICOM is deliberately retained
+in its original execution domain; selecting it blanks previous audience media and
+displays an explicit workstation-viewer message. DICOM audience output is not
+implemented or qualified by this change.
+
+Four targeted guards failed before production edits. The Education suite passed
+199 tests with one pre-existing quarantined xfail and six SWIG warnings. Following
+final parent/keyboard cleanup, the focused presenter/navigation/multimedia/builder
+selection passed 35 tests, with one staged-build skip and three deselections.
+Synthetic Qt rendering and restoration are separate from real two-monitor/source
+application acceptance. The documented local control bridge and live GUI result,
+Developer source parity, activation and packaging are recorded separately below.
+No installer or build is produced. Protected exact-file backups are under
+C:/Users/Dr.Alizadeh/Documents/AI-PACS Courses/presenter-ui-backup-20261009.
+
+Final presenter follow-up: a fifth regression demonstrated that the workstation's
+broad QWidget theme painted the composed content host black despite its selected
+background. Host/title backgrounds are now transparent; the corrected pixel guard
+fails against the protected baseline and passes against the current surface.
+Actual Qt layout captures were inspected for compact controls, authored color,
+original Radiopaedia image and content-only audience rendering. These captures
+use a synthetic host, not the live clinical application. The final combined local
+Education/course-command/session-source selection passed 220 tests with one existing
+quarantined xfail and six SWIG warnings. The current Test Control ping is unavailable
+(AIPACS_TEST_Dr_Alizadeh has no listener); live source and physical-display acceptance
+remain pending. No source GUI or service was restarted for this slice.
+
+The final theme guard captures the containing workstation, not only the child
+widget: QWidget.grab() can paint a child background even when normal ancestor
+painting does not. WA_StyledBackground plus transparent host/title now preserves
+the selected color in the actual containing-window capture. The containing-window
+guard failed before that final attribute and passes afterward.
+
+### Presenter identity and composed text sizing (2026-10-09, OPT-61)
+
+Presenter identity now occupies the Items heading, with plain text and wrapping. Multimedia exposes A-/A+ beside image controls; text and title scale together within bounded view-only limits, preserving rich formatting and relative sizes. Each slide starts at its authored size. Image zoom and saved course payloads remain independent. Two failing-before guards reproduced hidden identity and missing composed zoom. Live source GUI acceptance remains pending.
+
+### Readable Items browser (2026-10-09, OPT-61)
+
+The fixed 432px Items column left most width unused in Resources. A non-collapsible horizontal splitter now allocates 60% to Items by default and permits manual resizing. Items use 16px type, wrapped titles and taller rows; section headings use 14px. Expanded dock height is 240-280px; hiding slides still restores content space. Resources retain drag, selection, wrapping and scrolling with no new count restriction. The actual-layout guard failed before the change (420px Items versus 984px Resources) and passes at 1500px and 1050px owner widths. Live source GUI acceptance remains pending; Test Control Server is unavailable. Both Client/Server Education payload inputs are synchronized; no installer produced.
+
+### Image zoom rendering (2026-10-09, OPT-61)
+
+The QGraphicsPixmapItem defaulted to FastTransformation despite the enclosing view smooth-pixmap render hint. Explicit SmoothTransformation now interpolates visible pixels from the unchanged original pixmap. FullViewportUpdate redraws the small teaching-image surface after transform/pan, avoiding dependence on partial dirty rectangles. Scene bounds use the item logical rectangle, respecting device pixel ratio. Fit retains aspect ratio and full image; zoomed content outside the viewport remains accessible by pan/scroll. Synthetic pixel guards cover interpolation through zoom cycles, unchanged source pixels, high-DPI bounds and pan-visible regions. The interpolation guard failed before the fix. Source GUI acceptance remains pending. No changes to DICOM rendering domains or image assets.
+
+### Responsive numbered slide cards (2026-10-09, OPT-61)
+
+Replace long full-width Items rows with numbered cards in two columns when the Items pane has at least 600px usable width, otherwise one column. Cards use 18px wrapped titles and 32px number badges, 88px grid rows, static ordering and full-title tooltips. The small SlideSelector widget owns resize/layout behavior; the course viewer retains selection/navigation. Resources and content rendering remain unchanged. The actual-footer two-column guard failed before the change; synthetic selector guards cover wide/narrow reflow, actual mouse selection, unchanged order and scrolling. Visually inspected the actual layout render. Live source GUI remains pending because the documented test bridge is unavailable. Client/Server build inputs synchronized, no installer produced.
+
+### Scoped media arrow navigation (2026-10-09, OPT-61)
+
+Add an owner-scoped Qt event filter for unmodified arrows while the Education media page is active. Left/Right select previous/next slides; Up/Down select and open previous/next resources through the existing item-dispatch generation guard. Boundaries do not wrap or reload. ShortcutOverride prevents duplicate/conflicting child shortcuts, including the audience window. DICOM page and selected DICOM payloads bypass interception, including the deferred-switch interval. Editable fields, modifiers, modal dialogs and popups retain their keys; unrelated windows are outside scope. The QObject is viewer-owned and removed with it. Synthetic real-key tests cover routing, boundaries, resource dispatch, modified keys, field editing, audience shortcut precedence, and DICOM cursor-key pass-through. Initial guard failed before implementation; source GUI acceptance pending (documented control bridge unavailable). No clinical viewer key handlers changed. Client/Server Education payload inputs synchronized; no installer produced.
+
+### Course content cleanup and uncropped covers (2026-10-09, OPT-61)
+
+User-authorized maintenance reviewed 14 local courses. The private transaction converted 11 legacy text resources to multimedia, retained original payloads in metadata, preserved an archive as an accessible attachment, normalized resource order in 52 slides and split eight oversized resource groups into continuation slides. Two incomplete wrist courses received draft title items and covers only; no clinical findings or cases were invented. All 195 resulting slides have readable thumbnails; 186 new slide thumbnails include 168 from existing imaging/media and 18 conceptual anatomy previews. Existing case/image/DICOM payloads and original files were preserved. Backups, planned/readback inventories and receipts remain outside source in the protected course-maintenance directory. No patient material is copied into Developer synchronization.
+
+ModernCourseCard used KeepAspectRatioByExpanding in a 168px square and left-aligned the box. Legacy CourseCardWidget also expanded images into a shorter region shared with badges, causing clipping. Both cards now contain the full image; the modern card is centered with an inset for its border, and the legacy image region is bounded to the actual space above badges. Build Course cover previews also preserve aspect ratio. Four wide/portrait Qt card guards failed before the fit change, and two centering guards failed before the alignment change. Actual saved conceptual course covers were rendered offscreen to inspect the fit; this is not live GUI acceptance.
+
+Source GUI acceptance remains pending: documented control client ping returned QLocalSocket Invalid name. Concurrent server-console Developer differences were observed outside Education; the protected parity receipt distinguishes owned Education hashes from unresolved whole-snapshot parity and blocks build handoff while reconciliation is pending. No service restart or installer build was performed.
+
+
+### Education selection clearing (2026-10-09)
+
+OPT-61: Slide/resource navigation now retires the previous thumbnail build and DICOM load requests, clears the study rail and identity, and uses the existing viewer teardown before displaying new content. Empty resources and empty courses invalidate pending media callbacks and show an empty presentation message. Stored course content and DICOM files are unchanged. The empty-resource regression failed before the fix; focused navigation guards pass. Source GUI acceptance is pending because the local test-control socket is unavailable. Full Developer parity and build handoff remain blocked by the previously recorded concurrent server-console deltas; no service was activated.
+
+
+### Responsive Education filters (2026-10-10)
+
+OPT-61: Library and downloaded-course filter sidebars previously constrained two columns to 300 pixels without scrolling. The fail-before geometry guard found 126-pixel controls requiring 208 pixels for their full labels. The shared FilterPanel now uses a resizable scroll viewport, preserves checkbox/group minimum geometry, and selects one or two columns from current label size hints and available viewport width. Short windows scroll rather than compress rows. Clear Filters can grow vertically with font metrics. Synthetic geometry checks cover heights 400/650/900, widths 260/300/440 and 12/18-point text; selection and clearing survive reflow. No database or clinical viewer changes. Live source GUI acceptance remains pending: the documented test-control socket is unavailable. No installed executable, service activation or release build was used. Complete Developer parity remains blocked by concurrent source deltas; owned source is staged separately with hashes.
+
+
+### Education lifecycle diagnostics (2026-10-10)
+
+OPT-61: Added normal-operation, PHI-free sidebar lifecycle/worker timings and Education import/page/query/card/event-loop timing. Coordinated with fix 1; no renderer retry or root-cause claim. See [diagnostic contract](EDUCATION_CONTENT_DIAGNOSTICS_2026-10-10.md). Synthetic guards cover cancellation, invalidation, visibility and native destruction. Live source and installed ARM acceptance remain pending.
+
+
+### OPT-61 - Education lazy tabs (2026-10-10)
+
+The owner separated click-to-open Education delay from DICOM. The shell now creates lightweight slots; only the selected page is built on demand, with retained state and real-widget compatibility for Secretary and deep links. Import refresh touches loaded pages only. Six shell guards and a Settings refresh guard failed before implementation; twelve synthetic cases cover lifecycle, selection, retry and availability. See [scope and evidence](EDUCATION_LAZY_TABS_2026-10-10.md). Live source/installed ARM and complete Developer reconciliation remain pending; no prewarm, activation or release.
+
+
+### Education workspace layout follow-up (2026-10-10, OPT-61)
+
+Library card columns previously used stale pre-layout viewport dimensions. Reflow now
+observes viewport resize and moves existing cards without rebuilding selection state.
+Details width can grow from 340 to 540 pixels; course actions live outside the details
+scroll area, and cover images fit within 360 by 180 pixels without cropping. Build
+Course uses available width up to 1440 pixels and top-aligned form fields instead of
+stretching gaps between controls. No course database migration or viewer changes.
+
+Guard: `tests/code/education/test_workspace_layout.py` (three failures before the fix,
+three passes after). Full Education suite recorded in the protected layout receipt.
+Source GUI control ping unavailable (QLocalSocket invalid name); live GUI acceptance
+and installed ARM acceptance remain pending. No installer produced or activated.
+Developer/Razi reconciliation remains pending; historical lazy-tab candidate is unchanged.
+
+
+### Unified course presentation shell (2026-10-10, OPT-61)
+
+The preflight window was 1280x800 before any content existed. It now opens at
+640x320 with navigation hidden until the live viewer starts. Library Open Course
+uses the same independent viewer shell as Build Course Preview / Present; a clean
+preflight starts it automatically, while missing-resource issues remain reviewable.
+Present offers single-monitor fullscreen or an explicitly selected audience screen.
+The dual-display host moves the existing viewer, retaining the DICOM execution
+session, and keeps the Education item/resource footer on the controller. The viewer's
+imaging tools remain with the viewer. Closing the audience host or removing its
+screen restores the viewer; no duplicate decoding session is created.
+
+Guards in test_presenter_tasks.py: two new failures before implementation; compact
+preflight and single-monitor guards pass after, plus audience-host restoration.
+Synthetic offscreen checks do not establish physical two-monitor or clinical GUI
+acceptance. Source control bridge unavailable; live GUI, physical screen unplug,
+Developer/Razi reconciliation and installed ARM acceptance remain pending. No build,
+activation or installed executable changes performed.
+
+
+### OPT-61 Education manual DICOM viewport admission (2026-10-10)
+
+Owner requested no automatic first-series display when selecting an Education DICOM
+resource. The course shell now starts without resolving/preloading its first future
+DICOM study. Folder, study and explicit-series resources establish the selected
+study identity, activate the existing controller, create empty comparison viewports
+and populate the full shared thumbnail rail. They no longer call the synchronous
+single-series loader or change_series_on_viewer during resource selection. Explicit
+series metadata remains stored but does not trigger display; thumbnail selection or
+drag uses the unchanged viewer route. Existing selection clearing retires old viewer
+requests before building the empty layout, so the prior case cannot remain visible.
+Normal workstation patient-open behavior is outside this Education-only change.
+
+Three changed navigation guards failed before the runtime edit; after it, the full
+Education suite reports 254 passed and one existing quarantined xfail. Source/payload
+mirror verification reports 528 pairs matching. Full series inventory, revisits and
+selection-clearing guards remain green. No field latency claim is made. Fresh source
+GUI observation and actual mouse/OLE drag, local/Razi Developer parity and installed
+artifact acceptance remain pending. No release or remote activation performed.
+
+
+### OPT-61 Education presentation branding (2026-10-10)
+
+Added the existing AI-PACS SVG logo and AI-PACS wordmark in a compact, right-aligned
+footer beneath the resource list. It participates in layout rather than overlaying
+resource cards, ignores mouse input, and follows footer collapse and dual-display
+controller placement. Existing logo is reused from IMAGES_LOGIN_PATH; no new asset
+or network request. Guard verifies logo availability, wordmark, visible placement
+below resources, resize, and collapse without losing slide selection. Guard failed
+before implementation; 23 presenter/navigation/task checks pass after. Education
+source/payload hashes match. Global mirror check observes four unrelated EchoMind
+drifts; those were not changed or swept. Synthetic offscreen geometry checked; live
+source GUI and full Developer/Razi parity remain pending. No installer/activation.
+
+
+### 2026-10-11: OPT-61 bounded card work and stable presentation
+
+The initial Library/My Courses path constructed every card and decoded cover files on the GUI thread. Card creation now yields between entries; cover QImage decoding uses the existing two-worker AuthoringThumbnails pool, with GUI-owned QPixmap delivery and cancellation/generation checks. Search/filter semantics are unchanged. A replacement filter cancels the old grid generation.
+
+First live source acceptance showed Library construction at 166 ms versus about 1.5 s previously, but the user reported visibly jumping cards. That timing alone is not a UX pass. The follow-up keeps an opaque, stationary loading surface over the grid while cards and covers settle, then reveals the populated grid together. It tracks resize and covers the scrollbars as well as partial cards. The cover wait has a two-second bound; missing/corrupt covers retain their fixed-size placeholder. No artificial animation, forced repaint, nested event loop, or clinical thumbnail pipeline was added. A 150 ms minimum prevents a loading-label flash on very short builds. Rendering remains incremental behind the surface.
+
+Synthetic identical 14-cover runs measured maximum GUI heartbeat gap about 695 ms before versus 49 ms after the first slice; wall time about 705 versus 422 ms. These are synthetic local measurements, not clinical or installed acceptance. Actual first-slice card maxima reached 165 ms. New stable-presentation acceptance requires a fresh source process; the currently open process predates that follow-up. Guards: `test_card_grid_responsiveness.py`, `test_course_cover_fit.py`. Education mirrors must be synchronized for the next build. Server Developer activation and complete snapshot parity remain separate gates.
+
+Verification update (2026-10-11): combined Education/MPR checks finished with 508 passed and one pre-existing quarantined xfail; final focused checks passed 16/16. Education mirrors verified 531/531. Immutable Razi review delta verified 16/16 hashes, without active-source changes; complete snapshot parity and fresh GUI acceptance remain pending.

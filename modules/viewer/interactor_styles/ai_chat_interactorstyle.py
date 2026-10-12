@@ -45,8 +45,8 @@ def _eagle_worker_lifecycle_enabled() -> bool:
     Guards the crash-hardening for the Eagle Eye MG/DX server workers:
       * a re-entrancy guard (no duplicate concurrent run for the same study), and
       * keeping every started QThread strongly referenced until it ACTUALLY
-        finishes, so it can never be garbage-collected — or deleted with its
-        parent — while still running (that is a Qt `qFatal`/abort =
+        finishes, so it can never be garbage-collected â€” or deleted with its
+        parent â€” while still running (that is a Qt `qFatal`/abort =
         "the Python process crashes").
     """
     raw = os.environ.get("AIPACS_EAGLE_WORKER_LIFECYCLE")
@@ -62,10 +62,10 @@ def _eagle_worker_lifecycle_enabled() -> bool:
 # never `deleteLater()`-d. Two consequences, both of which abort the interpreter
 # with "QThread: Destroyed while thread is still running":
 #   1. A SECOND Eagle Eye run overwrote `_current_worker = worker` while the first
-#      thread was still talking to the server → the first thread's refcount hit 0
-#      → Python GC finalized a *running* QThread → Qt calls abort().
+#      thread was still talking to the server â†’ the first thread's refcount hit 0
+#      â†’ Python GC finalized a *running* QThread â†’ Qt calls abort().
 #   2. Closing the patient / tab mid-request deleted the style object, dropping the
-#      only ref to the running thread — same abort.
+#      only ref to the running thread â€” same abort.
 # The set below keeps a process-level strong ref to every started worker until it
 # emits finished/error, so neither can happen. Same proven idiom as EchoMind's
 # `_ORPHANED_WORKERS` (ai_chat_pages.py) and the documented curved-MPR
@@ -74,7 +74,7 @@ _LIVE_AI_WORKERS: set = set()
 
 
 def _retire_ai_worker(worker) -> None:
-    """A worker finished on its own — drop the process-level ref and let Qt free it."""
+    """A worker finished on its own â€” drop the process-level ref and let Qt free it."""
     try:
         _LIVE_AI_WORKERS.discard(worker)
     except Exception:
@@ -162,7 +162,7 @@ class MGCSVSelectionDialog(QDialog):
             "Threshold"
         ])
 
-        # ✅ درستِ enumها
+        # âœ… ط¯ط±ط³طھظگ enumظ‡ط§
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -238,17 +238,17 @@ class AISettingsDialog(QDialog):
         root = QVBoxLayout(self)
 
         # icon_lbl = QLabel(header_row)
-        # 1) اگر آیکون داخل qrc است (طبق پروژه‌ات که /icons داری):
-        # pix = QPixmap(":/icons/ai_settings.png")  # ← مسیر آیکون خودت
-        # 2) یا اگر فایل است:
-        # pix = QPixmap(f"{IMAGES_LOGIN_PATH}/icon.jpg")  # ← مسیر آیکون خودت
+        # 1) ط§ع¯ط± ط¢غŒع©ظˆظ† ط¯ط§ط®ظ„ qrc ط§ط³طھ (ط·ط¨ظ‚ ظ¾ط±ظˆعکظ‡â€Œط§طھ ع©ظ‡ /icons ط¯ط§ط±غŒ):
+        # pix = QPixmap(":/icons/ai_settings.png")  # â†گ ظ…ط³غŒط± ط¢غŒع©ظˆظ† ط®ظˆط¯طھ
+        # 2) غŒط§ ط§ع¯ط± ظپط§غŒظ„ ط§ط³طھ:
+        # pix = QPixmap(f"{IMAGES_LOGIN_PATH}/icon.jpg")  # â†گ ظ…ط³غŒط± ط¢غŒع©ظˆظ† ط®ظˆط¯طھ
         #
         # if not pix.isNull():
         #     # DPI-friendly scaling
         #     icon_lbl.setPixmap(pix.scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         # else:
-        #     # fallback اگر پیدا نشد
-        #     icon_lbl.setText("🟦")
+        #     # fallback ط§ع¯ط± ظ¾غŒط¯ط§ ظ†ط´ط¯
+        #     icon_lbl.setText("ًںں¦")
         #     icon_lbl.setStyleSheet("font-size:22px;")
 
         # title_lbl = QLabel("AI Analysis Settings", header_row)
@@ -265,7 +265,7 @@ class AISettingsDialog(QDialog):
         # bar.setStyleSheet("color:#235bc0;")
 
         # Section title
-        # sec = QLabel("🔎  Detection Parameters")
+        # sec = QLabel("ًں”ژ  Detection Parameters")
         # sec.setStyleSheet("font-weight:600; margin-top:8px;")
 
         # Slider row
@@ -290,7 +290,7 @@ class AISettingsDialog(QDialog):
         row.addWidget(self.val)
 
         # Range hint
-        hint = QLabel("Range: 0.0 – 1.0  |  Recommended: 0.45")
+        hint = QLabel("Range: 0.0 â€“ 1.0  |  Recommended: 0.45")
         hint.setStyleSheet("color:#8aa0bd; font-size:12px;")
 
         # Buttons
@@ -315,31 +315,31 @@ class AISettingsDialog(QDialog):
         # live update
         self.slider.valueChanged.connect(lambda v: self.val.setText(f"{v/100:.2f}"))
 
-        # پس از:
+        # ظ¾ط³ ط§ط²:
         eagle_path = str(IMAGES_LOGIN_PATH / 'Eagle-eye2.png')
 
-        # برای QSS بهتر است مسیر اسلش رو به جلو باشد
+        # ط¨ط±ط§غŒ QSS ط¨ظ‡طھط± ط§ط³طھ ظ…ط³غŒط± ط§ط³ظ„ط´ ط±ظˆ ط¨ظ‡ ط¬ظ„ظˆ ط¨ط§ط´ط¯
         _eagle = eagle_path.replace("\\", "/")
         
         # Debug: print path to verify
         print(f"Eagle Eye image path: {_eagle}")
 
-        # [جایگزین کاملِ استایل قبلی]
+        # [ط¬ط§غŒع¯ط²غŒظ† ع©ط§ظ…ظ„ظگ ط§ط³طھط§غŒظ„ ظ‚ط¨ظ„غŒ]
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"""
-            /* بک‌گراند با تصویر عقاب + رنگ پشتیبان */
+            /* ط¨ع©â€Œع¯ط±ط§ظ†ط¯ ط¨ط§ طھطµظˆغŒط± ط¹ظ‚ط§ط¨ + ط±ظ†ع¯ ظ¾ط´طھغŒط¨ط§ظ† */
             QDialog {{
                 border-image: url("{_eagle}") 0 0 0 0 stretch stretch;
-                background-color: #0f172a;  /* fallback در صورت نبود تصویر */
+                background-color: #0f172a;  /* fallback ط¯ط± طµظˆط±طھ ظ†ط¨ظˆط¯ طھطµظˆغŒط± */
             }}
 
-            /* متن‌ها شفاف بمانند تا بک‌گراند دیده شود */
+            /* ظ…طھظ†â€Œظ‡ط§ ط´ظپط§ظپ ط¨ظ…ط§ظ†ظ†ط¯ طھط§ ط¨ع©â€Œع¯ط±ط§ظ†ط¯ ط¯غŒط¯ظ‡ ط´ظˆط¯ */
             QLabel {{
                 color:#e6edf3;
                 background: transparent;
             }}
 
-            /* استایل‌های قبلی‌ات (بدون پس‌زمینه‌ی مات) */
+            /* ط§ط³طھط§غŒظ„â€Œظ‡ط§غŒ ظ‚ط¨ظ„غŒâ€Œط§طھ (ط¨ط¯ظˆظ† ظ¾ط³â€Œط²ظ…غŒظ†ظ‡â€ŒغŒ ظ…ط§طھ) */
             QSlider::groove:horizontal {{
                 height:6px; background:#334155; border-radius:4px;
             }}
@@ -472,7 +472,7 @@ class MamoWorker(QThread):
 
     def _save_binary(self, url: str, out_path: Path, headers: dict | None = None, timeout: int = 60):
         """
-        نسخه modify‌شده برای چک cancel در حلقه دانلود.
+        ظ†ط³ط®ظ‡ modifyâ€Œط´ط¯ظ‡ ط¨ط±ط§غŒ ع†ع© cancel ط¯ط± ط­ظ„ظ‚ظ‡ ط¯ط§ظ†ظ„ظˆط¯.
         """
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with requests.get(url, headers=headers, stream=True, timeout=timeout) as r:
@@ -567,9 +567,9 @@ class BoneAgeWorker(QThread):
 
     def _save_result_json(self, data: dict):
         """
-        ذخیره نتیجه‌ی bone age در یک JSON:
+        ط°ط®غŒط±ظ‡ ظ†طھغŒط¬ظ‡â€ŒغŒ bone age ط¯ط± غŒع© JSON:
         Canonical keys + legacy compatibility keys.
-        مسیر: ATTACHMENT_PATH / <study_uid> / bone_age.json
+        ظ…ط³غŒط±: ATTACHMENT_PATH / <study_uid> / bone_age.json
         """
         try:
             # Canonical, stable schema for DX bone-age results.
@@ -608,7 +608,7 @@ class BoneAgeWorker(QThread):
                 # Legacy keys (kept for backward compatibility)
                 "predicted_bone_age_months": canonical_months,
                 "predicted_bone_age_years": canonical_years,
-                # چون این Worker فقط برای DX استفاده می‌شود، مودالیتی را ثابت DX می‌گذاریم
+                # ع†ظˆظ† ط§غŒظ† Worker ظپظ‚ط· ط¨ط±ط§غŒ DX ط§ط³طھظپط§ط¯ظ‡ ظ…غŒâ€Œط´ظˆط¯طŒ ظ…ظˆط¯ط§ظ„غŒطھغŒ ط±ط§ ط«ط§ط¨طھ DX ظ…غŒâ€Œع¯ط°ط§ط±غŒظ…
                 "modality": "DX",
             }
 
@@ -655,11 +655,11 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         super().__init__(image_viewer)
         self.image_viewer = image_viewer
         self.patient_widget = None
-        # نگه داشتن رفرنس به worker ها برای جلوگیری از gc
+        # ظ†ع¯ظ‡ ط¯ط§ط´طھظ† ط±ظپط±ظ†ط³ ط¨ظ‡ worker ظ‡ط§ ط¨ط±ط§غŒ ط¬ظ„ظˆع¯غŒط±غŒ ط§ط² gc
         self._current_worker = None
 
     # ------------------------------------------------------------------
-    # Eagle Eye worker lifecycle (crash-hardening — see _LIVE_AI_WORKERS)
+    # Eagle Eye worker lifecycle (crash-hardening â€” see _LIVE_AI_WORKERS)
     # ------------------------------------------------------------------
     def _ai_worker_busy(self) -> bool:
         """True while an Eagle Eye MG/DX worker for this style is still running."""
@@ -669,7 +669,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         try:
             return bool(w.isRunning())
         except RuntimeError:
-            # underlying C++ QThread already gone → treat as not busy
+            # underlying C++ QThread already gone â†’ treat as not busy
             self._current_worker = None
             return False
 
@@ -776,7 +776,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         Eagle Eye and a dialog being shown (a patient switch / viewer rebuild in
         between). Parenting a QMessageBox/dialog to the freed widget raised
         ``RuntimeError: Internal C++ object (QtFastContainer) already deleted`` (seen
-        caught in the live logs) — that is the catchable form of the PySide6
+        caught in the live logs) â€” that is the catchable form of the PySide6
         use-after-free that hard-crashed the installed build with an access violation
         (0xc0000005 in pyside6.abi3.dll; other-PC WER, 2026-06-17). Same shiboken6
         liveness idiom as PacsClient/.../_hp_layout.py::_hide_loading_overlay."""
@@ -826,7 +826,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             if self._open_lumbar_eagle_eye(patient_widget):
                 return
             # Only reached when the lumbar path itself could not run (module
-            # import or panel switch failed) — the "wrong region" and "user
+            # import or panel switch failed) â€” the "wrong region" and "user
             # declined" cases are reported inside _open_lumbar_eagle_eye.
             show_message(
                 "Eagle Eye could not open the lumbar spine layout for this study.\n"
@@ -870,7 +870,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
                     if dlg.exec() == QDialog.Accepted:
                         det_csv, cls_csv = dlg.selected_pair
 
-                        # ✅ ذخیره انتخاب کاربر در manifest
+                        # âœ… ط°ط®غŒط±ظ‡ ط§ظ†طھط®ط§ط¨ ع©ط§ط±ط¨ط± ط¯ط± manifest
                         self._save_mg_manifest(study_uid, det_csv, cls_csv)
 
                         self.open_ai_module()
@@ -929,7 +929,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         empty StudyDescription and NULL series body parts, while every header on
         disk said ``BodyPartExamined = 'LSPINE'``.
 
-        Returns True when the click was handled — including "the user cancelled"
+        Returns True when the click was handled â€” including "the user cancelled"
         and "this region is not supported", both of which are reported by the
         resolver itself.
         """
@@ -954,7 +954,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
         if resolution is None:
             print("[EAGLE-EYE] resolution produced no runnable mapping; nothing opened")
-            return True  # handled — the resolver already told the user why
+            return True  # handled â€” the resolver already told the user why
 
         self._log_resolution(resolution)
 
@@ -986,7 +986,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
     @staticmethod
     def _log_resolution(resolution) -> None:
-        """One readable block per run — the first thing to read when a run looks wrong."""
+        """One readable block per run â€” the first thing to read when a run looks wrong."""
         try:
             print(f"[EAGLE-EYE] study    : {resolution.study.label} "
                   f"({resolution.study.study_uid})")
@@ -1031,8 +1031,8 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
         # Re-entrancy guard: never start a second server job while one is still
         # running. Without this, a second run overwrote the ONLY reference to the
-        # first (still-running) QThread → GC → "Destroyed while thread is still
-        # running" → the Python process aborts. It also prevents duplicate uploads
+        # first (still-running) QThread â†’ GC â†’ "Destroyed while thread is still
+        # running" â†’ the Python process aborts. It also prevents duplicate uploads
         # / duplicate server jobs for the same study.
         if _eagle_worker_lifecycle_enabled() and self._ai_worker_busy():
             show_message(
@@ -1090,17 +1090,11 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             det_name = Path(det_path).name
             cls_name = Path(cls_path).name if cls_path else None
 
-            # ✅ همیشه run را ثبت کن (حتی بدون classification)
+            # âœ… ظ‡ظ…غŒط´ظ‡ run ط±ط§ ط«ط¨طھ ع©ظ† (ط­طھغŒ ط¨ط¯ظˆظ† classification)
             self._save_mg_manifest(study_uid, det_name, cls_name)
 
-            # ✅ اگر classification نیامده → یعنی هیچ چیزی detect نشده
-            if cls_path is None:
-                show_message(
-                    "Detection results are available.\n"
-                    "No completed lesion classification is available. Review the detection output; this is not a negative classification."
-                )
-            else:
-                show_message("EAGLE EYE (MG) completed successfully!")
+            from modules.ai_imaging.eagle_eye_remote.breast_results import completion_message
+            show_message(completion_message(out))
 
             self.open_ai_module()
 
@@ -1113,15 +1107,15 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         ))
 
         # Safety timeout: force-remove the overlay only AFTER the worker's own read
-        # budget (240 s) has elapsed — not before. The old 120 s value hid the modal
+        # budget (240 s) has elapsed â€” not before. The old 120 s value hid the modal
         # overlay while the request was STILL running for up to another 120 s, so the
-        # UI looked idle and the user re-clicked Eagle Eye → a duplicate run that
-        # overwrote the still-running worker → the abort described above. Keep the
+        # UI looked idle and the user re-clicked Eagle Eye â†’ a duplicate run that
+        # overwrote the still-running worker â†’ the abort described above. Keep the
         # safety net well beyond the request timeout.
         def force_hide_overlay():
             if overlay_ref.get('overlay'):
                 try:
-                    print("⚠️ [MG Analysis] Force removing loading after safety timeout")
+                    print("âڑ ï¸ڈ [MG Analysis] Force removing loading after safety timeout")
                     AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
                 except RuntimeError:
                     pass
@@ -1142,8 +1136,8 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
     def start_dx_process(self, study_uid: str):
         print(f'[DX] start bone-age processing for {study_uid}')
 
-        # Same re-entrancy guard as MG — a second run must not overwrite the only
-        # reference to a still-running worker (→ GC of a live QThread → abort).
+        # Same re-entrancy guard as MG â€” a second run must not overwrite the only
+        # reference to a still-running worker (â†’ GC of a live QThread â†’ abort).
         if _eagle_worker_lifecycle_enabled() and self._ai_worker_busy():
             show_message(
                 "An Eagle Eye analysis is already running for this study.\n"
@@ -1151,9 +1145,9 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             )
             return
 
-        # اگر در متادیتا جنسیت لازم است، اینجا بخوان:
+        # ط§ع¯ط± ط¯ط± ظ…طھط§ط¯غŒطھط§ ط¬ظ†ط³غŒطھ ظ„ط§ط²ظ… ط§ط³طھطŒ ط§غŒظ†ط¬ط§ ط¨ط®ظˆط§ظ†:
         patient_sex = self.image_viewer.metadata_fixed.get('patient_sex', None)
-        # اگر key واقعی چیز دیگری است، فقط همین خط را عوض کن.
+        # ط§ع¯ط± key ظˆط§ظ‚ط¹غŒ ع†غŒط² ط¯غŒع¯ط±غŒ ط§ط³طھطŒ ظپظ‚ط· ظ‡ظ…غŒظ† ط®ط· ط±ط§ ط¹ظˆط¶ ع©ظ†.
 
         metadata_fixed = getattr(self.image_viewer, 'metadata_fixed', None)
         if not isinstance(metadata_fixed, dict):
@@ -1165,8 +1159,9 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         instances = metadata.get('instances') if isinstance(metadata.get('instances'), list) else []
         first_instance = instances[0] if instances and isinstance(instances[0], dict) else {}
 
+        from modules.ai_imaging.eagle_eye_remote.demographics import viewer_identity
         metadata_context = {
-            'patient_id': metadata_fixed.get('patient_id') or metadata_fixed.get('patient_code') or metadata.get('patient_id') or metadata.get('PatientID'),
+            'patient_id': viewer_identity(self.image_viewer)[1],
             'patient_code': metadata_fixed.get('patient_code'),
             'series_instance_uid': series_meta.get('series_uid') or series_meta.get('SeriesInstanceUID') or metadata_fixed.get('series_uid') or metadata_fixed.get('series_instance_uid'),
             'sop_instance_uid': first_instance.get('sop_instance_uid') or first_instance.get('SOPInstanceUID'),
@@ -1212,7 +1207,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
                     pass  # Already deleted
                 overlay_ref['overlay'] = None
 
-            # بر اساس خروجی واقعی سرور:
+            # ط¨ط± ط§ط³ط§ط³ ط®ط±ظˆط¬غŒ ظˆط§ظ‚ط¹غŒ ط³ط±ظˆط±:
             # {'predicted_bone_age_months': 157.56, 'predicted_bone_age_years': 13.13, ...}
             if worker.canceled or current_identity() != (study_uid, str(worker.metadata_context.get('patient_id') or '')):
                 return
@@ -1234,7 +1229,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             else:
                 show_message("Bone age analysis completed.")
 
-            # دقیقا مثل منطق MG → بعد از موفقیت، AI module رو باز کن
+            # ط¯ظ‚غŒظ‚ط§ ظ…ط«ظ„ ظ…ظ†ط·ظ‚ MG â†’ ط¨ط¹ط¯ ط§ط² ظ…ظˆظپظ‚غŒطھطŒ AI module ط±ظˆ ط¨ط§ط² ع©ظ†
             self.open_ai_module()
             from modules.ai_imaging.eagle_eye_remote.bone_report_ui import show_completed_report
             if not show_completed_report(data, study_uid, current_identity()) and data.get('report_error'):
@@ -1252,7 +1247,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         def force_hide_overlay():
             if overlay_ref.get('overlay'):
                 try:
-                    print("⚠️ [Bone Age Analysis] Force removing loading after 60s timeout")
+                    print("âڑ ï¸ڈ [Bone Age Analysis] Force removing loading after 60s timeout")
                     AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
                 except RuntimeError:
                     pass
@@ -1267,9 +1262,8 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         # Track the worker so it can never be GC'd/deleted while running.
         from modules.ai_imaging.eagle_eye_remote.demographics_ui import SexConfirmation
         def current_identity():
-            fixed = getattr(self.image_viewer, 'metadata_fixed', {}) or {}
-            current_study = fixed.get('study_uid') or fixed.get('study_instance_uid')
-            return current_study, str(fixed.get('patient_id') or fixed.get('patient_code') or '')
+            from modules.ai_imaging.eagle_eye_remote.demographics import viewer_identity
+            return viewer_identity(self.image_viewer)
         confirmation = SexConfirmation(main_window, worker, current_identity, safety_timer)
         worker.sex_required.connect(confirmation.request)
         worker.finished.connect(lambda *_: confirmation.deleteLater())

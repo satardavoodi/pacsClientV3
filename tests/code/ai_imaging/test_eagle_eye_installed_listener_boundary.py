@@ -41,6 +41,10 @@ def test_installed_service_desktop_attaches_without_hosting(tmp_path, monkeypatc
     def forbidden(config):
         raise AssertionError('Installed desktop must not create a listener')
     monkeypatch.setattr(launch, 'HostedService', forbidden)
+    from modules.ai_imaging.eagle_eye_remote import release_package
+    checked = []
+    monkeypatch.setattr(release_package, 'check_installed_service',
+                        lambda path, cfg: checked.append((path, cfg)))
     for name in ('AIPACS_EAGLE_EYE_ROLE', 'AIPACS_EAGLE_EYE_SERVER_CONFIG',
                  'AIPACS_EAGLE_EYE_CLIENT_CONFIG', 'AIPACS_EAGLE_EYE_WORKER'):
         monkeypatch.setenv(name, '')
@@ -49,6 +53,7 @@ def test_installed_service_desktop_attaches_without_hosting(tmp_path, monkeypatc
         'clients': {'local': str(tmp_path / 'token')}, 'job_root': str(tmp_path)}))
     assert launch.configure(['app', '--eagle-eye-mode', 'server',
                              '--eagle-eye-config', str(path)]) is None
+    assert len(checked) == 1
     assert json.loads((tmp_path / 'desktop-client.json').read_text())['url'] == 'http://127.0.0.1:8042'
 
 

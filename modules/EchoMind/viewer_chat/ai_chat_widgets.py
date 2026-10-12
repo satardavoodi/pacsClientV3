@@ -4,16 +4,26 @@ import typing as t
 import re
 import os, tempfile, time, threading
 import numpy as np
-import sounddevice as sd
 import soundfile as sf
 from .ai_chat_helpers import _set_icon, extract_plain_text_from_html, themed_message_box
 from datetime import datetime
 from dataclasses import dataclass
 from html import escape
 
+
+class _AudioBackend:
+    """Initialize PortAudio only when a recording operation requests it."""
+
+    def __getattr__(self, name):
+        import sounddevice
+        return getattr(sounddevice, name)
+
+
+sd = _AudioBackend()
+
 from PySide6.QtCore import QObject, Signal, Slot, QThread,Qt,QSize, QUrl,QTimer, QMimeData, QEvent, Property, QPropertyAnimation
 from PySide6.QtWidgets import (
-    QListWidget, QListWidgetItem, QPushButton,
+    QListWidget, QListWidgetItem, QPushButton, QMessageBox,
     QPlainTextEdit, QScrollArea, QMenu, QFileDialog, QSpacerItem,QFrame,QSizePolicy,
     QDialog, QDialogButtonBox, QTextEdit,QComboBox, QMenu,QGraphicsOpacityEffect,QWidget, QHBoxLayout, QVBoxLayout, QToolButton, QLabel, QSlider, QSizePolicy, QStyle, QTabBar
 
@@ -246,6 +256,7 @@ class MessageBubble(QWidget):
         on_persian: t.Callable[['MessageBubble'], None] | None = None,
         on_send_reception: t.Callable[['MessageBubble'], None] | None = None,
         on_medical_consult=None,
+        on_add_reference=None,
         created_at=_NEW_MESSAGE_TIME,
     ):
         super().__init__(parent)
@@ -425,6 +436,18 @@ class MessageBubble(QWidget):
         self.btnEdit.setVisible(self._on_edit_cb is not None)
         footer.addWidget(self.btnEdit, 0, Qt.AlignRight)
 
+        review_actions = QHBoxLayout()
+        review_actions.addStretch(1)
+        self.btnAddReference = None
+        if not self._is_user and on_add_reference is not None:
+            self.btnAddReference = QToolButton(box)
+            self.btnAddReference.setText('Add Reference')
+            self.btnAddReference.setToolTip('Create a referenced obstetric or cardiac measurement review')
+            self.btnAddReference.setStyleSheet(self.btnCopy.styleSheet())
+            self.btnAddReference.setCursor(Qt.PointingHandCursor)
+            self.btnAddReference.clicked.connect(lambda: on_add_reference(self))
+            review_actions.addWidget(self.btnAddReference, 0, Qt.AlignRight)
+
         self.btnMedicalConsult = None
         if not self._is_user and on_medical_consult is not None:
             self.btnMedicalConsult = QToolButton(box)
@@ -433,7 +456,7 @@ class MessageBubble(QWidget):
             self.btnMedicalConsult.setStyleSheet(self.btnCopy.styleSheet())
             self.btnMedicalConsult.setCursor(Qt.PointingHandCursor)
             self.btnMedicalConsult.clicked.connect(lambda: on_medical_consult(self))
-            footer.addWidget(self.btnMedicalConsult, 0, Qt.AlignRight)
+            review_actions.addWidget(self.btnMedicalConsult, 0, Qt.AlignRight)
 
         # Persian (only for AI responses with callback)
         self.btnPersian: QToolButton | None = None
@@ -494,6 +517,8 @@ class MessageBubble(QWidget):
         footer.addWidget(self.btnRetry, 0, Qt.AlignRight)
 
         box_lay.addLayout(footer, 0)
+        if self.btnAddReference is not None or self.btnMedicalConsult is not None:
+            box_lay.addLayout(review_actions, 0)
         outer.addWidget(box, 0)
 
         self.timestamp_label = QLabel(self)
@@ -1318,6 +1343,7 @@ class ChatHistory(QWidget):
         on_send_reception=None,
         force_right: bool | None = None,   # جدید: فقط برای موارد خاص مثل تصویر
         on_medical_consult=None,
+        on_add_reference=None,
         created_at=_NEW_MESSAGE_TIME,
     ) -> MessageBubble:
         """
@@ -1332,6 +1358,7 @@ class ChatHistory(QWidget):
             on_persian=on_persian,
             on_send_reception=on_send_reception,
             on_medical_consult=on_medical_consult,
+            on_add_reference=on_add_reference,
             created_at=created_at,
         )
 
@@ -2017,7 +2044,7 @@ class UnifiedComposer(QWidget):
             pass
         # Controls bar
         controls = QFrame(self.input_shell)
-        # Kept on `self`: this row (+ / mic / Modalities / Turbo / send) is the
+        # Kept on `self`: this row (+ / mic / Modalities / Send) is the
         # thing that must never be clipped, so tests and any future layout work
         # need a handle on it. It stays `Fixed` vertically with a real minimum,
         # so under pressure the layout takes space from the editor, not here.
@@ -2043,7 +2070,7 @@ class UnifiedComposer(QWidget):
                 font-weight:600;
             }}
 
-            /* wide text tools (Voice Quality / Modalities / Turbo) */
+            /* wide text tools (Voice Quality / Modalities / Send) */
             QToolButton[role="tool"][kind="text"] {{
                 min-width:86px;
                 min-height:42px;
@@ -2120,16 +2147,7 @@ class UnifiedComposer(QWidget):
         self.btn_modality.setFixedWidth(140)
         self.btn_modality.setVisible(False)
 
-        self.btn_all_modality_hq = QToolButton(controls)
-        self.btn_all_modality_hq.setProperty("role", "tool")
-        self.btn_all_modality_hq.setText("⚡Turbo")
-        self.btn_all_modality_hq.setCursor(Qt.PointingHandCursor)
-        self.btn_all_modality_hq.setToolTip("Run high-quality model")
-        self.btn_all_modality_hq.setProperty("kind", "text")
-        self.btn_all_modality_hq.setFixedHeight(40)
-        self.btn_all_modality_hq.setFixedWidth(140)
-        self.btn_all_modality_hq.setVisible(False)
-        
+
         # ⏸️ دکمه پوز (styled circle)
         self.btn_pause = QToolButton(controls)
         self.btn_pause.setToolButtonStyle(Qt.ToolButtonIconOnly)
@@ -2194,11 +2212,13 @@ class UnifiedComposer(QWidget):
         self.btn_send = QToolButton(controls)
         self.btn_send.setProperty("role", "tool")
         self.btn_send.setObjectName("send")
-        self.btn_send.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.btn_send.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.btn_send.setCursor(Qt.PointingHandCursor)
         self.btn_send.setIconSize(icon_sz)
-        self.btn_send.setFixedSize(42, 42)
+        self.btn_send.setFixedSize(92, 40)
         _set_icon(self.btn_send, "send.png", icon_sz.width(), "Send")
+        self.btn_send.setText('Send')
+        self.btn_send.setAccessibleName('Send')
         self.btn_send.clicked.connect(self._emit_send)
 
         # 🤖 دکمه Assist
@@ -2266,7 +2286,6 @@ class UnifiedComposer(QWidget):
         # "clear" mode and auto-falls-back to "noisy" on failure.
         self.btn_transcribe_quality.setVisible(False)
         ctl.addWidget(self.btn_modality, 0, Qt.AlignVCenter)
-        ctl.addWidget(self.btn_all_modality_hq, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_assist_send, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_search_send, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_send, 0, Qt.AlignVCenter)
@@ -2541,6 +2560,11 @@ class UnifiedComposer(QWidget):
 
         if not hasattr(self, "_image_attachments"):
             self._image_attachments = []
+        if path in self._image_attachments:
+            return
+        if len(self._image_attachments) >= 6:
+            QMessageBox.warning(self, "Attachment limit", "Attach at most six files.")
+            return
         self._image_attachments.append(path)
 
         self._ensure_chips_layout()
@@ -2579,6 +2603,7 @@ class UnifiedComposer(QWidget):
         btn_preview.setObjectName("chipAction")
         btn_preview.setText("👁")
         btn_preview.setToolTip("Preview image")
+        btn_preview.setVisible(ext.lower() not in (".txt", ".docx", ".pdf"))
         btn_preview.setFixedSize(26, 22)
         btn_preview.clicked.connect(lambda _=False, p=path: self._preview_image(p))
         lay.addWidget(btn_preview)
@@ -2674,7 +2699,21 @@ class UnifiedComposer(QWidget):
         """همه‌ی مسیرهای تصویرهای attach شده را برمی‌گرداند."""
         if not hasattr(self, "_image_attachments"):
             self._image_attachments = []
-        return list(self._image_attachments)
+        return [p for p in self._image_attachments if os.path.splitext(p)[1].lower() not in ('.txt', '.docx', '.pdf')]
+
+    def get_report_attachments(self):
+        return tuple(getattr(self, '_image_attachments', ()))
+
+    def copy_from_clipboard(self):
+        if self._handle_clipboard_paste():
+            return
+        mime = QGuiApplication.clipboard().mimeData()
+        if mime.hasUrls():
+            for url in mime.urls():
+                if url.isLocalFile():
+                    self._choose_file(url.toLocalFile())
+        elif mime.hasText():
+            self.box.insertPlainText(mime.text())
 
     def clear_image_attachments(self):
         """پاک کردن فقط چیپ‌های تصویر و خالی‌کردن لیست مسیرها."""
@@ -3123,10 +3162,6 @@ class UnifiedComposer(QWidget):
         self.btn_mic.setEnabled(en);
         self.btn_send.setEnabled(en);
         self.box.setEnabled(en)
-        try:
-            self.btn_all_modality_hq.setEnabled(en)
-        except Exception:
-            pass
         # cancel در هنگام ترنسکرایب از بیرون کنترل می‌شود
 
     def append_text(self, more: str):
@@ -3588,7 +3623,7 @@ class UnifiedComposer(QWidget):
            Correction and Normal-Template tabs add a 44 px toolbar above the
            editor; that 44 px is taken OUT of the editor, not added to the
            composer. Before this, the toolbar simply grew the composer and the
-           action-button row (+ / mic / Modalities / Turbo / send) was pushed
+           action-button row (+ / mic / Modalities / Send) was pushed
            past the bottom of the window — the reported bug. The old code tried
            to do this with ``setMaximumHeight`` alone, but ``__init__`` had
            pinned the editor with ``setFixedHeight(140)`` — which also sets the
@@ -4435,7 +4470,7 @@ class UnifiedComposer(QWidget):
                 "Select file",
                 "",
                 (
-                    "Audio/Images (*.wav *.mp3 *.m4a *.aac *.flac "
+                    "Documents (*.txt *.docx *.pdf);;Audio/Images (*.wav *.mp3 *.m4a *.aac *.flac "
                     "*.png *.jpg *.jpeg *.bmp *.gif *.dcm);;"
                     "All Files (*.*)"
                 ),
@@ -4448,7 +4483,7 @@ class UnifiedComposer(QWidget):
         # -------------------------
         #  ✔️ Image file → attachment (no auto-send)
         # -------------------------
-        if ext in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".dcm"):
+        if ext in (".txt", ".docx", ".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".dcm"):
             # Just attach the image. Image Analyzer mode will pick it up.
             self.add_image_attachment(path)
             return
@@ -4456,6 +4491,9 @@ class UnifiedComposer(QWidget):
         # -------------------------
         #  ✔️ Audio file → transcription
         # -------------------------
+        if ext not in (".wav", ".mp3", ".m4a", ".aac", ".flac"):
+            QMessageBox.warning(self, "Unsupported file", "Use TXT, DOCX, PDF, image or audio files. Export DOC as DOCX first.")
+            return
         self.add_voice_attachment(path)
         payload = {
             "paths": [path],

@@ -14,6 +14,9 @@ def format_result(result):
         operations = [labels[step] for step in steps if isinstance(step, str) and step in labels]
         detail = 'I will ' + ', then '.join(operations) + '. ' if operations else ''
         return detail + 'Please confirm this request in the confirmation window. No action has been completed yet.'
+    from modules.EchoMind.secretary.patient_list_receipt import aggregate_text, is_patient_list_result
+    if is_patient_list_result(result):
+        return aggregate_text(result)
     if not result.get('ok'):
 
         return message or 'I could not complete the requested action.'
@@ -22,15 +25,9 @@ def format_result(result):
     from modules.ai_imaging.eagle_eye_remote.secretary.validation.settings_controls import SETTINGS_CONTROL_MODELS
     if action in SETTINGS_CONTROL_MODELS:
         return 'The settings operation has started. I will check the actual result before reporting completion.'
-    if action in ('list_patients', 'read_patients', 'advanced_search', 'search_patients'):
-        if payload.get('state') in ('searching', 'pending', 'running'):
-            return 'The patient search has started. Results are still loading.'
-        count = payload.get('count')
-        if type(count) is int and count >= 0:
-            if count == 0:
-                return 'The search completed. No matching studies were found.'
-            return f'The search completed. {count} studies are displayed in the patient list.'
-        return 'The patient list is ready on screen.'
+    from modules.EchoMind.secretary.patient_list_receipt import PATIENT_LIST_ACTIONS, aggregate_text, is_patient_list_result
+    if action in PATIENT_LIST_ACTIONS:
+        return aggregate_text(result)
     if action in ('release_memory', 'get_viewer_preferences', 'set_viewer_preferences', 'diagnose_resources'):
         return 'The operation has started. I will check its result before reporting completion.'
     if action == 'configure_personal_ai':
@@ -83,6 +80,8 @@ def format_result(result):
             return 'Viewer preferences were saved. Restart the application to apply them.'
         return 'The settings operation completed.'
     if action == '__workflow__':
+        if is_patient_list_result(result):
+            return aggregate_text(result)
         steps = payload.get('steps') or []
         labels = {
             'list_patients': 'updated the patient list',
@@ -95,7 +94,7 @@ def format_result(result):
                      and step.get('verified') and step.get('tool') in labels]
         if completed:
             return 'I ' + ', then '.join(completed) + '.'
-        return 'The requested steps were completed.'
+        return 'No workflow steps have been verified yet.'
     if action == 'open_patient':
         return 'The requested study is open.'
     if action == 'sort_patients':

@@ -35,6 +35,8 @@ class SocketTokenManager:
         
         self._token: Optional[str] = None
         self._user: Optional[Dict[str, Any]] = None
+        self._generation = 0
+        self._identity_listeners = []
         self._lock = threading.Lock()
         self._initialized = True
     
@@ -43,7 +45,7 @@ class SocketTokenManager:
         """Get the singleton instance"""
         return cls()
     
-    def set_token(self, token: str, user: Optional[Dict[str, Any]] = None) -> None:
+    def set_token(self, token: str, user: Optional[Dict[str, Any]] = None) -> int:
         """
         ذخیره token و اطلاعات کاربر
         
@@ -54,6 +56,23 @@ class SocketTokenManager:
         with self._lock:
             self._token = token
             self._user = user
+            self._generation += 1
+            generation = self._generation
+            listeners = tuple(self._identity_listeners)
+        for listener in listeners:
+            listener()
+        return generation
+
+    def identity_snapshot(self):
+        """Return one atomic, process-local login generation and its token."""
+        with self._lock:
+            return self._generation, self._token
+
+    def on_identity_change(self, callback):
+        """Register an in-memory credential invalidator; it must never do I/O."""
+        with self._lock:
+            if callback not in self._identity_listeners:
+                self._identity_listeners.append(callback)
     
     def get_token(self) -> Optional[str]:
         """
@@ -80,6 +99,10 @@ class SocketTokenManager:
         with self._lock:
             self._token = None
             self._user = None
+            self._generation += 1
+            listeners = tuple(self._identity_listeners)
+        for listener in listeners:
+            listener()
     
     def has_token(self) -> bool:
         """

@@ -191,3 +191,8 @@ model inference, Standard-client round trips, and frozen PyInstaller/Nuitka
 installers remain unqualified. The build workstream does not modify the viewer
 or shared reception pipeline. Model transfer is not inference qualification;
 the scoped source PASS does not authorize a new build or release.
+
+## Unified package source gate (2026-10-10)
+
+Server core staging and installed runtime identity are now coupled by SHA-256; see
+[unified lifecycle status](../../docs/modules/eagle-eye-server-development/docs/UNIFIED_SERVER_PACKAGE_2026-10-10.md). 71 focused guards pass. The generic installer transaction, fresh host enrollment/shortcut binding and complete payload activation remain unimplemented/unqualified; these source guards do not clear the Server installer release gate.

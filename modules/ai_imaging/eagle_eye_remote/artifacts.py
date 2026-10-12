@@ -7,8 +7,9 @@ import zipfile
 
 from .contracts import digest
 
-MASKS = {'labels.npy', 'labels.nii.gz', 'space-flair_seg-lst.nii.gz', 'spine-mask.npy'}
-TABLES = {'volumes.csv', 'posterior.csv', 'qc.csv', 'classification.csv', 'updated_csv_with_boxes.csv'}
+MASKS = {'labels.npy', 'labels.nii.gz', 'space-flair_seg-lst.nii.gz', 'spine-mask.npy', 'marrow-roi.npy',
+         'marrow-signal-ff.nii.gz', 'marrow-signal-drop.nii.gz', 'marrow-echo-labels.nii.gz'}
+TABLES = {'volumes.csv', 'posterior.csv', 'qc.csv', 'classification.csv', 'updated_csv_with_boxes.csv', 'marrow.csv', 'dental.csv'}
 
 
 def prepare_breast_tables(result, records):
@@ -62,7 +63,7 @@ def publish(job, request, records, result):
         prepare_breast_tables(result, records)
     exports = {}
     review_paths = set()
-    if request['module'] in ('brain', 'brain-lesions') and (result.get('review_assets')
+    if request['module'] in ('brain', 'brain-lesions', 'lumbar-marrow') and (result.get('review_assets')
             or result.get('mask_path') or (directory / 'labels.nii.gz').is_file()):
         from .segmentation_review import assets
         selected = assets(result)
@@ -76,6 +77,7 @@ def publish(job, request, records, result):
         if 'anatomy-context' in path.relative_to(directory).parts:
             continue  # Internal anatomy provenance, not a second patient report.
         if not (path in review_paths or path.name in MASKS | TABLES
+                or request['module'] == 'alignment' and path.name == 'report.json'
                 or request['module'] == 'brain-lesions' and (result.get('multisequence') or result.get('enhancement_review') or result.get('sampled_topography'))
                 and path.name in ('labels-cross-plane.nii.gz', 'labels-primary.nii.gz', 'labels-disagreement.nii.gz', 'secondary-flair.nii.gz',
                                   'secondary-labels.nii.gz', 'secondary-aligned.nii.gz', 'secondary-aligned-labels.nii.gz',

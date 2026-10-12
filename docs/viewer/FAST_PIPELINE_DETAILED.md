@@ -93,3 +93,10 @@ Potential re-check candidates at render boundary:
 - `_lazy_requested_slice` (latest requested decode)
 
 No fix applied here; this is the identified insertion zone.
+
+
+### 2026-10-11: preserve already-read VOI facts (OPT-60)
+
+Two session sampler traces reached _get_voi_lut_function -> pydicom.dcmread during GUI first-frame application. Pixel decoding and DicomHeaderEntry scanning already had the dataset, but scanning discarded VOILUTFunction and absence was indistinguishable from unknown. The Fast-domain correction retains the value in immutable header entries and records resolved presence/absence on the individual SliceMeta. A retired decode updates its own slice, not pipeline-global negative state; an unrelated slice still resolves its own header. Existing fallback remains for incomplete DB metadata and disk-cache-only decodes. This does not eliminate all foreground DICOM I/O, extras probing, filters or native decode cost and is not a measured whole-session speedup.
+
+Seven synthetic VOI checks cover absent, LINEAR, LINEAR_EXACT and SIGMOID values, the decode and scanner seams, and unrelated-slice isolation. Both seams failed before their respective fixes and pass after correction; multiframe and shutdown neighbors pass. Canonical scanner/pipeline plus their viewer mirrors are synchronized. Shared trunk and Advanced/VTK execution domains are unchanged. Source visual/normal-exit acceptance and full Developer parity remain pending; see the dated UI_STALL_EVIDENCE_AND_FIX report for receipts and rollback scope.

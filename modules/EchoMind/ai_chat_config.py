@@ -81,7 +81,7 @@ URL_SEARCH           = resolve_search_endpoint()   # → ASSIST_BASE (same as As
 #   * the report renderer keeps ALL keys (the 2026-08-01 whitelist->blacklist
 #     fix was made because the whitelist deleted exactly these sections).
 REPORT_MODALITIES = ["CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND",
-                     "RADIOLOGY", "MAMOGRAPHY"]
+                     "RADIOLOGY", "MAMOGRAPHY", "ECHOCARDIOGRAPHY"]
 
 
 # =============================

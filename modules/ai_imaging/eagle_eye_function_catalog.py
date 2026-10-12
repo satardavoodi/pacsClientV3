@@ -10,6 +10,8 @@ FUNCTION_LEGION_CONSULT = "legion_consult"
 FUNCTION_BRAIN_LESIONS = "brain_lesions"
 FUNCTION_ALIGNMENT = "alignment_view"
 FUNCTION_TOTAL_SPINE = "total_spine_alignment"
+FUNCTION_LUMBAR_MARROW = "lumbar_bone_marrow"
+FUNCTION_DENTAL_PANORAMA = "dental_panorama"
 
 
 @dataclass(frozen=True)
@@ -45,12 +47,18 @@ def function_options_for_modality(modality: str, mode: str | None = None) -> tup
                                enabled=normalized in {"MG", "DX", "MR"},
                                reason="" if normalized in {"MG", "DX", "MR"}
                                else "No analysis is available for this image type."),
+        *((EagleEyeFunctionOption(FUNCTION_DENTAL_PANORAMA, "Panoramic Dental AI | Research Review",
+                                  reason="Eight findings per tooth; confirm a panoramic image. Physician review required."),)
+          if normalized in {"DX", "CR", "PX", "IO"} else ()),
         *((EagleEyeFunctionOption(FUNCTION_ALIGNMENT, "Alignment View | Hip-Knee-Ankle",
                                   reason="Local AI landmarks, editable measurements and bilateral report."),)
           if normalized in {"DX", "CR"} else ()),
         *((EagleEyeFunctionOption(FUNCTION_TOTAL_SPINE, "Total Spine Alignment | Coronal + Lateral",
                                   reason="Coronal landmark proposals, manual sagittal measurements and reviewed reports."),)
           if normalized in {"DX", "CR"} else ()),
+        *((EagleEyeFunctionOption(FUNCTION_LUMBAR_MARROW, "Lumbar Bone Marrow | T1 + Dixon / Multi-echo",
+                                  reason="Server vertebral-body segmentation, signal maps and research measurements; physician review required."),)
+          if normalized == "MR" else ()),
         EagleEyeFunctionOption(
             FUNCTION_LEGION_CONSULT,
             "Legion Consult",

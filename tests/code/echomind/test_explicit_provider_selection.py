@@ -64,7 +64,8 @@ def test_key_override_cannot_switch_company_route(monkeypatch):
     monkeypatch.setattr(llm_client, "_active_backend", lambda: "company")
     monkeypatch.setattr(llm_client, "_resolve_company_backend", lambda: sentinel)
     monkeypatch.setattr(llm_client, "_resolve_openai_backend", lambda **kw: pytest.fail("implicit direct route"))
-    assert llm_client._resolve_active_backend(api_key_override="synthetic-key") is sentinel
+    with pytest.raises(llm_client.LLMError, match='Eagle Eye Server'):
+        llm_client._resolve_active_backend(api_key_override="synthetic-key")
 
 
 def test_direct_resolver_requires_explicit_endpoint(monkeypatch):

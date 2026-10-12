@@ -20,16 +20,16 @@ def transport(monkeypatch, tmp_path):
     return calls
 
 
-def test_turbo_sends_context_without_prompt_model_or_provider_secret(transport):
-    remote.reporter('Synthetic dictation', 'MRI', 'Template.', workflow='turbo',
+def test_normal_report_sends_context_without_prompt_model_or_provider_secret(transport):
+    remote.reporter('Synthetic dictation', 'MRI', 'Template.',
                     study_profile={'regions':['brain'], 'contrast':'without'},
                     CENTER_Key='synthetic-local-code', model='ignored-local-model')
     url, args = transport[0]
     assert url == '/v1/echomind/process'
     assert args['json'] == {'text':'Synthetic dictation', 'modality':'MRI',
-        'normal_template':'Template.', 'workflow':'turbo', 'provider':'company',
+        'normal_template':'Template.', 'workflow':'report', 'provider':'company',
         'response_format':'json', 'study_profile':{'regions':['brain'], 'contrast':'without'}}
-    assert args['timeout'] == 360
+    assert args['timeout'] == 480
     assert 'synthetic-local-code' not in json.dumps(args)
 
 
@@ -76,7 +76,7 @@ def test_timeout_never_retries_or_leaks_details(transport, monkeypatch):
 
 
 def test_profile_adapts_desktop_subtype_and_rejects_prompt_fields(transport):
-    remote.reporter('Synthetic', 'CT', workflow='turbo', study_profile={'subtype':'angiography'})
+    remote.reporter('Synthetic', 'CT', study_profile={'subtype':'angiography'})
     assert transport[0][1]['json']['study_profile']['subtype'] == ['angiography']
     with pytest.raises(remote.RemoteError):
         remote.reporter('Synthetic', 'CT', study_profile={'system_prompt':'private'})
@@ -90,18 +90,15 @@ def test_switching_away_from_pilot_never_sends(transport, monkeypatch):
     assert not transport
 
 
-def test_ui_turbo_branches_before_building_a_local_prompt():
+def test_ui_has_no_turbo_action_or_client_selected_report_route():
     import ast
     from pathlib import Path
     source = Path('modules/EchoMind/viewer_chat/ai_chat_pages.py').read_text(encoding='utf-8')
     tree = ast.parse(source)
-    turbo = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == '_on_hq_all_modality_clicked')
-    worker = next(n for n in ast.walk(turbo) if isinstance(n, ast.FunctionDef) and n.name == 'work')
-    branch = next(n for n in worker.body if isinstance(n, ast.If))
-    assert ast.unparse(branch.test) == 'remote_backend.selected()'
-    assert any(isinstance(n, ast.Return) for n in branch.body)
-    assert "workflow='turbo'" in ast.unparse(branch)
-    assert 'build_turbo_system_prompt' not in ast.unparse(branch)
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert '_on_hq_all_modality_clicked' not in names
+    assert '_turbo_correction' not in names
+    assert 'btn_all_modality_hq' not in source
 
 
 def test_each_access_alias_opens_only_its_matching_login_envelope(monkeypatch):
@@ -182,9 +179,9 @@ def test_reference_ui_worker_routes_remotely_and_preserves_content(monkeypatch, 
     from types import SimpleNamespace
     tree = ast.parse(Path('modules/EchoMind/viewer_chat/ai_chat_pages.py').read_text(encoding='utf-8'))
     send = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == '_send_with_mode')
-    guard = next(n for n in send.body if isinstance(n, ast.If) and 'remote_route' in ast.unparse(n.test))
+    guard = next(n for n in send.body if isinstance(n, ast.If) and 'has_images' in ast.unparse(n.test))
     assert not eval(compile(ast.Expression(guard.test), '<guard>', 'eval'), {},
-                    dict(remote_route=True, has_images=False, mode=mode))
+                        dict(remote_route=True, has_images=False, report_files=(), mode=mode))
     assert eval(compile(ast.Expression(guard.test), '<guard>', 'eval'), {},
                 dict(remote_route=True, has_images=True, mode=mode))
     branch = next(n for n in send.body if isinstance(n, ast.If) and ast.unparse(n.test) == f"mode == '{mode}'")

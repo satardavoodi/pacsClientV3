@@ -133,8 +133,14 @@ def test_cleanup_completion_counts_come_from_actual_worker_result(monkeypatch, a
     result = SimpleNamespace(success=True, warnings=[], files_deleted=3,
         folders_touched=1, db_rows_affected=0, message='Synthetic cleanup')
     module.StorageCleanupPanelWidget._on_category_cleanup_finished(panel, panel, result)
-    assert panel._assistant_cleanup_state == {'state':'succeeded', 'category':'cache',
+    assert panel._assistant_cleanup_state == {'state':'refreshing_storage', 'cleanup_state':'succeeded', 'category':'cache',
         'files_deleted':3, 'folders_touched':1, 'db_rows_affected':0}
+    assert panel._assistant_cleanup_owned
+    panel._folder_size_pending = False
+    panel._apply_folder_sizes = lambda value:None
+    module.StorageCleanupPanelWidget._on_folder_sizes_ready(panel, {})
+    assert panel._assistant_cleanup_state['state'] == 'succeeded'
+    assert panel._assistant_cleanup_state['storage_refreshed'] is True
 
 
 def test_resource_diagnosis_runs_off_gui_without_deleting_data(monkeypatch, app):

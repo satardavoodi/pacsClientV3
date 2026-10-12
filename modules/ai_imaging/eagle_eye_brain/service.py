@@ -86,7 +86,7 @@ def _run_analysis(t1_path, flair_path, output_root, *, plan=None, cancel=None, p
         # SynthSeg does not save --resample when no resampling was necessary.
         if not (directory / "resampled.nii.gz").exists():
             sitk.WriteImage(t1, str(directory / "resampled.nii.gz"))
-        progress("Measuring and independently checking binary volumes in Slicer")
+        progress("Measuring and independently checking binary volumes in Advanced Image Analysis")
         slicer_result = run_slicer(directory, cancel)
         result = {"format_version": 1, "job_id": directory.name, "status": "review_required",
                   "model": "SynthSeg 2.0", "model_revision": manifest["revision"], "plan": asdict(plan),

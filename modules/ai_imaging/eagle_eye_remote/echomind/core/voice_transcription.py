@@ -180,11 +180,8 @@ def resolve_auth_token(cfg: Optional[Dict[str, Any]] = None) -> str:
     if token and provider != STT_PROVIDER_AIPACS_3:
         return token
     try:  # best-effort; never raise into the audio path
-        from modules.ai_imaging.eagle_eye_remote.echomind.core.viewer_chat.api_manager import Manage
-        m = Manage.instance()
-        if m.is_validated():
-            info = m.ensure_detected()
-            return str(getattr(info, "gapgpt_key", "") or "").strip()
+        from modules.ai_imaging.eagle_eye_remote.echomind.runtime import company_identity
+        return str(company_identity()[1] or '').strip()
     except Exception:
         pass
     return ""

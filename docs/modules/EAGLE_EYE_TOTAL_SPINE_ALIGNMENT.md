@@ -707,3 +707,116 @@ inspected; this is not native application acceptance. Test Control ping remains
 unavailable and no running app was restarted or hot-reloaded. Global mirror
 verification found five unrelated EchoMind mismatches among 468 pairs; these were
 not synchronized or modified by this slice. New spine code has no existing mirror.
+
+
+## Wheel zoom geometry and crash investigation (2026-10-10, OPT-51)
+
+Status: zoom geometry fixed with automated guards; original native crash remains
+open. No live acceptance, activation, complete Developer parity or release claim.
+
+EditableSegment and the region CandidateBody previously calculated scene-local
+shape/bounds from the current view transform inside virtual geometry callbacks.
+A view-only scale changed endplate bounds height from 12 to 120 without notifying
+the scene. Cached hit widths now change only after prepareGeometryChange; the
+SpineCanvas scale, setTransform, resetTransform and fitInView boundaries refresh
+these widths. Screen-sized correction targets remain available. No shared
+Alignment, global tooltip, garbage collector or shutdown behavior was changed.
+
+Two behavioral geometry-invariance guards failed before the fix (exit 1).
+The zoom/index/real wheel/ToolTip/rebuild/collection suite now passes, including
+40 rebuild cycles. Focused zoom/edit/Alignment/build-input selection: 44 passed,
+exit 0. Broad Total Spine selection: 99 passed, six failed, exit 1. Running the
+two original graphics modules from HEAD in isolated module namespaces reproduces
+the same six inference-routing fixture failures (35 passed, six failed, exit 1).
+These legacy local-predictor tests now reach the remote identity contract; they
+are not a green subsystem gate and were not modified by this graphics repair.
+
+The private incident dump shows a surviving _purecall/abort path through Qt scene
+items/helpEvent; the terminal Shiboken releaseWrapper access violation is during
+teardown. This is not an unwound proof of the exact destroyed graphics item.
+Normal candidate/endplate edits, wheel/ToolTip/GC and the existing modal numbering
+accept test have not reproduced the initiating abort. The scene-index mismatch
+reported during diagnosis is timing/tree dependent: the newly committed point-hit
+checks also passed before the fix. Only the two geometry-invariance failures are
+claimed as deterministic fail-before evidence. Owner-authorized fix 2 coordination
+remains read-only at the shared native lifetime boundary.
+
+Fresh-source GUI acceptance is pending: Test Control ping is unavailable. The
+human must launch/login to one source app under the repository agreement; no
+restart, login, installed executable, hot reload or clinical inference was used.
+Required next acceptance: render the Total Spine result, wheel zoom in/out, hover
+and edit the existing lines/bodies, then inspect that session's native-fault evidence.
+
+Both changed runtime files matched the inactive Razi server-hardening-r2 baseline
+before editing. The reviewed delta is staged separately on Razi; executing sources
+are unchanged. Full Developer reconciliation is pending the shared source freeze,
+with unrelated local/Razi changes preserved. Staged delta parity is not full-source
+parity or running-service parity. All source/test/document hashes for this slice
+belong in the protected generated-files receipt, never patient data or dumps.
+
+Build handoff: canonical modules.ai_imaging inclusion is present for PyInstaller
+and Nuitka Client inputs; the common source correction is retained for Server
+source parity, with interactive Client workflow acceptance separate from headless
+Server behavior. No model/weight/configuration change. No existing plugin mirror
+contains the changed Total Spine files. Mirror dry-run found three unrelated
+EchoMind drifts; no global synchronizer mutation was made. Build/artifact acceptance
+and full mirror verification remain pending. Rollback is limited to the reviewed
+editing.py/widget.py delta; preserve every concurrent worktree change.
+
+
+## Automatic saved-result reopening (2026-10-10, OPT-51)
+
+Opening an exact-study Eagle Eye workspace now admits saved Total Spine detection
+results even when no HTML/PDF was generated. The existing authenticated case-result
+download path feeds the same discovery reader. Existing candidates or portable
+review geometry open the native Total Spine tab automatically, without Choose
+Function, an input selector, AI inference, or foreground focus changes. An existing
+tab/manual review is retained rather than overwritten by background history.
+
+The new worker-only saved_review.prepare service reloads original local DICOM
+pixels through the existing source loader and proves study/series/SOP and byte or
+semantic radiograph identity. It validates bounds and bounded review structures
+before applying candidates, region, numbering, endplates, curves, markers,
+pedicles, reader rotation assessments and notes. Missing original input produces
+a visible restoration error; a neighbouring image is never substituted. Loading
+pixels and history discovery stay off the Qt GUI thread. Late downloaded rows
+are ignored if their study no longer owns the window or disposal has begun.
+
+New Server spine correction results retain optional review_views (image metadata
+without pixels plus the existing reader snapshot) and notes. Request, human
+authorization, inference routing and permissions are unchanged. Legacy reports
+without this structured geometry retain their existing HTML/PDF tab; editable
+coordinates are not invented from an old report. Unsaved local edits are not
+claimed to be server-persistent. Equivalent re-encodings invalidate stale curve
+approval signatures rather than silently certifying new evidence.
+
+Fail-before: two missing reopening behaviors and two absent service checks;
+separately the missing portable report geometry and GUI-thread filesystem discovery
+each failed before repair. Final source selection: 121 passed, three deselected,
+exit 0 (six dependency warnings). The three HTTP foreign-token expectation checks
+failed both with changed code and pre-fix spine_review imported from HEAD in an
+isolated process; no authentication workaround was introduced. Ten restoration
+guards passed after the final structure-limit tightening. Current plugin mirror
+verification: 529 pairs match, exit 0; no Total Spine mirror exists to synchronize.
+
+The user reports wheel zoom did not close the latest source process. Its current
+session-specific native-fault log contains the startup header only; the source
+process is alive and no matching Application Error was observed in that session
+window. This is bounded corroboration, not proof that the original initiating
+native abort is permanently resolved. No patient IDs/images or raw dump data
+were copied into this record. The current process predates the reopening edits,
+so fresh-source reopen/zoom GUI acceptance is pending, not a pass.
+
+Developer parity: the Eagle Eye Server owner is coordinating a fresh immutable
+r6 freeze and source reconciliation; all modified/new runtime, tests, docs and
+the frozen slice manifest are supplied in generated-files/eagle-eye/
+total-spine-restore-20261010. Do not overwrite an executing revision. Source parity,
+controlled Server activation, new portable-result acceptance and desktop GUI
+acceptance are separate gates. PyInstaller/Nuitka Client and Server inputs retain
+the canonical modules.ai_imaging package inclusion; no build was requested.
+
+Mobile coverage: this change targets the desktop spine editor. The optional
+Server result fields are additive and change no mobile requests, authentication
+or workflow. Android/iOS optional-field compatibility assessment is handed to
+the existing Eagle Eye owner under the owner's cross-platform coordination
+contract; no unverified mobile acceptance is claimed.

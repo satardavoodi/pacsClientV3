@@ -19,7 +19,10 @@ class HomeSelectionAdapter:
 
     def _source(self):
         panel=getattr(self.home,"data_access_panel_widget",None)
-        return panel.get_result() if panel is not None else "unknown"
+        value = panel.get_result() if panel is not None else None
+        # Home exposes title-case tab labels; receipts use canonical source IDs.
+        return {'Server': 'server', 'Local': 'local', 'server': 'server', 'local': 'local'}.get(
+            value, 'unknown') if isinstance(value, str) else 'unknown'
 
     def _rows(self):
         table = self.home.patient_table_widget

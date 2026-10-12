@@ -39,11 +39,12 @@ class PacsCaseBridge(threading.Thread):
                 if not token:
                     raise ValueError('PACS service authentication unavailable.')
                 receiver = WorkflowReceiver(host, self.config.get('socket_port', 50052),
-                    token, transform=lambda states: states)
+                    token, transform=lambda states: states, allow_legacy_events=True,
+                    invalidate=self.cases.workflow_invalidate)
                 self.receiver = receiver
                 receiver.start()
                 while not self.stopped.wait(.2):
-                    receiver.watch(self.cases.watch_list())
+                    receiver.watch(self.cases.watch_map())
                     self.cases.workflow_update(receiver.mailbox.drain())
                     self.set_status(receiver.status)
                     if not receiver.is_alive():

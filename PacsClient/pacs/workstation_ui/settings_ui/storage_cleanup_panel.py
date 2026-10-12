@@ -412,7 +412,8 @@ class StorageCleanupPanelWidget(QWidget):
             return False
         self._assistant_cleanup_pending = True
         self._assistant_cleanup_owned = True
-        self._assistant_cleanup_state = {'state':'awaiting_local_confirmation', 'category':category}
+        from uuid import uuid4
+        self._assistant_cleanup_state = {'state':'awaiting_local_confirmation', 'category':category, 'operation_id':str(uuid4())}
         def request():
             try:
                 if category == 'patients':
@@ -513,9 +514,9 @@ class StorageCleanupPanelWidget(QWidget):
 
     def _on_category_cleanup_finished(self, parent, result) -> None:
         if getattr(self, '_assistant_cleanup_owned', False):
-            self._assistant_cleanup_owned = False
             self._assistant_cleanup_state.update(
-                state='succeeded' if (getattr(result, 'success', False) and not getattr(result, 'warnings', None)) else 'completed_with_warnings',
+                state='refreshing_storage',
+                cleanup_state='succeeded' if (getattr(result, 'success', False) and not getattr(result, 'warnings', None)) else 'completed_with_warnings',
                 files_deleted=int(getattr(result, 'files_deleted', 0)),
                 folders_touched=int(getattr(result, 'folders_touched', 0)),
                 db_rows_affected=int(getattr(result, 'db_rows_affected', 0)))
@@ -1242,11 +1243,20 @@ class StorageCleanupPanelWidget(QWidget):
                 self._apply_folder_sizes(payload.get("folder_sizes", {}))
             else:  # compatibility with an older injected worker/test double
                 self._apply_folder_sizes(payload)
+            receipt = getattr(self, '_assistant_cleanup_state', {})
+            if receipt.get('state') == 'refreshing_storage' and not self._folder_size_pending:
+                receipt['state'] = receipt.pop('cleanup_state', 'completed_with_warnings')
+                receipt['storage_refreshed'] = True
+                self._assistant_cleanup_owned = False
         except Exception:
             _logger.exception("[STORAGE_PANEL] failed to apply folder sizes")
 
     @Slot(str)
     def _on_folder_sizes_failed(self, error_text: str) -> None:
+        receipt = getattr(self, '_assistant_cleanup_state', {})
+        if receipt.get('state') == 'refreshing_storage' and not self._folder_size_pending:
+            receipt.update(state='completed_with_warnings', storage_refreshed=False)
+            self._assistant_cleanup_owned = False
         if self.storage_summary_label is not None:
             self.storage_summary_label.setText(
                 f"Could not calculate folder sizes: {error_text}"

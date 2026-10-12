@@ -4,13 +4,14 @@ import json
 import math
 import re
 
-MODULES = ('breast', 'bone-age', 'brain', 'brain-lesions', 'lumbar', 'alignment', 'total-spine')
+MODULES = ('breast', 'bone-age', 'brain', 'brain-lesions', 'lumbar', 'lumbar-marrow', 'alignment', 'total-spine', 'dental-panorama')
 MAX_REVIEW_REQUEST = 24 * 1024**2
 PARAMETERS = {
+    'dental-panorama': {'panoramic_confirmed'},
     'breast': {'threshold'}, 'bone-age': {'sex', 'sex_provenance'},
     'brain': {'profile', 'reference_id', 'correction'},
     'brain-lesions': {'primary_disease', 'clinical_note', 'fazekas_overall', 'correction', 'acquisition_mode', 'contrast_roles_confirmed'},
-    'lumbar': set(), 'alignment': {'correction'},
+    'lumbar': set(), 'lumbar-marrow': {'t1_confirmed', 'clinical', 'correction', 'mode', 'inputs_confirmed', 'alignment_confirmed', 'input_protocol'}, 'alignment': {'correction'},
     'total-spine': {'projection', 'region', 'model', 'level', 'correction'},
 }
 
@@ -39,7 +40,11 @@ def validate(request):
         raise ValueError('Invalid request identity.')
     uid(request['study_uid'])
     series = request['series']
-    if not isinstance(series, dict) or len(series) > 4 or set(series) - {'primary', 'secondary', 't1', 'flair', 'flair_secondary', 't1_post'}:
+    marrow_multi = (request['module'] == 'lumbar-marrow' and isinstance(request['parameters'], dict)
+                    and (request['parameters'].get('mode') == 'multiparametric'
+                         or 'correction' in request['parameters'] and isinstance(series,dict) and ({'fat','water','multiecho'}.issubset(series) or {'primary','opposed','t1','t2'}.issubset(series))))
+    known_roles = {'primary', 'secondary', 't1', 'flair', 'flair_secondary', 't1_post'} | ({'fat','water','multiecho','t2','opposed','stir'} if marrow_multi else set())
+    if not isinstance(series, dict) or len(series) > (8 if marrow_multi else 4) or set(series) - known_roles:
         raise ValueError('Unsupported input roles.')
     for item in series.values():
         if not isinstance(item, dict) or set(item) - {'series_uid', 'sop_uid', 'expected_count'}:
@@ -50,15 +55,16 @@ def validate(request):
         if type(item.get('expected_count')) is not int or not 1 <= item['expected_count'] <= 10000:
             raise ValueError('A counted source series is required.')
     module = request['module']
-    allowed_roles = {'brain': {'t1', 'flair'}, 'brain-lesions': {'t1', 'flair', 'flair_secondary', 't1_post'},
+    allowed_roles = {'lumbar-marrow': {'primary','fat','water','multiecho','t1','t2','opposed','stir'} if marrow_multi else {'primary'},
+                     'brain': {'t1', 'flair'}, 'brain-lesions': {'t1', 'flair', 'flair_secondary', 't1_post'},
                      'total-spine': {'primary', 'secondary'} if isinstance(request['parameters'], dict) and 'correction' in request['parameters'] else {'primary'}}.get(module, {'primary'})
     if set(series) - allowed_roles:
         raise ValueError('The selected roles do not belong to this analysis.')
     required = {'brain': {'t1'}, 'brain-lesions': {'t1', 'flair'},
-                'lumbar': {'primary'}, 'alignment': {'primary'}, 'total-spine': {'primary'}}.get(module, set())
+                'dental-panorama': {'primary'}, 'lumbar': {'primary'}, 'lumbar-marrow': {'primary'}, 'alignment': {'primary'}, 'total-spine': {'primary'}}.get(module, set())
     if not required.issubset(series):
         raise ValueError('Select the required source series.')
-    if module in ('alignment', 'total-spine') and not series['primary'].get('sop_uid'):
+    if module in ('alignment', 'total-spine', 'dental-panorama') and not series['primary'].get('sop_uid'):
         raise ValueError('Select an exact source instance.')
     if module == 'total-spine' and len({(x['series_uid'], x.get('sop_uid')) for x in series.values()}) != len(series):
         raise ValueError('Each spine projection requires a distinct source instance.')
@@ -67,13 +73,26 @@ def validate(request):
     params = request['parameters']
     if not isinstance(params, dict) or set(params) - PARAMETERS[module]:
         raise ValueError('Unsupported analysis parameters.')
-    limit = MAX_REVIEW_REQUEST if module in ('brain', 'brain-lesions') and 'correction' in params else 65536 if module == 'total-spine' and 'correction' in params else 16384
+    if module == 'dental-panorama' and (params.get('panoramic_confirmed') is not True or series['primary']['expected_count'] != 1):
+        raise ValueError('Confirm and select one exact panoramic source image.')
+    limit = MAX_REVIEW_REQUEST if module in ('brain', 'brain-lesions', 'lumbar-marrow') and 'correction' in params else 65536 if module == 'total-spine' and 'correction' in params else 16384
     if len(json.dumps(request, allow_nan=False)) > limit:
         raise ValueError('Analysis request is too large.')
+    if module == 'lumbar-marrow' and 'correction' not in params:
+        if marrow_multi:
+            from ..marrow_multisequence import validate_parameters
+            validate_parameters(params)
+            from ..marrow_inputs import require_roles
+            require_roles(series, params.get('input_protocol', 1))
+        else:
+            if set(params) - {'t1_confirmed','clinical'}:
+                raise ValueError('Unsupported T1 marrow parameters.')
+            from ..lumbar_marrow import validate_parameters
+            validate_parameters(params)
     if 'correction' in params:
         if set(params) != {'correction'}:
             raise ValueError('A correction cannot change inference parameters.')
-        if module in ('brain', 'brain-lesions'):
+        if module in ('brain', 'brain-lesions', 'lumbar-marrow'):
             from .segmentation_review import validate as validate_mask
             validate_mask(params['correction'])
         elif module == 'total-spine':

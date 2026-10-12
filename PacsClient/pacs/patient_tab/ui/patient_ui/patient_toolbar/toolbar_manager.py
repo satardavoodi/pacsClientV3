@@ -2346,6 +2346,11 @@ class ToolbarManager:
 
     def toggle_ruler(self, selected_widget):
         """Toggle ruler tool on/off for the selected viewer"""
+        # A queued tool action can retain a Python wrapper after its native
+        # viewport was deleted. Even formatting that wrapper for logs raises.
+        from shiboken6 import isValid
+        if selected_widget is None or not isValid(selected_widget):
+            return
         if getattr(selected_widget, "_structured_report_active", False):
             return  # A document must not operate on its retained image backend.
         import logging
@@ -5566,6 +5571,24 @@ class ToolbarManager:
                 return
             
             logger.info("   ✅ [MPR OPEN] Series data found")
+
+            # First-use Python/DLL imports can take seconds. Prepare them before
+            # geometry resolution imports the Zeta package, keeping the existing
+            # volume and GUI/VTK construction paths unchanged.
+            from modules.mpr.runtime_prepare import MprRuntimePreparation
+            preparation = getattr(self.patient_widget, '_mpr_runtime_preparation', None)
+            if preparation is None:
+                preparation = MprRuntimePreparation(self.patient_widget)
+                self.patient_widget._mpr_runtime_preparation = preparation
+            source_index = getattr(selected_widget, 'last_series_show', None)
+            def resume_mpr():
+                if (self.patient_widget.selected_widget is selected_widget
+                        and getattr(selected_widget, 'last_series_show', None) == source_index
+                        and active_series_index < len(self.patient_widget.lst_thumbnails_data)
+                        and self.patient_widget.lst_thumbnails_data[active_series_index] is series_data):
+                    self.toggle_zeta_mpr()
+            if not preparation.request(resume_mpr):
+                return
             
             # ✅ Get VTK data from found series
             try:
@@ -5785,6 +5808,7 @@ class ToolbarManager:
                         slab_mode=_proj.get('slab_mode'),
                         slab_thickness_mm=_proj.get('slab_thickness_mm'),
                         pre_flipped_image_data=_pre_flipped,
+                        progressive_2d=True,
                     )
                 finally:
                     if _build_dlg is not None:
@@ -5793,6 +5817,7 @@ class ToolbarManager:
                             _build_dlg.deleteLater()
                         except Exception:
                             pass
+                zeta_widget._initial_views_failure_callback = lambda: self._restore_selected_viewer(selected_widget)
                 self._mpr_projection_request = None  # consume (one-shot)
                 try:
                     logger.warning(

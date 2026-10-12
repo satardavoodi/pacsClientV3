@@ -8,10 +8,11 @@ import urllib.request
 import pytest
 
 from modules.ai_imaging.eagle_eye_remote import server
+from tests.code.ai_imaging.human_access_fixture import human_access, session_headers
 
 
 @pytest.fixture
-def endpoint():
+def endpoint(human_access):
     class Jobs:
         def recent(self, owner):
             return []
@@ -20,11 +21,15 @@ def endpoint():
         capabilities = {'workflows': ['report', 'web_search', 'standardize_assist']}
 
         def process(self, owner, body):
-            assert owner == 'synthetic-client'
+            import hashlib
+            principal = human_access.store.identify({'provider':'pacs',
+                'subject':'synthetic-approved-person', 'username':'synthetic-user'})
+            assert owner == 'human:' + hashlib.sha256(principal.encode()).hexdigest()
             return {'content': 'Synthetic response.', 'workflow': body['workflow']}
 
     http = ThreadingHTTPServer(('127.0.0.1', 0), server.handler(
-        Jobs(), {'synthetic-client': 'test-token'}, echomind=EchoMind()))
+        Jobs(), {'synthetic-client': 'test-token'}, echomind=EchoMind(), license_guard=lambda: True,
+        user_authority=human_access))
     thread = threading.Thread(target=http.serve_forever, daemon=True)
     thread.start()
     try:
@@ -38,12 +43,13 @@ def endpoint():
 def call(endpoint, path, body=None, token='test-token'):
     request = urllib.request.Request(endpoint + path,
         data=None if body is None else json.dumps(body).encode(),
-        headers={'Authorization': 'Bearer ' + token})
+        headers=(session_headers(endpoint, token) if token == 'test-token' and path != '/v1/capabilities'
+                 else {'Authorization': 'Bearer ' + token}))
     with urllib.request.urlopen(request, timeout=3) as response:
         return json.load(response)
 
 
-@pytest.mark.parametrize('workflow', ['report', 'web_search', 'standardize_assist'])
+@pytest.mark.parametrize('workflow', ['report', 'web_search', 'standardize_assist', 'add_reference'])
 def test_eagle_eye_listener_accepts_server_owned_echomind(endpoint, workflow):
     body = call(endpoint, '/v1/echomind/process', {'text': 'Synthetic.', 'workflow': workflow})
     assert body == {'content': 'Synthetic response.', 'workflow': workflow}
@@ -52,7 +58,8 @@ def test_eagle_eye_listener_accepts_server_owned_echomind(endpoint, workflow):
 def test_capabilities_declare_echomind_without_removing_models(endpoint):
     value = call(endpoint, '/v1/capabilities')
     assert 'web_search' in value['echomind']['workflows']
-    assert len(value['modules']) == 7
+    from modules.ai_imaging.eagle_eye_remote.contracts import MODULES
+    assert set(value['modules']) == set(MODULES)
     assert value['interactive_edits'] is True
 
 

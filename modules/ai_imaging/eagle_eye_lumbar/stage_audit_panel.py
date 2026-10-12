@@ -125,46 +125,38 @@ class _StagePage(QWidget):
         self._fit_preview()
 
 
-class EagleEyeStageAuditPanel(QDialog):
-    """Show exact stored image inputs and gates without touching live viewers."""
+class EagleEyeStageAuditWidget(QWidget):
+    """Embeddable, read-only view of the exact images used by each stage."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._session_dir: Path | None = None
-        self.setWindowTitle("Eagle Eye - Stage Images")
-        self.setWindowFlag(Qt.WindowType.Window, True)
-        self.setModal(False)
-        self.setMinimumSize(900, 640)
-        self.resize(1200, 800)
-        self.setStyleSheet(f"QDialog {{ background: {_BG}; }}")
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 10)
-        self.title = QLabel("Eagle Eye stage-by-stage image audit")
-        self.title.setStyleSheet(f"color: {_ACCENT}; font-size: 15px; font-weight: 700;")
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.title = QLabel("Analysis cards and stage inputs")
+        self.title.setStyleSheet(
+            f"color: {_ACCENT}; font-size: 14px; font-weight: 700;"
+        )
         layout.addWidget(self.title)
         self.subtitle = QLabel(
-            "These are immutable stored artifacts. Opening this window does not recapture the study."
+            "Stored derived images are shown read-only; opening this page does not rerun analysis."
         )
+        self.subtitle.setWordWrap(True)
         self.subtitle.setStyleSheet(f"color: {_MUTED};")
         layout.addWidget(self.subtitle)
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("eagleEyeStageCardTabs")
         self.tabs.setStyleSheet(f"QTabWidget {{ color: {_FG}; }}")
         layout.addWidget(self.tabs, 1)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.hide)
-        buttons.addWidget(close_button)
-        layout.addLayout(buttons)
 
     @property
     def session_dir(self) -> Path | None:
         return self._session_dir
 
-    def show_session(self, session_dir: str | Path) -> None:
+    def load_session(self, session_dir: str | Path) -> None:
         self._session_dir = Path(session_dir)
         self.tabs.clear()
         try:
@@ -180,6 +172,43 @@ class EagleEyeStageAuditPanel(QDialog):
             failure = QLabel("Stage images could not be loaded from this session.")
             failure.setStyleSheet(f"color: {_FG}; padding: 20px;")
             self.tabs.addTab(failure, "Unavailable")
+
+
+class EagleEyeStageAuditPanel(QDialog):
+    """Show exact stored image inputs and gates without touching live viewers."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._session_dir: Path | None = None
+        self.setWindowTitle("Eagle Eye - Stage Images")
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.setModal(False)
+        self.setMinimumSize(900, 640)
+        self.resize(1200, 800)
+        self.setStyleSheet(f"QDialog {{ background: {_BG}; }}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 10)
+        self.gallery = EagleEyeStageAuditWidget(self)
+        self.title = self.gallery.title
+        self.subtitle = self.gallery.subtitle
+        self.tabs = self.gallery.tabs
+        layout.addWidget(self.gallery, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.hide)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+    @property
+    def session_dir(self) -> Path | None:
+        return self._session_dir
+
+    def show_session(self, session_dir: str | Path) -> None:
+        self._session_dir = Path(session_dir)
+        self.gallery.load_session(self._session_dir)
         self.show()
         self.raise_()
         self.activateWindow()

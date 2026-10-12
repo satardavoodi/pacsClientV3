@@ -3,6 +3,23 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def test_space_free_launcher_preserves_presentation_companion_resolution(tmp_path, monkeypatch):
+    import runpy
+    from modules.mpr.advanced_3d_slicer.slicer_custom_app import launch_slicer
+    source = tmp_path / 'source with spaces' / 'startup_script.py'
+    source.parent.mkdir()
+    source.with_name('viewer_chrome.py').write_text('shared chrome', encoding='utf-8')
+    source.write_text("from pathlib import Path\nPath(__file__).with_name('evidence.txt').write_text(Path(__file__).with_name('viewer_chrome.py').read_text())\n", encoding='utf-8')
+    scratch = tmp_path / 'scratch'; scratch.mkdir()
+    import tempfile
+    monkeypatch.setattr(tempfile, 'gettempdir', lambda: str(scratch))
+    monkeypatch.setattr(launch_slicer, 'get_startup_script_path', lambda: source)
+    command = launch_slicer.build_slicer_command(Path('synthetic.exe'), tmp_path, 'mpr')
+    bootstrap = Path(command[command.index('--python-script') + 1])
+    runpy.run_path(str(bootstrap), run_name='__main__')
+    assert source.with_name('evidence.txt').read_text() == 'shared chrome'
+
+
 def test_late_startup_title_uses_current_version_instead_of_native_baseline(monkeypatch):
     import os
     monkeypatch.setenv("AIPACS_VIEWER_TITLE", "AI-PACS Advanced Viewer v3.6.9")

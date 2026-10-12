@@ -94,6 +94,17 @@ class Runtime:
         self.role = os.environ["AIPACS_RESIDENT_ROLE"]
         self.root = Path(os.environ["AIPACS_RESIDENT_ROOT"])
         self.token = os.environ.pop("AIPACS_RESIDENT_TOKEN")
+        try:
+            from eagle_eye_remote import user_session
+            from eagle_eye_remote.parent_ipc import ChildIdentityQueue
+        except ImportError:
+            package_root = os.environ.get('AIPACS_EAGLE_EYE_PACKAGE_ROOT')
+            if package_root and package_root not in sys.path:
+                sys.path.append(package_root)
+            from modules.ai_imaging.eagle_eye_remote import user_session
+            from modules.ai_imaging.eagle_eye_remote.parent_ipc import ChildIdentityQueue
+        self.human_identity = ChildIdentityQueue()
+        user_session.install_parent_bridge(self.human_identity)
         self.commands = queue.Queue(maxsize=4)
         self.completed = queue.Queue()
         self.results = {}
@@ -137,7 +148,8 @@ class Runtime:
                 server.bind(("127.0.0.1", 0))
                 server.listen(4)
                 server.settimeout(1)
-                descriptor = {"protocol": 1, "role": self.role, "port": server.getsockname()[1], "pid": os.getpid()}
+                descriptor = {"protocol": 1, "role": self.role, "port": server.getsockname()[1], "pid": os.getpid(),
+                              "user_identity_version": 1}
                 temp = self.root / "ready.partial"
                 temp.write_text(json.dumps(descriptor), encoding="utf-8")
                 temp.replace(self.root / "ready.json")
@@ -176,6 +188,11 @@ class Runtime:
         operation = request.get("operation")
         if operation == "ping":
             return {"ok": True, "ready": self.ready, "role": self.role}
+        if operation == 'identity_poll':
+            return {'ok': True, 'requests': self.human_identity.pull()}
+        if operation == 'identity_reply':
+            self.human_identity.reply(request.get('id'), request.get('result'))
+            return {'ok': True}
         request_id = request.get("id", "")
         if len(request_id) != 32 or any(c not in "0123456789abcdef" for c in request_id):
             raise ValueError("Invalid job ID")

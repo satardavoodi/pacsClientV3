@@ -205,7 +205,7 @@ def test_server_spine_mask_is_a_portable_artifact(tmp_path, monkeypatch):
         assert 'spine-mask.npy' in archive.namelist()
 
 
-def test_large_mask_handle_resumes_without_changing_request(tmp_path, monkeypatch):
+def test_large_mask_handle_resumes_without_changing_request(tmp_path, monkeypatch, human_access):
     import numpy as np
     import SimpleITK as sitk
     from modules.ai_imaging.eagle_eye_remote import segmentation_review as review
@@ -217,8 +217,10 @@ def test_large_mask_handle_resumes_without_changing_request(tmp_path, monkeypatc
     assert len(json.dumps(req)) > 65536
     monkeypatch.setenv('SYNTHETIC_REVIEW_TOKEN', 'a'*64)
     client = Client({'url': 'http://127.0.0.1:8002', 'token_env': 'SYNTHETIC_REVIEW_TOKEN'})
+    monkeypatch.setattr(client, 'json', lambda path, body=None: human_access.login('synthetic-device', body))
+    principal=human_access.store.users()[0]['principal']
     handle = dict(version=1, server=client.url, credential_binding=hashlib.sha256(client.token.encode()).hexdigest(),
-                  request=req, job_id=None)
+                  human_binding=hashlib.sha256(principal.encode()).hexdigest(), request=req, job_id=None)
     path = tmp_path/'pending.json'; save_handle(path, handle)
     monkeypatch.setattr(client, '_observe', lambda value, *a, **kw: value['request'])
     assert client.resume(path, tmp_path) == req

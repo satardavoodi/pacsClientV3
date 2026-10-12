@@ -22,6 +22,9 @@ def _installed_settings_role():
 
 def settings_role():
     """UI role only; warm the installed fallback before QApplication startup."""
+    from aipacs_runtime import is_frozen
+    if is_frozen():
+        return _installed_settings_role()
     return os.environ.get('AIPACS_EAGLE_EYE_ROLE') or _installed_settings_role()
 
 
@@ -36,23 +39,17 @@ def read_connection(path):
 
 
 def validate_connection(value):
+    from .settings import ordinary_connection
+    value = ordinary_connection(value)
     url = value.get('url', '').strip().rstrip('/')
     parsed = urlsplit(url)
-    if (parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username
-            or parsed.password or parsed.query or parsed.fragment
-            or (parsed.scheme == 'http' and parsed.hostname not in ('localhost', '127.0.0.1', '::1'))):
-        raise ValueError('Use an HTTPS Eagle Eye address; HTTP is allowed only for loopback.')
+    if (parsed.scheme != 'http' or not parsed.hostname or parsed.username
+            or parsed.password or parsed.query or parsed.fragment):
+        raise ValueError('Use an HTTP Eagle Eye server address.')
     try:
         parsed.port
     except ValueError:
         raise ValueError('The server port is invalid.') from None
-    for key in ('token_file', 'ca_file', 'client_certificate', 'client_private_key'):
-        if value.get(key) and not Path(value[key]).is_absolute():
-            raise ValueError('Credential and certificate files require absolute paths.')
-    if bool(value.get('client_certificate')) != bool(value.get('client_private_key')):
-        raise ValueError('Paired client certificate and private key must be configured together.')
-    if value.get('client_certificate') and parsed.scheme != 'https':
-        raise ValueError('Paired clients require HTTPS.')
     return {**value, 'url': url, 'schema_version': 1}
 
 
@@ -142,8 +139,8 @@ def save_listener_options(path, revision, options):
     if type(options['port']) is not int or not 1 <= options['port'] <= 65535:
         raise ValueError('The listening port must be between 1 and 65535.')
     certificate, key = options['certificate'], options['private_key']
-    if bool(certificate) != bool(key) or (not address.is_loopback and not certificate):
-        raise ValueError('Network listeners require a TLS certificate and private key.')
+    if bool(certificate) != bool(key):
+        raise ValueError('Configure both legacy TLS certificate and private key, or neither.')
     if certificate:
         if any(not Path(p).is_absolute() or not Path(p).is_file() for p in (certificate, key)):
             raise ValueError('Select existing absolute certificate and private-key paths.')
@@ -162,6 +159,24 @@ def save_listener_options(path, revision, options):
     return {'revision': saved['revision']}
 
 
+def local_pacs_defaults(fallback):
+    """Read the workstation profile in the settings worker; never save or copy secrets."""
+    from PacsClient.utils.server_profiles import load_profiles_document, ServerProfile
+    document = load_profiles_document(migrate_if_missing=False)
+    selected = document.get('active_profile_id')
+    record = next((entry for entry in document.get('profiles', []) if entry.get('id') == selected), None)
+    profile = ServerProfile.from_dict(record) if record else None
+    url = (profile.module_endpoint('pacs_http') if profile else None) or fallback.get('url') or 'http://127.0.0.1:8000'
+    parsed = urlsplit(url)
+    if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password or parsed.query:
+        raise ValueError('The saved PACS metadata address is invalid. Review Server Settings.')
+    port = parsed.port
+    local = parsed._replace(netloc='127.0.0.1' + (f':{port}' if port else ''), fragment='').geturl()
+    return {'url': local,
+            'dicom_port': int(profile.dicom_port if profile else fallback.get('dicom_port') or 105),
+            'socket_port': int(profile.socket_port if profile else fallback.get('socket_port') or 50052)}
+
+
 def load_settings():
     snapshot = read_connection(config_path())
     role = settings_role()
@@ -172,7 +187,7 @@ def load_settings():
         server = server_snapshot['value']
         pacs = server.get('pacs', {})
         snapshot['server'] = {'host': server.get('host', '127.0.0.1'),
-                              'port': server.get('port', 8042), 'job_root': server.get('job_root', ''),
+                              'port': server.get('port', 8002), 'job_root': server.get('job_root', ''),
                               'certificate': server.get('certificate', ''),
                               'private_key': server.get('private_key', ''),
                               'source_type': pacs.get('type', 'pacs-storage'),
@@ -219,12 +234,16 @@ def probe_pacs(path):
 
 def probe_connection(value):
     from .client import Client
-    response = Client(validate_connection(value)).json('/v1/capabilities')
+    from . import user_session
+    connection = Client(validate_connection(value))
+    response = connection.json('/v1/capabilities')
     if (response.get('protocol') != 1 or response.get('input_mode') != 'pacs_references'
             or not isinstance(response.get('modules'), list)
             or any(not isinstance(item, str) for item in response['modules'])):
         raise ValueError('The endpoint is not a compatible Eagle Eye server.')
-    return response
+    user_session.session(connection)
+    admission = user_session.confirmed_admission(connection)
+    return dict(response, human_authenticated=True, human_provider=admission['provider'])
 
 
 def recent_jobs(value):
@@ -233,3 +252,34 @@ def recent_jobs(value):
     if not isinstance(result.get('jobs'), list) or len(result['jobs']) > 50:
         raise ValueError('Invalid job inventory.')
     return result['jobs']
+
+
+def usage_snapshot():
+    """Read aggregate counters only; invoked by an owned settings worker."""
+    from .usage import history_summary, job_summary
+    from .text_history import History
+    if settings_role() != 'server':
+        from .client import Client
+        value = Client().json('/v1/usage')
+        from .user_usage import validate_user_usage
+        validate_user_usage(value)
+        return value
+    path = os.environ.get('AIPACS_EAGLE_EYE_SERVER_CONFIG')
+    if not path:
+        raise ValueError('Select the server configuration before reading usage.')
+    config = read_connection(path)['value']
+    root = Path(config['job_root'])
+    states = []
+    for file in root.glob('*/state.json'):
+        if file.stat().st_size > 2*1024*1024:
+            raise ValueError('Server job usage inventory is invalid.')
+        states.append(json.loads(file.read_text(encoding='utf-8')))
+    from aipacs_runtime import user_data_root
+    echo = config.get('echomind') or {}
+    echo_dir = Path(echo.get('history_dir') or user_data_root() / 'echomind' / 'remote_history')
+    agent = config.get('secretary') or {}
+    agent_dir = Path(agent.get('history_dir') or echo_dir.parents[1] / 'secretary' / 'remote_history')
+    return dict(version=1, scope='all_clients_on_this_server', period='retained_server_history',
+                eagle_eye=job_summary(states, available=root.is_dir(), by_client=True),
+                echomind=history_summary(History(echo_dir), by_client=True),
+                agent=history_summary(History(agent_dir), category='agent', by_client=True))

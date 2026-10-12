@@ -35,6 +35,10 @@ google-auth-oauthlib>=1.2.0
 keyring>=24.0.0
 cryptography>=42.0.0
 
+# Hosted reception CRM: match the verified 1.32.6 runtime.
+pypdfium2==5.13.0
+pymongo==4.18.0
+
 # ── Secretary background agent: education content search + OCR hook ──
 # (2026-06-11) Pure-Python extractors for full-text search inside
 # educational PDFs / e-books / PowerPoint decks. pytesseract is the OCR

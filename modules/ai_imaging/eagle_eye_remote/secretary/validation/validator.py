@@ -4,6 +4,9 @@ import copy
 import re
 from dataclasses import dataclass
 from typing import Any
+from .course_authoring import COURSE_AUTHORING_MODELS
+from .content_assets import CONTENT_ASSET_MODELS
+from .session_files import SESSION_FILE_MODELS
 
 from .contracts import SecretaryActionPlan
 from .errors import (
@@ -38,6 +41,9 @@ _ALLOWED_ACTIONS = {
 # ``close_patient_tab`` is deliberately ABSENT (destructive; test-server only).
 from modules.ai_imaging.eagle_eye_remote.secretary.validation.settings_controls import SETTINGS_CONTROL_MODELS, SETTINGS_CONTROL_WRITES
 _BUS_ALLOWED_ACTIONS = {
+    *CONTENT_ASSET_MODELS,
+    *SESSION_FILE_MODELS,
+    *COURSE_AUTHORING_MODELS,
     'get_ai_settings',
     'verify_eagle_eye_connection',
     'set_voice_to_text_preferences',
@@ -180,6 +186,8 @@ def validate_steps(steps: list) -> tuple[list, list]:
     """
     norm: list = []
     errors: list = []
+    from .content_assets import ASSET_RESULT_BINDINGS,workflow_asset_entities
+    produced=set()
     for st in (steps or []):
         st2 = dict(st) if isinstance(st, dict) else {}
         # Normalize to the full single-plan shape validate_plan expects, so a
@@ -193,7 +201,16 @@ def validate_steps(steps: list) -> tuple[list, list]:
             st2["needs_confirmation"] = True  # workflow confirms once up front
         else:
             st2.setdefault("needs_confirmation", False)
+        original_entities=st2['entities']
+        try:
+            st2['entities']=workflow_asset_entities(st2.get('action'),original_entities,produced)
+        except ValueError:
+            errors.append(ValidationError(code=ERR_INVALID_ENTITY,field='entities',message='Unbound content result reference.'))
         normalized, errs = validate_plan(st2)
+        st2['entities']=original_entities
+        if normalized is not None:
+            normalized['entities']=original_entities
+            produced.update(ASSET_RESULT_BINDINGS.get(st2.get('action'),()))
         norm.append(normalized if normalized is not None else st2)
         if errs:
             errors.extend(errs)
@@ -334,6 +351,21 @@ def validate_plan_semantics(plan: SecretaryActionPlan) -> list[ValidationError]:
     # known and entities must be an object; per-entity typing is the owning
     # adapter's job (each returns a typed, recoverable error envelope).
     if action in _BUS_ALLOWED_ACTIONS:
+        if action in CONTENT_ASSET_MODELS:
+            try:
+                CONTENT_ASSET_MODELS[action].model_validate(plan.get('entities') or {})
+            except ValueError:
+                return [ValidationError(code=ERR_INVALID_ENTITY, field='entities', message='Invalid content asset arguments.')]
+        if action in SESSION_FILE_MODELS:
+            try:
+                SESSION_FILE_MODELS[action].model_validate(plan.get('entities') or {})
+            except ValueError:
+                return [ValidationError(code=ERR_INVALID_ENTITY, field='entities', message='Invalid bounded session file arguments.')]
+        if action in COURSE_AUTHORING_MODELS:
+            try:
+                COURSE_AUTHORING_MODELS[action].model_validate(plan.get('entities') or {})
+            except ValueError:
+                return [ValidationError(code=ERR_INVALID_ENTITY, field='entities', message='Invalid bounded course arguments.')]
         from modules.ai_imaging.eagle_eye_remote.secretary.validation.ui_controls import UI_CONTROL_MODELS
         if action in UI_CONTROL_MODELS:
             try:

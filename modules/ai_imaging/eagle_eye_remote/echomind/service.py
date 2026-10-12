@@ -2,6 +2,8 @@
 import json
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
+from .reference_report import ReferenceContext
+from .attachments import Attachment, content_parts
 from .runtime import request_context, current_settings
 from .core import ai_chat_config as endpoints, echomind_http
 from .core.viewer_chat import openai_reporter as company, openai_parallel_backend as openai
@@ -25,8 +27,11 @@ class ProcessRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=200000)
     provider: Literal["aipacs", "company", "openai"] = "company"
-    workflow: Literal["report", "turbo", "chat", "assistant", "search", "web_search", "standardize", "standardize_assist", "translate_report", "translate_text", "correction", "breast", "organize_template", "template_languages"] = "report"
-    modality: Literal["CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND", "RADIOLOGY", "MAMOGRAPHY", ""] = ""
+    workflow: Literal["report", "turbo", "chat", "assistant", "search", "web_search", "standardize", "standardize_assist", "translate_report", "translate_text", "correction", "breast", "organize_template", "template_languages", "add_reference"] = "report"
+    modality: Literal["CT", "MRI", "SONOGRAPHY", "OBSTETRIC ULTRASOUND", "RADIOLOGY", "MAMOGRAPHY", "ECHOCARDIOGRAPHY", ""] = ""
+    correction_source: Attachment | None = None
+    attachments: list[Attachment] = Field(default_factory=list, max_length=6)
+    reference_context: ReferenceContext | None = None
     normal_template: str = Field(default="", max_length=100000)
     correction_note: str = Field(default="", max_length=20000)
     target_section: str = Field(default="", max_length=200)
@@ -43,6 +48,14 @@ class WorkflowError(Exception):
     pass
 
 
+class ReportUnavailable(WorkflowError):
+    pass
+
+
+class AttachmentFallbackUnavailable(ReportUnavailable):
+    pass
+
+
 def _overrides(request, openai_key, center_code):
     if request.workflow == 'web_search' and (request.provider != 'company' or request.model or request.translate):
         raise WorkflowError('Web Search requires the company provider and server-selected model; translation is not supported')
@@ -50,13 +63,13 @@ def _overrides(request, openai_key, center_code):
         raise WorkflowError('Turbo correction requires company correction and its server-selected model')
     if request.workflow == "turbo" and request.provider != "company":
         raise WorkflowError("Turbo requires the company provider")
-    values = {"llm_backend": "openai" if request.provider == "openai" else "company"}
+    values = {"llm_backend": "openai" if request.provider == "openai" else "company", "brain_workflow": request.workflow, "brain_modality": request.modality}
     if openai_key:
         # User keys are sent only to OpenAI, never to a server-configured alternate host.
         values.update(openai_api_key=openai_key, openai_base_url="https://api.openai.com/v1",
                       openai_org_id="", openai_project_id="")
     if center_code:
-        values["api_key"] = center_code
+        raise WorkflowError('Company credentials are owned by Eagle AI Brain in AI > Connection.')
     if request.stt_provider:
         values["stt_provider"] = request.stt_provider
     return values
@@ -85,10 +98,101 @@ def _native(request):
                 break
         else:
             break
+    from ..usage import record_tokens
+    record_tokens(body.get("usage") if isinstance(body, dict) else None, "company-service")
     return {"content": content, "usage": body.get("usage", {}) if isinstance(body, dict) else {}}
 
 
+def _report_content(result):
+    if not isinstance(result, dict):
+        return False
+    value = result.get('content')
+    if isinstance(value, str):
+        return bool(value.strip())
+    return isinstance(value, dict) and bool(value) and not value.get('error') and any(
+        isinstance(item, str) and item.strip() for item in value.values())
+
+
+def _report_with_fallback(request, options):
+    if request.model:
+        raise WorkflowError('Reporting uses the server-selected model')
+    prompt = build_turbo_system_prompt(request.modality, request.normal_template,
+        profile=request.study_profile.model_dump() if request.study_profile else None)
+    try:
+        result = company.reporter(request.text, request.modality, request.normal_template,
+                                  **options, system_prompt_override=prompt)
+        if _report_content(result):
+            return {**result, 'route_used': 'turbo', 'fallback_used': False}
+    except Exception:
+        # Provider details may contain credentials or clinical text. Do not log.
+        pass
+    if request.attachments:
+        raise AttachmentFallbackUnavailable('Turbo is unavailable; company fallback cannot process report attachments')
+    if current_settings().get('brain_server', 'server_1') != 'server_1':
+        raise ReportUnavailable('The selected Brain route failed. No company fallback was sent.')
+    result = _native(request.model_copy(update={'provider': 'aipacs', 'workflow': 'report'}))
+    if not _report_content(result):
+        raise ReportUnavailable('Report providers returned no usable content')
+    return {**result, 'route_used': 'company_service', 'fallback_used': True}
+
+
+def _custom_report(request, attachment_parts):
+    from .core.ai_chat_config import GAPGPT_API_URL
+    fields = ('text',) if request.workflow == 'chat' else (
+        'text', 'modality', 'normal_template', 'correction_note', 'target_section')
+    data = {key: getattr(request, key) for key in fields}
+    if request.study_profile:
+        data['study_profile'] = request.study_profile.model_dump()
+    content = json.dumps(data, ensure_ascii=True)
+    if attachment_parts:
+        content = [{'type': 'text', 'text': content}] + attachment_parts
+    from ..brain_connection import source
+    with source('echomind'):
+        response = echomind_http.post(GAPGPT_API_URL, json={
+            'messages': [{'role': 'user', 'content': content}]})
+    response.raise_for_status()
+    body = response.json()
+    text = body['choices'][0]['message']['content']
+    if not isinstance(text, str) or not text.strip():
+        raise WorkflowError('Custom provider returned an empty report.')
+    from ..usage import record_tokens
+    model_key = 'openai_text_model' if request.workflow == 'chat' else 'openai_report_model'
+    record_tokens(body.get('usage'), current_settings().get(model_key, 'unspecified'))
+    return {'content': text, 'usage': body.get('usage', {})}
+
+
 def _process(request):
+    if (current_settings().get('brain_server', 'server_1') == 'custom'
+            and request.workflow in ('assistant', 'search', 'web_search')):
+        raise WorkflowError('Assist and Search are unavailable with Custom Brain.')
+    imported_source = request.correction_source is not None
+    if imported_source:
+        if request.workflow != 'correction' or request.provider != 'company' or not request.correction_note.strip():
+            raise WorkflowError('Saved sources require company Correction and a correction note.')
+        from .correction_source import normalize
+        try:
+            request = request.model_copy(update={'text': normalize(request.correction_source)})
+        except Exception:
+            raise WorkflowError('Cannot read the saved report. Use JSON, HTML, UTF-8 text, DOCX or a readable text PDF; limit 1 MiB.') from None
+    attachment_parts = None
+    if request.attachments:
+        if request.provider != "company" or request.workflow not in ("report", "turbo"):
+            raise WorkflowError("Attachments require company Report or Turbo.")
+        try:
+            attachment_parts = content_parts(request.attachments)
+        except Exception:
+            raise WorkflowError("Cannot read attachments. Use UTF-8 TXT, DOCX, text PDF (up to 30 pages) or images; total limit 1 MiB.") from None
+    if (current_settings().get('brain_server') == 'custom'
+            and request.provider in ('company', 'aipacs')
+            and request.workflow in ('report', 'turbo', 'correction', 'chat')):
+        if request.workflow == 'correction' and not request.correction_note.strip():
+            raise WorkflowError('A correction note is required')
+        return _custom_report(request, attachment_parts)
+    if request.workflow == "add_reference":
+        if request.provider != "company" or request.model or request.translate:
+            raise WorkflowError("Reference comparison requires the company server workflow")
+        from .reference_report import add_reference
+        return add_reference(request.text, request.modality, request.reference_context or ReferenceContext())
     if request.workflow in ('organize_template', 'template_languages'):
         if request.provider != 'company':
             raise WorkflowError('Template workflows require the company provider')
@@ -113,16 +217,15 @@ def _process(request):
     if request.workflow == 'web_search':
         from .web_search import search
         return search(request.text)
-    if request.provider == "aipacs":
+    if request.workflow in ('report', 'turbo') and request.provider in ('company', 'aipacs'):
+        options = {'attachment_parts': attachment_parts} if attachment_parts else {}
+        return _report_with_fallback(request, options)
+    if request.provider == "aipacs" and request.workflow != "chat":
         return _native(request)
     backend = openai if request.provider == "openai" else company
     options = {"model": request.model} if request.model else {}
-    if request.workflow == "turbo":
-        if request.model:
-            raise WorkflowError("Turbo uses the company-selected model")
-        return company.reporter(request.text, request.modality, request.normal_template,
-                                system_prompt_override=build_turbo_system_prompt(request.modality, request.normal_template,
-                                    profile=request.study_profile.model_dump() if request.study_profile else None))
+    if attachment_parts:
+        options["attachment_parts"] = attachment_parts
     if request.workflow == "report":
         return backend.reporter(request.text, request.modality, request.normal_template, **options)
     if request.workflow == "correction":
@@ -134,6 +237,9 @@ def _process(request):
                 profile['modality'] = request.modality
             options['system_prompt_prefix'] = build_turbo_correction_prefix(
                 profile or None) or ''
+        if imported_source:
+            from .correction_source import INSTRUCTIONS
+            options['system_prompt_prefix'] = INSTRUCTIONS + options.get('system_prompt_prefix', '')
         return backend.correction(request.text, request.correction_note, target_section=request.target_section, **options)
     function = {"chat": backend.chat, "assistant": backend.BreastExpertAssistant,
                 "breast": backend.BreastExpertAssistant, "search": backend.standard_assist_search,
@@ -172,7 +278,8 @@ def process(request, *, openai_key="", center_code="", audio_paths=None, base=No
             backend = openai if request.provider == "openai" else company
             raw = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             translated = backend.translate_report(raw) if request.workflow in ("report", "turbo", "correction") else backend.translate_text_to_persian(raw)
-        return {"content": content, "usage": result.get("usage", {}), "transcript": transcript,
+        return {**{key: result[key] for key in ("route_used", "fallback_used") if key in result},
+                "content": content, "usage": result.get("usage", {}), "transcript": transcript,
                 "translation": translated, "provider": request.provider, "workflow": request.workflow}
 
 

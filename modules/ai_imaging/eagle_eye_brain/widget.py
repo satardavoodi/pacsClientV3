@@ -164,7 +164,7 @@ class BrainVolumetryWidget(QWidget):
         result_layout.addLayout(actions)
         self._manual_session = None
         self._pending_manual_review = False
-        self.manual_edit = QPushButton('Manual correction in 3D Slicer')
+        self.manual_edit = QPushButton('Manual Correction — Advanced Image Analysis')
         self.manual_edit.setObjectName('brainManualCorrection')
         self.manual_edit.clicked.connect(self._manual_open)
         result_layout.addWidget(self.manual_edit)
@@ -348,7 +348,7 @@ class BrainVolumetryWidget(QWidget):
                 self._manual_session = result
                 self.manual_recalculate.setEnabled(not self._result.get('longitudinal'))
                 self.manual_recalculate.setText('Apply mask on server / recalculate' if self._result.get('remote_analysis') else 'Recalculate corrected report')
-                self.status.setText('Edit existing segments in Slicer, then save the correction. PACS remains available.')
+                self.status.setText('Edit existing segments in Advanced Image Analysis, then save the correction. PACS remains available.')
                 return
             if self._future_kind != 'manual_recalculate' or result.get('remote_analysis'):
                 self._manual_session = None
@@ -403,15 +403,12 @@ class BrainVolumetryWidget(QWidget):
         if self._result.get('remote_analysis') and not self._result.get('review_assets'):
             self.status.setText('This older result has no editable reference bundle. Update the server and run the analysis again.')
             return
-        if self._manual_session:
-            self.status.setText('A manual review session is already open. Save its correction in Slicer, then recalculate here.')
-            return
         from copy import deepcopy
-        from .manual_review import prepare_review
+        from .manual_review import open_review_ready
         self._future_kind = 'manual_open'
         self._cancel.clear()
-        self.status.setText('Preparing a separate segmentation copy for manual review')
-        self._future = self._executor.submit(prepare_review, deepcopy(self._result))
+        self.status.setText('Opening Advanced Image Analysis. Preparing images and editing controls; PACS remains available.')
+        self._future = self._executor.submit(open_review_ready, deepcopy(self._result), self._manual_session)
         self._begin_progress()
 
     def _manual_recalculate(self):

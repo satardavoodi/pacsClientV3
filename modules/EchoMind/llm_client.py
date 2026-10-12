@@ -89,8 +89,8 @@ def is_active_backend_configured() -> bool:
     """
     from modules.EchoMind import remote_backend
     if remote_backend.selected():
-        from modules.EchoMind.entitlement import company_entitled
-        return company_entitled()
+        from modules.ai_imaging.eagle_eye_remote.user_session import has_login_context
+        return has_login_context()
     backend = _active_backend()
     if backend == "openai":
         cfg = get_openai_settings()
@@ -176,7 +176,7 @@ def _resolve_openai_backend(api_key_override: str | None = None) -> BackendSessi
 def _resolve_active_backend(api_key_override: str | None = None) -> BackendSession:
     if _active_backend() == "openai":
         return _resolve_openai_backend(api_key_override=api_key_override)
-    return _resolve_company_backend()
+    raise LLMAuthError('Company AI requires the authenticated Eagle Eye Server workflow; direct company inference is disabled.')
 
 
 def _openai_headers(session: BackendSession) -> dict[str, str]:

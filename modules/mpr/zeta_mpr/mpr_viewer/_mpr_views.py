@@ -13,7 +13,7 @@ import logging
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import (
     QWidget, QGridLayout, QLabel, QComboBox, QHBoxLayout, QVBoxLayout,
-    QFrame, QPushButton, QScrollArea,
+    QFrame, QPushButton, QScrollArea, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
@@ -303,9 +303,22 @@ class _MprViewsMixin:
             # callback so the planes are shown first. The 3D cell is held by a
             # lightweight placeholder so the 2x2 grid does not jump when the real
             # 3D pane lands. Geometry is unaffected — see the module-level note.
-            self._create_axial_view(views_layout, 0, 0)
-            self._create_sagittal_view(views_layout, 1, 0)
-            self._create_coronal_view(views_layout, 1, 1)
+            if getattr(self, '_progressive_2d', False):
+                self._initial_views_pending = True
+                self._initial_view_steps = [('axial', 0, 0), ('sagittal', 1, 0), ('coronal', 1, 1)]
+                self._initial_view_placeholders = {}
+                for name, row, col in self._initial_view_steps:
+                    placeholder = QLabel("Preparing " + name + " view...")
+                    placeholder.setAlignment(Qt.AlignCenter)
+                    placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                    views_layout.addWidget(placeholder, row, col)
+                    self._initial_view_placeholders[name] = placeholder
+                self.setEnabled(False)
+                QTimer.singleShot(1, self, self._build_next_initial_view)
+            else:
+                self._create_axial_view(views_layout, 0, 0)
+                self._create_sagittal_view(views_layout, 1, 0)
+                self._create_coronal_view(views_layout, 1, 1)
             # OPT-48 #4: on a LARGE volume the VRT is not auto-built — the
             # placeholder becomes a clickable "Show 3D" cell (the ~9 s GPU cost
             # is paid only if the user wants 3D). Small volumes: unchanged.
@@ -322,7 +335,7 @@ class _MprViewsMixin:
                     "when the user opens the 3D pane (2D MPR unaffected)",
                     _zdim, _vrt_on_demand_slice_threshold(),
                 )
-            if not self._vrt_on_demand:
+            if not self._vrt_on_demand and not getattr(self, '_initial_views_pending', False):
                 # Small volume: unchanged L1 behaviour — auto-build on idle.
                 QTimer.singleShot(0, self._build_deferred_3d_view)
         else:
@@ -342,6 +355,47 @@ class _MprViewsMixin:
         # build — the cause is the blocked GUI thread, not the layout. See
         # docs/reports/MPR_DEFERRED_3D_LAYOUT_STABILITY_2026-08-01.md.
 
+        content_layout.addWidget(views_container, stretch=1)
+        main_layout.addWidget(content_container)
+        self.setLayout(main_layout)
+        if getattr(self, '_initial_views_pending', False):
+            return
+        self._finish_initial_views()
+
+    def _build_next_initial_view(self):
+        """Construct one GUI-owned native pane per event-loop turn."""
+        if getattr(self, '_mpr_closed', False) or not self._initial_views_pending:
+            return
+        try:
+            name, row, col = self._initial_view_steps.pop(0)
+            getattr(self, '_create_' + name + '_view')(self._views_layout, row, col)
+            if getattr(self, '_mpr_closed', False):
+                return
+            self._apply_native_plane_interpolation()
+            placeholder = self._initial_view_placeholders.pop(name, None)
+            if placeholder is not None:
+                self._views_layout.removeWidget(placeholder)
+                placeholder.deleteLater()
+            if self._initial_view_steps:
+                QTimer.singleShot(1, self, self._build_next_initial_view)
+                return
+            self._finish_initial_views()
+            if self._initial_window_level is not None:
+                self._apply_window_level(*self._initial_window_level)
+            self._highlight_current_series()
+            self._initial_views_pending = False
+            self.setEnabled(True)
+            if self._deferred_3d_pending and not self._vrt_on_demand:
+                QTimer.singleShot(1, self, self._build_deferred_3d_view)
+        except Exception as exc:
+            self._initial_views_pending = False
+            logger.error("[MPR-INITIAL-VIEWS] outcome=failed error_type=%s", type(exc).__name__)
+            self.cleanup()
+            restore = getattr(self, '_initial_views_failure_callback', None)
+            if restore is not None:
+                restore()
+
+    def _finish_initial_views(self):
         # The NATIVE-plane pane (the one looking down the acquired-slice axis) must show the
         # ORIGINAL acquired slices (nearest-neighbour, no blending); the other two panes are MPR
         # reconstructions (linear). Hardcoding interpolation per pane name made a routed
@@ -364,9 +418,6 @@ class _MprViewsMixin:
             except Exception as exc:
                 logger.warning("[ZETA_MPR] slab projection apply failed: %r", exc)
 
-        content_layout.addWidget(views_container, stretch=1)
-        main_layout.addWidget(content_container)
-        self.setLayout(main_layout)
 
         # Capture baseline camera state AFTER all views created + CT corrections applied
         self._capture_baseline_camera_state()
@@ -390,14 +441,17 @@ class _MprViewsMixin:
         Warms VTK's reslice/GPU path so the user's first crosshair drag does not
         pay a first-touch cost. Identical image (no camera/geometry change),
         idempotent, and teardown-safe (a close mid-defer is swallowed)."""
-        if not _MPR_PREWARM:
+        if not _MPR_PREWARM or getattr(self, '_mpr_closed', False):
             return
+        pending = getattr(self, '_mpr_prewarm_remaining', ('axial', 'sagittal', 'coronal'))
+        if not pending:
+            return
+        vn, *remaining = pending
+        self._mpr_prewarm_remaining = tuple(remaining)
         _mpr_step('all', 'prewarm_reslice', 'begin')
         try:
-            for vn in ('axial', 'sagittal', 'coronal'):
-                view = (getattr(self, 'viewers', None) or {}).get(vn)
-                if not view:
-                    continue
+            view = (getattr(self, 'viewers', None) or {}).get(vn)
+            if view:
                 mapper = view.get('mapper')
                 if mapper is not None:
                     try:
@@ -414,6 +468,8 @@ class _MprViewsMixin:
             logger.debug("[ZETA_MPR] reslice pre-warm skipped: %r", exc)
         finally:
             _mpr_step('all', 'prewarm_reslice', 'end')
+            if remaining and not getattr(self, '_mpr_closed', False):
+                QTimer.singleShot(1, self, self._prewarm_mpr_reslice)
 
     def _create_toolbar(self):
         """Create clean, minimal toolbar like professional DICOM viewers"""

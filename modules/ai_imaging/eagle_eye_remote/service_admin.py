@@ -8,6 +8,52 @@ import time
 from .service_host import SERVICE_NAME, service_config
 
 
+LOGIN_OPERATOR_RIGHTS = 0x35  # QUERY_CONFIG | QUERY_STATUS | START | STOP only.
+
+
+def validate_login_operator_sid(sid):
+    """Provision only an explicitly selected account/group SID, never a broad alias."""
+    import re
+    if not isinstance(sid, str) or re.fullmatch(r'S-1-5-21-(?:\d+-){3}\d+', sid) is None:
+        raise ValueError('Select a specific approved operator account or group SID.')
+    return sid
+
+
+def provision_login_operator(config_path, operator_sid):
+    """Elevated installer action only; ordinary GUI never calls this function.
+
+    Preserve existing DACL entries. The operator SID gains no configuration,
+    deletion, ownership, DACL-writing or other-service rights.
+    """
+    import win32service as scm
+    import win32security as security
+    operator_sid = validate_login_operator_sid(operator_sid)
+    if not inspect_service(config_path).get('owned'):
+        raise ValueError('Only the exact configured Eagle service may be provisioned.')
+    sid = security.ConvertStringSidToSid(operator_sid)
+    manager = scm.OpenSCManager(None, None, scm.SC_MANAGER_CONNECT)
+    service = None
+    try:
+        service = scm.OpenService(manager, SERVICE_NAME, 0x20000 | 0x40000)
+        descriptor = scm.QueryServiceObjectSecurity(service, security.DACL_SECURITY_INFORMATION)
+        dacl = descriptor.GetSecurityDescriptorDacl()
+        if dacl is None:
+            raise ValueError('A null service DACL cannot be provisioned safely.')
+        for index in range(dacl.GetAceCount()):
+            ace = dacl.GetAce(index)
+            if security.ConvertSidToStringSid(ace[-1]) == operator_sid:
+                if ace[0][0] != security.ACCESS_ALLOWED_ACE_TYPE or ace[1] & ~LOGIN_OPERATOR_RIGHTS:
+                    raise ValueError('Existing operator policy requires explicit administrator review.')
+        dacl.AddAccessAllowedAceEx(security.ACL_REVISION, 0, LOGIN_OPERATOR_RIGHTS, sid)
+        descriptor.SetSecurityDescriptorDacl(True, dacl, False)
+        scm.SetServiceObjectSecurity(service, security.DACL_SECURITY_INFORMATION, descriptor)
+        return {'service': SERVICE_NAME, 'operator_rights': LOGIN_OPERATOR_RIGHTS}
+    finally:
+        if service is not None:
+            scm.CloseServiceHandle(service)
+        scm.CloseServiceHandle(manager)
+
+
 def service_command(config_path):
     config_path = str(Path(config_path).resolve())
     from aipacs_runtime import is_frozen, load_installation_profile
@@ -34,7 +80,8 @@ def inspect_service(config_path):
                 return {'installed': False, 'owned': False}
             raise
         config = scm.QueryServiceConfig(service)
-        return {'installed': True, 'owned': config[3] == service_command(config_path),
+        return {'installed': True, 'owned': (config[3] == service_command(config_path)
+                and config[7].casefold() == 'nt authority\\localservice'),
                 'running': scm.QueryServiceStatus(service)[1] == scm.SERVICE_RUNNING,
                 'automatic': config[1] == scm.SERVICE_AUTO_START}
     finally:

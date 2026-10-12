@@ -1,29 +1,10 @@
-"""Report + Assign columns must render the SERVER workflow state — not "all red".
+"""Report author and internal assignment are separate Home projections.
 
-THE BUG (2026-07-14, live screenshot):
-Every row on the Main Patient List showed a red assignee name in the Report column
-and a red "active" icon in the Assign column.
-
-Root cause — the PACS ``/assign`` endpoint's ``assignment.radiologist`` is populated
-by the RIS **report workflow** for MOST receptions; it is the *reporting radiologist*,
-not only an explicit hand-assignment. Live proof (192.168.2.222:8000):
-
-    50178 → دكتر رضا علیزاده     50336 → دكتر رضا علیزاده
-    49936 → دكتر رضا علیزاده     50210 → دكتر وحید علیزاده  (the logged-in user)
-    20179 → <empty>              50347 → <empty>
-
-So "an assignee exists" was true for nearly every row. Two consequences:
-  * the Report column went red for everyone — with SOMEONE ELSE's name — and the red
-    name HID the real report-workflow icon (a completed report never showed green);
-  * the Assign column showed the same red "active, needs action" icon forever, even
-    for receptions whose report was already finished.
-
-The rules this pins:
-  1. Report red  ⇔ the assignment is **MINE** (ID match) **and** the report is not done.
-  2. Assign icon ⇔ the assignment LIFECYCLE: an active assignment whose report is done
-     is **completed** (green), not active (red). No assignment ⇒ the default state.
-
-Pure — no Qt, no network.
+Owner requirement, 2026-10-07: Report names the reporting physician; Assign
+shows the verified internal assignment lifecycle. A finished report completes
+an active assignment, but an assignee never substitutes for the report author.
+Historical identity/lifecycle guards below remain independent of presentation.
+Pure model/source guards; no application database or network.
 """
 from __future__ import annotations
 
@@ -113,40 +94,23 @@ def _widget_src() -> str:
             / "patient_table_widget.py").read_text(encoding="utf-8", errors="replace")
 
 
-def test_report_red_mirrors_the_assign_icon():
-    """RED name in Report  ⇔  RED icon in Assign. Both columns must compute the
-    SAME effective status from the SAME merged source, so they can never disagree."""
-    src = _widget_src()
-    block = src.split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
-    assert "assignment_display_for" in block
-    assert "effective_assign_status" in block, (
-        "the Report column must use the same effective status as the Assign icon — "
-        "a finished report is 'completed', never red")
-    assert "STATUS_ACTIVE" in block
+def test_report_column_is_separate_from_assignment_lifecycle():
+    block = _widget_src().split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
+    assert "assignment_display_for" not in block
+    assert "Assigned to:" not in block
+    assert "Reporting Physician:" in block
 
 
-def test_report_red_is_not_gated_on_mine():
-    """The column shows the ASSIGNED PERSON, whoever that is. Gating on `mine` also
-    never worked: the socket Login response does not reliably carry the user's id,
-    while the server identifies an assignee by ObjectId — so `mine` was always False
-    and the red name never appeared at all."""
-    src = _widget_src()
-    block = src.split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
-    red = block.split("STATUS_ACTIVE", 1)[1]
-    assert "if _assignee:" in red, "an active assignment must render its assignee"
-    assert "and _is_mine" not in block
-    assert "AIPACS_REPORT_RED_ONLY_MINE" not in block
+def test_report_column_has_no_assignee_substitution():
+    block = _widget_src().split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
+    assert "assignee_name" not in block
+    assert "setText(physician_text)" in block
 
 
-def test_report_red_is_not_suppressed_by_a_different_reporting_physician():
-    """The old `same_person_name(assignee, physician_text)` gate hid the assignment
-    exactly when the reporting physician differed from the assignee — the case an
-    assignment exists to make visible."""
-    src = _widget_src()
-    block = src.split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
-    # ignore the comment that documents the removal
-    code = "\n".join(ln for ln in block.splitlines() if not ln.lstrip().startswith("#"))
-    assert "same_person_name" not in code
+def test_report_author_does_not_depend_on_assignment_identity():
+    block = _widget_src().split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
+    assert "same_person_name" not in block
+    assert "STATUS_ACTIVE" not in block
 
 
 def test_login_carries_the_user_identity_ids():
@@ -160,14 +124,11 @@ def test_login_carries_the_user_identity_ids():
         assert f"'{key}'" in block, f"login must carry {key} for identity matching"
 
 
-def test_completed_report_still_reaches_the_green_branch():
-    """The green (completed) branch runs BEFORE the assignment branch, and the
-    assignment branch can no longer swallow a done report."""
-    src = _widget_src()
-    block = src.split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
-    green = block.index("#10b981")
-    red = block.index("#ef4444")
-    assert green < red, "the completed/green branch must be evaluated first"
+def test_completed_report_keeps_green_author_display():
+    block = _widget_src().split("def _apply_report_status_display", 1)[1].split("\n    def ", 1)[0]
+    assert "#10b981" in block
+    assert "normalized_status in ('completed', 'complete')" in block
+    assert "STATUS_COLORS.get(report_status" in block
 
 
 def test_assign_icon_uses_the_effective_lifecycle_status():

@@ -1,0 +1,6165 @@
+{
+ "services_total": 519,
+ "service_groups": [
+  {
+   "group": "سي تي اسکن",
+   "services": 206
+  },
+  {
+   "group": "سونوگرافي",
+   "services": 80
+  },
+  {
+   "group": "ام آر آي",
+   "services": 63
+  },
+  {
+   "group": "لگن و شکم راديولوژي",
+   "services": 38
+  },
+  {
+   "group": null,
+   "services": 36
+  },
+  {
+   "group": "سر وگردن راديولوژی",
+   "services": 26
+  },
+  {
+   "group": "اندام تحتاني راديولوژي",
+   "services": 20
+  },
+  {
+   "group": "ستون فقرات راديولوژي",
+   "services": 18
+  },
+  {
+   "group": "قفسه سينه راديولوژي",
+   "services": 17
+  },
+  {
+   "group": "اندام فوقاني راديولوژي",
+   "services": 13
+  },
+  {
+   "group": "سنجش تراکم استخوان",
+   "services": 1
+  },
+  {
+   "group": "سی تی اسکن",
+   "services": 1
+  }
+ ],
+ "service_names_by_modality": {
+  "1": {
+   "count": 208,
+   "sample": [
+    "-",
+    "-",
+    "test",
+    "آنژیو سی تی اسکن آئورت با بازسازی ها",
+    "بازسازی متال آرتیفکت (اضافه بر هزینه سی تی اسکن اصلی)",
+    "بازسازی هر ناحیه (اضافه بر هزینه سی تی اسکن اصلی)",
+    "بررسی 2 و 4 میلی متری هر یک از اعضاء شکم - با یا بدون تزریق- هر یک به تنهایی (پانکراس- کلیه ها- طحال)",
+    "بررسی 4 و 2 میلی متری اعضاء انفرادی و اختصاصی شکم- با تزریق دینامیک (کبد)",
+    "بیهوشی برای انجام خدمات CT-Scan یا سی تی آنژیوگرافی",
+    "سی تی آنژیوپورتوگرافی کبد",
+    "سی تی آنژیوگرافی اندام تحتانی با و بدون ماده حاجب",
+    "سی تی آنژیوگرافی اندام فوقانی با وبدون ماده حاجب-مقاطع بعدی",
+    "سی تی آنژیوگرافی شکم بدون ماده حاجب وباماده حاجب",
+    "سی تی ارتروگرافی",
+    "سی تی اسپیرال بررسی 2و 4میلی متری اعضاء انفرادی و اختصاصی شکم با تزریق دینامیک(کبد)",
+    "سی تی اسپیرال منطقه ماگزیلو فاشیال بدون تزریق",
+    "سی تی اسکن High Resolution تمام ریه در یک نفس (5 میلی متری )- بدون تزریق",
+    "سی تی اسکن اسپیرال 2و4میلی متری هر یک از اعضاء شکم با یا بدون تزریق - هر یک به تنهایی(پانکراس-کلیه ها)",
+    "سی تی اسکن اسپیرال اربیت - سلا- پوستریور فوسا گوش داخلی خارجی یا میانی با تزریق",
+    "سی تی اسکن اسپیرال اربیت -سلا پوستریور فوسا با و بدون تزریق گوش داخلی خارجی یا میانی - با یا بدون تز",
+    "سی تی اسکن اسپیرال اربیت -سلا- پوستریور فوسا گوش داخلی خارجی یا میانی بدون تزریق",
+    "سی تی اسکن اسپیرال اندام تحتانی با و بدون کنتراست",
+    "سی تی اسکن اسپیرال اندام تحتانی با کنتراست",
+    "سی تی اسکن اسپیرال اندام تحتانی بدون کنتراست",
+    "سی تی اسکن اسپیرال اندام فوقانی با کنتراست",
+    "سی تی اسکن اسپیرال اندام فوقانی بدون و با کنتراست",
+    "سی تی اسکن اسپیرال اندام فوقانی بدون کنتراست",
+    "سی تی اسکن اسپیرال اوربیت (هر جهت - با و بدون تزریق)",
+    "سی تی اسکن اسپیرال اوربیت دو جهت با تزریق",
+    "سی تی اسکن اسپیرال اوربیت دو جهت با و بدون تزریق",
+    "سی تی اسکن اسپیرال اوربیت دو جهت بدون تزریق",
+    "سی تی اسکن اسپیرال اوربیت هر جهت با تزریق",
+    "سی تی اسکن اسپیرال اوربیت هر جهت بدون تزریق",
+    "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- با تزریق",
+    "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- با وبدون تزری",
+    "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- بدون تزریق",
+    "سی تی اسکن اسپیرال حنجره دو جهت",
+    "سی تی اسکن اسپیرال حنجره یک جهت 2 میلیمتری با و بدون تزریق",
+    "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری با تزریق",
+    "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری بدون تزریق"
+   ]
+  },
+  "14": {
+   "count": 3,
+   "sample": [
+    "Female VCUG",
+    "سونو هیستروگرافی ",
+    "فیستولوگرافی"
+   ]
+  },
+  "2": {
+   "count": 73,
+   "sample": [
+    "MR ارتروگرافی",
+    "MR دفکوگرافی ",
+    "MR کلانژیوگرافی (MRCP )",
+    "MR یوروگرافی( MRU دینامیک)",
+    "MRA (آنژیوگرافی) اندام تحتانی با یابدون ماده حاجب",
+    "MRA (آنژیوگرافی) اندام فوقانی با یا بدون ماده حاجب",
+    "MRA (آنژیوگرافی) شکم با یا بدون مواد حاجب",
+    "MRA (آنژیوگرافی) لگن با یا بدون ماده حاجب",
+    "MRA (آنژیوگرافی) گردن بدون ماده حاجب و بعد از آن با ماده حاجب با سایر سکانس‌ها",
+    "MRA سر(مغز) بدون ماده حاجب یا با ماده حاجب",
+    "MRA قفسه صدری شامل میوکارد با و بدون ماده حاجب",
+    "MRA کانال spinal و محتویات آن با یا بدون ماده حاجب",
+    "MRA گردن بدون ماده حاجب یا با ماده حاجب",
+    "MRI  اندام تحتانی با ماده حاجب (به عنوان مثال proton)",
+    "MRI  قلب جهت ارزیابی  میزان اضافه بار اهن",
+    "MRI  کبد جهت ارزیابی  میزان اضافه بار اهن",
+    "MRI (به عنوان مثال Proton) دوطرفهiTMG",
+    "MRI (به عنوان مثال Proton) هر مفصل اندام تحتانی با و بدون ماده حاجب",
+    "MRI (به عنوان مثال Proton) هر مفصل اندام تحتانی بدون ماده حاجب",
+    "MRI (به عنوان مثال proton) اندام تحتانی با و بدون ماده حاجب",
+    "MRI (به عنوان مثال proton) اندام تحتانی بدون ماده حاجب",
+    "MRI (به عنوان مثال proton) شکم با و بدون مواد حاجب",
+    "MRI (به عنوان مثال proton) شکم بدون مواد حاجب",
+    "MRI (به عنوان مثال proton) لگن با ماده حاجب",
+    "MRI (به عنوان مثال proton) لگن با و بدون ماده حاجب",
+    "MRI (به عنوان مثال proton) لگن بدون ماده حاجب",
+    "MRI (به عنوان مثال proton) کانال Spinal محتویات ان توراسیک بدون ماده حاجب",
+    "MRI (به عنوان مثال proton) کانال spinal و محتویات ان ناحیه سرویکال بدون ماده حاجب",
+    "MRI (به عنوان مثالproton ) قفسه صدری (به عنوان مثال برای ارزیابی لنفادنوپاتی میدیاستیال) بدون ماده حاجب",
+    "MRI اسکوپی",
+    "MRI اندام فوقانی بازو یا ساعد به غیر از مفاصل بدون ماده حاجب",
+    "MRI اندام فوقانی به غیر از مفاصل با ماده حاجب",
+    "MRI اندام فوقانی به غیر از مفاصل با و بدون ماده حاجب",
+    "MRI اوربیت- صورت- و یا گردن با ماده حاجب",
+    "MRI اوربیت- صورت- و یا گردن با و بدون ماده حاجب",
+    "MRI اوربیت- صورت- و یا گردن بدون ماده حاجب",
+    "MRI برای velocity flow mapping",
+    "MRI توراسیک با ماده حاجب",
+    "MRI توراسیک با و بدون ماده حاجب",
+    "MRI دینامیک هر قسمت بدن بجز قلب"
+   ]
+  },
+  "3": {
+   "count": 87,
+   "sample": [
+    "FNA  از تیروئید ",
+    "Scan A Quantitative به تنهائی",
+    "Unquantitative A Scan با یا بدون B scan",
+    "الاستوگرافی پستان ",
+    "اکوکاردیوگرافی جنین",
+    "بستن کمپرسیونی سودوآنوریسم با پروب سونوگرافی",
+    "بیوپسی پستان ",
+    "سونوگرافی Infertility در آقایان (بررسی آنومالی مجرای EJ و VD)",
+    "سونوگرافی NT و آنومالی سه ماهه اول",
+    "سونوگرافی NT و یا NB (کدهای مربوط به تعیین حاملگی در این کد لحاظ شده است)",
+    "سونوگرافی TCCS(اسکن دوبلکس شریان های خارج مغزی شامل کاروتید و ورتبرال دو طرفه و وریدهای گردنی همراه",
+    "سونوگرافی آدرنال- یک یا دو طرفه",
+    "سونوگرافی استنوز هیپرتروفیک پیلور نوزاد",
+    "سونوگرافی الت ( پنیس )",
+    "سونوگرافی انواژیناسیون روده",
+    "سونوگرافی اپاندیس",
+    "سونوگرافی بارداری ترانس واژینال",
+    "سونوگرافی برای بررسی وضع جنین های چند قلویی- هر قل اضافه",
+    "سونوگرافی برای تشخیص مالفورماسیون های مادرزادی جنین",
+    "سونوگرافی بررسی رشد جنین و IUGR غیرداپلر",
+    "سونوگرافی بلوغ ریه ها جنین",
+    "سونوگرافی به ازای هر چشم (A اسکن و B اسکن با هم )",
+    "سونوگرافی بیضه ها",
+    "سونوگرافی بیضه پایین نیامده",
+    "سونوگرافی بیوفیزیکال پروفایل (بررسی حرکت- تون- تنفس جنین و مایع امنیوتیک)",
+    "سونوگرافی تاندون",
+    "سونوگرافی ترانس واژینال جستجوی حاملگی خارج رحم(EP)",
+    "سونوگرافی تیروئید یا پاراتیروئید",
+    "سونوگرافی جستجوی حاملگی خارج از رحم",
+    "سونوگرافی جستجوی مایع در پلور یا آسیت- هر کدام",
+    "سونوگرافی جفت از نظر کرتا",
+    "سونوگرافی حاملگی (شامل سن- وضع جفت- جنین و ضربان قلب)",
+    "سونوگرافی داپلر رنگی پروستات به روش ترانس رکتال",
+    "سونوگرافی داپلر واریس اندام تحتانی طرفه بررسی وریدهای سطحی و عمقی دریچه صافن و فمورال و صافن و پوپلی",
+    "سونوگرافی داپلر واریس اندام تحتانی یک طرفه بررسی وریدهای سطحی وعمقی دریچه صافن و فمورال و صافن وپوپل",
+    "سونوگرافی داپلرترانس کرانیال (TCD)",
+    "سونوگرافی رتروپریتوئن یا آئورت شکمی غیر داپلر",
+    "سونوگرافی رحم و تخمدان از روی شکم",
+    "سونوگرافی رحم و تخمدان ها (ترانس واژینال)",
+    "سونوگرافی ریفلاکس معده به مری"
+   ]
+  },
+  "4": {
+   "count": 135,
+   "sample": [
+    "Defecography",
+    "آرتروگرافی زانو با هوا و ماده حاجب",
+    "آرتروگرافی شانه با هوا و ماده حاجب",
+    "آرتروگرافی مچ دست",
+    "اوروگرافی ترشحی فیلم با هر تعداد کلیشه لازم و کامل (با یا بدون PVC)",
+    "اوروگرافی سریع برای فشار خون (حداقل برای 6 کلیشه)",
+    "برونکوگرافی یک طرفه",
+    "در صورت انجام پیلوگرافی یا نفروگرافی یا نفروستومی قبلی از کدهای 700335 و 700340 استفاده میگردد",
+    "رادیوگرافی EOS تمام ستون فقرات در پوزیشن های مختلف",
+    "رادیوگرافی استخوان بازو ( 2 جهت روی یک فیلم )",
+    "رادیوگرافی استخوان بازو یا ساعد یا آرنج یک جهت (یک فیلم )",
+    "رادیوگرافی استخوان جناغ (نمای ابلیک و نیمرخ به طور هم زمان- 2 فیلم)",
+    "رادیوگرافی استخوان جناغ (نمای ابلیک یا نیمرخ - یک فیلم)",
+    "رادیوگرافی استخوان ران (دو اکسپوز- روی یک فیلم)",
+    "رادیوگرافی استخوان ران (روبرو و نیمرخ - روی دو فیلم )",
+    "رادیوگرافی استخوان ساعد ( دو جهت- روی یک فیلم )",
+    "رادیوگرافی استخوان ساکروم و مهره های دنبالچه- دوجهت",
+    "رادیوگرافی استخوان فک (نمای ابلیک یا روبرو یا نیمرخ هر طرف)",
+    "رادیوگرافی استخوانهای کف دست – دو جهت",
+    "رادیوگرافی استخوانهای کف دست- یک جهت",
+    "رادیوگرافی استخوان‌های صورت (نمای روبرو )",
+    "رادیوگرافی استخوان‌های صورت (نمای روبرو و نیمرخ )",
+    "رادیوگرافی استخوان‌های مخصوص بینی (نمای نیمرخ راست و چپ روی یک فیلم)",
+    "رادیوگرافی اسکنوگرام (برای تعیین کوتاهی اندام با خط کش مدرج)",
+    "رادیوگرافی انگشتان هر دست - دو جهت",
+    "رادیوگرافی انگشتان هر دست - یک جهت",
+    "رادیوگرافی انگشتان هر پا - دو جهت",
+    "رادیوگرافی انگشتان هر پا - یک جهت",
+    "رادیوگرافی ایستاده فقرات (روبرو و نیمرخ - روی2 فیلم)",
+    "رادیوگرافی باریم انما (حداقل 4 کلیشه )",
+    "رادیوگرافی باریم انما دوبل کنتراست (حداقل 6 کلیشه)",
+    "رادیوگرافی ترانزیت روده های کوچک (حداقل4 کلیشه)",
+    "رادیوگرافی ترانزیت کولون Colon Transit Time (CTT)",
+    "رادیوگرافی تعیین سن استخوانی- هر کلیشه",
+    "رادیوگرافی توموگرافی (هر عضو- هر کلیشه فیلم کوچک)",
+    "رادیوگرافی توموگرافی( هر عضو- هر کلیشه فیلم بزرگ)",
+    "رادیوگرافی جمجمه رخ و نیمرخ",
+    "رادیوگرافی جمجمه نمای تاون- هیرتز یا هر نمای دیگر(هراکسپوز)",
+    "رادیوگرافی داکریوسیستوگرافی",
+    "رادیوگرافی دندان هر فیلم (پری اپیکال یا بایت وینگ)"
+   ]
+  },
+  "5": {
+   "count": 7,
+   "sample": [
+    "Bone Densitometry تراکم سنجی استخوان(یک یا دو منطقه) رادیوگرافی",
+    "Bone Densitometry تراکم سنجی استخوانهای تمام بدن",
+    "Bone Survey(بالای سن 10 سالگی) با دو کلیشه اضافه (رخ و نیمرخ کمر)",
+    "Bone Survey(تا سن 10 سالگی) ",
+    "test",
+    "سنجش تراکم استخوان (Dual Photon)",
+    "سنجش تراکم استخوان (Single Photon)"
+   ]
+  },
+  "6": {
+   "count": 1,
+   "sample": [
+    "عکس سفالوگرام دندان"
+   ]
+  },
+  "9": {
+   "count": 5,
+   "sample": [
+    "ماموگرافی با بزرگنمایی ",
+    "ماموگرافی دو طرفه",
+    "ماموگرافی یک طرفه",
+    "کلیشه بزرگ",
+    "کلیشه کوچک"
+   ]
+  }
+ },
+ "group_to_modality": {
+  "سي تي اسکن": {
+   "1": 206
+  },
+  "سونوگرافي": {
+   "3": 80
+  },
+  "ام آر آي": {
+   "2": 63
+  },
+  "لگن و شکم راديولوژي": {
+   "4": 38
+  },
+  "null": {
+   "9": 5,
+   "6": 1,
+   "14": 3,
+   "2": 10,
+   "4": 3,
+   "5": 6,
+   "3": 7,
+   "1": 1
+  },
+  "سر وگردن راديولوژی": {
+   "4": 26
+  },
+  "اندام تحتاني راديولوژي": {
+   "4": 20
+  },
+  "ستون فقرات راديولوژي": {
+   "4": 18
+  },
+  "قفسه سينه راديولوژي": {
+   "4": 17
+  },
+  "اندام فوقاني راديولوژي": {
+   "4": 13
+  },
+  "سنجش تراکم استخوان": {
+   "5": 1
+  },
+  "سی تی اسکن": {
+   "1": 1
+  }
+ },
+ "insurance": {
+  "transaction_pairs": [
+   {
+    "insuranceType": null,
+    "insuranceSource": null,
+    "n": 40071
+   },
+   {
+    "insuranceType": "tamin",
+    "insuranceSource": "online",
+    "n": 6402
+   },
+   {
+    "insuranceType": "tamin",
+    "insuranceSource": null,
+    "n": 1306
+   },
+   {
+    "insuranceType": "army",
+    "insuranceSource": "manual",
+    "n": 874
+   },
+   {
+    "insuranceType": "salamat",
+    "insuranceSource": "online",
+    "n": 825
+   },
+   {
+    "insuranceType": "tamin",
+    "insuranceSource": "manual",
+    "n": 694
+   },
+   {
+    "insuranceType": "salamat",
+    "insuranceSource": null,
+    "n": 151
+   },
+   {
+    "insuranceType": "army",
+    "insuranceSource": null,
+    "n": 143
+   },
+   {
+    "insuranceType": "salamat",
+    "insuranceSource": "manual",
+    "n": 129
+   }
+  ],
+  "reception_type_evidence": [
+   {
+    "_id": "2",
+    "n": 9808,
+    "tamin": 7709,
+    "salamat": 16,
+    "army": 117
+   },
+   {
+    "_id": "4",
+    "n": 8133,
+    "tamin": 290,
+    "salamat": 96,
+    "army": 834
+   },
+   {
+    "_id": "1",
+    "n": 1743,
+    "tamin": 18,
+    "salamat": 930,
+    "army": 34
+   },
+   {
+    "_id": "0",
+    "n": 64,
+    "tamin": 17,
+    "salamat": 0,
+    "army": 0
+   },
+   {
+    "_id": "3",
+    "n": 6,
+    "tamin": 0,
+    "salamat": 0,
+    "army": 5
+   },
+   {
+    "_id": "آزاد",
+    "n": 1,
+    "tamin": 0,
+    "salamat": 0,
+    "army": 0
+   }
+  ]
+ },
+ "imaging_workflow": {
+  "sampled": 300,
+  "keys": [
+   [
+    "report",
+    300
+   ],
+   [
+    "report.approvalFlags",
+    300
+   ],
+   [
+    "report.approvalFlags.physicianApproved",
+    300
+   ],
+   [
+    "report.approvalFlags.secretaryApproved",
+    300
+   ],
+   [
+    "report.approvalFlags.physicianApprovedBy",
+    300
+   ],
+   [
+    "report.approvalFlags.secretaryApprovedBy",
+    300
+   ],
+   [
+    "report.approvalFlags.physicianApprovedAt",
+    300
+   ],
+   [
+    "report.approvalFlags.secretaryApprovedAt",
+    300
+   ],
+   [
+    "report.pacsVoice",
+    300
+   ],
+   [
+    "report.pacsVoice.hasVoice",
+    300
+   ],
+   [
+    "report.pacsVoice.count",
+    300
+   ],
+   [
+    "report.pacsVoice.lastFileName",
+    300
+   ],
+   [
+    "report.pacsVoice.lastFileFormat",
+    300
+   ],
+   [
+    "report.pacsVoice.lastFileSize",
+    300
+   ],
+   [
+    "report.pacsVoice.studyUid",
+    300
+   ],
+   [
+    "report.pacsVoice.uploadedAt",
+    300
+   ],
+   [
+    "report.pacsVoice.uploadedBy",
+    300
+   ],
+   [
+    "report.pacsVoice.lastSyncAt",
+    300
+   ],
+   [
+    "report.radiologist",
+    300
+   ],
+   [
+    "report.typist",
+    300
+   ],
+   [
+    "report.approvedBy",
+    300
+   ],
+   [
+    "report.findings",
+    300
+   ],
+   [
+    "report.content",
+    300
+   ],
+   [
+    "report.reportDate",
+    300
+   ],
+   [
+    "report.status",
+    300
+   ],
+   [
+    "report.date",
+    300
+   ],
+   [
+    "workflowStatus",
+    300
+   ],
+   [
+    "pacsListManagement",
+    300
+   ],
+   [
+    "pacsListManagement.priority",
+    300
+   ],
+   [
+    "pacsListManagement.hidden",
+    300
+   ],
+   [
+    "pacsComment",
+    300
+   ],
+   [
+    "pacsComment.text",
+    300
+   ],
+   [
+    "pacsComment.updatedAt",
+    300
+   ],
+   [
+    "pacsComment.updatedBy",
+    300
+   ],
+   [
+    "imagingItems",
+    300
+   ],
+   [
+    "updatedAt",
+    300
+   ],
+   [
+    "pacsListManagement.hiddenAt",
+    23
+   ],
+   [
+    "pacsListManagement.hiddenBy",
+    23
+   ],
+   [
+    "pacsListManagement.priorityChangedAt",
+    5
+   ],
+   [
+    "pacsListManagement.priorityChangedBy",
+    5
+   ]
+  ]
+ },
+ "workflow_vocab": {
+  "imagingWorkflow.report.status": [
+   "awaiting_physician_approval",
+   "awaiting_secretary_approval",
+   "completed",
+   "pending",
+   "physician_approved"
+  ]
+ },
+ "study_link": {
+  "ModalitiesInStudy": [
+   "CT",
+   "DOC",
+   "DX",
+   "MG",
+   "MR",
+   "PX",
+   "SR",
+   "US"
+  ],
+  "StudyDate_formats": [
+   [
+    "len8_starts20",
+    527
+   ],
+   [
+    "len8_starts14",
+    73
+   ]
+  ]
+ },
+ "stored_files": {
+  "reception-api-paths.json": {
+   "absolute": [
+    "/api/Form/Update/",
+    "/api/Form/add",
+    "/api/Reception/getOneByReceptionID",
+    "/api/Setting/PatternMount/getAll",
+    "/api/Setting/PatternMount/set",
+    "/api/abort",
+    "/api/acme/status",
+    "/api/billpayment",
+    "/api/cardinfo",
+    "/api/chat/admin-users",
+    "/api/chat/conversations",
+    "/api/chat/rooms",
+    "/api/chat/send-unread-sms",
+    "/api/chat/upload",
+    "/api/commoditybasket",
+    "/api/deviceinfo",
+    "/api/foodsafety",
+    "/api/getdevices/0/0",
+    "/api/getinfo",
+    "/api/getserialports",
+    "/api/governmentidentifiedinquiry",
+    "/api/identifiedinquiry",
+    "/api/image-proxy",
+    "/api/iranNoobat/add-pattern",
+    "/api/iranNoobat/edit-pattern",
+    "/api/iranNoobat/templates",
+    "/api/iranNoobat/test-token",
+    "/api/kiosk/kiosk-services",
+    "/api/kiosk/patient-lookup",
+    "/api/kiosk/patient-receptions",
+    "/api/kiosk/patient-reports",
+    "/api/kiosk/payment-status",
+    "/api/kiosk/prescription-lookup",
+    "/api/kiosk/queue-ticket",
+    "/api/kiosk/submit-reception",
+    "/api/kiosk/today-unsettled",
+    "/api/marco-pacs/test",
+    "/api/pacs-config",
+    "/api/pacs-config/",
+    "/api/pacs-config/AI-PACS/endpoints",
+    "/api/patient-records",
+    "/api/patients/",
+    "/api/reports/physician-performance/search",
+    "/api/reports/physician-performance/summary",
+    "/api/restart",
+    "/api/sale",
+    "/api/transactionreport",
+    "/api/user/profile",
+    "/api/user/settings",
+    "/api/v1"
+   ],
+   "relative": [
+    "Authentication",
+    "Author",
+    "Authorization",
+    "CashDeskAnalysis/admitted-by-users",
+    "CashDeskAnalysis/ai/analyze",
+    "CashDeskAnalysis/ai/settings",
+    "CashDeskAnalysis/cashiers",
+    "CashDeskAnalysis/checklists",
+    "CashDeskAnalysis/checklists/",
+    "CashDeskAnalysis/reality",
+    "CashDeskAnalysis/wallet-history/",
+    "CashDeskKart/add",
+    "CashDeskKart/delete/",
+    "CashDeskKart/getAll",
+    "CashDeskKart/getOne/",
+    "CashDeskKart/update/",
+    "Doctor",
+    "DoctorInfo",
+    "Doctors",
+    "INSURANCE_NOT_CONFIGURED",
+    "Insurance",
+    "Insurance100Cost",
+    "InsuranceID",
+    "InsuranceImg",
+    "InsuranceName",
+    "InsuranceShareCost",
+    "InsuranceType",
+    "InsuranceTypeName",
+    "Modality",
+    "Modality.Name",
+    "Modality/",
+    "Modality/active/",
+    "Modality/add",
+    "Modality/deActive/",
+    "Modality/delete/",
+    "Modality/getAll",
+    "Modality/getOne/",
+    "Modality/synchToIrannobat",
+    "Modality/update/",
+    "Modality/updateSchedulingRequired/",
+    "ModalityID",
+    "ModalityProducts",
+    "PACS",
+    "PACS_SERVER_URL",
+    "PATIENT_MOBILE",
+    "PATIENT_NOT_FOUND",
+    "PacsValidIp",
+    "Patient",
+    "Patient.Tel",
+    "Patient.nationalCode",
+    "Patient/ChangeAvatar",
+    "Patient/ChangeInsurance",
+    "Patient/addAddictionHistory",
+    "Patient/addDiseaseHistory",
+    "Patient/addDrugAllergy",
+    "Patient/addFamilyHistory",
+    "Patient/addFoodAllergy",
+    "Patient/addNote",
+    "Patient/addPatient",
+    "Patient/addSurgeryHistory",
+    "Patient/autoCheckNID",
+    "Patient/checkByNid",
+    "Patient/deleteAddictionHistory/",
+    "Patient/deleteDiseaseHistory/",
+    "Patient/deleteDrugAllergy/",
+    "Patient/deleteFamilyHistory/",
+    "Patient/deleteFoodAllergy/",
+    "Patient/deleteNote",
+    "Patient/deletePendingPatient",
+    "Patient/deleteSurgeryHistory/",
+    "Patient/editAddictionHistory/",
+    "Patient/editDrugAllergy/",
+    "Patient/editFamilyHistory/",
+    "Patient/editPatient",
+    "Patient/getCustomerTypes",
+    "Patient/getDiseaseList",
+    "Patient/getInsuranceType/",
+    "Patient/getMedicalHistory/",
+    "Patient/getOne/",
+    "Patient/getPendingPatient2",
+    "Patient/getSurgeryList",
+    "Patient/updateCustomerInfo",
+    "Patient/updateTel",
+    "PatientAttachments/",
+    "PatientAttachments/patient/",
+    "PatientAttachments/upload",
+    "PatientBD",
+    "PatientCard",
+    "PatientCost",
+    "PatientHeight",
+    "PatientID",
+    "PatientName",
+    "PatientOptionsModal",
+    "PatientTel",
+    "PatientTotal",
+    "PatientWeight",
+    "Patients",
+    "Personnel",
+    "Personnel/",
+    "PersonnelCode",
+    "PersonnelConnection",
+    "PersonnelID",
+    "PersonnelType",
+    "Reception",
+    "Reception/",
+    "Reception/add",
+    "Reception/apply-fund-discount/",
+    "Reception/delete/",
+    "Reception/getOne/",
+    "Reception/getOneByReceptionID/",
+    "Reception/list",
+    "Reception/pay/",
+    "Reception/remove-fund-discount/",
+    "Reception/search",
+    "Reception/today-reception",
+    "Reception/unsettled-by-patient/",
+    "Reception/update/",
+    "Reception/warehouse-product/",
+    "ReceptionAttachments",
+    "ReceptionDate",
+    "ReceptionID",
+    "ReceptionID.ReceptionID",
+    "ReceptionId",
+    "ReceptionObjID",
+    "Reception_ID",
+    "Reports",
+    "Reports/cashier-report",
+    "Reports/custom",
+    "Reports/custom-query",
+    "Reports/custom-query/templates",
+    "Reports/custom-query/templates/",
+    "Reports/dashboard",
+    "Reports/debtors/",
+    "Reports/financial",
+    "Reports/financial/transactions-list",
+    "Reports/imaging-workflow",
+    "Reports/insurance",
+    "Reports/medical-services",
+    "Reports/patients",
+    "Reports/patients-by-service-insurance",
+    "Reports/patients/",
+    "Reports/patients/details/",
+    "Reports/personnel",
+    "Reports/personnel-performance/detailed/",
+    "Reports/personnel-performance/summary",
+    "Reports/physician-performance/patients/",
+    "Reports/physician-performance/search",
+    "Reports/physician-performance/summary",
+    "Reports/reception",
+    "Reports/reception/",
+    "Reports/reception/details/",
+    "Reports/referring-physicians/stats",
+    "Reports/rooms",
+    "Reports/services/details/",
+    "Reports/warehouse",
+    "SERVICE",
+    "Service",
+    "ServiceCode",
+    "ServiceGroup",
+    "ServiceID",
+    "ServiceId",
+    "ServiceName",
+    "ServiceSerach",
+    "Services",
+    "ServicesInfo",
+    "ServicesInfo//delete/",
+    "ServicesInfo/AddLoeing/",
+    "ServicesInfo/CompareSyncData/",
+    "ServicesInfo/CompareSyncLoeings/",
+    "ServicesInfo/DeleteLoeing",
+    "ServicesInfo/EditLoeing",
+    "ServicesInfo/EditServiceGroup/",
+    "ServicesInfo/EditServiceModality/",
+    "ServicesInfo/EditServiceTariffByValue/",
+    "ServicesInfo/ServicesSynchToIno/",
+    "ServicesInfo/SmartSyncToIno/",
+    "ServicesInfo/SyncLoeingsToIno/",
+    "ServicesInfo/add",
+    "ServicesInfo/addGroup",
+    "ServicesInfo/deleteGroup/",
+    "ServicesInfo/edit/",
+    "ServicesInfo/editGroup/",
+    "ServicesInfo/getByModality/",
+    "ServicesInfo/getByModalityIno/",
+    "ServicesInfo/getGroupsByModality/",
+    "ServicesInfo/getOneService/",
+    "ServicesInfo/search/",
+    "Setting",
+    "Setting/Insurance/AllConnectionStatus",
+    "Setting/Insurance/add",
+    "Setting/Insurance/delete/",
+    "Setting/Insurance/getAll",
+    "Setting/Insurance/update/",
+    "Setting/PatternMount/delete/",
+    "Setting/PatternMount/getAll",
+    "Setting/PatternMount/set",
+    "Setting/RequireStamp/get",
+    "Setting/RequireStamp/set",
+    "Setting/Setting/Set",
+    "Setting/Setting/get",
+    "Setting/SmsPanel",
+    "Settings",
+    "USERRANGE",
+    "User",
+    "User-Agent",
+    "User1",
+    "User2",
+    "UserBView",
+    "UserChats",
+    "UserConnect",
+    "UserID",
+    "UserName",
+    "UserNone",
+    "UserPlus",
+    "UserProfileID",
+    "UserSViewBegin",
+    "UserSViewEnd",
+    "Users",
+    "Users/jquense/src/uncontrollable/src/uncontrollable.js",
+    "account",
+    "account.key",
+    "accountKey",
+    "accountKeyPath",
+    "accountValidto",
+    "accounting",
+    "auth",
+    "auth/check",
+    "auth/login",
+    "auth/logout",
+    "auth/role",
+    "authError",
+    "authLoading",
+    "authModalityApi",
+    "authState",
+    "authType",
+    "auth_error",
+    "auth_url_already_generated",
+    "authentication",
+    "author",
+    "author-initials",
+    "author-name",
+    "authority",
+    "authorization",
+    "authorized",
+    "authorizedOnly",
+    "authorizedUsers",
+    "cashDeskAnalysis",
+    "cashDeskAnalysis_amountCell__jKzua",
+    "cashDeskAnalysis_analysisButtonContainer__OIP5S",
+    "cashDeskAnalysis_analysisCardCompare__9W0u_",
+    "cashDeskAnalysis_analysisCardHeader__aSCR0",
+    "cashDeskAnalysis_analysisCardValue__d37u4",
+    "cashDeskAnalysis_analysisCard__T3Zl0",
+    "cashDeskAnalysis_analysisCardsGrid__VnoXy",
+    "cashDeskAnalysis_analysisFooterItem__TIB5o",
+    "cashDeskAnalysis_analysisFooter__4Fv_f",
+    "cashDeskAnalysis_analysisModalBody__T1Xx0",
+    "cashDeskAnalysis_analysisModalFooter__VhSgC",
+    "cashDeskAnalysis_analysisModalHeaderContent__c0E0q",
+    "cashDeskAnalysis_analysisModalHeader__xvXuq",
+    "cashDeskAnalysis_analysisModalIcon__GGMnv",
+    "cashDeskAnalysis_analysisModalSubtitle__A_WMM",
+    "cashDeskAnalysis_analysisModalTitle__svqHS",
+    "cashDeskAnalysis_btnAnalysis__gusLl",
+    "cashDeskAnalysis_btnDanger__NQt95",
+    "cashDeskAnalysis_btnIcon__I5IJX",
+    "cashDeskAnalysis_btnPrimary__SLuMC",
+    "cashDeskAnalysis_btnSecondary__sN6bW",
+    "cashDeskAnalysis_btnSpinner__3s49M",
+    "cashDeskAnalysis_btnSuccess__anTcY",
+    "cashDeskAnalysis_btn__kOBaN",
+    "cashDeskAnalysis_cashierAvatar__B1RDZ",
+    "cashDeskAnalysis_cashierCardBody__bemTP",
+    "cashDeskAnalysis_cashierCardHeader__hEQ7_",
+    "cashDeskAnalysis_cashierCard__XGMO5",
+    "cashDeskAnalysis_cashierCardsGrid__cIq4A",
+    "cashDeskAnalysis_cashierName__rQQ_Z",
+    "cashDeskAnalysis_cashierStatLabel__3S5ZV",
+    "cashDeskAnalysis_cashierStatValue__0q1Lv",
+    "cashDeskAnalysis_cashierStat__gZ8q3",
+    "cashDeskAnalysis_cashierUser__LQzv4",
+    "cashDeskAnalysis_checklistEditActions__mBESa",
+    "cashDeskAnalysis_checklistEditBase__y4QEg",
+    "cashDeskAnalysis_checklistEditBody__UoRqk",
+    "cashDeskAnalysis_checklistEditChecklist__cWcSo",
+    "cashDeskAnalysis_checklistEditChoiceItem__IuZvW",
+    "cashDeskAnalysis_checklistEditChoiceTitle___6Gde",
+    "cashDeskAnalysis_checklistEditChoice__cppGa",
+    "cashDeskAnalysis_checklistEditHeader__5J5F8",
+    "cashDeskAnalysis_checklistEditItem__xk6lR",
+    "cashDeskAnalysis_checklistEditLabel__rOdAh",
+    "cashDeskAnalysis_checklistEditLayout__A6FrD",
+    "cashDeskAnalysis_checklistEditList__bag6V",
+    "cashDeskAnalysis_checklistEditMeta__6476_",
+    "cashDeskAnalysis_checklistSectionTitle__KRbZ1",
+    "cashDeskAnalysis_closestMatchAlert__ALPbW",
+    "cashDeskAnalysis_closestMatchContent__lIo9X",
+    "cashDeskAnalysis_combItemAmount__e6Kzu",
+    "cashDeskAnalysis_combItemId__fgziX",
+    "cashDeskAnalysis_combItemName__GSWmG",
+    "cashDeskAnalysis_combinationAccuracy__PDTr3",
+    "cashDeskAnalysis_combinationCard__csbwy",
+    "cashDeskAnalysis_combinationHeader__ftD9_",
+    "cashDeskAnalysis_combinationItem__Htv0h",
+    "cashDeskAnalysis_combinationItems__ySeJ0",
+    "cashDeskAnalysis_combinationSum__Idj4j",
+    "cashDeskAnalysis_combinationTitle___HNVZ",
+    "cashDeskAnalysis_combinationsList__2yyKG",
+    "cashDeskAnalysis_combinationsSection__I_HWj",
+    "cashDeskAnalysis_container__fr1Br",
+    "cashDeskAnalysis_dataTableSection__nhaaa",
+    "cashDeskAnalysis_dataTable__f3Uoi",
+    "cashDeskAnalysis_discrepancyBalanced__p19RN",
+    "cashDeskAnalysis_discrepancyCritical__cahRg",
+    "cashDeskAnalysis_discrepancyMinor__TQhkR",
+    "cashDeskAnalysis_discrepancySignificant__4hZ__",
+    "cashDeskAnalysis_emptyStateIcon__Wv48v",
+    "cashDeskAnalysis_emptyStateText__CQnY1",
+    "cashDeskAnalysis_emptyState__shnXm",
+    "cashDeskAnalysis_filterActions__jjRzr",
+    "cashDeskAnalysis_filterItem__M7Ifj",
+    "cashDeskAnalysis_filterLabel__vigSl",
+    "cashDeskAnalysis_filtersContainer__sTCh2",
+    "cashDeskAnalysis_findingAction__ixHg3",
+    "cashDeskAnalysis_findingAmount__js3hv",
+    "cashDeskAnalysis_findingCard__1VJ5R",
+    "cashDeskAnalysis_findingConfidence__B4Gfk",
+    "cashDeskAnalysis_findingDescription__zL0Z4",
+    "cashDeskAnalysis_findingDetailItem__hcSYk",
+    "cashDeskAnalysis_findingDetails__6S80D",
+    "cashDeskAnalysis_findingHeader__i6hIt",
+    "cashDeskAnalysis_findingTitle__YzvZa",
+    "cashDeskAnalysis_findingsList__aJyLX",
+    "cashDeskAnalysis_findingsSection__SDZ1r",
+    "cashDeskAnalysis_formGroup__UgK2_",
+    "cashDeskAnalysis_formInput__E40Uf",
+    "cashDeskAnalysis_formLabel__VvZG5",
+    "cashDeskAnalysis_formTextarea__29UtA",
+    "cashDeskAnalysis_highlightRow__tcUHA",
+    "cashDeskAnalysis_loadingContainer__5T65o",
+    "cashDeskAnalysis_loadingText__7MYdU",
+    "cashDeskAnalysis_matchDetails__LI81t",
+    "cashDeskAnalysis_matchLabel__UAHde",
+    "cashDeskAnalysis_matchValue__pa2SY",
+    "cashDeskAnalysis_modalBody__lwxFS",
+    "cashDeskAnalysis_modalCloseBtn__y1pXu",
+    "cashDeskAnalysis_modalContent__pLwA9",
+    "cashDeskAnalysis_modalFooter__zlMzq",
+    "cashDeskAnalysis_modalHeader__Yrc1a",
+    "cashDeskAnalysis_modalOverlay__ukENY",
+    "cashDeskAnalysis_modalTitle__AIjNK",
+    "cashDeskAnalysis_noFindings__JwD8O",
+    "cashDeskAnalysis_paymentMethodAmount__M6nTT",
+    "cashDeskAnalysis_paymentMethodCard__SYKZV",
+    "cashDeskAnalysis_paymentMethodCount__BI2HB",
+    "cashDeskAnalysis_paymentMethodTitle__XArnz",
+    "cashDeskAnalysis_paymentMethodsGrid__4M2_3",
+    "cashDeskAnalysis_percentageHigh__gOXec",
+    "cashDeskAnalysis_percentageLow__rcJ6r",
+    "cashDeskAnalysis_percentageMedium__IvnQP",
+    "cashDeskAnalysis_posAnalysisCardBank__w4lGi",
+    "cashDeskAnalysis_posAnalysisCardCompare__d5tqE",
+    "cashDeskAnalysis_posAnalysisCardHeader___Ms60",
+    "cashDeskAnalysis_posAnalysisCardName__nIuUA",
+    "cashDeskAnalysis_posAnalysisCardValue__kb8tJ",
+    "cashDeskAnalysis_posAnalysisCard__UwVrf",
+    "cashDeskAnalysis_posAnalysisGrid__qLarA",
+    "cashDeskAnalysis_posAnalysisSection__WUqoC",
+    "cashDeskAnalysis_posAnalysisSmartBtn__nE_Ac",
+    "cashDeskAnalysis_posAnalysisTitle__TkbMu",
+    "cashDeskAnalysis_posDeviceBank__fG8B0",
+    "cashDeskAnalysis_posDeviceCard__fNQxB",
+    "cashDeskAnalysis_posDeviceCount__w70yk",
+    "cashDeskAnalysis_posDeviceHeader__iAmXr",
+    "cashDeskAnalysis_posDeviceName__AcGXb",
+    "cashDeskAnalysis_posDeviceSystemData__xuGxE",
+    "cashDeskAnalysis_posDevicesGrid__8ZIcD",
+    "cashDeskAnalysis_posDevicesSection___BYUz",
+    "cashDeskAnalysis_posDevicesTitle___QEBd",
+    "cashDeskAnalysis_quickFilterBtnActive__8RboO",
+    "cashDeskAnalysis_quickFilterBtn__ZRf_i",
+    "cashDeskAnalysis_quickFiltersContainer__QpXSg",
+    "cashDeskAnalysis_receptionIdCell__roFPb",
+    "cashDeskAnalysis_recordFormFullWidth__oehGl",
+    "cashDeskAnalysis_recordFormGrid__Mejq6",
+    "cashDeskAnalysis_riskBadge__kkoxl",
+    "cashDeskAnalysis_riskFactorDesc__GLMyU",
+    "cashDeskAnalysis_riskFactorItem__rxyRw",
+    "cashDeskAnalysis_riskFactorLabel__SkRzq",
+    "cashDeskAnalysis_riskFactor__gPHbD",
+    "cashDeskAnalysis_riskFactorsList__luC4O",
+    "cashDeskAnalysis_riskFactorsSection__a_hdo",
+    "cashDeskAnalysis_riskFactorsTitle__N1C0_",
+    "cashDeskAnalysis_riskFactors__QDps_",
+    "cashDeskAnalysis_riskHIGH__kZEc6",
+    "cashDeskAnalysis_riskLOW___TF6b",
+    "cashDeskAnalysis_riskMEDIUM__N92WC",
+    "cashDeskAnalysis_riskhigh__t9TMB",
+    "cashDeskAnalysis_risklow__09i_l",
+    "cashDeskAnalysis_riskmedium__4m7Zu",
+    "cashDeskAnalysis_scenarioAmount__0uBpt",
+    "cashDeskAnalysis_scenarioCardTop__by3dt",
+    "cashDeskAnalysis_scenarioCard__qQtf0",
+    "cashDeskAnalysis_scenarioCombItem__Y0FET",
+    "cashDeskAnalysis_scenarioCombinationItems__iyWge",
+    "cashDeskAnalysis_scenarioDescription__GrpcO",
+    "cashDeskAnalysis_scenarioDetails__ybBqv",
+    "cashDeskAnalysis_scenarioHeader__1xQpV",
+    "cashDeskAnalysis_scenarioHint__vbjvd",
+    "cashDeskAnalysis_scenarioLabel__YKV0h",
+    "cashDeskAnalysis_scenarioProbability__3AR1k",
+    "cashDeskAnalysis_scenarioRank__Xa6Xr",
+    "cashDeskAnalysis_scenarioReceptionId__VkBoD",
+    "cashDeskAnalysis_scenarioTitle___u011",
+    "cashDeskAnalysis_scenariosList___27cE",
+    "cashDeskAnalysis_scenariosSection__Cykag",
+    "cashDeskAnalysis_sectionTitle__Fxjre",
+    "cashDeskAnalysis_severityBadge__Jc9q_",
+    "cashDeskAnalysis_smartDetectionError__K2uE8",
+    "cashDeskAnalysis_smartDetectionHeader__yHnOA",
+    "cashDeskAnalysis_smartDetectionLoadingText__IodDj",
+    "cashDeskAnalysis_smartDetectionLoading__zLBM1",
+    "cashDeskAnalysis_smartDetectionMeta__OU_in",
+    "cashDeskAnalysis_smartDetectionResults__Vfujz",
+    "cashDeskAnalysis_smartDetectionSection__ScdP4",
+    "cashDeskAnalysis_smartDetectionStats__KxA4c",
+    "cashDeskAnalysis_smartDetectionTitle__nAAj2",
+    "cashDeskAnalysis_snapshotBadge__IwAN7",
+    "cashDeskAnalysis_snapshotCardTitle__uCqId",
+    "cashDeskAnalysis_snapshotCard__D9Rik",
+    "cashDeskAnalysis_snapshotContainer__GStZd",
+    "cashDeskAnalysis_snapshotEmpty__VoXNG",
+    "cashDeskAnalysis_snapshotGrid__oJQGX",
+    "cashDeskAnalysis_snapshotHeader__iNv6n",
+    "cashDeskAnalysis_snapshotLine__YpABz",
+    "cashDeskAnalysis_snapshotList__b_RwZ",
+    "cashDeskAnalysis_snapshotMuted__eDjOZ",
+    "cashDeskAnalysis_snapshotSectionTitle__z2qAC",
+    "cashDeskAnalysis_snapshotSection__m7VVS",
+    "cashDeskAnalysis_snapshotTitle__QSI42",
+    "cashDeskAnalysis_spinIcon__jZNbe",
+    "cashDeskAnalysis_spin__ukmGG",
+    "cashDeskAnalysis_spinner__ooTAR",
+    "cashDeskAnalysis_statBadge__MKy8H",
+    "cashDeskAnalysis_statCardDefault__Iig3C",
+    "cashDeskAnalysis_statCardHeader__fcndp",
+    "cashDeskAnalysis_statCardHigh__b49Mz",
+    "cashDeskAnalysis_statCardIconDefault__RNEUJ",
+    "cashDeskAnalysis_statCardIconHigh__gaPxD",
+    "cashDeskAnalysis_statCardIconLow__SkVrL",
+    "cashDeskAnalysis_statCardIconMedium__aKHfm",
+    "cashDeskAnalysis_statCardIcon__ruw7C",
+    "cashDeskAnalysis_statCardLow__GOTxt",
+    "cashDeskAnalysis_statCardMedium__aBUD9",
+    "cashDeskAnalysis_statCardPercentage__07fL8",
+    "cashDeskAnalysis_statCardSubtext__faKvh",
+    "cashDeskAnalysis_statCardTitle___Ecet",
+    "cashDeskAnalysis_statCardValue__ed20T",
+    "cashDeskAnalysis_statCard__r9ZQv",
+    "cashDeskAnalysis_statsContainer__vwWhQ",
+    "cashDeskAnalysis_statusBadge__M9rQn",
+    "cashDeskAnalysis_statusCompleted__IhDtm",
+    "cashDeskAnalysis_statusPending__hOL3u",
+    "cashDeskAnalysis_statusRejected__oa0mG",
+    "cashDeskAnalysis_stepContent__PatHH",
+    "cashDeskAnalysis_stepIndicator__hd8kw",
+    "cashDeskAnalysis_stepItemActive__g8KZm",
+    "cashDeskAnalysis_stepItemCurrent__XE0ru",
+    "cashDeskAnalysis_stepItem__Wkjfk",
+    "cashDeskAnalysis_stepLabel__jBRUZ",
+    "cashDeskAnalysis_stepNumber__c2jmM",
+    "cashDeskAnalysis_suggestionItem__rhrCt",
+    "cashDeskAnalysis_suggestionsList__utpUn",
+    "cashDeskAnalysis_suggestionsSection__p0qDr",
+    "cashDeskAnalysis_suggestionsTitle__VrP3q",
+    "cashDeskAnalysis_summaryContainer__RUR31",
+    "cashDeskAnalysis_summaryItem__Cr1w1",
+    "cashDeskAnalysis_summaryLabel__zQVtl",
+    "cashDeskAnalysis_summaryValue__iEdWh",
+    "cashDeskAnalysis_systemDataCount__ZerGd",
+    "cashDeskAnalysis_systemDataGrid__xjQpN",
+    "cashDeskAnalysis_systemDataItem__GBUrz",
+    "cashDeskAnalysis_systemDataLabel__ib2v4",
+    "cashDeskAnalysis_systemDataSummary__eyVEg",
+    "cashDeskAnalysis_systemDataTitle__LrMep",
+    "cashDeskAnalysis_systemDataValue__lzec4",
+    "cashDeskAnalysis_tabActive__fBRGv",
+    "cashDeskAnalysis_tab__bdBWf",
+    "cashDeskAnalysis_tableActions__KyLYA",
+    "cashDeskAnalysis_tableContainer__Yv3L2",
+    "cashDeskAnalysis_tableHeader__Rxzf7",
+    "cashDeskAnalysis_tableMore__NPuwJ",
+    "cashDeskAnalysis_tableTitle__74_Dr",
+    "cashDeskAnalysis_tableWrapper__YmzKL",
+    "cashDeskAnalysis_tabsContainer__ReWZP",
+    "cashDeskAnalysis_userInputSection__rJeGA",
+    "cashDeskAnalysis_userInputTitle__UoiAx",
+    "cashDeskData",
+    "cashDeskDiscount",
+    "cashDeskDiscountAmount",
+    "cashDeskKartGetAll",
+    "cashDeskKarts",
+    "cashDeskKartsPer",
+    "cashDeskPer",
+    "cashDeskReceptionOpen",
+    "cashDeskReceptionOpenSwitch",
+    "cashDesk_active__JxWIW",
+    "cashDesk_amount__1BYDL",
+    "cashDesk_autoCalculateToggle__HHGix",
+    "cashDesk_badgeSettled__yXyHL",
+    "cashDesk_badgeUnsettled__9mksd",
+    "cashDesk_beyane__t91cI",
+    "cashDesk_btnAmount__Awlbq",
+    "cashDesk_btnLabel__9FFKh",
+    "cashDesk_danger__tHwmi",
+    "cashDesk_debtDisplay__EXZHj",
+    "cashDesk_discountForm__KGbjW",
+    "cashDesk_emptyState__vk31u",
+    "cashDesk_financialItem__DZ0hY",
+    "cashDesk_financialSummary___3xlw",
+    "cashDesk_formGroup__TH7ea",
+    "cashDesk_glassFooter__XPEId",
+    "cashDesk_glassHeader__wqtlC",
+    "cashDesk_glassModal__gshyS",
+    "cashDesk_headerContent__EQMSA",
+    "cashDesk_icon__aB6n9",
+    "cashDesk_inputHint__BQl4C",
+    "cashDesk_label__rUenk",
+    "cashDesk_loading__1SJpZ",
+    "cashDesk_patientInfo__2vfO6",
+    "cashDesk_paymentActions__vs7IJ",
+    "cashDesk_paymentInputGroup__EI78i",
+    "cashDesk_paymentInputs__3DWOK",
+    "cashDesk_paymentPanel__blJ9x",
+    "cashDesk_paymentSummaryTwoCol__mlxnP",
+    "cashDesk_paymentSummary__8WaZC",
+    "cashDesk_primary__lKZTv",
+    "cashDesk_pulse__wKROT",
+    "cashDesk_quickActionBtn__m7fXQ",
+    "cashDesk_quickActionCard__G65CP",
+    "cashDesk_quickActionCash__TKpqh",
+    "cashDesk_quickActionDiscount__rODiY",
+    "cashDesk_quickActionPrint__P1kUV",
+    "cashDesk_quickActionRefund__SmeJJ",
+    "cashDesk_quickActionsBar__cOssM",
+    "cashDesk_quickAmountBtn__ogbWG",
+    "cashDesk_quickAmountButtons__Pt7M5",
+    "cashDesk_radioOption__Blh2Z",
+    "cashDesk_radioOptionsCompact__0b1GH",
+    "cashDesk_radioOptions___yq98",
+    "cashDesk_receptionActions__uSyjn",
+    "cashDesk_receptionAmount__jiwaa",
+    "cashDesk_receptionBadge___kRCq",
+    "cashDesk_receptionCardBody__SMpYr",
+    "cashDesk_receptionCardHeader__bISOa",
+    "cashDesk_receptionCard__MTkOE",
+    "cashDesk_receptionId__kxeXB",
+    "cashDesk_receptionInfo__hhMYm",
+    "cashDesk_receptionSelectAmount__9G0Nx",
+    "cashDesk_receptionSelectCard__FpdyS",
+    "cashDesk_receptionSelectDate__VwLIe",
+    "cashDesk_receptionSelectGrid__nUxSL",
+    "cashDesk_receptionSelectIcon__WX7_r",
+    "cashDesk_receptionSelectId__1pd7c",
+    "cashDesk_receptionSelectInfo__U_Vmu",
+    "cashDesk_refundForm___ojw9",
+    "cashDesk_returnAmount__yhPap",
+    "cashDesk_selectedReceptionDetails__HXyKv",
+    "cashDesk_selectedReceptionHeader__N3bo3",
+    "cashDesk_selectedReceptionStat__v9P6F",
+    "cashDesk_selectedReceptionStats__AMO_2",
+    "cashDesk_selectedReceptionTitle__BXEh_",
+    "cashDesk_selected__LhRni",
+    "cashDesk_serviceItem__d9NtM",
+    "cashDesk_servicesGrid__i8_2f",
+    "cashDesk_services__HhKUo",
+    "cashDesk_slideIn__vJ5rJ",
+    "cashDesk_statusBadge__Syw5D",
+    "cashDesk_statusCredit__i_O40",
+    "cashDesk_statusDebt__WPRHo",
+    "cashDesk_statusSettled__est4z",
+    "cashDesk_successAnimation__nXk_m",
+    "cashDesk_successPop__71oSE",
+    "cashDesk_success__btS2a",
+    "cashDesk_text__65r0P",
+    "cashDesk_totalReceived__zHxK3",
+    "cashDesk_unsettled__PhS8L",
+    "cashDesk_value__nUekA",
+    "cashDesk_walletBalanceDisplay__yWPcH",
+    "cashDesk_walletBtn__YIybF",
+    "cashDesk_walletPayBtnSecondary__CvsZR",
+    "cashDesk_walletPayBtn__tKe_8",
+    "cashDesk_walletPayControls__ttWl6",
+    "cashDesk_walletPayHint__RiOgp",
+    "cashDesk_walletPayInput__8Mglq",
+    "cashDesk_walletPayMax__0LW7k",
+    "cashDesk_walletPaySectionHeader__i_76x",
+    "cashDesk_walletPaySectionTitle__bigj_",
+    "cashDesk_walletPaySection__xgd4n",
+    "cashDesk_warning__CxQcC",
+    "cashdesk",
+    "cashdesk-footer",
+    "cashdesk-header",
+    "cashdesk-pay",
+    "cashdesk-payment-actions",
+    "cashdesk-payment-autocalc",
+    "cashdesk-payment-beyane",
+    "cashdesk-payment-debt",
+    "cashdesk-payment-inputs",
+    "cashdesk-payment-kart",
+    "cashdesk-payment-last-receptions",
+    "cashdesk-payment-preset-amounts",
+    "cashdesk-payment-summary",
+    "cashdesk-quick-",
+    "cashdesk-quick-actions",
+    "cashdesk-quick-card",
+    "cashdesk-quick-cash",
+    "cashdesk-quick-discount",
+    "cashdesk-quick-print",
+    "cashdesk-quick-refund",
+    "cashdesk-reception-sample",
+    "cashdesk-receptions-settled",
+    "cashdesk-receptions-unsettled",
+    "cashdesk-tour-modal-content",
+    "cashdesk-wallet",
+    "cashier",
+    "cashier-analysis",
+    "cashier-report-container",
+    "cashierAvatar",
+    "cashierCard",
+    "cashierCardBody",
+    "cashierCardHeader",
+    "cashierCardsGrid",
+    "cashierId",
+    "cashierInflowsCashCardAndInsurance",
+    "cashierInsuranceCreditsAmount",
+    "cashierInsuranceCreditsForReportReceptionsAmount",
+    "cashierName",
+    "cashierPatientCashAndCard",
+    "cashierPatientCashAndCardForReportReceptions",
+    "cashierPatientCashAndCardForReportReceptionsCount",
+    "cashierPatientCashAndCardTransactionCount",
+    "cashierReceptionDebtBookedAmount",
+    "cashierReceptionDebtBookedCount",
+    "cashierReportsPer",
+    "cashierStat",
+    "cashierStatLabel",
+    "cashierStatValue",
+    "cashierUser",
+    "doctor",
+    "doctorExpertise",
+    "doctorId",
+    "doctorMedicalNo",
+    "doctorName",
+    "doctorNotes",
+    "doctorPerformanceReport",
+    "doctorSpec",
+    "doctors",
+    "imagingWorkflow",
+    "imagingWorkflow/",
+    "imagingWorkflow/workflow/reporting",
+    "imagingWorkflow/workflow/waiting-appointment",
+    "insurance",
+    "insurance-",
+    "insurance-item",
+    "insurance-loading",
+    "insurance-patient-",
+    "insurance-select-",
+    "insurance-status-container",
+    "insurance-token-status",
+    "insuranceAmount",
+    "insuranceBreakdown",
+    "insuranceBreakdownByPatient",
+    "insuranceCompany",
+    "insuranceData",
+    "insuranceDiscountCount",
+    "insuranceGetAll",
+    "insuranceID",
+    "insuranceId",
+    "insuranceLabel",
+    "insuranceName",
+    "insuranceNumber",
+    "insuranceOptions",
+    "insuranceOrgShare",
+    "insuranceParent",
+    "insuranceParentModalityId",
+    "insurancePassword",
+    "insurancePercentage",
+    "insuranceProcessing",
+    "insuranceReport",
+    "insuranceReportsPer",
+    "insuranceSettingsPer",
+    "insuranceShare",
+    "insuranceSharePercentage",
+    "insuranceShareTotal",
+    "insuranceSource",
+    "insuranceStatus",
+    "insuranceToken",
+    "insuranceTotal",
+    "insuranceType",
+    "insuranceTypeFilter",
+    "insuranceTypeLabel",
+    "insuranceTypeOptions",
+    "insuranceTypes",
+    "insuranceUserName",
+    "insurance_change",
+    "insurance_id",
+    "insurances",
+    "modality",
+    "modality-",
+    "modality/addWarehouseProduct/",
+    "modality/getWarehouseProducts/",
+    "modality/removeWarehouseProduct/",
+    "modalityData",
+    "modalityDetails",
+    "modalityFilter",
+    "modalityFullName",
+    "modalityGetAll",
+    "modalityID",
+    "modalityId",
+    "modalityLabel",
+    "modalityName",
+    "modalityPerFullName",
+    "modalityShortName",
+    "pacs",
+    "pacs-",
+    "pacs-config",
+    "pacs-config-modal",
+    "pacs-config/",
+    "pacs-field-active",
+    "pacs-field-connection",
+    "pacs-field-name",
+    "pacs-grid",
+    "pacs-images-list",
+    "pacs-toolbar",
+    "pacs/patients/",
+    "pacs/patients/bulk/hide",
+    "pacs/patients/bulk/priority",
+    "pacsComment",
+    "pacsImages",
+    "pacsListManagement",
+    "pacsServerConfig",
+    "pacsSettings",
+    "pacsViewerUrl",
+    "pacsVoice",
+    "patient",
+    "patient-",
+    "patient-age",
+    "patient-avatar",
+    "patient-avatar-default",
+    "patient-calling",
+    "patient-calling/call-next",
+    "patient-calling/call-next/",
+    "patient-calling/call/",
+    "patient-calling/cancel/",
+    "patient-calling/complete/",
+    "patient-calling/display",
+    "patient-calling/display/",
+    "patient-calling/display/rooms",
+    "patient-calling/enqueue",
+    "patient-calling/enqueue-by-reception",
+    "patient-calling/history",
+    "patient-calling/no-show/",
+    "patient-calling/priority/",
+    "patient-calling/queue",
+    "patient-calling/queue/reset",
+    "patient-calling/recall/",
+    "patient-calling/renumber-today",
+    "patient-calling/requeue/",
+    "patient-calling/rooms-by-section/",
+    "patient-calling/settings",
+    "patient-calling/stats",
+    "patient-calling/transfer/",
+    "patient-code",
+    "patient-content",
+    "patient-details",
+    "patient-form-print-body",
+    "patient-form-print-field__label",
+    "patient-form-print-field__option",
+    "patient-form-print-field__value",
+    "patient-form-print-fields",
+    "patient-form-print-fingerprint",
+    "patient-form-print-fingerprint__image",
+    "patient-form-print-fingerprint__title",
+    "patient-form-print-page__header",
+    "patient-form-print-page__meta",
+    "patient-form-print-page__title",
+    "patient-form-print-section__divider",
+    "patient-form-print-section__title",
+    "patient-form-print-shell",
+    "patient-free-nid",
+    "patient-header",
+    "patient-id",
+    "patient-images",
+    "patient-info",
+    "patient-info-box",
+    "patient-info-compact",
+    "patient-info-section",
+    "patient-manual-",
+    "patient-name",
+    "patient-name-changes.xlsx",
+    "patient-print-summary",
+    "patient-print-summary__cell",
+    "patient-print-summary__label",
+    "patient-print-summary__table",
+    "patient-print-summary__value",
+    "patient-report",
+    "patient-results",
+    "patient-vertical",
+    "patient-view",
+    "patient-view-container",
+    "patient.mobile",
+    "patient.name",
+    "patient.nationalCode",
+    "patient/editDiseaseHistory/",
+    "patient/editSurgeryHistory/",
+    "patientAge",
+    "patientAmount",
+    "patientAvatar",
+    "patientAvatarImg",
+    "patientBD",
+    "patientBase",
+    "patientCalled",
+    "patientCalling",
+    "patientCallingDisplay",
+    "patientCard",
+    "patientCode",
+    "patientCollectionRate",
+    "patientComplaintCode",
+    "patientCompleted",
+    "patientContext",
+    "patientCost",
+    "patientCount",
+    "patientData",
+    "patientDetails",
+    "patientDetails.name",
+    "patientFile",
+    "patientGender",
+    "patientID",
+    "patientId",
+    "patientImgFile",
+    "patientInfo",
+    "patientInfoCard",
+    "patientInfoCard2",
+    "patientInfoSubmit",
+    "patientInquiry",
+    "patientLandlinePhone",
+    "patientLink",
+    "patientLoading",
+    "patientLocked",
+    "patientNID",
+    "patientName",
+    "patientNameChangeReport_alertBanner__89buB",
+    "patientNameChangeReport_blockedBadge__RKAQ_",
+    "patientNameChangeReport_blockedRow__xbFUl",
+    "patientNameChangeReport_empty__h9UFN",
+    "patientNameChangeReport_filters__mZaIG",
+    "patientNameChangeReport_newName__31Tyn",
+    "patientNameChangeReport_oldName__pLslQ",
+    "patientNameChangeReport_page__63Bta",
+    "patientNameChangeReport_statCard__yMw1j",
+    "patientNameChangeReport_statDanger__6_2xK",
+    "patientNameChangeReport_statLabel__pYcPe",
+    "patientNameChangeReport_statValue__lo6mh",
+    "patientNameChangeReport_statsRow__CdP4x",
+    "patientNameChangeReport_tableWrap__1TfK3",
+    "patientNameChangeReport_table__iJXE3",
+    "patientNameChanges",
+    "patientNationalCode",
+    "patientNationalId",
+    "patientPayment",
+    "patientPercentage",
+    "patientShare",
+    "patientShareFromFranchise",
+    "patientShareInventory",
+    "patientShareServices",
+    "patientStatIsLoading",
+    "patientTel",
+    "patientTooltipLbl",
+    "patientTotal",
+    "patientVoice",
+    "patientVsInsurance",
+    "patient_id",
+    "patient_refund",
+    "patientlink",
+    "patients",
+    "patients-",
+    "patients-list",
+    "patientsArchives",
+    "patientsData",
+    "patientsPer",
+    "patientsReport",
+    "personnel",
+    "personnel-tooltip",
+    "personnel/",
+    "personnel/department/",
+    "personnel/metadata/departments",
+    "personnel/metadata/specialities",
+    "personnel/speciality/",
+    "personnelActiveStatus",
+    "personnelApi",
+    "personnelCode",
+    "personnelId",
+    "personnelList",
+    "personnelManagementPer",
+    "personnelPerformance",
+    "personnelReport",
+    "physician",
+    "physician-",
+    "physicianApproved",
+    "physicianCode",
+    "physicianDetails",
+    "physicianId",
+    "physicianName",
+    "physicianPerformanceReportsPer",
+    "physician_approved",
+    "physicians-print-content",
+    "radiologist",
+    "radiologistCount",
+    "radiologistId",
+    "radiologistName",
+    "radiologistStampUrl",
+    "radiologist_assigned",
+    "radiologistsList",
+    "reception",
+    "reception-",
+    "reception-attachments",
+    "reception-attachments/",
+    "reception-attachments/by-patient-module",
+    "reception-attachments/by-patient/",
+    "reception-attachments/by-reception-module",
+    "reception-attachments/issue-mobile-upload-token",
+    "reception-attachments/mobile-reception",
+    "reception-attachments/mobile-upload",
+    "reception-attachments/stats/",
+    "reception-attachments/upload",
+    "reception-detail",
+    "reception-details",
+    "reception-history-list",
+    "reception-id",
+    "reception-number",
+    "reception-pattern",
+    "reception-preview-header",
+    "reception-receipt-content",
+    "reception-refund",
+    "reception-refund/",
+    "reception-services-",
+    "reception-time",
+    "reception-tour-demo-service-v1",
+    "reception-wrapper",
+    "reception/",
+    "reception/ChangeProfileData",
+    "reception/delete/",
+    "reception/deleted",
+    "reception/get-register-id/",
+    "reception/manual-insurance-code/",
+    "reception/process-insurance/",
+    "reception/refund-history/",
+    "reception/refund-wallet/",
+    "reception/refund/",
+    "reception/refund/history/",
+    "reception/restore/",
+    "reception/return-restore/",
+    "reception/return/",
+    "reception/returned",
+    "reception/transaction/",
+    "reception/wallet/",
+    "reception/wallets",
+    "reception/wallets/",
+    "receptionActions",
+    "receptionAmount",
+    "receptionBadge",
+    "receptionCard",
+    "receptionCardBody",
+    "receptionCardHeader",
+    "receptionCode",
+    "receptionCount",
+    "receptionCountForComparison",
+    "receptionData",
+    "receptionDate",
+    "receptionDateTime",
+    "receptionDebt",
+    "receptionField",
+    "receptionGrowth",
+    "receptionID",
+    "receptionId",
+    "receptionIdCell",
+    "receptionImgLink",
+    "receptionInfo",
+    "receptionLink",
+    "receptionList",
+    "receptionListPer",
+    "receptionList_columnVisibility",
+    "receptionMongoId",
+    "receptionNotification",
+    "receptionNumber",
+    "receptionObjectId",
+    "receptionPaidAmountSum",
+    "receptionQueueNumber",
+    "receptionRefund",
+    "receptionRefundPagePer",
+    "receptionReportsPer",
+    "receptionSelectAmount",
+    "receptionSelectCard",
+    "receptionSelectDate",
+    "receptionSelectGrid",
+    "receptionSelectIcon",
+    "receptionSelectId",
+    "receptionSelectInfo",
+    "receptionTagsPer",
+    "receptionTime",
+    "receptionTourSeen_v1",
+    "receptionUser",
+    "reception_deleted",
+    "reception_id",
+    "reception_settled",
+    "reception_updated",
+    "receptionattachments",
+    "receptions",
+    "receptions-tag/",
+    "receptions-tag/active/list",
+    "receptions-tag/reorder",
+    "receptionsList",
+    "reportSettings",
+    "reportStatus",
+    "reports",
+    "reports/debtors/",
+    "reports/financial/transactions-list",
+    "reports/patients-by-service-insurance",
+    "reports/patients/",
+    "reports/patients/detailed-list",
+    "reports/patients/details/",
+    "reports/personnel-performance/detailed/",
+    "reports/personnel-performance/summary",
+    "reports/physician-performance/patients/",
+    "reports/physician-performance/search",
+    "reports/physician-performance/summary",
+    "reports/reception",
+    "reports/reception/",
+    "reports/reception/detailed-list",
+    "reports/reception/details/",
+    "reports/services/details/",
+    "reportsDashboardPer",
+    "service",
+    "service-",
+    "service-card",
+    "service-category-count",
+    "service-category-header",
+    "service-category-section",
+    "service-category-tabs",
+    "service-category-title",
+    "service-cell",
+    "service-controls",
+    "service-details-grid",
+    "service-dosage",
+    "service-group-tooltip",
+    "service-groups",
+    "service-groups/",
+    "service-icon",
+    "service-info",
+    "service-item",
+    "service-item-delete-btn",
+    "service-monitor.log",
+    "service-name",
+    "service-row-",
+    "service-subcategory-block",
+    "service-subcategory-header",
+    "service-table",
+    "service-type-badge",
+    "serviceAmount",
+    "serviceAmounts",
+    "serviceCode",
+    "serviceCoverages",
+    "serviceDiscount",
+    "serviceGroup",
+    "serviceGroupOrCode",
+    "serviceGroups",
+    "serviceId",
+    "serviceId...",
+    "serviceInsurance",
+    "serviceInsuranceReport",
+    "serviceInterfaceName",
+    "serviceItem",
+    "serviceMatch",
+    "serviceMatchIds",
+    "serviceModality",
+    "serviceModalityName",
+    "serviceName",
+    "serviceNameWithQty",
+    "serviceNationalNumber",
+    "serviceRequestTitle",
+    "serviceType",
+    "serviceTypesSummary",
+    "serviceWorker",
+    "service_add",
+    "service_edit",
+    "service_message",
+    "service_remove",
+    "service_update",
+    "serviceid-",
+    "serviceid-new",
+    "servicename-",
+    "servicename-new",
+    "services",
+    "services-grid",
+    "services-list",
+    "services-reception-",
+    "services-section",
+    "services-toolbar",
+    "servicesAmount",
+    "servicesCount",
+    "servicesGetAll",
+    "servicesGrid",
+    "servicesList",
+    "servicesTable",
+    "servicesTotal",
+    "servicesWithNewLoeings",
+    "servicestack",
+    "serviceworker",
+    "setting",
+    "settings",
+    "settings-center-panel-general",
+    "settings-center-panel-marcopacs",
+    "settings-center-panel-pacs",
+    "settings-center-panel-refund",
+    "settings-center-panel-velid",
+    "settings-center-save",
+    "settings-center-tabs",
+    "settings-center-title",
+    "settings-form",
+    "settings-section",
+    "settings/backup",
+    "settings/cashDeskKarts",
+    "settings/deliveryPrintSettings",
+    "settings/devices",
+    "settings/fetchSettings",
+    "settings/insurances",
+    "settings/iranNoobat",
+    "settings/medicalParams",
+    "settings/modalities",
+    "settings/pacsSettings",
+    "settings/personnel",
+    "settings/pettyCashAccounts",
+    "settings/pregnancyCareTemplates",
+    "settings/receiptSettings",
+    "settings/receptionsTags",
+    "settings/referringPhysicians",
+    "settings/rooms",
+    "settings/rooms/",
+    "settings/sadadApi",
+    "settings/saveSettings",
+    "settings/services",
+    "settings/settings",
+    "settings/supplementary-insurance",
+    "settingsCenter",
+    "settingsPer",
+    "settingsTourMarkers",
+    "settingsTourSeen_cashDeskKarts_v1",
+    "settingsTourSeen_deliveryPrint_v1",
+    "settingsTourSeen_insurances_v1",
+    "settingsTourSeen_modalities_v1",
+    "settingsTourSeen_pacsSettings_v1",
+    "settingsTourSeen_pettyCashAccounts_v2",
+    "settingsTourSeen_printReceipt_v1",
+    "settingsTourSeen_printReport_v1",
+    "settingsTourSeen_referringPhysicians_v1",
+    "settingsTourSeen_settingsCenter_v1",
+    "useReactToPrint",
+    "useReducer",
+    "useReducerWithReduxDevtools",
+    "useReduxContext",
+    "useRef",
+    "useResizeContainer",
+    "useRootClose",
+    "useRouter",
+    "useRtl",
+    "user",
+    "user-",
+    "user-agent",
+    "user-agent-data-types",
+    "user-alt",
+    "user-alt-slash",
+    "user-astronaut",
+    "user-check",
+    "user-circle",
+    "user-circle-o",
+    "user-clock",
+    "user-cog",
+    "user-content-",
+    "user-defined",
+    "user-edit",
+    "user-friends",
+    "user-graduate",
+    "user-img",
+    "user-injured",
+    "user-last-chat",
+    "user-lock",
+    "user-md",
+    "user-minus",
+    "user-ninja",
+    "user-nurse",
+    "user-o",
+    "user-override",
+    "user-plus",
+    "user-secret",
+    "user-select",
+    "user-select-all",
+    "user-shield",
+    "user-slash",
+    "user-status",
+    "user-tag",
+    "user-tie",
+    "user-times",
+    "user-x",
+    "user/",
+    "userAgent",
+    "userAgentData",
+    "userAgentFromString",
+    "userCancel",
+    "userConnected",
+    "userData",
+    "userDeclined",
+    "userDetails",
+    "userId",
+    "userInfo",
+    "userInputSection",
+    "userInputTitle",
+    "userName",
+    "userPermissions",
+    "userRoles",
+    "userSelect",
+    "userSet",
+    "userSpaceOnUse",
+    "user_",
+    "user_id",
+    "user_status",
+    "user_stopped_typing",
+    "user_typing",
+    "userland",
+    "username",
+    "users",
+    "users-cog",
+    "usersPermissionsSettings",
+    "usersRoles",
+    "usersRolesPer"
+   ]
+  },
+  "reception-report-shapes.json": {
+   "period": [
+    "1405/06/01",
+    "1405/06/01"
+   ],
+   "endpoints": {
+    "/api/Reports/cashier-report": {
+     "label": "cashier report (dedicated)",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "cashierReport": [
+        "list of 2",
+        {
+         "_id": "str(len 24)",
+         "fullName": "str(len 15)",
+         "userName": "str(len 9)",
+         "creditDetails": [
+          "list of 1",
+          "..."
+         ],
+         "debtDetails": "[] (empty)",
+         "totalCredit": "number",
+         "totalDebt": "number",
+         "totalCreditCount": "number",
+         "totalDebtCount": "number",
+         "userId": "str(len 24)",
+         "netAmount": "number",
+         "totalTransactions": "number"
+        }
+       ],
+       "byModality": [
+        "list of 4",
+        {
+         "modalityId": "str(len 1)",
+         "modalityName": "str(len 8)",
+         "modalityShortName": "str(len 2)",
+         "totalTransactions": "number",
+         "incomes": {
+          "cash": "...",
+          "card": "...",
+          "insurance": "...",
+          "discount": "...",
+          "total": "..."
+         },
+         "withdrawals": {
+          "manualWithdrawal": "...",
+          "receptionDebt": "..."
+         },
+         "cashDeskNet": {
+          "income": "...",
+          "manualWithdrawal": "...",
+          "net": "...",
+          "label": "..."
+         }
+        }
+       ],
+       "paymentsByCard": [
+        "list of 2",
+        {
+         "_id": "str(len 24)",
+         "totalAmount": "number",
+         "transactionCount": "number",
+         "cardId": "str(len 24)",
+         "cardName": "str(len 19)",
+         "bankName": "str(len 5)",
+         "cardNumber": "str(len 1)",
+         "averageAmount": "number"
+        }
+       ],
+       "cashPayment": {
+        "paymentType": "str(len 4)",
+        "totalAmount": "number",
+        "transactionCount": "number",
+        "averageAmount": "number"
+       },
+       "insurancePayments": [
+        "list of 3",
+        {
+         "_id": "str(len 13)",
+         "totalAmount": "number",
+         "transactionCount": "number",
+         "insuranceType": "str(len 13)",
+         "averageAmount": "number"
+        }
+       ],
+       "discountedPatientsStats": {
+        "totalDiscountedPatients": "number",
+        "totalAllDiscounts": "number",
+        "breakdown": {
+         "itemDiscount": {
+          "count": "...",
+          "amount": "...",
+          "label": "..."
+         },
+         "cashDeskDiscount": {
+          "count": "...",
+          "amount": "...",
+          "label": "..."
+         },
+         "fundDiscount": {
+          "count": "...",
+          "amount": "...",
+          "label": "..."
+         }
+        },
+        "physicianStats": "[] (empty)"
+       },
+       "summary": {
+        "incomes": {
+         "cash": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         },
+         "card": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         },
+         "insurance": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         },
+         "discount": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         },
+         "total": "number=2908270000"
+        },
+        "withdrawals": {
+         "manualWithdrawal": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         },
+         "receptionDebt": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         },
+         "total": "number=2600860000"
+        },
+        "deleted": {
+         "breakdown": {
+          "cash": "...",
+          "card": "...",
+          "insurance": "...",
+          "discount": "...",
+          "receptionDebt": "...",
+          "manualWithdrawal": "..."
+         },
+         "total": {
+          "amount": "...",
+          "count": "...",
+          "label": "..."
+         }
+        },
+        "cashDeskNet": {
+         "income": "number=2616950000",
+         "manualWithdrawal": "number=0",
+         "receptionDebt": "number=2600860000",
+         "net": "number=2616950000",
+         "label": "str='خالص صندوق'"
+        },
+        "overall": {
+         "totalCredit": "number=2616950000",
+         "totalDebt": "number=0",
+         "netAmount": "number=2616950000",
+         "totalTransactions": "number=102",
+         "uniqueUsers": "number=2"
+        },
+        "paymentDetails": {
+         "totalCardPayments": "number=2573240000",
+         "totalCashPayments": "number=43710000",
+         "cardTransactionCount": "number=97",
+         "cashTransactionCount": "number=5",
+         "cardsCount": "number=2"
+        }
+       },
+       "reportInfo": {
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)",
+        "scope": "str(len 14)",
+        "scopeNotes": [
+         "list of 2",
+         "str(len 76)"
+        ],
+        "filters": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/financial": {
+     "label": "financial",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "overview": {
+        "totalIncome": "number",
+        "totalExpense": "number",
+        "totalReceivables": "number",
+        "netIncome": "number",
+        "netCashFlow": "number",
+        "profitMargin": "number",
+        "description": "str(len 23)",
+        "fields": {
+         "totalIncome": "str(len 62)",
+         "totalExpense": "str(len 69)",
+         "totalReceivables": "str(len 53)",
+         "netIncome": "str(len 60)",
+         "netCashFlow": "str(len 67)",
+         "profitMargin": "str(len 37)"
+        }
+       },
+       "income": {
+        "reception": "number",
+        "payments": "number",
+        "walletCredit": "number",
+        "total": "number=5517500000",
+        "breakdown": {
+         "receptionPercentage": "number",
+         "paymentsPercentage": "number",
+         "walletCreditPercentage": "number"
+        },
+        "description": "str(len 36)",
+        "fields": {
+         "reception": "str(len 74)",
+         "payments": "str(len 76)",
+         "walletCredit": "str(len 69)",
+         "total": "str='مجموع کل درآمدها'",
+         "receptionPercentage": "str(len 32)",
+         "paymentsPercentage": "str(len 36)",
+         "walletCreditPercentage": "str(len 33)"
+        }
+       },
+       "expenses": {
+        "costs": "number",
+        "total": "number=0",
+        "expenseRatio": "number",
+        "description": "str(len 30)",
+        "fields": {
+         "costs": "str(len 65)",
+         "total": "str='مجموع کل هزینه\\u200cها'",
+         "expenseRatio": "str(len 52)"
+        }
+       },
+       "receivables": {
+        "walletDebt": "number",
+        "total": "number=2600860000",
+        "receivableRatio": "number",
+        "description": "str(len 25)",
+        "fields": {
+         "walletDebt": "str(len 72)",
+         "total": "str='مجموع کل مطالبات'",
+         "receivableRatio": "str(len 53)"
+        }
+       },
+       "transactions": {
+        "paymentCount": "number",
+        "expenseCount": "number",
+        "walletCreditCount": "number",
+        "walletDebtCount": "number",
+        "totalTransactionCount": "number",
+        "averagePayment": "number",
+        "averageExpense": "number",
+        "description": "str(len 20)",
+        "fields": {
+         "paymentCount": "str(len 36)",
+         "expenseCount": "str(len 23)",
+         "walletCreditCount": "str(len 29)",
+         "walletDebtCount": "str(len 29)",
+         "totalTransactionCount": "str(len 25)",
+         "averagePayment": "str(len 30)",
+         "averageExpense": "str(len 21)"
+        }
+       },
+       "analysis": {
+        "cashPosition": "str(len 4)",
+        "profitability": "str(len 6)",
+        "liquidityRatio": "number",
+        "operatingEfficiency": "number",
+        "description": "str(len 16)",
+        "fields": {
+         "cashPosition": "str(len 47)",
+         "profitability": "str(len 42)",
+         "liquidityRatio": "str(len 51)",
+         "operatingEfficiency": "str(len 47)"
+        }
+       },
+       "metadata": {
+        "period": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        },
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)",
+        "currency": "str(len 4)",
+        "description": "str(len 25)",
+        "fields": {
+         "period": "str(len 16)",
+         "startDate": "str(len 95)",
+         "endDate": "str(len 96)",
+         "currency": "str(len 29)",
+         "reportDate": "str(len 24)"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/financial/transactions-list": {
+     "label": "financial transactions",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": [
+       "list of 5",
+       {
+        "_id": "str(len 24)",
+        "ReceptionID": "number",
+        "amount": "number",
+        "type": "str(len 6)",
+        "date": "str(len 10)",
+        "time": "str(len 8)",
+        "description": "str(len 42)",
+        "paymentMethod": "str(len 5)",
+        "cardDetails": "null",
+        "patientDetails": {
+         "id": "str(len 24)",
+         "name": "str(len 11)",
+         "nationalCode": "str(len 10)",
+         "tel": "str(len 11)"
+        },
+        "receptionistDetails": {
+         "id": "str(len 24)",
+         "fullName": "str(len 19)",
+         "username": "str(len 5)"
+        },
+        "cashierDetails": {
+         "id": "str(len 24)",
+         "fullName": "str(len 19)",
+         "username": "str(len 5)"
+        }
+       }
+      ],
+      "pagination": {
+       "currentPage": "number=1",
+       "totalPages": "number=50",
+       "totalCount": "number=247",
+       "limit": "number=5"
+      },
+      "metadata": {
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)"
+       },
+       "reportDate": "str(len 19)"
+      }
+     }
+    },
+    "/api/Reports/debtors": {
+     "label": "debtors (unpaid)",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "debtors": [
+        "list of 31",
+        {
+         "totalDebt": "number",
+         "receptionCount": "number",
+         "oldestDebtDate": "str(len 10)",
+         "oldestDebtTime": "str(len 8)",
+         "newestDebtDate": "str(len 10)",
+         "totalReceptionAmount": "number",
+         "totalPaidAmount": "number",
+         "receptionIds": [
+          "list of 1",
+          "..."
+         ],
+         "patientId": "str(len 24)",
+         "patient": {
+          "id": "...",
+          "name": "...",
+          "nationalCode": "...",
+          "age": "..."
+         }
+        }
+       ],
+       "summary": {
+        "totalDebt": "number=37194164499",
+        "totalReceptions": "number=1646",
+        "minDebt": "number=0",
+        "maxDebt": "number=220000000",
+        "totalDebtors": "number=1519",
+        "averageDebt": "number=22596698"
+       },
+       "pagination": {
+        "currentPage": "number=1",
+        "totalPages": "number=1",
+        "totalCount": "number=31",
+        "limit": "number=50",
+        "hasNextPage": "bool=False",
+        "hasPrevPage": "bool=False"
+       },
+       "filters": {
+        "minDebt": "number",
+        "maxDebt": "str(len 12)",
+        "sortBy": "str(len 9)",
+        "sortOrder": "str(len 4)",
+        "search": "str(len 3)"
+       }
+      },
+      "metadata": {
+       "reportName": "str(len 20)",
+       "reportDate": "str(len 19)",
+       "description": "str(len 74)",
+       "fieldsDescription": {
+        "debtors": {
+         "patient": "str(len 13)",
+         "totalDebt": "str(len 19)",
+         "receptionCount": "str(len 22)",
+         "oldestDebtDate": "str(len 21)",
+         "newestDebtDate": "str(len 19)",
+         "totalReceptionAmount": "str(len 20)",
+         "totalPaidAmount": "str(len 22)",
+         "receptionIds": "str(len 27)"
+        },
+        "summary": {
+         "totalDebtors": "str='تعداد کل بیماران بدهکار'",
+         "totalDebt": "str='جمع کل بدهی همه بیماران'",
+         "totalReceptions": "str(len 25)",
+         "averageDebt": "str='میانگین بدهی هر بیمار'",
+         "minDebt": "str='کمترین بدهی'",
+         "maxDebt": "str='بیشترین بدهی'"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/dashboard": {
+     "label": "dashboard",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "overview": {
+        "totalPatients": "number",
+        "todayPatients": "number",
+        "monthlyPatients": "number",
+        "totalUsers": "number",
+        "totalPersonnel": "number",
+        "totalRooms": "number",
+        "todayReceptions": "number",
+        "periodReceptions": "number",
+        "periodTotalAmount": "number",
+        "periodUniquePatients": "number",
+        "currentPersianDate": "str(len 10)",
+        "currentPersianTime": "str(len 8)",
+        "reportDate": "str(len 19)",
+        "description": "str(len 67)",
+        "sectionId": "str(len 18)",
+        "sectionLabel": "str(len 13)",
+        "sectionDescription": "str(len 37)",
+        "level": "str(len 9)",
+        "fields": {
+         "totalPatients": "str(len 24)"
+        },
+        "fieldDefinitions": {
+         "totalPatients": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         }
+        }
+       },
+       "ratios": {
+        "patientsToUsersRatio": "number",
+        "dailyReceptionRate": "number",
+        "monthlyGrowthRate": "number",
+        "description": "str(len 26)"
+       },
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)",
+        "description": "str(len 40)"
+       },
+       "metadata": {
+        "reportType": "str(len 9)",
+        "reportName": "str(len 7)",
+        "schemaVersion": "str(len 5)",
+        "appliedFilters": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        },
+        "period": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        },
+        "fieldDefinitions": {
+         "totalPatients": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "reportDate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "startDate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "format": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "endDate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "format": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "currentPage": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPages": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         }
+        },
+        "sections": [
+         "list of 2",
+         {
+          "id": "...",
+          "label": "...",
+          "fields": "..."
+         }
+        ],
+        "scope": "str(len 11)",
+        "scopeNotes": [
+         "list of 2",
+         "str(len 67)"
+        ],
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)"
+       }
+      },
+      "fieldDefinitions": {
+       "totalPatients": {
+        "key": "str(len 13)",
+        "label": "str(len 11)",
+        "description": "str(len 24)",
+        "type": "str(len 7)",
+        "category": "str(len 7)",
+        "level": "str(len 7)"
+       },
+       "reportDate": {
+        "key": "str(len 10)",
+        "label": "str(len 17)",
+        "description": "str(len 24)",
+        "type": "str(len 6)",
+        "category": "str(len 8)",
+        "level": "str(len 8)"
+       },
+       "startDate": {
+        "key": "str(len 9)",
+        "label": "str(len 10)",
+        "description": "str(len 29)",
+        "type": "str(len 6)",
+        "format": "str(len 12)",
+        "category": "str(len 8)",
+        "level": "str(len 8)"
+       },
+       "endDate": {
+        "key": "str(len 7)",
+        "label": "str(len 11)",
+        "description": "str(len 29)",
+        "type": "str(len 6)",
+        "format": "str(len 12)",
+        "category": "str(len 8)",
+        "level": "str(len 8)"
+       },
+       "currentPage": {
+        "key": "str(len 11)",
+        "label": "str(len 9)",
+        "description": "str(len 23)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 8)"
+       },
+       "totalCount": {
+        "key": "str(len 10)",
+        "label": "str(len 8)",
+        "description": "str(len 16)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 8)"
+       },
+       "totalPages": {
+        "key": "str(len 10)",
+        "label": "str(len 11)",
+        "description": "str(len 14)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 8)"
+       }
+      },
+      "reportSchema": {
+       "version": "str(len 5)",
+       "reportType": "str(len 9)",
+       "label": "str(len 7)",
+       "sections": [
+        "list of 2",
+        {
+         "id": "str(len 18)",
+         "label": "str(len 13)",
+         "level": "str(len 9)",
+         "description": "str(len 37)",
+         "fields": [
+          "list of 10",
+          "..."
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "/api/Reports/reception": {
+     "label": "reception",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "general": {
+        "_id": "null",
+        "totalReceptions": "number",
+        "totalAmount": "number",
+        "totalPatientAmount": "number",
+        "totalSalamatInsurance": "number",
+        "totalTaminInsurance": "number",
+        "totalArmyInsurance": "number",
+        "totalSupplementaryInsurance": "number",
+        "totalDiscounts": "number",
+        "totalCashDeskDiscounts": "number",
+        "totalPaidAmount": "number",
+        "totalDuration": "number",
+        "settledCount": "number",
+        "uniquePatients": "number",
+        "totalInsuranceAmount": "number",
+        "unsettledCount": "number",
+        "averageReceptionAmount": "number",
+        "averageDuration": "number",
+        "description": "str(len 58)",
+        "sectionId": "str(len 17)",
+        "sectionLabel": "str(len 14)",
+        "sectionDescription": "str(len 22)",
+        "fields": {
+         "totalReceptions": "str(len 69)",
+         "uniquePatients": "str(len 33)",
+         "totalAmount": "str(len 49)",
+         "totalPatientAmount": "str(len 59)",
+         "totalSalamatInsurance": "str(len 39)",
+         "totalTaminInsurance": "str(len 42)",
+         "totalArmyInsurance": "str(len 47)",
+         "totalSupplementaryInsurance": "str(len 38)",
+         "totalInsuranceAmount": "str(len 51)",
+         "totalDiscounts": "str(len 23)",
+         "totalCashDeskDiscounts": "str(len 26)",
+         "totalPaidAmount": "str(len 52)",
+         "totalDuration": "str(len 40)",
+         "settledCount": "str(len 25)",
+         "unsettledCount": "str(len 26)",
+         "averageReceptionAmount": "str(len 28)",
+         "averageDuration": "str(len 29)"
+        },
+        "fieldDefinitions": {
+         "totalReceptions": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "uniquePatients": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPatientAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalSalamatInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalTaminInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalArmyInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalSupplementaryInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalInsuranceAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalDiscounts": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalCashDeskDiscounts": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPaidAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalDuration": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "settledCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "unsettledCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "averageReceptionAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "averageDuration": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         }
+        }
+       },
+       "supplementaryInsurance": {
+        "stats": "[] (empty)",
+        "summary": {
+         "totalReceptionsWithSupplementary": "number=0",
+         "totalSupplementaryCoverageAmount": "number=0",
+         "distinctPlans": "number=0"
+        },
+        "description": "str(len 49)"
+       },
+       "insurance": {
+        "stats": [
+         "list of 3",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalDiscounts": "...",
+          "settledCount": "...",
+          "insuranceType": "...",
+          "totalInsuranceAmount": "...",
+          "averageAmount": "...",
+          "unsettledCount": "...",
+          "settlementRate": "..."
+         }
+        ],
+        "summary": {
+         "totalInsuranceTypes": "number=3",
+         "mostUsedInsurance": "str='4'",
+         "totalInsuranceCoverage": "number=291320000",
+         "insuranceCoveragePercentage": "number=11"
+        },
+        "description": "str(len 37)",
+        "sectionId": "str(len 19)",
+        "sectionLabel": "str(len 17)",
+        "sectionDescription": "str(len 37)",
+        "level": "str(len 9)",
+        "fields": {
+         "insuranceType": "str(len 98)",
+         "insuranceTypeLabel": "str(len 20)",
+         "count": "str(len 19)",
+         "totalAmount": "str(len 49)",
+         "totalPatientAmount": "str(len 59)",
+         "totalInsuranceAmount": "str(len 51)",
+         "settledCount": "str(len 25)",
+         "unsettledCount": "str(len 26)",
+         "totalDiscounts": "str(len 23)",
+         "averageAmount": "str(len 20)",
+         "settlementRate": "str(len 24)"
+        },
+        "fieldDefinitions": {
+         "insuranceType": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "insuranceTypeLabel": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "count": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPatientAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalInsuranceAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "settledCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "unsettledCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalDiscounts": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "averageAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "settlementRate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         }
+        }
+       },
+       "modality": {
+        "stats": [
+         "list of 4",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalDiscounts": "...",
+          "totalDuration": "...",
+          "settledCount": "...",
+          "modalityId": "...",
+          "modalityName": "...",
+          "modalityShortName": "...",
+          "totalInsuranceAmount": "...",
+          "averageAmount": "...",
+          "averageDuration": "...",
+          "unsettledCount": "..."
+         }
+        ],
+        "summary": {
+         "totalModalities": "number=4",
+         "mostActiveModality": "str='سونوگرافی'",
+         "averageDurationAcrossModalities": "number=0"
+        },
+        "description": "str(len 70)",
+        "fields": {
+         "modalityId": "str(len 18)",
+         "modalityName": "str(len 37)",
+         "modalityShortName": "str(len 22)",
+         "count": "str(len 22)",
+         "totalAmount": "str(len 28)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 23)",
+         "totalDuration": "str(len 26)",
+         "averageAmount": "str(len 21)",
+         "averageDuration": "str(len 29)",
+         "settledCount": "str(len 25)",
+         "unsettledCount": "str(len 26)"
+        }
+       },
+       "referringPhysician": {
+        "stats": [
+         "list of 61",
+         {
+          "_id": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "settledCount": "...",
+          "physicianId": "...",
+          "physicianName": "...",
+          "receptionCount": "...",
+          "uniquePatients": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "..."
+         }
+        ],
+        "summary": {
+         "totalPhysicians": "number=61",
+         "topPhysician": "str='-'"
+        },
+        "description": "str(len 36)",
+        "fields": {
+         "physicianId": "str(len 24)",
+         "physicianName": "str(len 20)",
+         "receptionCount": "str(len 11)",
+         "uniquePatients": "str(len 25)",
+         "totalAmount": "str(len 10)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)"
+        }
+       },
+       "daily": {
+        "stats": [
+         "list of 1",
+         {
+          "_id": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalDiscounts": "...",
+          "totalCashDeskDiscounts": "...",
+          "totalDuration": "...",
+          "settledCount": "...",
+          "persianDate": "...",
+          "receptionCount": "...",
+          "uniquePatients": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "averageAmount": "...",
+          "averageDuration": "...",
+          "uniqueModalities": "..."
+         }
+        ],
+        "description": "str(len 43)",
+        "fields": {
+         "persianDate": "str(len 24)",
+         "receptionCount": "str(len 22)",
+         "uniquePatients": "str(len 26)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 13)",
+         "totalCashDeskDiscounts": "str(len 13)",
+         "totalDuration": "str(len 18)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "averageAmount": "str(len 21)",
+         "averageDuration": "str(len 21)",
+         "uniqueModalities": "str(len 24)"
+        }
+       },
+       "topServices": {
+        "services": [
+         "list of 20",
+         {
+          "_id": "...",
+          "service": "...",
+          "serviceGroup": "...",
+          "checkCode": "...",
+          "count": "...",
+          "totalRevenue": "...",
+          "taminServices": "...",
+          "salamatServices": "...",
+          "discountedServices": "...",
+          "totalDiscount": "...",
+          "serviceCode": "...",
+          "internalCode": "...",
+          "modalityId": "...",
+          "modalityName": "...",
+          "modalityShortName": "...",
+          "averagePrice": "...",
+          "privateServices": "...",
+          "discountRate": "..."
+         }
+        ],
+        "summary": {
+         "totalUniqueServices": "number=20",
+         "mostPopularService": "str='سونوگرافی کامل شکم و لگن'",
+         "totalServiceRevenue": "number=1557250000"
+        },
+        "description": "str(len 41)",
+        "fields": {
+         "serviceCode": "str(len 34)",
+         "service": "str(len 8)",
+         "serviceGroup": "str(len 9)",
+         "checkCode": "str(len 30)",
+         "internalCode": "str(len 36)",
+         "modalityId": "str(len 26)",
+         "modalityName": "str(len 45)",
+         "modalityShortName": "str(len 30)",
+         "count": "str(len 36)",
+         "totalRevenue": "str(len 23)",
+         "averagePrice": "str(len 25)",
+         "taminServices": "str(len 25)",
+         "salamatServices": "str(len 25)",
+         "privateServices": "str(len 28)",
+         "discountedServices": "str(len 20)",
+         "totalDiscount": "str(len 16)",
+         "discountRate": "str(len 43)"
+        }
+       },
+       "customExpenses": {
+        "byTitle": "[] (empty)",
+        "overview": {
+         "totalLines": "number",
+         "totalQty": "number",
+         "totalAmount": "number"
+        },
+        "description": "str(len 63)",
+        "fields": {
+         "expenseTitle": "str(len 40)",
+         "totalQty": "str(len 17)",
+         "totalAmount": "str(len 32)",
+         "lineCount": "str(len 20)"
+        }
+       },
+       "payment": {
+        "_id": "null",
+        "totalReceptions": "number",
+        "settledReceptions": "number",
+        "totalReceivableAmount": "number",
+        "totalPaidAmount": "number",
+        "totalPatientShare": "number",
+        "remainingPatientAmount": "number",
+        "unsettledReceptions": "number",
+        "settlementRate": "number",
+        "remainingAmount": "number",
+        "overdueAmount": "number",
+        "paymentRate": "number",
+        "totalInsuranceShare": "number",
+        "patientSharePercentage": "number",
+        "insuranceSharePercentage": "number",
+        "patientCollectionRate": "number",
+        "description": "str(len 37)",
+        "fields": {
+         "totalReceptions": "str(len 17)",
+         "settledReceptions": "str(len 25)",
+         "unsettledReceptions": "str(len 26)",
+         "settlementRate": "str(len 52)",
+         "totalPaidAmount": "str(len 22)",
+         "remainingPatientAmount": "str(len 16)",
+         "patientCollectionRate": "str(len 59)",
+         "totalReceivableAmount": "str(len 21)",
+         "remainingAmount": "str(len 39)",
+         "paymentRate": "str(len 38)"
+        }
+       },
+       "registeredBy": {
+        "stats": [
+         "list of 5",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalDiscounts": "...",
+          "totalCashDeskDiscounts": "...",
+          "totalPaidAmount": "...",
+          "totalDuration": "...",
+          "settledCount": "...",
+          "userId": "...",
+          "fullName": "...",
+          "userName": "...",
+          "nickName": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "uniquePatients": "...",
+          "uniqueModalities": "...",
+          "averageAmount": "...",
+          "averageDuration": "...",
+          "settlementRate": "...",
+          "collectionRate": "..."
+         }
+        ],
+        "summary": {
+         "totalUsers": "number=5",
+         "mostActiveUser": "str='هومن سالاری'",
+         "mostActiveUserCount": "number=40",
+         "totalReceptionsByUsers": "number=95",
+         "averageReceptionsPerUser": "number=19"
+        },
+        "description": "str(len 39)",
+        "fields": {
+         "userId": "str(len 26)",
+         "fullName": "str(len 14)",
+         "userName": "str(len 17)",
+         "nickName": "str(len 21)",
+         "count": "str(len 38)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 17)",
+         "totalInsuranceAmount": "str(len 17)",
+         "totalDiscounts": "str(len 23)",
+         "totalCashDeskDiscounts": "str(len 13)",
+         "totalPaidAmount": "str(len 21)",
+         "totalDuration": "str(len 26)",
+         "settledCount": "str(len 25)",
+         "unsettledCount": "str(len 26)",
+         "uniquePatients": "str(len 26)",
+         "uniqueModalities": "str(len 19)",
+         "averageAmount": "str(len 21)",
+         "averageDuration": "str(len 29)",
+         "settlementRate": "str(len 37)",
+         "collectionRate": "str(len 46)"
+        }
+       },
+       "comparison": {
+        "lastMonth": {
+         "data": {
+          "_id": "...",
+          "totalReceptions": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalInsuranceAmount": "..."
+         },
+         "previousPeriodStart": "str(len 10)",
+         "previousPeriodEnd": "str(len 10)",
+         "periodLabel": "str(len 5)",
+         "receptionGrowth": "number",
+         "revenueGrowth": "number"
+        },
+        "lastYear": {
+         "data": {
+          "_id": "...",
+          "totalReceptions": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalInsuranceAmount": "..."
+         },
+         "previousPeriodStart": "str(len 10)",
+         "previousPeriodEnd": "str(len 10)",
+         "periodLabel": "str(len 24)",
+         "receptionGrowth": "number",
+         "revenueGrowth": "number"
+        },
+        "description": "str(len 39)",
+        "fields": {
+         "lastMonth": {
+          "description": "...",
+          "data": "...",
+          "receptionGrowth": "...",
+          "revenueGrowth": "..."
+         },
+         "lastYear": {
+          "description": "...",
+          "data": "...",
+          "receptionGrowth": "...",
+          "revenueGrowth": "..."
+         }
+        }
+       },
+       "peakHours": {
+        "hourlyStats": [
+         "list of 6",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalRevenue": "...",
+          "hour": "...",
+          "averageRevenue": "..."
+         }
+        ],
+        "summary": {
+         "busiestHour": "str='11'",
+         "busiestHourCount": "number=29",
+         "quietestHour": "str='13'",
+         "totalPeakHours": "number=6"
+        },
+        "description": "str(len 39)",
+        "fields": {
+         "hour": "str(len 24)",
+         "count": "str(len 23)",
+         "totalRevenue": "str(len 23)",
+         "averageRevenue": "str(len 34)"
+        }
+       },
+       "analysis": {
+        "patientVsInsurance": {
+         "totalAmount": "number",
+         "patientShare": "number",
+         "baseInsuranceShare": "number",
+         "supplementaryShare": "number",
+         "discountShare": "number",
+         "otherShare": "number",
+         "insuranceShare": "number",
+         "patientPercentage": "number",
+         "baseInsurancePercentage": "number",
+         "supplementaryPercentage": "number",
+         "discountPercentage": "number",
+         "otherPercentage": "number",
+         "insurancePercentage": "number",
+         "description": "str(len 55)",
+         "fields": {
+          "totalAmount": "...",
+          "patientShare": "...",
+          "baseInsuranceShare": "...",
+          "supplementaryShare": "...",
+          "discountShare": "...",
+          "otherShare": "...",
+          "insuranceShare": "..."
+         }
+        },
+        "discounts": {
+         "totalDiscounts": "number",
+         "cashDeskDiscounts": "number",
+         "serviceDiscounts": "number",
+         "discountPercentage": "number",
+         "description": "str(len 29)",
+         "fields": {
+          "totalDiscounts": "...",
+          "cashDeskDiscounts": "...",
+          "serviceDiscounts": "...",
+          "discountPercentage": "..."
+         }
+        },
+        "efficiency": {
+         "averageReceptionTime": "number",
+         "settlementRate": "number",
+         "paymentCollectionRate": "number",
+         "dailyAverageReceptions": "number",
+         "description": "str(len 26)",
+         "fields": {
+          "averageReceptionTime": "...",
+          "settlementRate": "...",
+          "paymentCollectionRate": "...",
+          "dailyAverageReceptions": "..."
+         }
+        }
+       },
+       "excluded": {
+        "deleted": {
+         "count": "number",
+         "uniquePatients": "number",
+         "totalAmount": "number",
+         "totalPatientAmount": "number",
+         "totalInsuranceAmount": "number",
+         "totalSupplementaryInsurance": "number",
+         "totalPaidAmount": "number",
+         "settledCount": "number",
+         "unsettledCount": "number",
+         "remainingPatientAmount": "number",
+         "averageAmount": "number"
+        },
+        "returned": {
+         "count": "number",
+         "uniquePatients": "number",
+         "totalAmount": "number",
+         "totalPatientAmount": "number",
+         "totalInsuranceAmount": "number",
+         "totalSupplementaryInsurance": "number",
+         "totalPaidAmount": "number",
+         "settledCount": "number",
+         "unsettledCount": "number",
+         "remainingPatientAmount": "number",
+         "averageAmount": "number"
+        },
+        "deletedCount": "number",
+        "returnedCount": "number",
+        "description": "str(len 72)",
+        "period": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        },
+        "filterBasis": {
+         "operational": "str(len 4)",
+         "deleted": "str(len 4)",
+         "returned": "str(len 4)"
+        },
+        "fields": {
+         "count": "str(len 11)",
+         "uniquePatients": "str(len 26)",
+         "totalAmount": "str(len 10)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalPaidAmount": "str(len 14)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "averageAmount": "str(len 21)"
+        }
+       },
+       "metadata": {
+        "reportType": "str(len 9)",
+        "reportName": "str(len 11)",
+        "schemaVersion": "str(len 5)",
+        "appliedFilters": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)",
+         "type": "str(len 5)"
+        },
+        "period": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)",
+         "type": "str(len 5)"
+        },
+        "fieldDefinitions": {
+         "totalReceptions": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "uniquePatients": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPatientAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalSalamatInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalTaminInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalArmyInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalSupplementaryInsurance": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "...",
+          "insuranceType": "..."
+         },
+         "totalInsuranceAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalDiscounts": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalCashDeskDiscounts": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPaidAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalDuration": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "settledCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "unsettledCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "averageReceptionAmount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "averageDuration": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "unit": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "insuranceType": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "insuranceTypeLabel": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "count": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "reportDate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "startDate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "format": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "endDate": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "format": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "currentPage": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalCount": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         },
+         "totalPages": {
+          "key": "...",
+          "label": "...",
+          "description": "...",
+          "type": "...",
+          "category": "...",
+          "level": "..."
+         }
+        },
+        "sections": [
+         "list of 3",
+         {
+          "id": "...",
+          "label": "...",
+          "fields": "..."
+         }
+        ],
+        "scope": "str(len 11)",
+        "scopeNotes": [
+         "list of 2",
+         "str(len 67)"
+        ],
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)"
+       }
+      },
+      "fieldDefinitions": {
+       "totalReceptions": {
+        "key": "str(len 15)",
+        "label": "str(len 11)",
+        "description": "str(len 69)",
+        "type": "str(len 7)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "uniquePatients": {
+        "key": "str(len 14)",
+        "label": "str(len 12)",
+        "description": "str(len 33)",
+        "type": "str(len 7)",
+        "category": "str(len 7)",
+        "level": "str(len 9)"
+       },
+       "totalAmount": {
+        "key": "str(len 11)",
+        "label": "str(len 10)",
+        "description": "str(len 49)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "totalPatientAmount": {
+        "key": "str(len 18)",
+        "label": "str(len 9)",
+        "description": "str(len 59)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "totalSalamatInsurance": {
+        "key": "str(len 21)",
+        "label": "str(len 14)",
+        "description": "str(len 39)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)",
+        "insuranceType": "str(len 1)"
+       },
+       "totalTaminInsurance": {
+        "key": "str(len 19)",
+        "label": "str(len 14)",
+        "description": "str(len 42)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)",
+        "insuranceType": "str(len 1)"
+       },
+       "totalArmyInsurance": {
+        "key": "str(len 18)",
+        "label": "str(len 13)",
+        "description": "str(len 47)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)",
+        "insuranceType": "str(len 1)"
+       },
+       "totalSupplementaryInsurance": {
+        "key": "str(len 27)",
+        "label": "str(len 15)",
+        "description": "str(len 38)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)",
+        "insuranceType": "str(len 1)"
+       },
+       "totalInsuranceAmount": {
+        "key": "str(len 20)",
+        "label": "str(len 14)",
+        "description": "str(len 51)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "totalDiscounts": {
+        "key": "str(len 14)",
+        "label": "str(len 11)",
+        "description": "str(len 23)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "totalCashDeskDiscounts": {
+        "key": "str(len 22)",
+        "label": "str(len 11)",
+        "description": "str(len 26)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "totalPaidAmount": {
+        "key": "str(len 15)",
+        "label": "str(len 15)",
+        "description": "str(len 52)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "totalDuration": {
+        "key": "str(len 13)",
+        "label": "str(len 9)",
+        "description": "str(len 40)",
+        "type": "str(len 6)",
+        "unit": "str(len 6)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "settledCount": {
+        "key": "str(len 12)",
+        "label": "str(len 9)",
+        "description": "str(len 25)",
+        "type": "str(len 7)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "unsettledCount": {
+        "key": "str(len 14)",
+        "label": "str(len 10)",
+        "description": "str(len 26)",
+        "type": "str(len 7)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "averageReceptionAmount": {
+        "key": "str(len 22)",
+        "label": "str(len 18)",
+        "description": "str(len 28)",
+        "type": "str(len 6)",
+        "unit": "str(len 4)",
+        "category": "str(len 10)",
+        "level": "str(len 9)"
+       },
+       "averageDuration": {
+        "key": "str(len 15)",
+        "label": "str(len 11)",
+        "description": "str(len 29)",
+        "type": "str(len 6)",
+        "unit": "str(len 6)",
+        "category": "str(len 10)",
+        "level": "str(len 9)"
+       },
+       "insuranceType": {
+        "key": "str(len 13)",
+        "label": "str(len 8)",
+        "description": "str(len 98)",
+        "type": "str(len 6)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "insuranceTypeLabel": {
+        "key": "str(len 18)",
+        "label": "str(len 12)",
+        "description": "str(len 20)",
+        "type": "str(len 6)",
+        "category": "str(len 9)",
+        "level": "str(len 9)"
+       },
+       "count": {
+        "key": "str(len 5)",
+        "label": "str(len 5)",
+        "description": "str(len 19)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 3)"
+       },
+       "reportDate": {
+        "key": "str(len 10)",
+        "label": "str(len 17)",
+        "description": "str(len 24)",
+        "type": "str(len 6)",
+        "category": "str(len 8)",
+        "level": "str(len 8)"
+       },
+       "startDate": {
+        "key": "str(len 9)",
+        "label": "str(len 10)",
+        "description": "str(len 29)",
+        "type": "str(len 6)",
+        "format": "str(len 12)",
+        "category": "str(len 8)",
+        "level": "str(len 8)"
+       },
+       "endDate": {
+        "key": "str(len 7)",
+        "label": "str(len 11)",
+        "description": "str(len 29)",
+        "type": "str(len 6)",
+        "format": "str(len 12)",
+        "category": "str(len 8)",
+        "level": "str(len 8)"
+       },
+       "currentPage": {
+        "key": "str(len 11)",
+        "label": "str(len 9)",
+        "description": "str(len 23)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 8)"
+       },
+       "totalCount": {
+        "key": "str(len 10)",
+        "label": "str(len 8)",
+        "description": "str(len 16)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 8)"
+       },
+       "totalPages": {
+        "key": "str(len 10)",
+        "label": "str(len 11)",
+        "description": "str(len 14)",
+        "type": "str(len 7)",
+        "category": "str(len 10)",
+        "level": "str(len 8)"
+       }
+      },
+      "reportSchema": {
+       "version": "str(len 5)",
+       "reportType": "str(len 9)",
+       "label": "str(len 11)",
+       "sections": [
+        "list of 3",
+        {
+         "id": "str(len 17)",
+         "label": "str(len 14)",
+         "description": "str(len 22)",
+         "fields": [
+          "list of 17",
+          "..."
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "/api/Reports/reception/detailed-list": {
+     "label": "reception detailed list",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": [
+       "list of 5",
+       {
+        "_id": "str(len 24)",
+        "modality": {
+         "_id": "str(len 1)",
+         "Modality": "str(len 2)",
+         "FullName": "str(len 3)",
+         "PerFullName": "str(len 8)",
+         "Icon": "str(len 8)"
+        },
+        "patient": {
+         "_id": "str(len 24)",
+         "NationalID": "str(len 10)",
+         "Name": "str(len 11)"
+        },
+        "nationalCode": "str(len 10)",
+        "Date": "str(len 10)",
+        "Time": "str(len 8)",
+        "totalAmount": "number",
+        "ReceptionID": "number",
+        "salamatInsuranceTotal": "number",
+        "taminInsuranceTotal": "number",
+        "armyInsuranceTotal": "number",
+        "supplementaryInsuranceTotal": "number",
+        "selectedSupplementaryInsurance": "null",
+        "services": [
+         "list of 3",
+         {
+          "Service": "...",
+          "Tamin": "...",
+          "Salamat": "...",
+          "Army": "...",
+          "SupplementaryInsurance": "..."
+         }
+        ],
+        "settled": "bool=False",
+        "imagingWorkflow": {
+         "report": {
+          "radiologist": "..."
+         }
+        }
+       }
+      ],
+      "pagination": {
+       "currentPage": "number=1",
+       "totalPages": "number=19",
+       "totalCount": "number=95",
+       "limit": "number=5"
+      },
+      "metadata": {
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)"
+       },
+       "reportDate": "str(len 19)",
+       "queryMode": "str(len 5)"
+      }
+     }
+    },
+    "/api/Reports/patients": {
+     "label": "patients",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "general": {
+        "totalPatients": "number",
+        "description": "str(len 35)",
+        "fields": {
+         "totalPatients": "str(len 38)"
+        }
+       },
+       "demographics": {
+        "gender": {
+         "stats": [
+          "list of 3",
+          "..."
+         ],
+         "description": "str(len 27)",
+         "fields": {
+          "_id": "...",
+          "count": "..."
+         }
+        },
+        "age": {
+         "groups": [
+          "list of 6",
+          "..."
+         ],
+         "description": "str(len 34)",
+         "fields": {
+          "_id": "...",
+          "count": "..."
+         }
+        },
+        "insurance": {
+         "stats": [
+          "list of 3",
+          "..."
+         ],
+         "description": "str(len 30)",
+         "fields": {
+          "_id": "...",
+          "count": "..."
+         }
+        }
+       },
+       "summary": {
+        "totalGenderTypes": "number=3",
+        "totalAgeGroups": "number=6",
+        "totalInsuranceTypes": "number=3",
+        "mostCommonGender": "null",
+        "mostCommonAgeGroup": "str='30-50 سال'",
+        "mostCommonInsurance": "str='4'"
+       },
+       "metadata": {
+        "period": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        },
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)",
+        "description": "str(len 28)",
+        "fields": {
+         "period": "str(len 16)",
+         "startDate": "str(len 38)",
+         "endDate": "str(len 39)",
+         "currentPersianDate": "str(len 16)",
+         "reportDate": "str(len 24)"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/patients/detailed-list": {
+     "label": "patients detailed list",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": [
+       "list of 5",
+       {
+        "_id": "str(len 24)",
+        "NationalID": "str(len 10)",
+        "Name": "str(len 11)",
+        "Age": "str(len 2)",
+        "InsuranceType": "str(len 1)",
+        "Tel": "str(len 11)",
+        "createdAt": "str(len 24)"
+       }
+      ],
+      "pagination": {
+       "currentPage": "number=1",
+       "totalPages": "number=19",
+       "totalCount": "number=94",
+       "limit": "number=5"
+      },
+      "metadata": {
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)"
+       },
+       "reportDate": "str(len 19)"
+      }
+     }
+    },
+    "/api/Reports/physician-performance/summary": {
+     "label": "physician performance summary",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": [
+       "list of 3",
+       {
+        "departments": [
+         "list of 1",
+         {
+          "modality": "...",
+          "modalityName": "...",
+          "patientCount": "...",
+          "totalAmount": "...",
+          "patientShare": "...",
+          "insuranceShare": "...",
+          "discountTotal": "...",
+          "inventoryAmount": "...",
+          "servicesAmount": "...",
+          "paidAmount": "...",
+          "paidServices": "...",
+          "paidInventory": "...",
+          "patientShareServices": "...",
+          "patientShareInventory": "...",
+          "receptions": "..."
+         }
+        ],
+        "totalPatients": "number",
+        "totalRevenue": "number",
+        "totalPatientShare": "number",
+        "totalInsuranceShare": "number",
+        "totalDiscount": "number",
+        "totalInventoryAmount": "number",
+        "totalServicesAmount": "number",
+        "totalPaidAmount": "number",
+        "totalPaidServices": "number",
+        "totalPaidInventory": "number",
+        "totalPatientShareServices": "number",
+        "totalPatientShareInventory": "number",
+        "radiologistId": "str(len 24)",
+        "radiologistName": "str(len 21)",
+        "personnelCode": "str(len 2)",
+        "nationalCode": "str(len 0)",
+        "speciality": "str(len 9)",
+        "departmentSummary": [
+         "list of 1",
+         {
+          "modality": "...",
+          "modalityName": "...",
+          "patientCount": "...",
+          "revenue": "..."
+         }
+        ]
+       }
+      ],
+      "summary": {
+       "totalRadiologists": "number=3",
+       "totalDepartments": "number=3",
+       "totalPatients": "number=30",
+       "totalRevenue": "number=450680000",
+       "totalPatientShare": "number=402980000",
+       "totalPatientShareServices": "number=398080000",
+       "totalPatientShareInventory": "number=4900000",
+       "totalInsuranceShare": "number=45650000",
+       "totalDiscount": "number=2050000",
+       "totalPaidAmount": "number=402980000",
+       "totalPaidServices": "number=398080000",
+       "totalPaidInventory": "number=4900000",
+       "totalInventoryAmount": "number=4900000",
+       "totalServicesAmount": "number=445780000",
+       "departmentBreakdown": [
+        "list of 3",
+        {
+         "patientCount": "number=27",
+         "totalRevenue": "number=376900000",
+         "patientShare": "number=336580000",
+         "insuranceShare": "number=40320000",
+         "discountTotal": "number=0",
+         "modality": "str='3'",
+         "modalityName": "str='سونوگرافی'",
+         "radiologistCount": "number=2",
+         "averageRevenuePerPatient": "number=13959259.25925926"
+        }
+       ],
+       "topDepartment": "str='سونوگرافی'",
+       "topDepartmentRevenue": "number=376900000"
+      },
+      "metadata": {
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)"
+       },
+       "reportDate": "str(len 19)"
+      }
+     }
+    },
+    "/api/Reports/personnel-performance/summary": {
+     "label": "personnel performance summary",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "summary": {
+        "totalPersonnel": "number=0",
+        "activePersonnel": "number=23",
+        "totalServices": "number=0",
+        "totalReceptions": "number=0",
+        "totalAmount": "number=0",
+        "totalInsuranceShare": "number=0",
+        "totalPatientShare": "number=0",
+        "averageServicesPerPersonnel": "number=0",
+        "averageAmountPerPersonnel": "number=0"
+       },
+       "personnelList": "[] (empty)"
+      },
+      "filters": {
+       "startDate": "str(len 10)",
+       "endDate": "str(len 10)",
+       "personnelId": "null",
+       "modality": "null",
+       "personnelType": "null",
+       "department": "null"
+      },
+      "metadata": {
+       "reportDate": "str(len 19)",
+       "reportTitle": "str(len 24)"
+      }
+     }
+    },
+    "/api/Reports/referring-physicians/stats": {
+     "label": "referring physician stats",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "summary": {
+        "totalPhysicians": "number=61",
+        "totalReceptions": "number=95",
+        "totalAmount": "number=2600860000",
+        "totalPatientAmount": "number=2307490000",
+        "totalInsuranceAmount": "number=234160000",
+        "totalDiscounts": "number=0",
+        "totalPaidAmount": "number=1251030000",
+        "totalSettled": "number=64",
+        "totalUnsettled": "number=31",
+        "averageReceptionsPerPhysician": "number=1.56",
+        "settlementRate": "number=67.37"
+       },
+       "physicians": [
+        "list of 61",
+        {
+         "_id": "str(len 24)",
+         "receptionCount": "number",
+         "totalAmount": "number",
+         "totalPatientAmount": "number",
+         "totalDiscounts": "number",
+         "totalPaidAmount": "number",
+         "settledCount": "number",
+         "physicianId": "str(len 24)",
+         "physicianName": "str(len 1)",
+         "physicianMSID": "str(len 3)",
+         "physicianExpertise": "str(len 1)",
+         "uniquePatientsCount": "number",
+         "totalInsuranceAmount": "number",
+         "unsettledCount": "number",
+         "averageAmount": "number",
+         "settlementRate": "number"
+        }
+       ]
+      },
+      "metadata": {
+       "reportName": "str(len 25)",
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)"
+       },
+       "reportDate": "str(len 19)",
+       "description": "str(len 46)",
+       "fieldsDescription": {
+        "summary": {
+         "totalPhysicians": "str(len 29)",
+         "totalReceptions": "str='تعداد کل پذیرش\\u200cها'",
+         "totalAmount": "str='جمع کل مبلغ پذیرش\\u200cها'",
+         "totalPatientAmount": "str='جمع کل سهم بیمار'",
+         "totalInsuranceAmount": "str='جمع کل مبلغ بیمه'",
+         "totalDiscounts": "str='جمع کل تخفیف\\u200cها'",
+         "totalPaidAmount": "str='جمع کل مبلغ پرداخت شده'",
+         "totalSettled": "str(len 25)",
+         "totalUnsettled": "str(len 26)",
+         "averageReceptionsPerPhysician": "str(len 35)",
+         "settlementRate": "str='نرخ تسویه (درصد)'"
+        },
+        "physicians": {
+         "physicianName": "str(len 8)",
+         "physicianMSID": "str(len 13)",
+         "physicianExpertise": "str(len 4)",
+         "receptionCount": "str(len 14)",
+         "uniquePatientsCount": "str(len 26)",
+         "totalAmount": "str(len 11)",
+         "averageAmount": "str(len 21)",
+         "settlementRate": "str(len 16)"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/insurance": {
+     "label": "insurance",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "general": {
+        "totalReceptions": "number",
+        "totalAmount": "number",
+        "totalPatientAmount": "number",
+        "totalSalamatInsurance": "number",
+        "totalTaminInsurance": "number",
+        "totalArmyInsurance": "number",
+        "totalSupplementaryInsurance": "number",
+        "totalDiscounts": "number",
+        "totalCashDeskDiscounts": "number",
+        "totalFundDiscounts": "number",
+        "totalPaidAmount": "number",
+        "settledCount": "number",
+        "totalInsuranceAmount": "number",
+        "unsettledCount": "number",
+        "averageAmount": "number",
+        "averagePatientAmount": "number",
+        "averageSalamatAmount": "number",
+        "averageTaminAmount": "number",
+        "settlementRate": "number",
+        "patientSharePercentage": "number",
+        "insuranceSharePercentage": "number",
+        "description": "str(len 35)",
+        "fields": {
+         "totalReceptions": "str(len 26)",
+         "totalAmount": "str(len 22)",
+         "totalPatientAmount": "str(len 17)",
+         "totalSalamatInsurance": "str(len 20)",
+         "totalTaminInsurance": "str(len 28)",
+         "totalArmyInsurance": "str(len 19)",
+         "totalSupplementaryInsurance": "str(len 26)",
+         "totalInsuranceAmount": "str(len 34)",
+         "totalDiscounts": "str(len 16)",
+         "totalPaidAmount": "str(len 21)",
+         "settledCount": "str(len 25)",
+         "unsettledCount": "str(len 26)",
+         "settlementRate": "str(len 10)",
+         "patientSharePercentage": "str(len 14)",
+         "insuranceSharePercentage": "str(len 13)"
+        }
+       },
+       "supplementaryInsurance": {
+        "stats": "[] (empty)",
+        "summary": {
+         "totalReceptionsWithSupplementary": "number=0",
+         "totalSupplementaryCoverageAmount": "number=0",
+         "distinctPlans": "number=0"
+        },
+        "description": "str(len 33)"
+       },
+       "insurance": {
+        "stats": [
+         "list of 3",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalSalamatInsurance": "...",
+          "totalTaminInsurance": "...",
+          "totalArmyInsurance": "...",
+          "totalDiscounts": "...",
+          "totalCashDeskDiscounts": "...",
+          "totalFundDiscounts": "...",
+          "totalPaidAmount": "...",
+          "settledCount": "...",
+          "insuranceType": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "averageAmount": "...",
+          "averagePatientAmount": "...",
+          "averageInsuranceAmount": "...",
+          "settlementRate": "...",
+          "patientSharePercentage": "...",
+          "insuranceSharePercentage": "...",
+          "discountPercentage": "...",
+          "insuranceTypeName": "..."
+         }
+        ],
+        "summary": {
+         "totalInsuranceTypes": "number=3",
+         "mostUsedInsurance": "str='4'",
+         "totalInsuranceCoverage": "number=291320000",
+         "averageInsuranceShare": "number=11.2"
+        },
+        "description": "str(len 28)",
+        "fields": {
+         "insuranceType": "str(len 35)",
+         "count": "str(len 27)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 13)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "settlementRate": "str(len 10)",
+         "patientSharePercentage": "str(len 14)",
+         "insuranceSharePercentage": "str(len 13)",
+         "discountPercentage": "str(len 10)"
+        }
+       },
+       "insuranceTypes": {
+        "stats": [
+         "list of 3",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalSalamatInsurance": "...",
+          "totalTaminInsurance": "...",
+          "totalArmyInsurance": "...",
+          "totalDiscounts": "...",
+          "totalCashDeskDiscounts": "...",
+          "totalFundDiscounts": "...",
+          "totalPaidAmount": "...",
+          "settledCount": "...",
+          "insuranceType": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "averageAmount": "...",
+          "averagePatientAmount": "...",
+          "averageInsuranceAmount": "...",
+          "settlementRate": "...",
+          "patientSharePercentage": "...",
+          "insuranceSharePercentage": "...",
+          "discountPercentage": "...",
+          "insuranceTypeName": "..."
+         }
+        ],
+        "summary": {
+         "totalInsuranceTypes": "number=3",
+         "mostUsedInsurance": "str='4'",
+         "totalInsuranceCoverage": "number=291320000",
+         "averageInsuranceShare": "number=11.2"
+        },
+        "description": "str(len 28)",
+        "fields": {
+         "insuranceType": "str(len 35)",
+         "count": "str(len 27)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 13)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "settlementRate": "str(len 10)",
+         "patientSharePercentage": "str(len 14)",
+         "insuranceSharePercentage": "str(len 13)",
+         "discountPercentage": "str(len 10)"
+        }
+       },
+       "salamatProcessing": {
+        "stats": [
+         "list of 3",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "processedCount": "...",
+          "successCount": "...",
+          "failedCount": "...",
+          "pendingCount": "...",
+          "processingCount": "...",
+          "status": "...",
+          "averageRetryCount": "...",
+          "successRate": "...",
+          "processingRate": "..."
+         }
+        ],
+        "summary": {
+         "totalSalamatReceptions": "number=10",
+         "processedCount": "number=3",
+         "successCount": "number=3",
+         "failedCount": "number=2",
+         "overallSuccessRate": "number=30"
+        },
+        "description": "str(len 22)",
+        "fields": {
+         "status": "str(len 51)",
+         "count": "str(len 24)",
+         "totalAmount": "str(len 21)",
+         "processedCount": "str(len 16)",
+         "successCount": "str(len 10)",
+         "failedCount": "str(len 12)",
+         "averageRetryCount": "str(len 23)",
+         "successRate": "str(len 11)",
+         "processingRate": "str(len 11)"
+        }
+       },
+       "taminProcessing": {
+        "stats": [
+         "list of 3",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "processedCount": "...",
+          "successCount": "...",
+          "failedCount": "...",
+          "pendingCount": "...",
+          "processingCount": "...",
+          "status": "...",
+          "averageRetryCount": "...",
+          "successRate": "...",
+          "processingRate": "..."
+         }
+        ],
+        "summary": {
+         "totalTaminReceptions": "number=41",
+         "processedCount": "number=27",
+         "successCount": "number=27",
+         "failedCount": "number=8",
+         "overallSuccessRate": "number=66"
+        },
+        "description": "str(len 30)",
+        "fields": {
+         "status": "str(len 51)",
+         "count": "str(len 24)",
+         "totalAmount": "str(len 21)",
+         "processedCount": "str(len 16)",
+         "successCount": "str(len 10)",
+         "failedCount": "str(len 12)",
+         "averageRetryCount": "str(len 23)",
+         "successRate": "str(len 11)",
+         "processingRate": "str(len 11)"
+        }
+       },
+       "modality": {
+        "stats": [
+         "list of 4",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalSalamatInsurance": "...",
+          "totalTaminInsurance": "...",
+          "totalArmyInsurance": "...",
+          "totalDiscounts": "...",
+          "settledCount": "...",
+          "modality": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "averageAmount": "...",
+          "settlementRate": "...",
+          "insuranceSharePercentage": "..."
+         }
+        ],
+        "summary": {
+         "totalModalities": "number=4",
+         "mostUsedModality": "str='3'",
+         "totalModalityAmount": "number=2560250000"
+        },
+        "description": "str(len 33)",
+        "fields": {
+         "modality": "str(len 16)",
+         "count": "str(len 22)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 13)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "averageAmount": "str(len 21)",
+         "settlementRate": "str(len 10)",
+         "insuranceSharePercentage": "str(len 13)"
+        }
+       },
+       "modalities": {
+        "stats": [
+         "list of 4",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalSalamatInsurance": "...",
+          "totalTaminInsurance": "...",
+          "totalArmyInsurance": "...",
+          "totalDiscounts": "...",
+          "settledCount": "...",
+          "modality": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "averageAmount": "...",
+          "settlementRate": "...",
+          "insuranceSharePercentage": "..."
+         }
+        ],
+        "summary": {
+         "totalModalities": "number=4",
+         "mostUsedModality": "str='3'",
+         "totalModalityAmount": "number=2560250000"
+        },
+        "description": "str(len 33)",
+        "fields": {
+         "modality": "str(len 16)",
+         "count": "str(len 22)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 13)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "averageAmount": "str(len 21)",
+         "settlementRate": "str(len 10)",
+         "insuranceSharePercentage": "str(len 13)"
+        }
+       },
+       "daily": {
+        "stats": [
+         "list of 1",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalSalamatInsurance": "...",
+          "totalTaminInsurance": "...",
+          "totalArmyInsurance": "...",
+          "totalDiscounts": "...",
+          "settledCount": "...",
+          "persianDate": "...",
+          "totalInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "uniquePatients": "...",
+          "averageAmount": "...",
+          "settlementRate": "..."
+         }
+        ],
+        "summary": {
+         "totalDays": "number=1",
+         "averageDailyReceptions": "number=95",
+         "averageDailyAmount": "number=2600860000"
+        },
+        "description": "str(len 34)",
+        "fields": {
+         "persianDate": "str(len 10)",
+         "count": "str(len 22)",
+         "totalAmount": "str(len 19)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "totalDiscounts": "str(len 13)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "uniquePatients": "str(len 26)",
+         "averageAmount": "str(len 21)",
+         "settlementRate": "str(len 10)"
+        }
+       },
+       "comparison": {
+        "stats": [
+         "list of 3",
+         {
+          "_id": "...",
+          "count": "...",
+          "totalAmount": "...",
+          "totalPatientAmount": "...",
+          "totalInsuranceAmount": "...",
+          "settledCount": "...",
+          "insuranceType": "...",
+          "averageAmount": "...",
+          "averagePatientAmount": "...",
+          "averageInsuranceAmount": "...",
+          "unsettledCount": "...",
+          "settlementRate": "...",
+          "marketShare": "...",
+          "insuranceTypeName": "..."
+         }
+        ],
+        "summary": {
+         "totalInsuranceTypes": "number=3",
+         "mostPopularInsurance": "str='4'",
+         "highestSettlementRate": "str='4'"
+        },
+        "description": "str(len 28)",
+        "fields": {
+         "insuranceType": "str(len 8)",
+         "count": "str(len 11)",
+         "totalAmount": "str(len 10)",
+         "totalPatientAmount": "str(len 15)",
+         "totalInsuranceAmount": "str(len 14)",
+         "averageAmount": "str(len 21)",
+         "averagePatientAmount": "str(len 17)",
+         "averageInsuranceAmount": "str(len 16)",
+         "settledCount": "str(len 15)",
+         "unsettledCount": "str(len 16)",
+         "settlementRate": "str(len 10)",
+         "marketShare": "str(len 16)"
+        }
+       },
+       "topServices": {
+        "stats": "[] (empty)",
+        "summary": {
+         "totalServices": "number=0",
+         "mostUsedService": "str='نامشخص'",
+         "totalServiceAmount": "number=0"
+        },
+        "description": "str(len 23)",
+        "fields": {
+         "serviceName": "str(len 8)",
+         "count": "str(len 11)",
+         "totalAmount": "str(len 10)",
+         "averageAmount": "str(len 12)"
+        }
+       },
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)",
+        "insuranceType": "str(len 14)",
+        "status": "str(len 12)",
+        "modality": "str(len 15)"
+       },
+       "currentPersianDate": "str(len 9)",
+       "currentPersianTime": "str(len 10)",
+       "reportDate": "str(len 24)"
+      }
+     }
+    },
+    "/api/Reports/medical-services": {
+     "label": "medical services",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "overview": {
+        "totalServices": "number",
+        "uniqueServices": "number",
+        "totalRevenue": "number",
+        "averageServiceValue": "number",
+        "description": "str(len 32)",
+        "fields": {
+         "totalServices": "str(len 46)",
+         "uniqueServices": "str(len 33)",
+         "totalRevenue": "str(len 50)",
+         "averageServiceValue": "str(len 27)"
+        }
+       },
+       "distribution": {
+        "byName": {
+         "services": [
+          "list of 10",
+          "..."
+         ],
+         "description": "str(len 32)",
+         "fields": {
+          "serviceCode": "...",
+          "serviceName": "...",
+          "checkCode": "...",
+          "internalCode": "...",
+          "count": "...",
+          "totalPrice": "...",
+          "avgPrice": "..."
+         }
+        },
+        "byGroup": {
+         "groups": [
+          "list of 9",
+          "..."
+         ],
+         "description": "str(len 28)",
+         "fields": {
+          "_id": "...",
+          "count": "...",
+          "totalPrice": "...",
+          "uniqueServicesCount": "..."
+         }
+        },
+        "byModality": {
+         "modalities": [
+          "list of 4",
+          "..."
+         ],
+         "description": "str(len 31)",
+         "fields": {
+          "modalityId": "...",
+          "modalityName": "...",
+          "modalityShortName": "...",
+          "count": "...",
+          "totalPrice": "...",
+          "uniqueServicesCount": "..."
+         }
+        }
+       },
+       "customExpenses": {
+        "byTitle": "[] (empty)",
+        "overview": {
+         "totalLines": "number",
+         "totalQty": "number",
+         "totalAmount": "number"
+        },
+        "description": "str(len 75)",
+        "fields": {
+         "expenseTitle": "str(len 11)",
+         "totalQty": "str(len 11)",
+         "totalAmount": "str(len 10)",
+         "lineCount": "str(len 8)"
+        }
+       },
+       "trends": {
+        "daily": {
+         "stats": [
+          "list of 1",
+          "..."
+         ],
+         "description": "str(len 42)",
+         "fields": {
+          "persianDate": "...",
+          "totalServices": "...",
+          "totalRevenue": "...",
+          "totalReceptions": "..."
+         }
+        }
+       },
+       "insights": {
+        "topServiceGroup": "str(len 9)",
+        "topModality": "str(len 9)",
+        "topModalityId": "str(len 1)",
+        "averageDailyServices": "number",
+        "description": "str(len 21)",
+        "fields": {
+         "topServiceGroup": "str(len 19)",
+         "topModality": "str(len 33)",
+         "topModalityId": "str(len 28)",
+         "averageDailyServices": "str(len 26)"
+        }
+       },
+       "metadata": {
+        "period": {
+         "startDate": "str(len 10)",
+         "endDate": "str(len 10)"
+        },
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)",
+        "description": "str(len 32)",
+        "fields": {
+         "period": "str(len 16)",
+         "startDate": "str(len 18)",
+         "endDate": "str(len 19)",
+         "currentPersianDate": "str(len 16)",
+         "reportDate": "str(len 24)"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/rooms": {
+     "label": "rooms",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "overview": {
+        "totalRooms": "number",
+        "activeRooms": "number",
+        "inactiveRooms": "number",
+        "activeRate": "number",
+        "description": "str(len 26)",
+        "fields": {
+         "totalRooms": "str(len 34)",
+         "activeRooms": "str(len 35)",
+         "inactiveRooms": "str(len 39)",
+         "activeRate": "str(len 32)"
+        }
+       },
+       "distribution": {
+        "byModality": {
+         "stats": [
+          "list of 11",
+          "..."
+         ],
+         "totalModalitiesWithRooms": "number",
+         "description": "str(len 34)",
+         "fields": {
+          "modalityId": "...",
+          "modalityName": "...",
+          "modalityShortName": "...",
+          "count": "...",
+          "active": "...",
+          "inactive": "..."
+         }
+        }
+       },
+       "details": {
+        "totalCapacity": "number",
+        "averageCapacity": "number",
+        "roomsWithEquipment": "number",
+        "equipmentRate": "number",
+        "description": "str(len 30)",
+        "fields": {
+         "totalCapacity": "str(len 23)",
+         "averageCapacity": "str(len 21)",
+         "roomsWithEquipment": "str(len 32)",
+         "equipmentRate": "str(len 27)"
+        }
+       },
+       "metadata": {
+        "currentPersianDate": "str(len 10)",
+        "reportDate": "str(len 19)",
+        "description": "str(len 28)",
+        "fields": {
+         "currentPersianDate": "str(len 16)",
+         "reportDate": "str(len 24)"
+        }
+       }
+      }
+     }
+    },
+    "/api/Reports/personnel": {
+     "label": "personnel",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "overview": {
+        "totalPersonnel": "number",
+        "activePersonnel": "number",
+        "inactivePersonnel": "number",
+        "activeRate": "number",
+        "description": "str(len 23)",
+        "fields": {
+         "totalPersonnel": "str(len 31)",
+         "activePersonnel": "str(len 30)",
+         "inactivePersonnel": "str(len 42)",
+         "activeRate": "str(len 27)"
+        }
+       },
+       "distribution": {
+        "byType": [
+         "list of 1",
+         {
+          "_id": "...",
+          "count": "..."
+         }
+        ],
+        "totalTypes": "number",
+        "mostCommonType": "null",
+        "description": "str(len 28)",
+        "fields": {
+         "_id": "str(len 43)",
+         "count": "str(len 23)",
+         "totalTypes": "str(len 26)",
+         "mostCommonType": "str(len 19)"
+        }
+       },
+       "efficiency": {
+        "personnelUtilization": "str(len 54)",
+        "averageExperience": "str(len 51)",
+        "description": "str(len 21)"
+       },
+       "metadata": {
+        "reportDate": "str(len 19)",
+        "currentPersianDate": "str(len 10)",
+        "description": "str(len 26)",
+        "fields": {
+         "reportDate": "str(len 24)",
+         "currentPersianDate": "str(len 16)"
+        }
+       }
+      }
+     }
+    },
+    "/api/CashDeskAnalysis/cashiers": {
+     "label": "cashdesk cashiers",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": [
+       "list of 23",
+       {
+        "_id": "str(len 24)",
+        "cashierId": "str(len 24)",
+        "fullName": "str(len 14)",
+        "userName": "str(len 9)",
+        "nickName": "str(len 0)"
+       }
+      ]
+     }
+    },
+    "/api/CashDeskAnalysis/admitted-by-users": {
+     "label": "cashdesk admitted-by-users",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": [
+       "list of 1",
+       {
+        "_id": "null",
+        "admittedById": "null",
+        "fullName": "str(len 6)",
+        "userName": "str(len 6)",
+        "admissionCount": "number"
+       }
+      ]
+     }
+    },
+    "/api/CashDeskAnalysis/reality": {
+     "label": "cashdesk reality",
+     "status": 404,
+     "error": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"utf-8\"> <title>Error</title> </head> <body> <pre>Cannot GET /api/"
+    },
+    "/api/CashDeskAnalysis/checklists": {
+     "label": "cashdesk checklists",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": "[] (empty)"
+     }
+    },
+    "/api/Reports/patients-by-service-insurance": {
+     "label": "baseline: patients-by-service-insurance",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "receptions": [
+        "list of 5",
+        {
+         "_id": "str(len 24)",
+         "Date": "str(len 10)",
+         "Time": "str(len 8)",
+         "discountTotal": "number",
+         "ReceptionID": "number",
+         "cashDeskDiscount": "number",
+         "fundDiscount": "number",
+         "settled": "bool=True",
+         "paidAmount": "number",
+         "modality": "str(len 1)",
+         "insuranceType": "str(len 1)",
+         "insuranceTypeLabel": "str(len 13)",
+         "totalAmount": "number",
+         "patientShare": "number",
+         "organizationShare": "number",
+         "salamatInsuranceShare": "number",
+         "taminInsuranceShare": "number",
+         "armyInsuranceShare": "number",
+         "supplementaryInsuranceShare": "number",
+         "patientDetails": {
+          "id": "...",
+          "name": "...",
+          "nationalCode": "..."
+         },
+         "modalityDetails": {
+          "shortName": "...",
+          "fullName": "..."
+         },
+         "physicianDetails": "null",
+         "service": {
+          "serviceName": "...",
+          "quantity": "...",
+          "privateTariff": "...",
+          "patientShare": "...",
+          "insuranceShare": "...",
+          "salamatShare": "...",
+          "taminShare": "...",
+          "armyShare": "...",
+          "supplementaryShare": "...",
+          "hasTamin": "...",
+          "hasSalamat": "...",
+          "hasArmy": "...",
+          "hasSupplementary": "..."
+         }
+        }
+       ],
+       "summary": {
+        "overall": {
+         "totalServices": "number=110",
+         "totalAmount": "number=2508160000",
+         "totalPatientShare": "number=2216840000",
+         "totalSalamatInsurance": "number=17860000",
+         "totalTaminInsurance": "number=216300000",
+         "totalArmyInsurance": "number=57160000",
+         "totalSupplementaryInsurance": "number=0",
+         "totalDiscount": "number=0",
+         "totalReceptions": "number=95",
+         "uniquePatients": "number=94",
+         "totalOrganizationShare": "number=291320000"
+        },
+        "debt": {
+         "totalPatientTotal": "number=2216840000",
+         "totalPaidAmount": "number=1251030000",
+         "totalCashDeskDiscount": "number=2050000",
+         "totalFundDiscount": "number=0",
+         "unsettledCount": "number=31",
+         "settledCount": "number=64",
+         "totalPatientDebt": "number=965810000",
+         "debtAlignedWithServiceShares": "bool=True"
+        },
+        "walletVsReception": {
+         "sameFiltersAsCashierReport": "bool=True",
+         "receptionPaidAmountSum": "number=1251030000",
+         "receptionCountForComparison": "number=95",
+         "cashierCashAmount": "number=0",
+         "cashierCardAmount": "number=2616950000",
+         "cashierPatientCashAndCard": "number=2616950000",
+         "cashierPatientCashAndCardTransactionCount": "number=102",
+         "cashierPatientCashAndCardForReportReceptions": "number=1251030000",
+         "cashierPatientCashAndCardForReportReceptionsCount": "number=66",
+         "cashierInsuranceCreditsAmount": "number=291320000",
+         "cashierInsuranceCreditsCount": "number=49",
+         "cashierInsuranceCreditsForReportReceptionsAmount": "number=291320000",
+         "cashierInsuranceCreditsForReportReceptionsCount": "number=49",
+         "cashierInflowsCashCardAndInsurance": "number=2908270000",
+         "cashierReceptionDebtBookedAmount": "number=2600860000",
+         "cashierReceptionDebtBookedCount": "number=95",
+         "deltaReceptionPaidMinusCashierCashCard": "number=-1365920000",
+         "deltaReceptionPaidMinusCashierCashCardForSameReceptions": "number=0",
+         "explanation": "str(len 316)",
+         "explanationTimingNote": "str(len 112)"
+        },
+        "byInsurance": [
+         "list of 4",
+         {
+          "insuranceType": "...",
+          "insuranceTypeLabel": "...",
+          "count": "...",
+          "uniquePatients": "...",
+          "totalAmount": "...",
+          "totalPatientShare": "...",
+          "totalOrganizationShare": "...",
+          "percentageOfTotal": "..."
+         }
+        ],
+        "byModality": [
+         "list of 4",
+         {
+          "modality": "...",
+          "modalityFullName": "...",
+          "count": "...",
+          "uniquePatients": "...",
+          "totalAmount": "...",
+          "totalPatientShare": "...",
+          "totalOrganizationShare": "...",
+          "percentageOfTotal": "..."
+         }
+        ],
+        "byModalityAndInsurance": [
+         "list of 12",
+         {
+          "modality": "...",
+          "modalityFullName": "...",
+          "insuranceType": "...",
+          "insuranceTypeLabel": "...",
+          "count": "...",
+          "uniquePatients": "...",
+          "totalAmount": "...",
+          "totalPatientShare": "...",
+          "totalOrganizationShare": "..."
+         }
+        ]
+       },
+       "pagination": {
+        "currentPage": "number=1",
+        "totalPages": "number=22",
+        "totalCount": "number=110",
+        "limit": "number=5",
+        "hasNextPage": "bool=True",
+        "hasPrevPage": "bool=False"
+       },
+       "filters": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)",
+        "modality": "str(len 3)",
+        "insuranceType": "str(len 3)"
+       }
+      },
+      "metadata": {
+       "reportName": "str(len 34)",
+       "reportDate": "str(len 19)",
+       "description": "str(len 111)",
+       "fieldsDescription": {
+        "receptions": {
+         "description": "str(len 20)",
+         "fields": {
+          "ReceptionID": "...",
+          "Date": "...",
+          "Time": "...",
+          "insuranceTypeLabel": "...",
+          "totalAmount": "...",
+          "patientTotal": "...",
+          "organizationShare": "...",
+          "patientDetails": "...",
+          "modalityDetails": "...",
+          "services": "..."
+         }
+        },
+        "summary": {
+         "description": "str='خلاصه آماری'",
+         "overall": {
+          "totalReceptions": "...",
+          "uniquePatients": "...",
+          "totalAmount": "...",
+          "totalPatientShare": "...",
+          "totalOrganizationShare": "..."
+         },
+         "byInsurance": "str='آمار به تفکیک نوع بیمه'",
+         "byModality": "str='آمار به تفکیک بخش/خدمت'",
+         "byModalityAndInsurance": "str='آمار ترکیبی خدمت و بیمه'"
+        }
+       },
+       "filters": {
+        "startDate": "str(len 29)",
+        "endDate": "str(len 30)",
+        "modality": "str(len 33)",
+        "insuranceType": "str(len 43)",
+        "page": "str(len 10)",
+        "limit": "str(len 16)",
+        "sortBy": "str(len 47)",
+        "sortOrder": "str(len 27)"
+       },
+       "examples": {
+        "گزارش MRI با تامین اجتماعی در آذر": "str(len 107)",
+        "گزارش کل پذیرش‌ها در آذر": "str(len 78)",
+        "گزارش سی‌تی‌اسکن همه بیمه‌ها": "str(len 90)"
+       }
+      }
+     }
+    },
+    "/api/CashDeskAnalysis/risk-analysis": {
+     "label": "baseline: risk analysis",
+     "status": 200,
+     "shape": {
+      "success": "bool=True",
+      "data": {
+       "totalReceptions": "number",
+       "totalAmount": "number",
+       "riskDistribution": {
+        "low": {
+         "count": "number",
+         "totalAmount": "number",
+         "receptions": [
+          "list of 20",
+          "..."
+         ],
+         "percentage": "number"
+        },
+        "medium": {
+         "count": "number",
+         "totalAmount": "number",
+         "receptions": [
+          "list of 20",
+          "..."
+         ],
+         "percentage": "number"
+        },
+        "high": {
+         "count": "number",
+         "totalAmount": "number",
+         "receptions": [
+          "list of 2",
+          "..."
+         ],
+         "percentage": "number"
+        }
+       }
+      },
+      "metadata": {
+       "period": {
+        "startDate": "str(len 10)",
+        "endDate": "str(len 10)"
+       },
+       "cashier": "str(len 3)",
+       "reportDate": "str(len 19)"
+      }
+     }
+    }
+   }
+  },
+  "reception-source-study.json": {
+   "cashier-report": {
+    "path": "/api/Reports/cashier-report",
+    "numeric_leaves": 91,
+    "differing_on_another_day": 64,
+    "ms": 592,
+    "date_scoped": true,
+    "leaf_count": 139,
+    "quantities": {
+     "service_count": {
+      "field": "data.summary.overall.totalTransactions",
+      "today": 108
+     },
+     "gross_amount": {
+      "field": "data.cashPayment.totalAmount",
+      "today": 43710000
+     },
+     "paid_amount": {
+      "field": "data.summary.overall.totalCredit",
+      "today": 2756430000
+     },
+     "debt": {
+      "field": "data.summary.overall.totalDebt",
+      "today": 0
+     },
+     "discount": {
+      "field": "data.discountedPatientsStats.totalAllDiscounts",
+      "today": 0
+     },
+     "cash": {
+      "field": "data.summary.paymentDetails.totalCashPayments",
+      "today": 43710000
+     },
+     "card": {
+      "field": "data.summary.paymentDetails.totalCardPayments",
+      "today": 2712720000
+     }
+    },
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {
+     "data.cashierReport[].creditDetails": 1,
+     "data.cashierReport": 2,
+     "data.byModality": 4,
+     "data.paymentsByCard": 2,
+     "data.insurancePayments": 3,
+     "data.reportInfo.scopeNotes": 2
+    }
+   },
+   "financial": {
+    "path": "/api/Reports/financial",
+    "numeric_leaves": 28,
+    "differing_on_another_day": 16,
+    "ms": 30,
+    "date_scoped": true,
+    "leaf_count": 78,
+    "quantities": {
+     "gross_amount": {
+      "field": "data.overview.totalIncome",
+      "today": 6081980000
+     }
+    },
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {}
+   },
+   "debtors": {
+    "path": "/api/Reports/debtors",
+    "numeric_leaves": 17,
+    "differing_on_another_day": 7,
+    "ms": 179,
+    "date_scoped": true,
+    "leaf_count": 51,
+    "quantities": {
+     "patient_count": {
+      "field": "data.summary.totalDebtors",
+      "today": 1526
+     },
+     "reception_count": {
+      "field": "data.summary.totalReceptions",
+      "today": 1653
+     },
+     "debt": {
+      "field": "data.summary.totalDebt",
+      "today": 37472174499
+     }
+    },
+    "top_level": [
+     "data",
+     "metadata",
+     "success"
+    ],
+    "row_sets": {
+     "data.debtors[].receptionIds": 1,
+     "data.debtors": 38
+    }
+   },
+   "dashboard": {
+    "path": "/api/Reports/dashboard",
+    "numeric_leaves": 15,
+    "differing_on_another_day": 3,
+    "ms": 30,
+    "date_scoped": true,
+    "leaf_count": 148,
+    "quantities": {
+     "patient_count": {
+      "field": "data.overview.totalPatients",
+      "today": 51917
+     }
+    },
+    "top_level": [
+     "data",
+     "fieldDefinitions",
+     "reportSchema",
+     "success"
+    ],
+    "row_sets": {
+     "data.metadata.sections[].fields": 10,
+     "data.metadata.sections": 2,
+     "data.metadata.scopeNotes": 2,
+     "reportSchema.sections[].fields": 10,
+     "reportSchema.sections": 2
+    }
+   },
+   "reception": {
+    "path": "/api/Reports/reception",
+    "numeric_leaves": 186,
+    "differing_on_another_day": 132,
+    "ms": 16,
+    "date_scoped": true,
+    "leaf_count": 978,
+    "quantities": {
+     "patient_count": {
+      "field": "data.general.uniquePatients",
+      "today": 104
+     },
+     "reception_count": {
+      "field": "data.general.totalReceptions",
+      "today": 106
+     },
+     "gross_amount": {
+      "field": "data.general.totalAmount",
+      "today": 2986640000
+     },
+     "patient_share": {
+      "field": "data.payment.totalPatientShare",
+      "today": 2654050000
+     },
+     "insurance_share": {
+      "field": "data.payment.totalInsuranceShare",
+      "today": 249780000
+     },
+     "paid_amount": {
+      "field": "data.general.totalPaidAmount",
+      "today": 1390510000
+     }
+    },
+    "top_level": [
+     "data",
+     "fieldDefinitions",
+     "reportSchema",
+     "success"
+    ],
+    "row_sets": {
+     "data.insurance.stats": 3,
+     "data.modality.stats": 4,
+     "data.referringPhysician.stats": 68,
+     "data.daily.stats": 1,
+     "data.topServices.services": 20,
+     "data.registeredBy.stats": 5,
+     "data.peakHours.hourlyStats": 6,
+     "data.metadata.sections[].fields": 17,
+     "data.metadata.sections": 3,
+     "data.metadata.scopeNotes": 2,
+     "reportSchema.sections[].fields": 17,
+     "reportSchema.sections": 3
+    }
+   },
+   "reception-detailed": {
+    "path": "/api/Reports/reception/detailed-list",
+    "numeric_leaves": 12,
+    "differing_on_another_day": 6,
+    "ms": 30,
+    "date_scoped": true,
+    "leaf_count": 37,
+    "quantities": {
+     "reception_count": {
+      "field": "pagination.totalCount",
+      "today": 106
+     }
+    },
+    "top_level": [
+     "data#count",
+     "data[]",
+     "metadata",
+     "pagination",
+     "success"
+    ],
+    "row_sets": {
+     "data[].services": 2,
+     "data": 50
+    }
+   },
+   "patients": {
+    "path": "/api/Reports/patients",
+    "numeric_leaves": 10,
+    "differing_on_another_day": 6,
+    "ms": 11,
+    "date_scoped": true,
+    "leaf_count": 38,
+    "quantities": {
+     "patient_count": {
+      "field": "data.general.totalPatients",
+      "today": 104
+     }
+    },
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {
+     "data.demographics.gender.stats": 3,
+     "data.demographics.age.groups": 6,
+     "data.demographics.insurance.stats": 3
+    }
+   },
+   "patients-detailed": {
+    "path": "/api/Reports/patients/detailed-list",
+    "numeric_leaves": 5,
+    "differing_on_another_day": 2,
+    "ms": 30,
+    "date_scoped": true,
+    "leaf_count": 16,
+    "quantities": {
+     "reception_count": {
+      "field": "pagination.totalCount",
+      "today": 106
+     }
+    },
+    "top_level": [
+     "data#count",
+     "data[]",
+     "metadata",
+     "pagination",
+     "success"
+    ],
+    "row_sets": {
+     "data": 50
+    }
+   },
+   "physician-performance": {
+    "path": "/api/Reports/physician-performance/summary",
+    "numeric_leaves": 54,
+    "differing_on_another_day": 48,
+    "ms": 27,
+    "date_scoped": true,
+    "leaf_count": 70,
+    "quantities": {
+     "patient_count": {
+      "field": "summary.totalPatients",
+      "today": 34
+     },
+     "gross_amount": {
+      "field": "summary.totalRevenue",
+      "today": 494590000
+     },
+     "patient_share": {
+      "field": "summary.totalPatientShare",
+      "today": 443870000
+     },
+     "insurance_share": {
+      "field": "summary.totalInsuranceShare",
+      "today": 48670000
+     },
+     "paid_amount": {
+      "field": "summary.totalPaidAmount",
+      "today": 443870000
+     },
+     "discount": {
+      "field": "summary.totalDiscount",
+      "today": 2050000
+     }
+    },
+    "top_level": [
+     "data#count",
+     "data[]",
+     "metadata",
+     "success",
+     "summary"
+    ],
+    "row_sets": {
+     "data[].departments[].receptions": 17,
+     "data[].departments": 1,
+     "data[].departmentSummary": 1,
+     "data": 3,
+     "summary.departmentBreakdown": 3
+    }
+   },
+   "personnel-performance": {
+    "path": "/api/Reports/personnel-performance/summary",
+    "numeric_leaves": 10,
+    "differing_on_another_day": 0,
+    "ms": 41,
+    "date_scoped": false,
+    "leaf_count": 19,
+    "quantities": {
+     "reception_count": {
+      "field": "data.summary.totalReceptions",
+      "today": 0
+     },
+     "service_count": {
+      "field": "data.summary.totalServices",
+      "today": 0
+     },
+     "gross_amount": {
+      "field": "data.summary.totalAmount",
+      "today": 0
+     },
+     "patient_share": {
+      "field": "data.summary.totalPatientShare",
+      "today": 0
+     },
+     "insurance_share": {
+      "field": "data.summary.totalInsuranceShare",
+      "today": 0
+     }
+    },
+    "top_level": [
+     "data",
+     "filters",
+     "metadata",
+     "success"
+    ],
+    "row_sets": {}
+   },
+   "referring-physicians": {
+    "path": "/api/Reports/referring-physicians/stats",
+    "numeric_leaves": 23,
+    "differing_on_another_day": 21,
+    "ms": 24,
+    "date_scoped": true,
+    "leaf_count": 53,
+    "quantities": {
+     "reception_count": {
+      "field": "data.summary.totalReceptions",
+      "today": 108
+     },
+     "gross_amount": {
+      "field": "data.summary.totalAmount",
+      "today": 3070720000
+     },
+     "paid_amount": {
+      "field": "data.summary.totalPaidAmount",
+      "today": 1390510000
+     }
+    },
+    "top_level": [
+     "data",
+     "metadata",
+     "success"
+    ],
+    "row_sets": {
+     "data.physicians": 70
+    }
+   },
+   "insurance": {
+    "path": "/api/Reports/insurance",
+    "numeric_leaves": 170,
+    "differing_on_another_day": 139,
+    "ms": 12,
+    "date_scoped": true,
+    "leaf_count": 322,
+    "quantities": {
+     "reception_count": {
+      "field": "data.general.totalReceptions",
+      "today": 106
+     },
+     "service_count": {
+      "field": "data.topServices.summary.totalServices",
+      "today": 0
+     },
+     "gross_amount": {
+      "field": "data.general.totalAmount",
+      "today": 2986640000
+     },
+     "paid_amount": {
+      "field": "data.general.totalPaidAmount",
+      "today": 1390510000
+     }
+    },
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {
+     "data.insurance.stats": 3,
+     "data.insuranceTypes.stats": 3,
+     "data.salamatProcessing.stats": 3,
+     "data.taminProcessing.stats": 3,
+     "data.modality.stats": 4,
+     "data.modalities.stats": 4,
+     "data.daily.stats": 1,
+     "data.comparison.stats": 3
+    }
+   },
+   "medical-services": {
+    "path": "/api/Reports/medical-services",
+    "numeric_leaves": 25,
+    "differing_on_another_day": 19,
+    "ms": 13,
+    "date_scoped": true,
+    "leaf_count": 91,
+    "quantities": {
+     "service_count": {
+      "field": "data.overview.totalServices",
+      "today": 126
+     },
+     "gross_amount": {
+      "field": "data.overview.totalRevenue",
+      "today": 2876940000
+     }
+    },
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {
+     "data.distribution.byName.services": 10,
+     "data.distribution.byGroup.groups": 9,
+     "data.distribution.byModality.modalities": 4,
+     "data.trends.daily.stats": 1
+    }
+   },
+   "rooms": {
+    "path": "/api/Reports/rooms",
+    "numeric_leaves": 13,
+    "differing_on_another_day": 0,
+    "ms": 24,
+    "date_scoped": false,
+    "leaf_count": 40,
+    "quantities": {},
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {
+     "data.distribution.byModality.stats": 11
+    }
+   },
+   "personnel": {
+    "path": "/api/Reports/personnel",
+    "numeric_leaves": 7,
+    "differing_on_another_day": 0,
+    "ms": 17,
+    "date_scoped": false,
+    "leaf_count": 28,
+    "quantities": {},
+    "top_level": [
+     "data",
+     "success"
+    ],
+    "row_sets": {
+     "data.distribution.byType": 1
+    }
+   },
+   "service-insurance": {
+    "path": "/api/Reports/patients-by-service-insurance",
+    "numeric_leaves": 80,
+    "differing_on_another_day": 61,
+    "ms": 119,
+    "date_scoped": true,
+    "leaf_count": 152,
+    "quantities": {
+     "patient_count": {
+      "field": "data.summary.overall.uniquePatients",
+      "today": 106
+     },
+     "reception_count": {
+      "field": "data.summary.overall.totalReceptions",
+      "today": 108
+     },
+     "service_count": {
+      "field": "data.summary.overall.totalServices",
+      "today": 125
+     },
+     "gross_amount": {
+      "field": "data.summary.overall.totalAmount",
+      "today": 2957020000
+     },
+     "patient_share": {
+      "field": "data.summary.overall.totalPatientShare",
+      "today": 2613330000
+     },
+     "insurance_share": {
+      "field": "data.summary.overall.totalOrganizationShare",
+      "today": 343690000
+     },
+     "paid_amount": {
+      "field": "data.summary.debt.totalPaidAmount",
+      "today": 1390510000
+     },
+     "debt": {
+      "field": "data.summary.debt.totalPatientDebt",
+      "today": 1222820000
+     },
+     "discount": {
+      "field": "data.summary.overall.totalDiscount",
+      "today": 0
+     },
+     "cash": {
+      "field": "data.summary.walletVsReception.cashierCashAmount",
+      "today": 0
+     },
+     "card": {
+      "field": "data.summary.walletVsReception.cashierCardAmount",
+      "today": 2756430000
+     }
+    },
+    "top_level": [
+     "data",
+     "metadata",
+     "success"
+    ],
+    "row_sets": {
+     "data.receptions": 50,
+     "data.summary.byInsurance": 4,
+     "data.summary.byModality": 4,
+     "data.summary.byModalityAndInsurance": 13
+    }
+   },
+   "cashdesk-risk": {
+    "path": "/api/CashDeskAnalysis/risk-analysis",
+    "numeric_leaves": 35,
+    "differing_on_another_day": 28,
+    "ms": 95,
+    "date_scoped": true,
+    "leaf_count": 61,
+    "quantities": {
+     "reception_count": {
+      "field": "data.totalReceptions",
+      "today": 108
+     },
+     "gross_amount": {
+      "field": "data.totalAmount",
+      "today": 3070720000
+     }
+    },
+    "top_level": [
+     "data",
+     "metadata",
+     "success"
+    ],
+    "row_sets": {
+     "data.riskDistribution.low.receptions[].riskFactors": 1,
+     "data.riskDistribution.low.receptions": 20,
+     "data.riskDistribution.medium.receptions[].riskFactors": 2,
+     "data.riskDistribution.medium.receptions": 20,
+     "data.riskDistribution.high.receptions[].riskFactors": 3,
+     "data.riskDistribution.high.receptions": 5
+    }
+   },
+   "cashdesk-cashiers": {
+    "path": "/api/CashDeskAnalysis/cashiers",
+    "numeric_leaves": 1,
+    "differing_on_another_day": 0,
+    "ms": 88,
+    "date_scoped": false,
+    "leaf_count": 7,
+    "quantities": {},
+    "top_level": [
+     "data#count",
+     "data[]",
+     "success"
+    ],
+    "row_sets": {
+     "data": 23
+    }
+   },
+   "cashdesk-admitted-by": {
+    "path": "/api/CashDeskAnalysis/admitted-by-users",
+    "numeric_leaves": 2,
+    "differing_on_another_day": 1,
+    "ms": 18,
+    "date_scoped": true,
+    "leaf_count": 7,
+    "quantities": {},
+    "top_level": [
+     "data#count",
+     "data[]",
+     "success"
+    ],
+    "row_sets": {
+     "data": 1
+    }
+   },
+   "cashdesk-checklists": {
+    "path": "/api/CashDeskAnalysis/checklists",
+    "numeric_leaves": 1,
+    "differing_on_another_day": 0,
+    "ms": 7,
+    "date_scoped": false,
+    "leaf_count": 2,
+    "quantities": {},
+    "top_level": [
+     "data#count",
+     "success"
+    ],
+    "row_sets": {}
+   }
+  }
+ },
+ "cashier_report_keys": [
+  [
+   "success",
+   1
+  ],
+  [
+   "data",
+   1
+  ],
+  [
+   "data.cashierReport",
+   1
+  ],
+  [
+   "data.cashierReport[]._id",
+   1
+  ],
+  [
+   "data.cashierReport[].fullName",
+   1
+  ],
+  [
+   "data.cashierReport[].userName",
+   1
+  ],
+  [
+   "data.cashierReport[].creditDetails",
+   1
+  ],
+  [
+   "data.cashierReport[].creditDetails[].paymentType",
+   1
+  ],
+  [
+   "data.cashierReport[].creditDetails[].amount",
+   1
+  ],
+  [
+   "data.cashierReport[].creditDetails[].count",
+   1
+  ],
+  [
+   "data.cashierReport[].debtDetails",
+   1
+  ],
+  [
+   "data.cashierReport[].totalCredit",
+   1
+  ],
+  [
+   "data.cashierReport[].totalDebt",
+   1
+  ],
+  [
+   "data.cashierReport[].totalCreditCount",
+   1
+  ],
+  [
+   "data.cashierReport[].totalDebtCount",
+   1
+  ],
+  [
+   "data.cashierReport[].userId",
+   1
+  ],
+  [
+   "data.cashierReport[].netAmount",
+   1
+  ],
+  [
+   "data.cashierReport[].totalTransactions",
+   1
+  ],
+  [
+   "data.byModality",
+   1
+  ],
+  [
+   "data.byModality[].modalityId",
+   1
+  ],
+  [
+   "data.byModality[].modalityName",
+   1
+  ],
+  [
+   "data.byModality[].modalityShortName",
+   1
+  ],
+  [
+   "data.byModality[].totalTransactions",
+   1
+  ],
+  [
+   "data.byModality[].incomes",
+   1
+  ],
+  [
+   "data.byModality[].incomes.cash",
+   1
+  ],
+  [
+   "data.byModality[].incomes.cash.amount",
+   1
+  ],
+  [
+   "data.byModality[].incomes.cash.count",
+   1
+  ],
+  [
+   "data.byModality[].incomes.cash.label",
+   1
+  ],
+  [
+   "data.byModality[].incomes.card",
+   1
+  ],
+  [
+   "data.byModality[].incomes.card.amount",
+   1
+  ],
+  [
+   "data.byModality[].incomes.card.count",
+   1
+  ],
+  [
+   "data.byModality[].incomes.card.label",
+   1
+  ],
+  [
+   "data.byModality[].incomes.insurance",
+   1
+  ],
+  [
+   "data.byModality[].incomes.insurance.amount",
+   1
+  ],
+  [
+   "data.byModality[].incomes.insurance.count",
+   1
+  ],
+  [
+   "data.byModality[].incomes.insurance.label",
+   1
+  ],
+  [
+   "data.byModality[].incomes.discount",
+   1
+  ],
+  [
+   "data.byModality[].incomes.discount.amount",
+   1
+  ],
+  [
+   "data.byModality[].incomes.discount.count",
+   1
+  ],
+  [
+   "data.byModality[].incomes.discount.label",
+   1
+  ],
+  [
+   "data.byModality[].incomes.total",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.manualWithdrawal",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.manualWithdrawal.amount",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.manualWithdrawal.count",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.manualWithdrawal.label",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.receptionDebt",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.receptionDebt.amount",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.receptionDebt.count",
+   1
+  ],
+  [
+   "data.byModality[].withdrawals.receptionDebt.label",
+   1
+  ],
+  [
+   "data.byModality[].cashDeskNet",
+   1
+  ],
+  [
+   "data.byModality[].cashDeskNet.income",
+   1
+  ],
+  [
+   "data.byModality[].cashDeskNet.manualWithdrawal",
+   1
+  ],
+  [
+   "data.byModality[].cashDeskNet.net",
+   1
+  ],
+  [
+   "data.byModality[].cashDeskNet.label",
+   1
+  ],
+  [
+   "data.paymentsByCard",
+   1
+  ],
+  [
+   "data.paymentsByCard[]._id",
+   1
+  ],
+  [
+   "data.paymentsByCard[].totalAmount",
+   1
+  ],
+  [
+   "data.paymentsByCard[].transactionCount",
+   1
+  ],
+  [
+   "data.paymentsByCard[].cardId",
+   1
+  ],
+  [
+   "data.paymentsByCard[].cardName",
+   1
+  ],
+  [
+   "data.paymentsByCard[].bankName",
+   1
+  ],
+  [
+   "data.paymentsByCard[].cardNumber",
+   1
+  ],
+  [
+   "data.paymentsByCard[].averageAmount",
+   1
+  ],
+  [
+   "data.cashPayment",
+   1
+  ],
+  [
+   "data.cashPayment.paymentType",
+   1
+  ],
+  [
+   "data.cashPayment.totalAmount",
+   1
+  ],
+  [
+   "data.cashPayment.transactionCount",
+   1
+  ],
+  [
+   "data.cashPayment.averageAmount",
+   1
+  ],
+  [
+   "data.insurancePayments",
+   1
+  ],
+  [
+   "data.insurancePayments[]._id",
+   1
+  ],
+  [
+   "data.insurancePayments[].totalAmount",
+   1
+  ],
+  [
+   "data.insurancePayments[].transactionCount",
+   1
+  ],
+  [
+   "data.insurancePayments[].insuranceType",
+   1
+  ],
+  [
+   "data.insurancePayments[].averageAmount",
+   1
+  ],
+  [
+   "data.discountedPatientsStats",
+   1
+  ],
+  [
+   "data.discountedPatientsStats.totalDiscountedPatients",
+   1
+  ],
+  [
+   "data.discountedPatientsStats.totalAllDiscounts",
+   1
+  ],
+  [
+   "data.discountedPatientsStats.breakdown",
+   1
+  ],
+  [
+   "data.discountedPatientsStats.breakdown.itemDiscount",
+   1
+  ]
+ ]
+}

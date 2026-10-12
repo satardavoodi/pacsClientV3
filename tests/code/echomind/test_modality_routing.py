@@ -84,7 +84,9 @@ def test_every_ui_modality_reaches_a_real_branch(modality, prompt):
     generic prompt. Reading the list from config means a new combo entry fails here."""
     p = prompt(modality, "")
     assert _contract(p) is not None, f"{modality!r} has no output contract"
-    assert len(p) > 25_000, (
+    # Echo has a dedicated compact contract instead of radiology examples.
+    minimum = 4000 if modality == "ECHOCARDIOGRAPHY" else 25_000
+    assert len(p) > minimum, (
         f"{modality!r} produced only {len(p)} chars — that is the generic fallback, "
         "not a real modality branch"
     )

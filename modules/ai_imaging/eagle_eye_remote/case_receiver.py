@@ -57,7 +57,11 @@ class CaseReceiver(threading.Thread):
                 capabilities = client.json('/v1/capabilities').get('case_realtime') or {}
                 if capabilities.get('version') != 1:
                     self.publish({'status': 'unavailable', 'case': self.reference})
-                    return
+                    # A server upgrade must reach an already-open Patient tab.
+                    # Wait interruptibly, without polling results or blocking Qt.
+                    if self.stopped.wait(15):
+                        return
+                    continue
                 snapshot = client.case_snapshot(self.reference)
                 server_host = urllib.parse.urlsplit(client.url).hostname
                 self.validate(snapshot, expected_host, server_host)

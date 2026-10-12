@@ -3620,3 +3620,146 @@ ping failed; human fresh source launch/login was requested. Actual viewport,
 Advanced volume and clinical/rendered acceptance remain pending. No existing
 source/installed process was restarted or hot-patched. Rollback is reverting
 only these reader substitutions/helper and owned mirror edits.
+
+### 2026-10-08: inactive FAST empty hint initially displaced (diagnosis only)
+
+The user reported that an inactive empty viewport hint sits above center until
+native drag highlighting starts. A read-only offscreen actual QtFastContainer
+probe with two panes reproduces the exact lifecycle: before showing the parent,
+both labels are explicitly shown but isVisible() is false because their parent
+is hidden. resizeEvent at qt_fast_container.py:1223 tests isVisible(), so final
+layout sizing skips recentering. There is no showEvent reconciliation.
+
+In the synthetic host, after showing, each pane measures 786x878 with center
+(392,438), while its hint stays at (101,118). Calling the ordinary activation
+visibility update on only the first pane moves only that hint to (392,438).
+Calling _show_drop_highlight(True) on the second also recenters it to (392,438).
+This falsifies the hypothesis that selection changes the correct center: selection
+and drag merely rerun a missed layout operation. No DICOM or patient data used.
+
+Owner seam: FAST container presentation lifecycle, not decoding/VTK. Proposed
+minimal correction: layout on resize for a label explicitly enabled (isHidden()
+distinguishes local hiding from ancestor visibility), plus reconcile on show to
+cover pre-show deferred sizing. Do not make hints visible for loaded/busy cells,
+change native drag gating or opaque Advanced backing. Guard should exercise hidden
+parent -> resize -> show, active vs inactive cells, reparent/tab show, loaded hints
+and both pre/post drag centers using actual Qt widgets. Existing empty-state tests
+cover visibility/backing but not this first-show center contract. No runtime patch
+or live GUI acceptance performed in this diagnosis.
+
+### 2026-10-08: FAST first-show hint centering execution receipt
+
+User authorized the minimal presentation fix following the diagnosis above.
+QtFastContainer.resizeEvent now uses explicit label isHidden() instead of
+ancestor-dependent isVisible(); showEvent reconciles the same enabled label
+against final geometry. Neither callback shows a hidden hint, changes series
+identity, creates a viewer, modifies styles/backing or alters native drag gating.
+
+Three actual-Qt synthetic guards cover two initially inactive panes before any
+activation/drag, hidden-parent resize/reshow and loaded-hint hiding. Before the
+patch: two center guards failed, loaded-hint guard passed (exit 1). After:
+17 selected new/adjacent tests pass, one existing quarantine xfail, three explicitly
+deselected baseline failures. The complete adjacent selection reports three
+failures in existing _PWPipelineMixin/ViewportSpinner mocks (missing
+has_first_series_displayed and repaint). A disposable process restoring only
+pre-fix QtFastContainer methods reproduced the same three failures; no worktree
+was reset and no other runtime/test mock was changed. Thus adjacent baseline
+is still red, not claimed green. Advanced opaque-hover guard passes unchanged.
+
+Source module is core PacsClient with no plugin mirror mapping; scoped mirror
+dry-run proposed no additions. Global verification passes 515 pairs. Shared core
+GUI editions receive the fix on their next build; no release/build run performed.
+Test Control Server ping remains unavailable. Offscreen actual QWidget acceptance
+is not native app acceptance: first patient open with two empty panes and real
+mouse drag after human fresh source launch remains pending. No active process
+restarted or login attempted. Rollback only the show/resize hunk in this file.
+
+
+## 2026-10-09: Panoramic PX projection admission (OPT-35)
+
+The reported panoramic raster decoded successfully with SimpleITK but was routed
+past the independent presentation loader: its DX-for-presentation SOP used modality
+PX rather than DX. The ordinary volume contract then rejected absent IPP/IOP.
+An explicit VOI LUT also triggered the existing presentation-layout rejection.
+
+Advanced preparation now accepts PX only with the already supported DX presentation
+SOP, preserves its modality and full native dimensions, and publishes independent
+2D frames with spatial_geometry_available=False. EGLI reaches this worker loader
+through its own per-widget VTK backend override; no Fast implementation, mutable
+cache, CT/MR geometry policy or AI widget was changed. Existing filter dispatch is
+retained. Processing SOPs and mixed modalities remain excluded.
+
+For DX/PX with an explicit VOI LUT, retain a valid source window; otherwise apply
+the first VOI LUT once on the worker and publish its full-range display window.
+These are alternative transforms, not consecutive ones (DICOM PS3.3 C.11.2:
+https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.11.2.html).
+Spacing remains display-plane/detector/uncalibrated metadata, without invented
+patient position or orientation.
+
+Guard: tests/code/viewer/test_advanced_presentation_sequence.py. Four corrected
+synthetic VOI/PX guards fail against an isolated HEAD copy of the pre-fix module
+(exit 1: PX returns None, DX rejects the LUT). An initial fixture serialization
+error was corrected and is not counted as fail-before evidence. Updated guards
+verify exact pixels, alternative window/LUT output, preserved modality/spacing,
+processing/mixed-modality refusal, and full-resolution native VTK rendering.
+82 focused/adjacent viewer tests pass (exit 0). Builder/display-geometry selection:
+57 passed, two staged-artifact skips, four existing quarantined geometry xfails
+(exit 0); those four are not claimed fixed. A bounded local sample preparation
+retained source pixel values and native dimensions; no clinical image was exported.
+
+Mirror dry-run proposed zero changes; verification: 528 pairs match. This core
+PacsClient module has no packaged plugin mirror. Standard and ARM64-emulated
+Client plus GUI Eagle Eye Server use the shared core source in PyInstaller/Nuitka;
+no native asset, profile, feature flag or module registration changed. Source
+builder guards pass; all six installer acceptance cells remain pending. No build,
+release, activation or application restart performed. Rollback is limited to the
+PX admission and projection VOI hunks in advanced_presentation.py.
+
+Live source-GUI acceptance remains BLOCKED: the existing control client ping found
+no Test Control Server listener. A fresh human-authorized source session must show
+this panorama via real thumbnail drag/drop in Advanced and EGLI, confirm contrast,
+aspect/units, and switch back to an ordinary CT/MR series. Offscreen rendering
+and successful worker preparation are not live acceptance.
+
+Developer synchronization: selected Razi source was resolved from the current
+CRM restoration activation receipt (education-presenter revision); its affected
+runtime baseline hash matches local HEAD. Preserve executing source. Stage this
+owned delta in a separate immutable panoramic candidate and append only these
+owned documentation additions to the remote documents. Complete declared-inventory
+parity is BLOCKED by concurrent unrelated differences; retain the SHA-256 audit
+and delta receipt under generated-files/vtk-panorama-20261009 and corresponding
+Razi staging. Do not overwrite other owners' work or hand off a build as complete.
+## 2026-10-11 live MPR opening pause: bounded handoff
+
+The fresh source session captured a 7234.9 ms event-loop gap while opening MPR.
+Repeated samples covered toggle_zeta_mpr -> _resolve_mpr_volume_for_route
+(including synchronous imports), then view construction through _setup_ui,
+_create_axial_view, _create_crosshairs, _create_coronal_view, _register_view and
+_add_view_crosshair_toggle. A separate deferred 3D construction sample reached
+1861.7 ms through _build_deferred_3d_view -> _create_3d_view. The run explicitly
+reported CPU/software OpenGL. Do not infer a hardware fault or attribute the
+entire pause to one crosshair operation from sampling alone.
+
+Next investigation should separate first-use import cost, GUI-owned widget/VTK
+construction and CPU rendering, preserving Qt/VTK thread affinity and immutable
+volume ownership. Moving all construction into a worker is not an accepted fix.
+No renderer changes were made in this acceptance lap. Normal exit from Home
+subsequently completed with source/launcher/task result zero. Sanitized evidence:
+user_data/test_reports/2026-10-11/pause_fix/live_exit_receipt.json.
+
+
+
+### 2026-10-11: OPT-48 first-use import and staged native panes
+
+The fresh source GUI trace still showed approximately 5.3 s of blocking while Standard MPR constructed its three 2D native panes synchronously. Moving imports alone did not solve this. Import-only worker preparation now precedes geometry resolution and resumes only for the same selected viewport/series identity. A synthetic fresh-process probe reduced the import-related GUI heartbeat gap from about 1831 ms to 28 ms while import wall time remained about 1.89 s. Actual live import was warm, so that run does not qualify cold-import behavior.
+
+Standard toolbar MPR now opts into staged initial 2D construction. A complete four-cell shell attaches first, then each unchanged axial/sagittal/coronal constructor runs on a separate GUI event-loop turn. Controls stay disabled until role-based interpolation, baseline capture, diagnostics and initial window/level finalize. The native VTK/GL constructors remain GUI-owned. Deferred 3D scheduling starts after 2D readiness. Projection subsets and Curve/Dental routes retain their previous synchronous constructor behavior. Cleanup retires pending construction; context-owned timers and closed checks prevent delayed callbacks from building into a retired viewer. A failed build cleans up and restores the original viewport. Reslice prewarm also yields between panes without changing geometry or image sampling.
+
+This bounds serial accumulation; it does not remove the cost of one native constructor or 3D rendering (a separate live trace was about 1.7 s). Do not claim zero freezes, or transfer these constructors to workers. New guards cover one-pane scheduling, close between stages, failure restore and real Qt placeholder-shell attachment. Existing geometry/lifecycle/interaction guards passed in the focused 89-test run. Fresh source GUI acceptance of staged construction remains pending. No release/build acceptance or full Razi snapshot parity is claimed.
+
+Verification update (2026-10-11): combined Education/MPR checks finished with 508 passed and one pre-existing quarantined xfail; final focused checks passed 16/16. Education mirrors verified 531/531. Immutable Razi review delta verified 16/16 hashes, without active-source changes; complete snapshot parity and fresh GUI acceptance remain pending.
+
+
+### Native reproduction handoff - 2026-10-11
+
+Use UX-STAB-01 (actual OLE drag) and UX-STAB-03 (Advanced/MPR lifecycle) in the structured UX stability protocol appended to docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md. Neither is live-qualified yet. Keep main/companion identity and current-thread native attribution separate; downstream MCP series switching cannot close native drag acceptance.

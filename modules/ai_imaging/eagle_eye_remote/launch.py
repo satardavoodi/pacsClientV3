@@ -61,7 +61,7 @@ def configure(argv):
         if not config.get('service_managed', False):
             service = HostedService(config)
         try:
-            port = service.server.server_port if service is not None else int(config.get('port', 8042))
+            port = service.server.server_port if service is not None else int(config.get('port', 8002))
             # The service certificate must include the loopback IP in its SANs.
             scheme = 'https' if config.get('certificate') else 'http'
             bind_host = config.get('host', '127.0.0.1')
@@ -75,6 +75,9 @@ def configure(argv):
                 client['ca_file'] = config.get('ca_file') or config['certificate']
             if config.get('client_ca_file'):
                 client.update(config.get('local_client_tls') or {})
+            if is_frozen():
+                from .release_package import check_installed_service
+                check_installed_service(server_config_path, client)
             path = Path(config['job_root']).resolve() / 'desktop-client.json'
             temporary = path.with_suffix('.partial')
             temporary.write_text(json.dumps(client, indent=2), encoding='utf-8')

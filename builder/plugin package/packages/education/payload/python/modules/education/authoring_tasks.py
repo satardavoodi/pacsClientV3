@@ -22,6 +22,25 @@ class CourseAssetCopyTask(QThread):
             self.error = True
 
 
+class CourseDocumentImportTask(CourseAssetCopyTask):
+    """Keep the original presentation and a managed static PDF preview."""
+    def run(self):
+        from modules.education.course_database import save_course_asset
+        from modules.education.presentation_conversion import presentation_pdf
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory(prefix='education-presentation-') as cache:
+                preview = presentation_pdf(self.source, cache)
+                # Publish a payload only after both copies have succeeded.
+                original = save_course_asset(self.source, self.course_pk)
+                pdf = save_course_asset(preview, self.course_pk)
+                self.result = {'path':pdf, 'original':{'path':original},
+                    'preview_format':'pdf', 'static_preview':True}
+        except Exception as exc:
+            self.error = ('PowerPoint import requires LibreOffice and a readable presentation. '
+                'Install LibreOffice or export to PDF and import that file.')
+
+
 def presentation_issues(course):
     """Check saved content/availability; does not certify clinical or pixel safety.
 
@@ -43,7 +62,14 @@ def presentation_issues(course):
                 issues.append(f"{label}: invalid content data.")
                 continue
             kind = item.get("content_type")
-            if kind == "text":
+            if kind == "multimedia":
+                if not str(data.get('text') or '').strip() and not data.get('path'):
+                    issues.append(f"{label}: add text or media.")
+                if data.get('path') and not Path(str(data['path'])).is_file():
+                    issues.append(f"{label}: the media file is unavailable.")
+                if data.get('media_type') not in {None,'image','audio','video'}:
+                    issues.append(f"{label}: unsupported multimedia source.")
+            elif kind == "text":
                 from modules.education.document_preview import TEXT_SUFFIXES
                 text_path = str(data.get("path") or "")
                 if text_path and Path(text_path).suffix.lower() in TEXT_SUFFIXES:
@@ -66,7 +92,7 @@ def presentation_issues(course):
                 exists = bool(path) and (Path(path).is_dir() if kind == "dicom" else Path(path).is_file())
                 if not exists:
                     issues.append(f"{label}: the source file or folder is unavailable.")
-                elif kind in {"document", "attachment", "presentation", "archive", "other"} and Path(path).suffix.lower() not in {".docx", ".txt", ".md", ".csv", ".tsv", ".log", ".json", ".xml"}:
+                elif kind in {"document", "attachment", "presentation", "archive", "other"} and Path(path).suffix.lower() not in {".pdf", ".docx", ".txt", ".md", ".csv", ".tsv", ".log", ".json", ".xml"}:
                     from modules.education.presentation_conversion import PRESENTATION_SUFFIXES, find_libreoffice
                     if Path(path).suffix.lower() in PRESENTATION_SUFFIXES and find_libreoffice():
                         issues.append(f"{label}: static PDF preview; verify slide layout before presenting. Animations require the original application.")

@@ -10,7 +10,11 @@ class Resources:
     def __init__(self, configuration=None):
         configuration = configuration or {}
         self.capacity = dict(configuration.get('capacity', {'jobs': 1}))
-        self.profiles = configuration.get('modules', {name: {'jobs': 1} for name in MODULES})
+        self.profiles = dict(configuration.get('modules', {name: {'jobs': 1} for name in MODULES}))
+        # The marrow route uses the same vertebra model and inherits its budget
+        # when upgrading a previously complete seven-route configuration.
+        if set(self.profiles) == set(MODULES) - {'lumbar-marrow'}:
+            self.profiles['lumbar-marrow'] = dict(self.profiles['lumbar'])
         if (not self.capacity or set(self.capacity) - {'jobs', 'cpu_threads', 'ram_mb'}
                 or 'jobs' not in self.capacity
                 or any(type(value) is not int or value <= 0 for value in self.capacity.values())

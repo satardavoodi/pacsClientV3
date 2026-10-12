@@ -132,6 +132,7 @@ def test_server_failure_does_not_enter_legacy_planner(monkeypatch):
     exec(compile(ast.Module(body=[function],type_ignores=[]),'<company-planner>','exec'),scope)
     page=SimpleNamespace(_use_brain=True,_get_brain=lambda:pytest.fail('Local brain'),
                          _ensure_source=lambda plan,cmd:plan)
+    page._get_memory_store_safe = lambda: None
     assert scope['_parse_plan'](page,{'text':'Synthetic request','language':'en'}) is None
     assert page._last_parse_failure == 'server_error: Synthetic server unavailable'
 

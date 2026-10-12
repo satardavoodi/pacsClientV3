@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import threading
+from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -141,6 +142,33 @@ class EchoMindMemoryStore:
 
         # Working dict for the cycle currently being collected
         self._current: dict[str, Any] = {}
+        self._conversation = self._fresh_conversation()
+
+    @staticmethod
+    def _fresh_conversation():
+        return {'id': str(uuid4()), 'mode': 'act', 'title': 'New conversation',
+                'topic': '', 'goal': '', 'summary': ''}
+
+    def get_conversation(self, mode: str | None = None) -> dict:
+        # Reading UI metadata performs no filesystem work.
+        from modules.ai_imaging.eagle_eye_remote.secretary.conversation import Conversation
+        value = Conversation.model_validate({**self._conversation, 'mode': mode or self._conversation['mode']}).model_dump()
+        self._conversation = value
+        return dict(value)
+
+    def prepare_conversation(self, mode: str) -> dict:
+        # Worker planning must roll over before reading the previous context.
+        if self._cycle_count >= MAX_CYCLES_PER_FILE:
+            self.new_memory()
+        return self.get_conversation(mode)
+
+    def update_conversation(self, value: dict) -> bool:
+        from modules.ai_imaging.eagle_eye_remote.secretary.conversation import Conversation
+        value = Conversation.model_validate(value).model_dump()
+        if value['id'] != self._conversation['id'] or value['mode'] != self._conversation['mode']:
+            return False
+        self._conversation = value
+        return True
 
     # ── DB helpers ─────────────────────────────────────────────────────────────
 
@@ -253,6 +281,8 @@ class EchoMindMemoryStore:
         self._current["cycle_number"] = self._cycle_count
         try:
             self._write_cycle_to_file(self._current)
+            self._filepath.with_suffix(".conversation.json").write_text(
+                json.dumps(self._conversation, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
         self._update_cycle_count_in_db()
@@ -271,6 +301,7 @@ class EchoMindMemoryStore:
         self._cycle_count = 0
         self._filepath = _MEMORY_DIR / _make_filename(self._memory_number)
         self._current = {}
+        self._conversation = self._fresh_conversation()
         self._register_file()
 
     # ── LLM context injection ───────────────────────────────────────────────────

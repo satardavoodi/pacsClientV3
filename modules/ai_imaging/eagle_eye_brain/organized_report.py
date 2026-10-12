@@ -13,6 +13,8 @@ def _cell(value, *, numeric=True):
     content = escape(text)
     if getattr(value, 'highlight', False):
         content = '<font color="#b91c1c"><b>' + content + '</b></font>'
+    if getattr(value, 'reference_position', None):
+        content += '<br/><small>' + escape(value.reference_position) + '</small>'
     return f"<td align='{align}'>" + content + '</td>'
 
 
@@ -89,7 +91,7 @@ def render_html(result):
         value = sum(values[k] for k in keys) if all(k in values for k in keys) else None
         overview.append([highlight(published,keys[0],label) if len(keys)==1 else label, highlight(published,keys[0],_num(value)) if len(keys)==1 else _num(value), range_text(published, keys[0]) if len(keys) == 1 else "Not available", _num(value / icv * 100 if value is not None and icv else None)])
     cover += "<h2>Global volumes and tissue compartments</h2>" + _table(["Structure", "Volume cm3", range_heading, "% ICV"], overview, [44, 18, 22, 16])
-    cover += "<p class='note'>Red = >25% beyond nearest reference endpoint; not statistical significance. Published intervals use age, sex and local ICV; cross-method validation remains pending.</p>"
+    cover += "<p class='note'>Red = more than 25% beyond the nearest published reference endpoint; a measurement review flag, not a diagnosis or statistical significance. Published intervals use age, sex and local ICV; cross-method validation remains pending.</p>"
     cover += "<p class='note'>Selected compartments are not a complete additive brain partition. Model CSF is not total CSF. Do not sum cortical parent volumes with their parcels.</p>"
     pages = [cover]
     evidence = result.get("report_evidence_png")
@@ -120,7 +122,7 @@ def render_html(result):
             if rows else "<p>No paired measurements available.</p>")
     note = ("<p class='note'>AI = 200 x (Right - Left) / (Right + Left). Positive means right is larger. "
             "No abnormality threshold is assigned. Published intervals are cross-method comparisons; unavailable entries have no mapped reference. "
-            "Red = >25% beyond nearest interval endpoint, not statistical significance. "
+            "Red = more than 25% beyond the nearest reference endpoint; a measurement review flag, not a diagnosis or statistical significance. "
             "* Cortical ranges are volBrain anatomical analogues, not matched normal limits; no atrophy flag is assigned. "
             "Atlas differs = split/merged territory with no direct interval. "
             "Groups organize native labels; no whole-lobe GM+WM volume is inferred.</p>")
@@ -166,6 +168,8 @@ def render_html(result):
         pages.extend([measurements, "<h1>Medial temporal image review</h1>" + image_heading + image_review])
     else:
         pages.append(medial)
+    from .atrophy_patterns import pages as atrophy_review_pages
+    pages.extend(atrophy_review_pages(result))
     normative = result.get("normative", {})
     from .reference_report import pages as reference_pages
     pages.extend(reference_pages(normative))

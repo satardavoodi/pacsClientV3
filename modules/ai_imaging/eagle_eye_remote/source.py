@@ -206,7 +206,7 @@ class PacsSource:
         destination = Path(destination)
         destination.mkdir(parents=True)
         selected = request['series']
-        modality = {'breast': ('MG',), 'bone-age': ('DX', 'CR'),
+        modality = {'dental-panorama': ('DX', 'CR', 'PX', 'IO'), 'breast': ('MG',), 'bone-age': ('DX', 'CR'),
                     'alignment': ('DX', 'CR'), 'total-spine': ('DX', 'CR')}.get(request['module'], ('MR',))
         records = []
         seen = set()
@@ -225,9 +225,12 @@ class PacsSource:
                      and (not ref.get('sop_uid') or ref['sop_uid'] == sop)]
             # Stitched standing radiographs are normally DERIVED. Admit only the
             # explicitly selected DX/CR SOP; model-specific pixel guards still run.
-            explicit_radiograph = request['module'] in ('alignment', 'total-spine') and any(
+            explicit_radiograph = request['module'] in ('alignment', 'total-spine', 'dental-panorama') and any(
                 selected[role].get('sop_uid') == sop for role in roles)
-            if 'DERIVED' in str(ds.get('ImageType', '')).upper() and not explicit_radiograph:
+            explicit_dixon = (request['module'] == 'lumbar-marrow'
+                and request.get('parameters', {}).get('mode') == 'multiparametric'
+                and bool(roles) and set(roles).issubset({'primary','opposed','fat','water'}))
+            if 'DERIVED' in str(ds.get('ImageType', '')).upper() and not (explicit_radiograph or explicit_dixon):
                 continue
             if selected and not roles:
                 continue
@@ -286,7 +289,7 @@ class WorkstationCacheSource(PacsSource):
         finally:
             connection.close()
         selected = {r['series_uid'] for r in request['series'].values()}
-        modalities = ('MG',) if request['module'] == 'breast' else (
+        modalities = ('DX', 'CR', 'PX', 'IO') if request['module'] == 'dental-panorama' else ('MG',) if request['module'] == 'breast' else (
             ('DX', 'CR') if request['module'] in ('bone-age', 'alignment', 'total-spine') else ('MR',))
         allowed = [Path(p).resolve() for p in self.config.get('allowed_roots', [])]
         files = []

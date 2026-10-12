@@ -1,0 +1,1988 @@
+{
+  "lexicon_version": "1.0.0",
+  "_about": "Vocabulary and query grounding for the reception software. Generated from a live inspection of the reception database; the generator is scripts/build_lexicon.py. Field names, codes, counts and catalogues are MEASURED. Human meanings and synonyms are hand-authored and marked as such. Nothing in this file may be typed from memory.",
+  "checked_against": {
+    "database": "ClinicWebsite",
+    "host": "the reception server, mongodb://127.0.0.1:27017/",
+    "reception_sample": 400,
+    "receptions_total": 54359,
+    "services_total": 519
+  },
+  "conventions": {
+    "date": {
+      "storage": "Jalali string, zero-padded, 'YYYY/MM/DD' e.g. '1405/06/01'",
+      "fields": [
+        "receptions.Date",
+        "transactions.date"
+      ],
+      "lexicographic_sort_safe": true,
+      "note": "Zero-padded fixed-width Jalali sorts correctly as a string, so range filters work with plain >= and <=. This holds ONLY while every value is zero-padded ASCII; a Persian-digit or unpadded value breaks it silently. Month lengths: 1-6 have 31 days, 7-11 have 30, 12 has 29 or 30. '1405/07/31' does not exist -- a naive 1..31 range is short or empty in the second half of the year.",
+      "week_starts": "Saturday",
+      "leap_year_warning": "Use the 33-year cycle (ICU/CLDR), not the 2820-year Birashk cycle: they disagree about 1403, which IS a leap year. A converter on the wrong cycle mis-maps 1403/12/30 and every count near that boundary disagrees with the vendor's own reports by a day."
+    },
+    "time": {
+      "storage": "'HH:MM:SS' local wall clock",
+      "fields": [
+        "receptions.Time",
+        "transactions.time"
+      ]
+    },
+    "money": {
+      "unit": "Rial",
+      "note": "Integer Rial. Divide by 10 for Toman only at display time."
+    },
+    "text_matching": {
+      "rule": "Never compare Persian text raw. Fold both sides. The live catalogue proves why: 'سي تي اسکن' (Arabic yeh, 206 services) and 'سی تی اسکن' (Persian yeh, 1 service) are stored as two different groups for one concept.",
+      "fold": "NFC, drop tatweel/harakat, digits to ASCII, yeh/kaf/heh/alef folded, ZWNJ to space, casefold",
+      "squash": "as fold(), plus all whitespace removed - use for entity lookup"
+    },
+    "live_only": {
+      "filter": {
+        "deleted": {
+          "$ne": true
+        }
+      },
+      "note": "Soft deletes. Measured cost of ignoring: 0.05% of counts (14 of 25,638)."
+    }
+  },
+  "entities": {
+    "patient": {
+      "human": "A person. One person over their whole history at the centre.",
+      "software": "ClinicWebsite.patients, referenced by receptions.patient (ObjectId)",
+      "count_key": "patient",
+      "standard_ref": "FHIR Patient; DICOM Patient IE",
+      "fields": {
+        "_id": "ObjectId, the join key",
+        "PatientName": "PHI",
+        "PatientID": "PHI - the vendor's patient identifier",
+        "PatientBirthDate": "PHI",
+        "PatientSex": "PHI",
+        "PatientAge": "PHI"
+      },
+      "total": 47719,
+      "note": "Field names follow DICOM tag names, not the vendor's usual style. receptions also carries patientNameSnapshot and nationalCode inline - both PHI."
+    },
+    "reception": {
+      "human": "One visit. A patient arrives, is registered, and is charged for one or more services.",
+      "software": "ClinicWebsite.receptions",
+      "count_key": "ReceptionID",
+      "standard_ref": "FHIR Encounter; DICOM Visit / Imaging Service Request",
+      "grain_warning": "A reception contains MANY services. Counting service rows and calling the result 'patients' is the defect that produced 76 and 24 when the true patient counts for 1405/06/01 were 62 and 22. Always count distinct ReceptionID for visits and distinct patient for people.",
+      "total": 54359
+    },
+    "service": {
+      "human": "One billable examination performed during a visit.",
+      "software": "receptions.services[] (embedded array); catalogue ClinicWebsite.ServicesInfo",
+      "count_key": "services[]._id",
+      "standard_ref": "DICOM Requested Procedure - 'the smallest unit of service that can be requested, reported, coded and billed' (PS3.3 sect 7.3); FHIR ServiceRequest.code / ChargeItem.code",
+      "catalogue_total": 519
+    },
+    "modality": {
+      "human": "The class of imaging equipment: CT, MRI, ultrasound, radiography, bone density.",
+      "software": "receptions.modality and receptions.services[].Modality; catalogue ClinicWebsite.Modality",
+      "standard_ref": "DICOM Modality (0008,0060), PS3.16 CID 29",
+      "three_vocabularies_warning": "The SAME concept is written three different ways in this system: the numeric catalogue code ('3') on receptions, the DICOM code ('US') in studies.ModalitiesInStudy, and the Persian name ('سونوگرافی') in reports. A filter written in one vocabulary silently matches nothing in the other."
+    },
+    "physician": {
+      "human": "Two different roles, and they are not the same person.",
+      "software": {
+        "referring": "receptions.referrerPhysician -> ClinicWebsite.ReferrerPhysician",
+        "reporting": "receptions.imagingWorkflow.report.radiologist; studies.radiologistId / radiologistName"
+      },
+      "standard_ref": "FHIR ServiceRequest.requester vs DiagnosticReport.resultsInterpreter",
+      "referrer_total": 6001
+    },
+    "staff": {
+      "human": "Reception and cashier personnel.",
+      "software": "ClinicWebsite.AdminUsers; receptions.registeredBy and transactions.registeredBy point here",
+      "bridge_to_central_chat": "AdminUsers.InoUserCode is the central chat 'Admin' id"
+    },
+    "transaction": {
+      "human": "One movement of money at the till.",
+      "software": "ClinicWebsite.transactions",
+      "count_key": "_id",
+      "standard_ref": "HL7 v2 FT1; FHIR ChargeItem / PaymentReconciliation"
+    },
+    "report": {
+      "human": "The radiologist's written findings for a visit.",
+      "software": "receptions.imagingWorkflow.report",
+      "standard_ref": "FHIR DiagnosticReport",
+      "note": "report.content is HTML and is PHI. Match on stripped text, never raw HTML."
+    },
+    "study": {
+      "human": "The images themselves, as stored by PACS.",
+      "software": "ClinicWebsite.studies -> series -> instances",
+      "count_key": "StudyInstanceUID",
+      "standard_ref": "DICOM Study IE; FHIR ImagingStudy",
+      "total": 50316
+    }
+  },
+  "value_sets": {
+    "modality": {
+      "vendor_field": "receptions.modality  (also services[].Modality)",
+      "storage_note": "receptions.modality is USUALLY a string code but is SOMETIMES an embedded object. Measured on 1405/06/01: 201 string, 4 object. Any equality filter must therefore be {'$or': [{'modality': c}, {'modality._id': c}]} or it silently loses rows.",
+      "concepts": [
+        {
+          "code": "1",
+          "vendor_field_value": "1",
+          "vendor_short": "CT",
+          "display": {
+            "en": {
+              "preferred": "CT Scan"
+            },
+            "fa": {
+              "preferred": "سی تی اسکن"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "CT",
+              "CT scan",
+              "CAT scan",
+              "computed tomography",
+              "CTscan",
+              "CT Scan"
+            ],
+            "fa": [
+              "سی تی",
+              "سی تی اسکن",
+              "سیتی",
+              "اسکن",
+              "سی‌تی‌اسکن"
+            ]
+          },
+          "status": "active",
+          "requires_scheduling": false,
+          "dicom_code": "CT",
+          "services_in_catalogue": 208
+        },
+        {
+          "code": "2",
+          "vendor_field_value": "2",
+          "vendor_short": "MR",
+          "display": {
+            "en": {
+              "preferred": "MRI"
+            },
+            "fa": {
+              "preferred": "ام آر آی"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "MRI",
+              "MR",
+              "magnetic resonance",
+              "MRI scan"
+            ],
+            "fa": [
+              "ام آر آی",
+              "ام‌آر‌آی",
+              "امآرآی",
+              "رزونانس مغناطیسی",
+              "ام ار ای"
+            ]
+          },
+          "status": "active",
+          "requires_scheduling": false,
+          "dicom_code": "MR",
+          "services_in_catalogue": 73
+        },
+        {
+          "code": "3",
+          "vendor_field_value": "3",
+          "vendor_short": "US",
+          "display": {
+            "en": {
+              "preferred": "Sonography"
+            },
+            "fa": {
+              "preferred": "سونوگرافی"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "sonography",
+              "ultrasound",
+              "US",
+              "sono",
+              "echo",
+              "sonogram",
+              "Sonography"
+            ],
+            "fa": [
+              "سونوگرافی",
+              "سونو",
+              "اولتراسوند",
+              "سونوگرافي"
+            ]
+          },
+          "status": "active",
+          "requires_scheduling": false,
+          "dicom_code": "US",
+          "services_in_catalogue": 87
+        },
+        {
+          "code": "4",
+          "vendor_field_value": "4",
+          "vendor_short": "DX",
+          "display": {
+            "en": {
+              "preferred": "Radiology"
+            },
+            "fa": {
+              "preferred": "رادیولوژی"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "radiology",
+              "radiography",
+              "X-ray",
+              "xray",
+              "XR",
+              "DX",
+              "plain film",
+              "Radiology"
+            ],
+            "fa": [
+              "رادیولوژی",
+              "رادیوگرافی",
+              "عکس ساده",
+              "گرافی",
+              "ایکس ری",
+              "رادیولوژي"
+            ]
+          },
+          "status": "active",
+          "requires_scheduling": false,
+          "dicom_code": "DX",
+          "services_in_catalogue": 135
+        },
+        {
+          "code": "5",
+          "vendor_field_value": "5",
+          "vendor_short": "BD",
+          "display": {
+            "en": {
+              "preferred": "Bone Density"
+            },
+            "fa": {
+              "preferred": "سنجش تراکم استخوان"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "bone density",
+              "bone densitometry",
+              "DEXA",
+              "DXA",
+              "BMD",
+              "densitometry",
+              "BD",
+              "Bone Density"
+            ],
+            "fa": [
+              "سنجش تراکم استخوان",
+              "تراکم استخوان",
+              "دانسیتومتری"
+            ]
+          },
+          "status": "active",
+          "requires_scheduling": false,
+          "dicom_code": "BMD",
+          "services_in_catalogue": 7,
+          "vendor_deviation": "The vendor stores Modality='BD'. 'BD' is not a DICOM value: PS3.3 C.7.3.1.1.1 and CID 29 define BMD for X-ray bone densitometry and BDUS for the ultrasound variant. Query the vendor with 'BD'."
+        },
+        {
+          "code": "9",
+          "vendor_field_value": "9",
+          "vendor_short": "Mammography",
+          "display": {
+            "en": {
+              "preferred": "Mammography"
+            },
+            "fa": {
+              "preferred": "ماموگرافی"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "mammography",
+              "mammogram",
+              "MG",
+              "breast imaging",
+              "Mammography"
+            ],
+            "fa": [
+              "ماموگرافی",
+              "مامو"
+            ]
+          },
+          "status": "disabled",
+          "requires_scheduling": false,
+          "dicom_code": "MG",
+          "services_in_catalogue": 5,
+          "vendor_deviation": "The vendor stores Modality='Mammography' -- the DICOM Code MEANING, not the code. Modality (0008,0060) has VR=CS, which permits only uppercase letters, digits, space and underscore, so a mixed-case value is not a conformant CS value at all. The DICOM code is MG. Compare case-sensitively against the literal string 'Mammography'."
+        },
+        {
+          "code": "14",
+          "vendor_field_value": "14",
+          "vendor_short": "تخصصی هیسترو",
+          "display": {
+            "en": {
+              "preferred": "تخصصی هیسترو"
+            },
+            "fa": {
+              "preferred": "تخصصی هیسترو"
+            }
+          },
+          "acceptable": {
+            "en": [
+              "hystero",
+              "specialist hystero",
+              "تخصصی هیسترو"
+            ],
+            "fa": [
+              "تخصصی هیسترو"
+            ]
+          },
+          "status": "disabled",
+          "requires_scheduling": false,
+          "dicom_code": null,
+          "services_in_catalogue": 3
+        }
+      ]
+    },
+    "insurance_type": {
+      "vendor_field": "receptions.insuranceType",
+      "storage_note": "Coded strings '0'..'4' -- but the literal Persian word 'آزاد' also occurs as a value (1 reception in 1405). The field is not a clean enum.",
+      "meaning_is_inferred": "The vendor exposes no lookup table for these codes. The meanings below are INFERRED from which per-insurer amount field is non-zero, and the evidence is recorded alongside each code. Treat as a strong hypothesis, not documented truth, until the vendor confirms.",
+      "evidence": {
+        "2": {
+          "receptions_1405": 9808,
+          "with_tamin_amount": 7709,
+          "with_salamat_amount": 16,
+          "with_army_amount": 117
+        },
+        "4": {
+          "receptions_1405": 8133,
+          "with_tamin_amount": 290,
+          "with_salamat_amount": 96,
+          "with_army_amount": 834
+        },
+        "1": {
+          "receptions_1405": 1743,
+          "with_tamin_amount": 18,
+          "with_salamat_amount": 930,
+          "with_army_amount": 34
+        },
+        "0": {
+          "receptions_1405": 64,
+          "with_tamin_amount": 17,
+          "with_salamat_amount": 0,
+          "with_army_amount": 0
+        },
+        "3": {
+          "receptions_1405": 6,
+          "with_tamin_amount": 0,
+          "with_salamat_amount": 0,
+          "with_army_amount": 5
+        },
+        "آزاد": {
+          "receptions_1405": 1,
+          "with_tamin_amount": 0,
+          "with_salamat_amount": 0,
+          "with_army_amount": 0
+        }
+      },
+      "concepts": [
+        {
+          "code": "1",
+          "acceptable": {
+            "en": [
+              "Salamat",
+              "health insurance"
+            ],
+            "fa": [
+              "سلامت",
+              "بیمه سلامت",
+              "خدمات درمانی"
+            ]
+          },
+          "evidence": {
+            "receptions_1405": 1743,
+            "with_tamin_amount": 18,
+            "with_salamat_amount": 930,
+            "with_army_amount": 34
+          }
+        },
+        {
+          "code": "2",
+          "acceptable": {
+            "en": [
+              "Tamin",
+              "social security"
+            ],
+            "fa": [
+              "تامین",
+              "تأمین اجتماعی",
+              "بیمه تامین"
+            ]
+          },
+          "evidence": {
+            "receptions_1405": 9808,
+            "with_tamin_amount": 7709,
+            "with_salamat_amount": 16,
+            "with_army_amount": 117
+          }
+        },
+        {
+          "code": "3",
+          "acceptable": {
+            "en": [
+              "Army",
+              "armed forces"
+            ],
+            "fa": [
+              "ارتش",
+              "نیروهای مسلح"
+            ]
+          },
+          "evidence": {
+            "receptions_1405": 6,
+            "with_tamin_amount": 0,
+            "with_salamat_amount": 0,
+            "with_army_amount": 5
+          }
+        },
+        {
+          "code": "4",
+          "acceptable": {
+            "en": [
+              "free",
+              "self-pay",
+              "uninsured",
+              "private"
+            ],
+            "fa": [
+              "آزاد",
+              "بدون بیمه",
+              "شخصی"
+            ]
+          },
+          "evidence": {
+            "receptions_1405": 8133,
+            "with_tamin_amount": 290,
+            "with_salamat_amount": 96,
+            "with_army_amount": 834
+          }
+        },
+        {
+          "code": "0",
+          "acceptable": {
+            "en": [
+              "unset",
+              "not recorded"
+            ],
+            "fa": [
+              "ثبت نشده"
+            ]
+          },
+          "evidence": {
+            "receptions_1405": 64,
+            "with_tamin_amount": 17,
+            "with_salamat_amount": 0,
+            "with_army_amount": 0
+          }
+        }
+      ]
+    },
+    "insurance_source": {
+      "vendor_field": "receptions.insuranceSource",
+      "measured_values": [
+        "manual",
+        "mixed",
+        "none",
+        "online"
+      ],
+      "concepts": [
+        {
+          "code": "none",
+          "acceptable": {
+            "en": [
+              "no insurance",
+              "self pay"
+            ],
+            "fa": [
+              "بدون بیمه"
+            ]
+          }
+        },
+        {
+          "code": "online",
+          "acceptable": {
+            "en": [
+              "online",
+              "checked electronically"
+            ],
+            "fa": [
+              "آنلاین",
+              "استعلام اینترنتی"
+            ]
+          }
+        },
+        {
+          "code": "manual",
+          "acceptable": {
+            "en": [
+              "manual",
+              "entered by hand"
+            ],
+            "fa": [
+              "دستی"
+            ]
+          }
+        },
+        {
+          "code": "mixed",
+          "acceptable": {
+            "en": [
+              "mixed"
+            ],
+            "fa": [
+              "ترکیبی"
+            ]
+          }
+        }
+      ]
+    },
+    "report_status": {
+      "vendor_field": "receptions.imagingWorkflow.report.status",
+      "measured_values": [
+        "awaiting_physician_approval",
+        "awaiting_secretary_approval",
+        "completed",
+        "pending",
+        "physician_approved"
+      ],
+      "concepts": [
+        {
+          "code": "pending",
+          "acceptable": {
+            "en": [
+              "pending",
+              "not started"
+            ],
+            "fa": [
+              "در انتظار",
+              "شروع نشده"
+            ]
+          }
+        },
+        {
+          "code": "awaiting_secretary_approval",
+          "acceptable": {
+            "en": [
+              "awaiting secretary approval",
+              "with the typist"
+            ],
+            "fa": [
+              "در انتظار تایید منشی",
+              "منتظر منشی"
+            ]
+          }
+        },
+        {
+          "code": "awaiting_physician_approval",
+          "acceptable": {
+            "en": [
+              "awaiting physician approval",
+              "with the radiologist"
+            ],
+            "fa": [
+              "در انتظار تایید پزشک",
+              "منتظر پزشک"
+            ]
+          }
+        },
+        {
+          "code": "physician_approved",
+          "acceptable": {
+            "en": [
+              "physician approved"
+            ],
+            "fa": [
+              "تایید پزشک",
+              "تایید شده توسط پزشک"
+            ]
+          }
+        },
+        {
+          "code": "completed",
+          "acceptable": {
+            "en": [
+              "completed",
+              "finalised",
+              "signed off"
+            ],
+            "fa": [
+              "تکمیل شده",
+              "نهایی",
+              "آماده"
+            ]
+          }
+        }
+      ]
+    },
+    "transaction_type": {
+      "vendor_field": "transactions.type",
+      "measured_values": [
+        "credit",
+        "debt"
+      ],
+      "concepts": [
+        {
+          "code": "credit",
+          "acceptable": {
+            "en": [
+              "credit",
+              "payment in",
+              "received"
+            ],
+            "fa": [
+              "دریافت",
+              "واریز",
+              "پرداخت بیمار"
+            ]
+          }
+        },
+        {
+          "code": "debt",
+          "acceptable": {
+            "en": [
+              "debt",
+              "charge",
+              "owed"
+            ],
+            "fa": [
+              "بدهی",
+              "بدهکاری"
+            ]
+          }
+        }
+      ]
+    },
+    "transaction_insurance_type": {
+      "vendor_field": "transactions.insuranceType",
+      "measured_values": [
+        "tamin",
+        "salamat",
+        "army",
+        null
+      ],
+      "collision_warning": "SAME FIELD NAME, DIFFERENT VOCABULARY. receptions.insuranceType holds codes '1'..'4'; transactions.insuranceType holds words 'tamin', 'salamat', 'army'. A filter that works on one collection returns zero on the other."
+    },
+    "service_group": {
+      "vendor_field": "receptions.services[].ServiceGroup and ServicesInfo.ServiceGroup",
+      "spelling_warning": "Groups are stored with mixed Arabic/Persian yeh. Fold before matching.",
+      "concepts": [
+        {
+          "key": "سیتیاسکن",
+          "display_fa": "سي تي اسکن",
+          "spelling_variants": [
+            "سي تي اسکن",
+            "سی تی اسکن"
+          ],
+          "services": 207,
+          "modalities": {
+            "1": 207
+          }
+        },
+        {
+          "key": "سونوگرافی",
+          "display_fa": "سونوگرافي",
+          "spelling_variants": [
+            "سونوگرافي"
+          ],
+          "services": 80,
+          "modalities": {
+            "3": 80
+          }
+        },
+        {
+          "key": "امارای",
+          "display_fa": "ام آر آي",
+          "spelling_variants": [
+            "ام آر آي"
+          ],
+          "services": 63,
+          "modalities": {
+            "2": 63
+          }
+        },
+        {
+          "key": "لگنوشکمرادیولوژی",
+          "display_fa": "لگن و شکم راديولوژي",
+          "spelling_variants": [
+            "لگن و شکم راديولوژي"
+          ],
+          "services": 38,
+          "modalities": {
+            "4": 38
+          }
+        },
+        {
+          "key": "سروگردنرادیولوژی",
+          "display_fa": "سر وگردن راديولوژی",
+          "spelling_variants": [
+            "سر وگردن راديولوژی"
+          ],
+          "services": 26,
+          "modalities": {
+            "4": 26
+          }
+        },
+        {
+          "key": "اندامتحتانیرادیولوژی",
+          "display_fa": "اندام تحتاني راديولوژي",
+          "spelling_variants": [
+            "اندام تحتاني راديولوژي"
+          ],
+          "services": 20,
+          "modalities": {
+            "4": 20
+          }
+        },
+        {
+          "key": "ستونفقراترادیولوژی",
+          "display_fa": "ستون فقرات راديولوژي",
+          "spelling_variants": [
+            "ستون فقرات راديولوژي"
+          ],
+          "services": 18,
+          "modalities": {
+            "4": 18
+          }
+        },
+        {
+          "key": "قفسهسینهرادیولوژی",
+          "display_fa": "قفسه سينه راديولوژي",
+          "spelling_variants": [
+            "قفسه سينه راديولوژي"
+          ],
+          "services": 17,
+          "modalities": {
+            "4": 17
+          }
+        },
+        {
+          "key": "اندامفوقانیرادیولوژی",
+          "display_fa": "اندام فوقاني راديولوژي",
+          "spelling_variants": [
+            "اندام فوقاني راديولوژي"
+          ],
+          "services": 13,
+          "modalities": {
+            "4": 13
+          }
+        },
+        {
+          "key": "سنجشتراکماستخوان",
+          "display_fa": "سنجش تراکم استخوان",
+          "spelling_variants": [
+            "سنجش تراکم استخوان"
+          ],
+          "services": 1,
+          "modalities": {
+            "5": 1
+          }
+        }
+      ]
+    },
+    "dicom_modality_in_study": {
+      "vendor_field": "studies.ModalitiesInStudy",
+      "measured_values": [
+        "CT",
+        "DOC",
+        "DX",
+        "MG",
+        "MR",
+        "PX",
+        "SR",
+        "US"
+      ],
+      "note": "DICOM codes, NOT the numeric catalogue codes. DOC and SR are documents and structured reports, not acquisition modalities -- excluding them is usually correct when counting examinations."
+    }
+  },
+  "service_index": [
+    {
+      "modality": "1",
+      "name": "-",
+      "fold": "-",
+      "squash": "-"
+    },
+    {
+      "modality": "1",
+      "name": "-",
+      "fold": "-",
+      "squash": "-"
+    },
+    {
+      "modality": "1",
+      "name": "test",
+      "fold": "test",
+      "squash": "test"
+    },
+    {
+      "modality": "1",
+      "name": "آنژیو سی تی اسکن آئورت با بازسازی ها",
+      "fold": "انژیو سی تی اسکن ائورت با بازسازی ها",
+      "squash": "انژیوسیتیاسکنائورتبابازسازیها"
+    },
+    {
+      "modality": "1",
+      "name": "بازسازی متال آرتیفکت (اضافه بر هزینه سی تی اسکن اصلی)",
+      "fold": "بازسازی متال ارتیفکت (اضافه بر هزینه سی تی اسکن اصلی)",
+      "squash": "بازسازیمتالارتیفکت(اضافهبرهزینهسیتیاسکناصلی)"
+    },
+    {
+      "modality": "1",
+      "name": "بازسازی هر ناحیه (اضافه بر هزینه سی تی اسکن اصلی)",
+      "fold": "بازسازی هر ناحیه (اضافه بر هزینه سی تی اسکن اصلی)",
+      "squash": "بازسازیهرناحیه(اضافهبرهزینهسیتیاسکناصلی)"
+    },
+    {
+      "modality": "1",
+      "name": "بررسی 2 و 4 میلی متری هر یک از اعضاء شکم - با یا بدون تزریق- هر یک به تنهایی (پانکراس- کلیه ها- طحال)",
+      "fold": "بررسی 2 و 4 میلی متری هر یک از اعضاء شکم - با یا بدون تزریق- هر یک به تنهایی (پانکراس- کلیه ها- طحال)",
+      "squash": "بررسی2و4میلیمتریهریکازاعضاءشکم-بایابدونتزریق-هریکبهتنهایی(پانکراس-کلیهها-طحال)"
+    },
+    {
+      "modality": "1",
+      "name": "بررسی 4 و 2 میلی متری اعضاء انفرادی و اختصاصی شکم- با تزریق دینامیک (کبد)",
+      "fold": "بررسی 4 و 2 میلی متری اعضاء انفرادی و اختصاصی شکم- با تزریق دینامیک (کبد)",
+      "squash": "بررسی4و2میلیمتریاعضاءانفرادیواختصاصیشکم-باتزریقدینامیک(کبد)"
+    },
+    {
+      "modality": "1",
+      "name": "بیهوشی برای انجام خدمات CT-Scan یا سی تی آنژیوگرافی",
+      "fold": "بیهوشی برای انجام خدمات ct-scan یا سی تی انژیوگرافی",
+      "squash": "بیهوشیبرایانجامخدماتct-scanیاسیتیانژیوگرافی"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی آنژیوپورتوگرافی کبد",
+      "fold": "سی تی انژیوپورتوگرافی کبد",
+      "squash": "سیتیانژیوپورتوگرافیکبد"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی آنژیوگرافی اندام تحتانی با و بدون ماده حاجب",
+      "fold": "سی تی انژیوگرافی اندام تحتانی با و بدون ماده حاجب",
+      "squash": "سیتیانژیوگرافیاندامتحتانیباوبدونمادهحاجب"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی آنژیوگرافی اندام فوقانی با وبدون ماده حاجب-مقاطع بعدی",
+      "fold": "سی تی انژیوگرافی اندام فوقانی با وبدون ماده حاجب-مقاطع بعدی",
+      "squash": "سیتیانژیوگرافیاندامفوقانیباوبدونمادهحاجب-مقاطعبعدی"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی آنژیوگرافی شکم بدون ماده حاجب وباماده حاجب",
+      "fold": "سی تی انژیوگرافی شکم بدون ماده حاجب وباماده حاجب",
+      "squash": "سیتیانژیوگرافیشکمبدونمادهحاجبوبامادهحاجب"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی ارتروگرافی",
+      "fold": "سی تی ارتروگرافی",
+      "squash": "سیتیارتروگرافی"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسپیرال بررسی 2و 4میلی متری اعضاء انفرادی و اختصاصی شکم با تزریق دینامیک(کبد)",
+      "fold": "سی تی اسپیرال بررسی 2و 4میلی متری اعضاء انفرادی و اختصاصی شکم با تزریق دینامیک(کبد)",
+      "squash": "سیتیاسپیرالبررسی2و4میلیمتریاعضاءانفرادیواختصاصیشکمباتزریقدینامیک(کبد)"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسپیرال منطقه ماگزیلو فاشیال بدون تزریق",
+      "fold": "سی تی اسپیرال منطقه ماگزیلو فاشیال بدون تزریق",
+      "squash": "سیتیاسپیرالمنطقهماگزیلوفاشیالبدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن High Resolution تمام ریه در یک نفس (5 میلی متری )- بدون تزریق",
+      "fold": "سی تی اسکن high resolution تمام ریه در یک نفس (5 میلی متری )- بدون تزریق",
+      "squash": "سیتیاسکنhighresolutionتمامریهدریکنفس(5میلیمتری)-بدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال 2و4میلی متری هر یک از اعضاء شکم با یا بدون تزریق - هر یک به تنهایی(پانکراس-کلیه ها)",
+      "fold": "سی تی اسکن اسپیرال 2و4میلی متری هر یک از اعضاء شکم با یا بدون تزریق - هر یک به تنهایی(پانکراس-کلیه ها)",
+      "squash": "سیتیاسکناسپیرال2و4میلیمتریهریکازاعضاءشکمبایابدونتزریق-هریکبهتنهایی(پانکراس-کلیهها)"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اربیت - سلا- پوستریور فوسا گوش داخلی خارجی یا میانی با تزریق",
+      "fold": "سی تی اسکن اسپیرال اربیت - سلا- پوستریور فوسا گوش داخلی خارجی یا میانی با تزریق",
+      "squash": "سیتیاسکناسپیرالاربیت-سلا-پوستریورفوساگوشداخلیخارجییامیانیباتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اربیت -سلا پوستریور فوسا با و بدون تزریق گوش داخلی خارجی یا میانی - با یا بدون تز",
+      "fold": "سی تی اسکن اسپیرال اربیت -سلا پوستریور فوسا با و بدون تزریق گوش داخلی خارجی یا میانی - با یا بدون تز",
+      "squash": "سیتیاسکناسپیرالاربیت-سلاپوستریورفوساباوبدونتزریقگوشداخلیخارجییامیانی-بایابدونتز"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اربیت -سلا- پوستریور فوسا گوش داخلی خارجی یا میانی بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال اربیت -سلا- پوستریور فوسا گوش داخلی خارجی یا میانی بدون تزریق",
+      "squash": "سیتیاسکناسپیرالاربیت-سلا-پوستریورفوساگوشداخلیخارجییامیانیبدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اندام تحتانی با و بدون کنتراست",
+      "fold": "سی تی اسکن اسپیرال اندام تحتانی با و بدون کنتراست",
+      "squash": "سیتیاسکناسپیرالاندامتحتانیباوبدونکنتراست"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اندام تحتانی با کنتراست",
+      "fold": "سی تی اسکن اسپیرال اندام تحتانی با کنتراست",
+      "squash": "سیتیاسکناسپیرالاندامتحتانیباکنتراست"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اندام تحتانی بدون کنتراست",
+      "fold": "سی تی اسکن اسپیرال اندام تحتانی بدون کنتراست",
+      "squash": "سیتیاسکناسپیرالاندامتحتانیبدونکنتراست"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اندام فوقانی با کنتراست",
+      "fold": "سی تی اسکن اسپیرال اندام فوقانی با کنتراست",
+      "squash": "سیتیاسکناسپیرالاندامفوقانیباکنتراست"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اندام فوقانی بدون و با کنتراست",
+      "fold": "سی تی اسکن اسپیرال اندام فوقانی بدون و با کنتراست",
+      "squash": "سیتیاسکناسپیرالاندامفوقانیبدونوباکنتراست"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اندام فوقانی بدون کنتراست",
+      "fold": "سی تی اسکن اسپیرال اندام فوقانی بدون کنتراست",
+      "squash": "سیتیاسکناسپیرالاندامفوقانیبدونکنتراست"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اوربیت (هر جهت - با و بدون تزریق)",
+      "fold": "سی تی اسکن اسپیرال اوربیت (هر جهت - با و بدون تزریق)",
+      "squash": "سیتیاسکناسپیرالاوربیت(هرجهت-باوبدونتزریق)"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اوربیت دو جهت با تزریق",
+      "fold": "سی تی اسکن اسپیرال اوربیت دو جهت با تزریق",
+      "squash": "سیتیاسکناسپیرالاوربیتدوجهتباتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اوربیت دو جهت با و بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال اوربیت دو جهت با و بدون تزریق",
+      "squash": "سیتیاسکناسپیرالاوربیتدوجهتباوبدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اوربیت دو جهت بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال اوربیت دو جهت بدون تزریق",
+      "squash": "سیتیاسکناسپیرالاوربیتدوجهتبدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اوربیت هر جهت با تزریق",
+      "fold": "سی تی اسکن اسپیرال اوربیت هر جهت با تزریق",
+      "squash": "سیتیاسکناسپیرالاوربیتهرجهتباتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال اوربیت هر جهت بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال اوربیت هر جهت بدون تزریق",
+      "squash": "سیتیاسکناسپیرالاوربیتهرجهتبدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- با تزریق",
+      "fold": "سی تی اسکن اسپیرال باقدرت تفکیک بالا hrct یا سی تی اسکن با قدرت تفکیک فوق العادهuhrct- با تزریق",
+      "squash": "سیتیاسکناسپیرالباقدرتتفکیکبالاhrctیاسیتیاسکنباقدرتتفکیکفوقالعادهuhrct-باتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- با وبدون تزری",
+      "fold": "سی تی اسکن اسپیرال باقدرت تفکیک بالا hrct یا سی تی اسکن با قدرت تفکیک فوق العادهuhrct- با وبدون تزری",
+      "squash": "سیتیاسکناسپیرالباقدرتتفکیکبالاhrctیاسیتیاسکنباقدرتتفکیکفوقالعادهuhrct-باوبدونتزری"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال باقدرت تفکیک بالا HRCT یا سی تی اسکن با قدرت تفکیک فوق العادهUHRCT- بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال باقدرت تفکیک بالا hrct یا سی تی اسکن با قدرت تفکیک فوق العادهuhrct- بدون تزریق",
+      "squash": "سیتیاسکناسپیرالباقدرتتفکیکبالاhrctیاسیتیاسکنباقدرتتفکیکفوقالعادهuhrct-بدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال حنجره دو جهت",
+      "fold": "سی تی اسکن اسپیرال حنجره دو جهت",
+      "squash": "سیتیاسکناسپیرالحنجرهدوجهت"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال حنجره یک جهت 2 میلیمتری با و بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال حنجره یک جهت 2 میلیمتری با و بدون تزریق",
+      "squash": "سیتیاسکناسپیرالحنجرهیکجهت2میلیمتریباوبدونتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری با تزریق",
+      "fold": "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری با تزریق",
+      "squash": "سیتیاسکناسپیرالحنجرهیکجهت2میلیمتریباتزریق"
+    },
+    {
+      "modality": "1",
+      "name": "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری بدون تزریق",
+      "fold": "سی تی اسکن اسپیرال حنجره یک جهت 2میلیمتری بدون تزریق",
+      "squash": "سیتیاسکناسپیرالحنجرهیکجهت2میلیمتریبدونتزریق"
+    },
+    {
+      "modality": "14",
+      "name": "Female VCUG",
+      "fold": "female vcug",
+      "squash": "femalevcug"
+    },
+    {
+      "modality": "14",
+      "name": "سونو هیستروگرافی ",
+      "fold": "سونو هیستروگرافی",
+      "squash": "سونوهیستروگرافی"
+    },
+    {
+      "modality": "14",
+      "name": "فیستولوگرافی",
+      "fold": "فیستولوگرافی",
+      "squash": "فیستولوگرافی"
+    },
+    {
+      "modality": "2",
+      "name": "MR ارتروگرافی",
+      "fold": "mr ارتروگرافی",
+      "squash": "mrارتروگرافی"
+    },
+    {
+      "modality": "2",
+      "name": "MR دفکوگرافی ",
+      "fold": "mr دفکوگرافی",
+      "squash": "mrدفکوگرافی"
+    },
+    {
+      "modality": "2",
+      "name": "MR کلانژیوگرافی (MRCP )",
+      "fold": "mr کلانژیوگرافی (mrcp )",
+      "squash": "mrکلانژیوگرافی(mrcp)"
+    },
+    {
+      "modality": "2",
+      "name": "MR یوروگرافی( MRU دینامیک)",
+      "fold": "mr یوروگرافی( mru دینامیک)",
+      "squash": "mrیوروگرافی(mruدینامیک)"
+    },
+    {
+      "modality": "2",
+      "name": "MRA (آنژیوگرافی) اندام تحتانی با یابدون ماده حاجب",
+      "fold": "mra (انژیوگرافی) اندام تحتانی با یابدون ماده حاجب",
+      "squash": "mra(انژیوگرافی)اندامتحتانیبایابدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA (آنژیوگرافی) اندام فوقانی با یا بدون ماده حاجب",
+      "fold": "mra (انژیوگرافی) اندام فوقانی با یا بدون ماده حاجب",
+      "squash": "mra(انژیوگرافی)اندامفوقانیبایابدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA (آنژیوگرافی) شکم با یا بدون مواد حاجب",
+      "fold": "mra (انژیوگرافی) شکم با یا بدون مواد حاجب",
+      "squash": "mra(انژیوگرافی)شکمبایابدونموادحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA (آنژیوگرافی) لگن با یا بدون ماده حاجب",
+      "fold": "mra (انژیوگرافی) لگن با یا بدون ماده حاجب",
+      "squash": "mra(انژیوگرافی)لگنبایابدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA (آنژیوگرافی) گردن بدون ماده حاجب و بعد از آن با ماده حاجب با سایر سکانس‌ها",
+      "fold": "mra (انژیوگرافی) گردن بدون ماده حاجب و بعد از ان با ماده حاجب با سایر سکانس ها",
+      "squash": "mra(انژیوگرافی)گردنبدونمادهحاجبوبعدازانبامادهحاجبباسایرسکانسها"
+    },
+    {
+      "modality": "2",
+      "name": "MRA سر(مغز) بدون ماده حاجب یا با ماده حاجب",
+      "fold": "mra سر(مغز) بدون ماده حاجب یا با ماده حاجب",
+      "squash": "mraسر(مغز)بدونمادهحاجبیابامادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA قفسه صدری شامل میوکارد با و بدون ماده حاجب",
+      "fold": "mra قفسه صدری شامل میوکارد با و بدون ماده حاجب",
+      "squash": "mraقفسهصدریشاملمیوکاردباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA کانال spinal و محتویات آن با یا بدون ماده حاجب",
+      "fold": "mra کانال spinal و محتویات ان با یا بدون ماده حاجب",
+      "squash": "mraکانالspinalومحتویاتانبایابدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRA گردن بدون ماده حاجب یا با ماده حاجب",
+      "fold": "mra گردن بدون ماده حاجب یا با ماده حاجب",
+      "squash": "mraگردنبدونمادهحاجبیابامادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI  اندام تحتانی با ماده حاجب (به عنوان مثال proton)",
+      "fold": "mri اندام تحتانی با ماده حاجب (به عنوان مثال proton)",
+      "squash": "mriاندامتحتانیبامادهحاجب(بهعنوانمثالproton)"
+    },
+    {
+      "modality": "2",
+      "name": "MRI  قلب جهت ارزیابی  میزان اضافه بار اهن",
+      "fold": "mri قلب جهت ارزیابی میزان اضافه بار اهن",
+      "squash": "mriقلبجهتارزیابیمیزاناضافهباراهن"
+    },
+    {
+      "modality": "2",
+      "name": "MRI  کبد جهت ارزیابی  میزان اضافه بار اهن",
+      "fold": "mri کبد جهت ارزیابی میزان اضافه بار اهن",
+      "squash": "mriکبدجهتارزیابیمیزاناضافهباراهن"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال Proton) دوطرفهiTMG",
+      "fold": "mri (به عنوان مثال proton) دوطرفهitmg",
+      "squash": "mri(بهعنوانمثالproton)دوطرفهitmg"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال Proton) هر مفصل اندام تحتانی با و بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) هر مفصل اندام تحتانی با و بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)هرمفصلاندامتحتانیباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال Proton) هر مفصل اندام تحتانی بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) هر مفصل اندام تحتانی بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)هرمفصلاندامتحتانیبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) اندام تحتانی با و بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) اندام تحتانی با و بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)اندامتحتانیباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) اندام تحتانی بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) اندام تحتانی بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)اندامتحتانیبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) شکم با و بدون مواد حاجب",
+      "fold": "mri (به عنوان مثال proton) شکم با و بدون مواد حاجب",
+      "squash": "mri(بهعنوانمثالproton)شکمباوبدونموادحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) شکم بدون مواد حاجب",
+      "fold": "mri (به عنوان مثال proton) شکم بدون مواد حاجب",
+      "squash": "mri(بهعنوانمثالproton)شکمبدونموادحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) لگن با ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) لگن با ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)لگنبامادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) لگن با و بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) لگن با و بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)لگنباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) لگن بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) لگن بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)لگنبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) کانال Spinal محتویات ان توراسیک بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) کانال spinal محتویات ان توراسیک بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)کانالspinalمحتویاتانتوراسیکبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثال proton) کانال spinal و محتویات ان ناحیه سرویکال بدون ماده حاجب",
+      "fold": "mri (به عنوان مثال proton) کانال spinal و محتویات ان ناحیه سرویکال بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)کانالspinalومحتویاتانناحیهسرویکالبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI (به عنوان مثالproton ) قفسه صدری (به عنوان مثال برای ارزیابی لنفادنوپاتی میدیاستیال) بدون ماده حاجب",
+      "fold": "mri (به عنوان مثالproton ) قفسه صدری (به عنوان مثال برای ارزیابی لنفادنوپاتی میدیاستیال) بدون ماده حاجب",
+      "squash": "mri(بهعنوانمثالproton)قفسهصدری(بهعنوانمثالبرایارزیابیلنفادنوپاتیمیدیاستیال)بدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اسکوپی",
+      "fold": "mri اسکوپی",
+      "squash": "mriاسکوپی"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اندام فوقانی بازو یا ساعد به غیر از مفاصل بدون ماده حاجب",
+      "fold": "mri اندام فوقانی بازو یا ساعد به غیر از مفاصل بدون ماده حاجب",
+      "squash": "mriاندامفوقانیبازویاساعدبهغیرازمفاصلبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اندام فوقانی به غیر از مفاصل با ماده حاجب",
+      "fold": "mri اندام فوقانی به غیر از مفاصل با ماده حاجب",
+      "squash": "mriاندامفوقانیبهغیرازمفاصلبامادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اندام فوقانی به غیر از مفاصل با و بدون ماده حاجب",
+      "fold": "mri اندام فوقانی به غیر از مفاصل با و بدون ماده حاجب",
+      "squash": "mriاندامفوقانیبهغیرازمفاصلباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اوربیت- صورت- و یا گردن با ماده حاجب",
+      "fold": "mri اوربیت- صورت- و یا گردن با ماده حاجب",
+      "squash": "mriاوربیت-صورت-ویاگردنبامادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اوربیت- صورت- و یا گردن با و بدون ماده حاجب",
+      "fold": "mri اوربیت- صورت- و یا گردن با و بدون ماده حاجب",
+      "squash": "mriاوربیت-صورت-ویاگردنباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI اوربیت- صورت- و یا گردن بدون ماده حاجب",
+      "fold": "mri اوربیت- صورت- و یا گردن بدون ماده حاجب",
+      "squash": "mriاوربیت-صورت-ویاگردنبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI برای velocity flow mapping",
+      "fold": "mri برای velocity flow mapping",
+      "squash": "mriبرایvelocityflowmapping"
+    },
+    {
+      "modality": "2",
+      "name": "MRI توراسیک با ماده حاجب",
+      "fold": "mri توراسیک با ماده حاجب",
+      "squash": "mriتوراسیکبامادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI توراسیک با و بدون ماده حاجب",
+      "fold": "mri توراسیک با و بدون ماده حاجب",
+      "squash": "mriتوراسیکباوبدونمادهحاجب"
+    },
+    {
+      "modality": "2",
+      "name": "MRI دینامیک هر قسمت بدن بجز قلب",
+      "fold": "mri دینامیک هر قسمت بدن بجز قلب",
+      "squash": "mriدینامیکهرقسمتبدنبجزقلب"
+    },
+    {
+      "modality": "3",
+      "name": "FNA  از تیروئید ",
+      "fold": "fna از تیروئید",
+      "squash": "fnaازتیروئید"
+    },
+    {
+      "modality": "3",
+      "name": "Scan A Quantitative به تنهائی",
+      "fold": "scan a quantitative به تنهائی",
+      "squash": "scanaquantitativeبهتنهائی"
+    },
+    {
+      "modality": "3",
+      "name": "Unquantitative A Scan با یا بدون B scan",
+      "fold": "unquantitative a scan با یا بدون b scan",
+      "squash": "unquantitativeascanبایابدونbscan"
+    },
+    {
+      "modality": "3",
+      "name": "الاستوگرافی پستان ",
+      "fold": "الاستوگرافی پستان",
+      "squash": "الاستوگرافیپستان"
+    },
+    {
+      "modality": "3",
+      "name": "اکوکاردیوگرافی جنین",
+      "fold": "اکوکاردیوگرافی جنین",
+      "squash": "اکوکاردیوگرافیجنین"
+    },
+    {
+      "modality": "3",
+      "name": "بستن کمپرسیونی سودوآنوریسم با پروب سونوگرافی",
+      "fold": "بستن کمپرسیونی سودوانوریسم با پروب سونوگرافی",
+      "squash": "بستنکمپرسیونیسودوانوریسمباپروبسونوگرافی"
+    },
+    {
+      "modality": "3",
+      "name": "بیوپسی پستان ",
+      "fold": "بیوپسی پستان",
+      "squash": "بیوپسیپستان"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی Infertility در آقایان (بررسی آنومالی مجرای EJ و VD)",
+      "fold": "سونوگرافی infertility در اقایان (بررسی انومالی مجرای ej و vd)",
+      "squash": "سونوگرافیinfertilityدراقایان(بررسیانومالیمجرایejوvd)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی NT و آنومالی سه ماهه اول",
+      "fold": "سونوگرافی nt و انومالی سه ماهه اول",
+      "squash": "سونوگرافیntوانومالیسهماههاول"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی NT و یا NB (کدهای مربوط به تعیین حاملگی در این کد لحاظ شده است)",
+      "fold": "سونوگرافی nt و یا nb (کدهای مربوط به تعیین حاملگی در این کد لحاظ شده است)",
+      "squash": "سونوگرافیntویاnb(کدهایمربوطبهتعیینحاملگیدراینکدلحاظشدهاست)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی TCCS(اسکن دوبلکس شریان های خارج مغزی شامل کاروتید و ورتبرال دو طرفه و وریدهای گردنی همراه",
+      "fold": "سونوگرافی tccs(اسکن دوبلکس شریان های خارج مغزی شامل کاروتید و ورتبرال دو طرفه و وریدهای گردنی همراه",
+      "squash": "سونوگرافیtccs(اسکندوبلکسشریانهایخارجمغزیشاملکاروتیدوورتبرالدوطرفهووریدهایگردنیهمراه"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی آدرنال- یک یا دو طرفه",
+      "fold": "سونوگرافی ادرنال- یک یا دو طرفه",
+      "squash": "سونوگرافیادرنال-یکیادوطرفه"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی استنوز هیپرتروفیک پیلور نوزاد",
+      "fold": "سونوگرافی استنوز هیپرتروفیک پیلور نوزاد",
+      "squash": "سونوگرافیاستنوزهیپرتروفیکپیلورنوزاد"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی الت ( پنیس )",
+      "fold": "سونوگرافی الت ( پنیس )",
+      "squash": "سونوگرافیالت(پنیس)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی انواژیناسیون روده",
+      "fold": "سونوگرافی انواژیناسیون روده",
+      "squash": "سونوگرافیانواژیناسیونروده"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی اپاندیس",
+      "fold": "سونوگرافی اپاندیس",
+      "squash": "سونوگرافیاپاندیس"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی بارداری ترانس واژینال",
+      "fold": "سونوگرافی بارداری ترانس واژینال",
+      "squash": "سونوگرافیبارداریترانسواژینال"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی برای بررسی وضع جنین های چند قلویی- هر قل اضافه",
+      "fold": "سونوگرافی برای بررسی وضع جنین های چند قلویی- هر قل اضافه",
+      "squash": "سونوگرافیبرایبررسیوضعجنینهایچندقلویی-هرقلاضافه"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی برای تشخیص مالفورماسیون های مادرزادی جنین",
+      "fold": "سونوگرافی برای تشخیص مالفورماسیون های مادرزادی جنین",
+      "squash": "سونوگرافیبرایتشخیصمالفورماسیونهایمادرزادیجنین"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی بررسی رشد جنین و IUGR غیرداپلر",
+      "fold": "سونوگرافی بررسی رشد جنین و iugr غیرداپلر",
+      "squash": "سونوگرافیبررسیرشدجنینوiugrغیرداپلر"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی بلوغ ریه ها جنین",
+      "fold": "سونوگرافی بلوغ ریه ها جنین",
+      "squash": "سونوگرافیبلوغریههاجنین"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی به ازای هر چشم (A اسکن و B اسکن با هم )",
+      "fold": "سونوگرافی به ازای هر چشم (a اسکن و b اسکن با هم )",
+      "squash": "سونوگرافیبهازایهرچشم(aاسکنوbاسکنباهم)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی بیضه ها",
+      "fold": "سونوگرافی بیضه ها",
+      "squash": "سونوگرافیبیضهها"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی بیضه پایین نیامده",
+      "fold": "سونوگرافی بیضه پایین نیامده",
+      "squash": "سونوگرافیبیضهپاییننیامده"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی بیوفیزیکال پروفایل (بررسی حرکت- تون- تنفس جنین و مایع امنیوتیک)",
+      "fold": "سونوگرافی بیوفیزیکال پروفایل (بررسی حرکت- تون- تنفس جنین و مایع امنیوتیک)",
+      "squash": "سونوگرافیبیوفیزیکالپروفایل(بررسیحرکت-تون-تنفسجنینومایعامنیوتیک)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی تاندون",
+      "fold": "سونوگرافی تاندون",
+      "squash": "سونوگرافیتاندون"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی ترانس واژینال جستجوی حاملگی خارج رحم(EP)",
+      "fold": "سونوگرافی ترانس واژینال جستجوی حاملگی خارج رحم(ep)",
+      "squash": "سونوگرافیترانسواژینالجستجویحاملگیخارجرحم(ep)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی تیروئید یا پاراتیروئید",
+      "fold": "سونوگرافی تیروئید یا پاراتیروئید",
+      "squash": "سونوگرافیتیروئیدیاپاراتیروئید"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی جستجوی حاملگی خارج از رحم",
+      "fold": "سونوگرافی جستجوی حاملگی خارج از رحم",
+      "squash": "سونوگرافیجستجویحاملگیخارجازرحم"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی جستجوی مایع در پلور یا آسیت- هر کدام",
+      "fold": "سونوگرافی جستجوی مایع در پلور یا اسیت- هر کدام",
+      "squash": "سونوگرافیجستجویمایعدرپلوریااسیت-هرکدام"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی جفت از نظر کرتا",
+      "fold": "سونوگرافی جفت از نظر کرتا",
+      "squash": "سونوگرافیجفتازنظرکرتا"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی حاملگی (شامل سن- وضع جفت- جنین و ضربان قلب)",
+      "fold": "سونوگرافی حاملگی (شامل سن- وضع جفت- جنین و ضربان قلب)",
+      "squash": "سونوگرافیحاملگی(شاملسن-وضعجفت-جنینوضربانقلب)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی داپلر رنگی پروستات به روش ترانس رکتال",
+      "fold": "سونوگرافی داپلر رنگی پروستات به روش ترانس رکتال",
+      "squash": "سونوگرافیداپلررنگیپروستاتبهروشترانسرکتال"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی داپلر واریس اندام تحتانی طرفه بررسی وریدهای سطحی و عمقی دریچه صافن و فمورال و صافن و پوپلی",
+      "fold": "سونوگرافی داپلر واریس اندام تحتانی طرفه بررسی وریدهای سطحی و عمقی دریچه صافن و فمورال و صافن و پوپلی",
+      "squash": "سونوگرافیداپلرواریساندامتحتانیطرفهبررسیوریدهایسطحیوعمقیدریچهصافنوفمورالوصافنوپوپلی"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی داپلر واریس اندام تحتانی یک طرفه بررسی وریدهای سطحی وعمقی دریچه صافن و فمورال و صافن وپوپل",
+      "fold": "سونوگرافی داپلر واریس اندام تحتانی یک طرفه بررسی وریدهای سطحی وعمقی دریچه صافن و فمورال و صافن وپوپل",
+      "squash": "سونوگرافیداپلرواریساندامتحتانییکطرفهبررسیوریدهایسطحیوعمقیدریچهصافنوفمورالوصافنوپوپل"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی داپلرترانس کرانیال (TCD)",
+      "fold": "سونوگرافی داپلرترانس کرانیال (tcd)",
+      "squash": "سونوگرافیداپلرترانسکرانیال(tcd)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی رتروپریتوئن یا آئورت شکمی غیر داپلر",
+      "fold": "سونوگرافی رتروپریتوئن یا ائورت شکمی غیر داپلر",
+      "squash": "سونوگرافیرتروپریتوئنیاائورتشکمیغیرداپلر"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی رحم و تخمدان از روی شکم",
+      "fold": "سونوگرافی رحم و تخمدان از روی شکم",
+      "squash": "سونوگرافیرحموتخمدانازرویشکم"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی رحم و تخمدان ها (ترانس واژینال)",
+      "fold": "سونوگرافی رحم و تخمدان ها (ترانس واژینال)",
+      "squash": "سونوگرافیرحموتخمدانها(ترانسواژینال)"
+    },
+    {
+      "modality": "3",
+      "name": "سونوگرافی ریفلاکس معده به مری",
+      "fold": "سونوگرافی ریفلاکس معده به مری",
+      "squash": "سونوگرافیریفلاکسمعدهبهمری"
+    },
+    {
+      "modality": "4",
+      "name": "Defecography",
+      "fold": "defecography",
+      "squash": "defecography"
+    },
+    {
+      "modality": "4",
+      "name": "آرتروگرافی زانو با هوا و ماده حاجب",
+      "fold": "ارتروگرافی زانو با هوا و ماده حاجب",
+      "squash": "ارتروگرافیزانوباهواومادهحاجب"
+    },
+    {
+      "modality": "4",
+      "name": "آرتروگرافی شانه با هوا و ماده حاجب",
+      "fold": "ارتروگرافی شانه با هوا و ماده حاجب",
+      "squash": "ارتروگرافیشانهباهواومادهحاجب"
+    },
+    {
+      "modality": "4",
+      "name": "آرتروگرافی مچ دست",
+      "fold": "ارتروگرافی مچ دست",
+      "squash": "ارتروگرافیمچدست"
+    },
+    {
+      "modality": "4",
+      "name": "اوروگرافی ترشحی فیلم با هر تعداد کلیشه لازم و کامل (با یا بدون PVC)",
+      "fold": "اوروگرافی ترشحی فیلم با هر تعداد کلیشه لازم و کامل (با یا بدون pvc)",
+      "squash": "اوروگرافیترشحیفیلمباهرتعدادکلیشهلازموکامل(بایابدونpvc)"
+    },
+    {
+      "modality": "4",
+      "name": "اوروگرافی سریع برای فشار خون (حداقل برای 6 کلیشه)",
+      "fold": "اوروگرافی سریع برای فشار خون (حداقل برای 6 کلیشه)",
+      "squash": "اوروگرافیسریعبرایفشارخون(حداقلبرای6کلیشه)"
+    },
+    {
+      "modality": "4",
+      "name": "برونکوگرافی یک طرفه",
+      "fold": "برونکوگرافی یک طرفه",
+      "squash": "برونکوگرافییکطرفه"
+    },
+    {
+      "modality": "4",
+      "name": "در صورت انجام پیلوگرافی یا نفروگرافی یا نفروستومی قبلی از کدهای 700335 و 700340 استفاده میگردد",
+      "fold": "در صورت انجام پیلوگرافی یا نفروگرافی یا نفروستومی قبلی از کدهای 700335 و 700340 استفاده میگردد",
+      "squash": "درصورتانجامپیلوگرافییانفروگرافییانفروستومیقبلیازکدهای700335و700340استفادهمیگردد"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی EOS تمام ستون فقرات در پوزیشن های مختلف",
+      "fold": "رادیوگرافی eos تمام ستون فقرات در پوزیشن های مختلف",
+      "squash": "رادیوگرافیeosتمامستونفقراتدرپوزیشنهایمختلف"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان بازو ( 2 جهت روی یک فیلم )",
+      "fold": "رادیوگرافی استخوان بازو ( 2 جهت روی یک فیلم )",
+      "squash": "رادیوگرافیاستخوانبازو(2جهتروییکفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان بازو یا ساعد یا آرنج یک جهت (یک فیلم )",
+      "fold": "رادیوگرافی استخوان بازو یا ساعد یا ارنج یک جهت (یک فیلم )",
+      "squash": "رادیوگرافیاستخوانبازویاساعدیاارنجیکجهت(یکفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان جناغ (نمای ابلیک و نیمرخ به طور هم زمان- 2 فیلم)",
+      "fold": "رادیوگرافی استخوان جناغ (نمای ابلیک و نیمرخ به طور هم زمان- 2 فیلم)",
+      "squash": "رادیوگرافیاستخوانجناغ(نمایابلیکونیمرخبهطورهمزمان-2فیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان جناغ (نمای ابلیک یا نیمرخ - یک فیلم)",
+      "fold": "رادیوگرافی استخوان جناغ (نمای ابلیک یا نیمرخ - یک فیلم)",
+      "squash": "رادیوگرافیاستخوانجناغ(نمایابلیکیانیمرخ-یکفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان ران (دو اکسپوز- روی یک فیلم)",
+      "fold": "رادیوگرافی استخوان ران (دو اکسپوز- روی یک فیلم)",
+      "squash": "رادیوگرافیاستخوانران(دواکسپوز-روییکفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان ران (روبرو و نیمرخ - روی دو فیلم )",
+      "fold": "رادیوگرافی استخوان ران (روبرو و نیمرخ - روی دو فیلم )",
+      "squash": "رادیوگرافیاستخوانران(روبروونیمرخ-رویدوفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان ساعد ( دو جهت- روی یک فیلم )",
+      "fold": "رادیوگرافی استخوان ساعد ( دو جهت- روی یک فیلم )",
+      "squash": "رادیوگرافیاستخوانساعد(دوجهت-روییکفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان ساکروم و مهره های دنبالچه- دوجهت",
+      "fold": "رادیوگرافی استخوان ساکروم و مهره های دنبالچه- دوجهت",
+      "squash": "رادیوگرافیاستخوانساکرومومهرههایدنبالچه-دوجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان فک (نمای ابلیک یا روبرو یا نیمرخ هر طرف)",
+      "fold": "رادیوگرافی استخوان فک (نمای ابلیک یا روبرو یا نیمرخ هر طرف)",
+      "squash": "رادیوگرافیاستخوانفک(نمایابلیکیاروبرویانیمرخهرطرف)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوانهای کف دست – دو جهت",
+      "fold": "رادیوگرافی استخوانهای کف دست – دو جهت",
+      "squash": "رادیوگرافیاستخوانهایکفدست–دوجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوانهای کف دست- یک جهت",
+      "fold": "رادیوگرافی استخوانهای کف دست- یک جهت",
+      "squash": "رادیوگرافیاستخوانهایکفدست-یکجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان‌های صورت (نمای روبرو )",
+      "fold": "رادیوگرافی استخوان های صورت (نمای روبرو )",
+      "squash": "رادیوگرافیاستخوانهایصورت(نمایروبرو)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان‌های صورت (نمای روبرو و نیمرخ )",
+      "fold": "رادیوگرافی استخوان های صورت (نمای روبرو و نیمرخ )",
+      "squash": "رادیوگرافیاستخوانهایصورت(نمایروبروونیمرخ)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی استخوان‌های مخصوص بینی (نمای نیمرخ راست و چپ روی یک فیلم)",
+      "fold": "رادیوگرافی استخوان های مخصوص بینی (نمای نیمرخ راست و چپ روی یک فیلم)",
+      "squash": "رادیوگرافیاستخوانهایمخصوصبینی(نماینیمرخراستوچپروییکفیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی اسکنوگرام (برای تعیین کوتاهی اندام با خط کش مدرج)",
+      "fold": "رادیوگرافی اسکنوگرام (برای تعیین کوتاهی اندام با خط کش مدرج)",
+      "squash": "رادیوگرافیاسکنوگرام(برایتعیینکوتاهیاندامباخطکشمدرج)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی انگشتان هر دست - دو جهت",
+      "fold": "رادیوگرافی انگشتان هر دست - دو جهت",
+      "squash": "رادیوگرافیانگشتانهردست-دوجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی انگشتان هر دست - یک جهت",
+      "fold": "رادیوگرافی انگشتان هر دست - یک جهت",
+      "squash": "رادیوگرافیانگشتانهردست-یکجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی انگشتان هر پا - دو جهت",
+      "fold": "رادیوگرافی انگشتان هر پا - دو جهت",
+      "squash": "رادیوگرافیانگشتانهرپا-دوجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی انگشتان هر پا - یک جهت",
+      "fold": "رادیوگرافی انگشتان هر پا - یک جهت",
+      "squash": "رادیوگرافیانگشتانهرپا-یکجهت"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی ایستاده فقرات (روبرو و نیمرخ - روی2 فیلم)",
+      "fold": "رادیوگرافی ایستاده فقرات (روبرو و نیمرخ - روی2 فیلم)",
+      "squash": "رادیوگرافیایستادهفقرات(روبروونیمرخ-روی2فیلم)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی باریم انما (حداقل 4 کلیشه )",
+      "fold": "رادیوگرافی باریم انما (حداقل 4 کلیشه )",
+      "squash": "رادیوگرافیباریمانما(حداقل4کلیشه)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی باریم انما دوبل کنتراست (حداقل 6 کلیشه)",
+      "fold": "رادیوگرافی باریم انما دوبل کنتراست (حداقل 6 کلیشه)",
+      "squash": "رادیوگرافیباریمانمادوبلکنتراست(حداقل6کلیشه)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی ترانزیت روده های کوچک (حداقل4 کلیشه)",
+      "fold": "رادیوگرافی ترانزیت روده های کوچک (حداقل4 کلیشه)",
+      "squash": "رادیوگرافیترانزیترودههایکوچک(حداقل4کلیشه)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی ترانزیت کولون Colon Transit Time (CTT)",
+      "fold": "رادیوگرافی ترانزیت کولون colon transit time (ctt)",
+      "squash": "رادیوگرافیترانزیتکولونcolontransittime(ctt)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی تعیین سن استخوانی- هر کلیشه",
+      "fold": "رادیوگرافی تعیین سن استخوانی- هر کلیشه",
+      "squash": "رادیوگرافیتعیینسناستخوانی-هرکلیشه"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی توموگرافی (هر عضو- هر کلیشه فیلم کوچک)",
+      "fold": "رادیوگرافی توموگرافی (هر عضو- هر کلیشه فیلم کوچک)",
+      "squash": "رادیوگرافیتوموگرافی(هرعضو-هرکلیشهفیلمکوچک)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی توموگرافی( هر عضو- هر کلیشه فیلم بزرگ)",
+      "fold": "رادیوگرافی توموگرافی( هر عضو- هر کلیشه فیلم بزرگ)",
+      "squash": "رادیوگرافیتوموگرافی(هرعضو-هرکلیشهفیلمبزرگ)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی جمجمه رخ و نیمرخ",
+      "fold": "رادیوگرافی جمجمه رخ و نیمرخ",
+      "squash": "رادیوگرافیجمجمهرخونیمرخ"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی جمجمه نمای تاون- هیرتز یا هر نمای دیگر(هراکسپوز)",
+      "fold": "رادیوگرافی جمجمه نمای تاون- هیرتز یا هر نمای دیگر(هراکسپوز)",
+      "squash": "رادیوگرافیجمجمهنمایتاون-هیرتزیاهرنمایدیگر(هراکسپوز)"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی داکریوسیستوگرافی",
+      "fold": "رادیوگرافی داکریوسیستوگرافی",
+      "squash": "رادیوگرافیداکریوسیستوگرافی"
+    },
+    {
+      "modality": "4",
+      "name": "رادیوگرافی دندان هر فیلم (پری اپیکال یا بایت وینگ)",
+      "fold": "رادیوگرافی دندان هر فیلم (پری اپیکال یا بایت وینگ)",
+      "squash": "رادیوگرافیدندانهرفیلم(پریاپیکالیابایتوینگ)"
+    },
+    {
+      "modality": "5",
+      "name": "Bone Densitometry تراکم سنجی استخوان(یک یا دو منطقه) رادیوگرافی",
+      "fold": "bone densitometry تراکم سنجی استخوان(یک یا دو منطقه) رادیوگرافی",
+      "squash": "bonedensitometryتراکمسنجیاستخوان(یکیادومنطقه)رادیوگرافی"
+    },
+    {
+      "modality": "5",
+      "name": "Bone Densitometry تراکم سنجی استخوانهای تمام بدن",
+      "fold": "bone densitometry تراکم سنجی استخوانهای تمام بدن",
+      "squash": "bonedensitometryتراکمسنجیاستخوانهایتمامبدن"
+    },
+    {
+      "modality": "5",
+      "name": "Bone Survey(بالای سن 10 سالگی) با دو کلیشه اضافه (رخ و نیمرخ کمر)",
+      "fold": "bone survey(بالای سن 10 سالگی) با دو کلیشه اضافه (رخ و نیمرخ کمر)",
+      "squash": "bonesurvey(بالایسن10سالگی)بادوکلیشهاضافه(رخونیمرخکمر)"
+    },
+    {
+      "modality": "5",
+      "name": "Bone Survey(تا سن 10 سالگی) ",
+      "fold": "bone survey(تا سن 10 سالگی)",
+      "squash": "bonesurvey(تاسن10سالگی)"
+    },
+    {
+      "modality": "5",
+      "name": "test",
+      "fold": "test",
+      "squash": "test"
+    },
+    {
+      "modality": "5",
+      "name": "سنجش تراکم استخوان (Dual Photon)",
+      "fold": "سنجش تراکم استخوان (dual photon)",
+      "squash": "سنجشتراکماستخوان(dualphoton)"
+    },
+    {
+      "modality": "5",
+      "name": "سنجش تراکم استخوان (Single Photon)",
+      "fold": "سنجش تراکم استخوان (single photon)",
+      "squash": "سنجشتراکماستخوان(singlephoton)"
+    },
+    {
+      "modality": "6",
+      "name": "عکس سفالوگرام دندان",
+      "fold": "عکس سفالوگرام دندان",
+      "squash": "عکسسفالوگرامدندان"
+    },
+    {
+      "modality": "9",
+      "name": "ماموگرافی با بزرگنمایی ",
+      "fold": "ماموگرافی با بزرگنمایی",
+      "squash": "ماموگرافیبابزرگنمایی"
+    },
+    {
+      "modality": "9",
+      "name": "ماموگرافی دو طرفه",
+      "fold": "ماموگرافی دو طرفه",
+      "squash": "ماموگرافیدوطرفه"
+    },
+    {
+      "modality": "9",
+      "name": "ماموگرافی یک طرفه",
+      "fold": "ماموگرافی یک طرفه",
+      "squash": "ماموگرافییکطرفه"
+    },
+    {
+      "modality": "9",
+      "name": "کلیشه بزرگ",
+      "fold": "کلیشه بزرگ",
+      "squash": "کلیشهبزرگ"
+    },
+    {
+      "modality": "9",
+      "name": "کلیشه کوچک",
+      "fold": "کلیشه کوچک",
+      "squash": "کلیشهکوچک"
+    }
+  ],
+  "relationships": [
+    {
+      "from": "patient",
+      "to": "reception",
+      "cardinality": "1:n",
+      "via": "receptions.patient"
+    },
+    {
+      "from": "reception",
+      "to": "service",
+      "cardinality": "1:n",
+      "via": "receptions.services[]",
+      "note": "THE fan-out. Counting past this edge without DISTINCT is the classic error."
+    },
+    {
+      "from": "service",
+      "to": "modality",
+      "cardinality": "n:1",
+      "via": "services[].Modality"
+    },
+    {
+      "from": "reception",
+      "to": "physician_referring",
+      "cardinality": "n:1",
+      "via": "receptions.referrerPhysician"
+    },
+    {
+      "from": "reception",
+      "to": "staff",
+      "cardinality": "n:1",
+      "via": "receptions.registeredBy"
+    },
+    {
+      "from": "reception",
+      "to": "transaction",
+      "cardinality": "1:n",
+      "via": "transactions.ReceptionID"
+    },
+    {
+      "from": "reception",
+      "to": "report",
+      "cardinality": "1:1",
+      "via": "receptions.imagingWorkflow.report"
+    },
+    {
+      "from": "patient",
+      "to": "study",
+      "cardinality": "1:n",
+      "via": "studies.patient"
+    }
+  ],
+  "data_quality": {
+    "orphan_modality_codes_in_services": {
+      "codes": [
+        "6"
+      ],
+      "note": "ServicesInfo references modality code(s) that the Modality catalogue does not define. A service under such a code resolves to a modality that cannot be named or filtered."
+    },
+    "insurance_type_non_code_values": {
+      "values": [
+        "آزاد"
+      ],
+      "note": "insuranceType is meant to be a numeric code but also holds a Persian word."
+    },
+    "modality_stored_as_object": {
+      "measured": "201 string / 4 object on 1405/06/01",
+      "note": "Any equality filter must cover both shapes."
+    },
+    "study_date_two_formats": {
+      "measured": [
+        [
+          "len8_starts20",
+          527
+        ],
+        [
+          "len8_starts14",
+          73
+        ]
+      ],
+      "note": "studies.StudyDate holds BOTH Gregorian YYYYMMDD ('20260823') and Jalali YYYYMMDD ('14050601'). A range filter written for one silently excludes the other."
+    },
+    "service_group_spelling_split": {
+      "note": "Service groups are split by the Arabic/Persian yeh: 'سي تي اسکن' (206 services) and 'سی تی اسکن' (1) are one concept stored twice."
+    }
+  },
+  "counting_rules": {
+    "_why": "Every count question must name its grain. The standards keep these three levels separate and so must we.",
+    "patients": {
+      "question_fa": [
+        "چند بیمار",
+        "چند نفر",
+        "چند مریض"
+      ],
+      "how": "count distinct receptions.patient"
+    },
+    "receptions": {
+      "question_fa": [
+        "چند پذیرش",
+        "چند مراجعه"
+      ],
+      "how": "count distinct receptions.ReceptionID"
+    },
+    "services": {
+      "question_fa": [
+        "چند خدمت",
+        "چند سرویس"
+      ],
+      "how": "count receptions.services[] rows"
+    },
+    "invariant": "services >= receptions >= distinct patients, for any period",
+    "ambiguity": "'چند نفر آمدند' is a patient question; 'چند تا مراجعه داشتیم' is a visit question. Staff use them interchangeably. When ambiguous, answer at the patient grain AND say which grain was used."
+  }
+}

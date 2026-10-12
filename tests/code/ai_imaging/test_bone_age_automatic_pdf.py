@@ -24,7 +24,8 @@ def test_missing_pdf_is_never_opened(monkeypatch):
     assert ui.show_completed_report({},'1.2.3',('1.2.3','fixture')) is False
 
 
-def test_actual_analysis_worker_always_builds_template_with_source_image(tmp_path,monkeypatch):
+@pytest.mark.parametrize('use_job_route', [False, True])
+def test_actual_analysis_worker_always_builds_template_with_source_image(tmp_path,monkeypatch,use_job_route):
     import ast
     from pathlib import Path
     from PySide6.QtCore import QThread,Signal,Qt
@@ -36,7 +37,23 @@ def test_actual_analysis_worker_always_builds_template_with_source_image(tmp_pat
     exec(compile(ast.Module(body=[cls],type_ignores=[]),'<actual-bone-worker>','exec'),scope)
     draft=dict(study_uid='1.2.3',patient_id='fixture',name='Synthetic Child',sex='M',chronological_age_months=120)
     monkeypatch.setattr(demographics,'prepare_review',lambda *args:dict(draft))
-    monkeypatch.setattr(routing,'study',lambda *args,**kwargs:dict(sex='M',predicted_bone_age_months=125.68))
+    submitted = []
+    if use_job_route:
+        class SyntheticClient:
+            def json(self, path):
+                assert path == '/v1/capabilities'
+                return {'bone_age_demographic_confirmation': 1}
+            def analyze(self, module, study, references, parameters, output, *, cancel):
+                assert worker.confirmed_demographics['physician_confirmed'] is True
+                assert module == 'bone-age' and study == '1.2.3' and references == {}
+                assert parameters['sex'] == 'M'
+                assert parameters['sex_provenance'] == dict(source='physician-review', study_uid='1.2.3', patient_id='fixture')
+                assert not cancel.is_set()
+                submitted.append(True)
+                return dict(sex='M', predicted_bone_age_months=125.68)
+        monkeypatch.setattr(routing, 'Client', SyntheticClient)
+    else:
+        monkeypatch.setattr(routing,'study',lambda *args,**kwargs:dict(sex='M',predicted_bone_age_months=125.68))
     calls=[]
     def inputs(study,**kwargs):
         assert kwargs['review'] is False and kwargs['result']['patient_id']=='fixture'
@@ -56,3 +73,5 @@ def test_actual_analysis_worker_always_builds_template_with_source_image(tmp_pat
     worker.run()
     assert not errors and calls==[('1.2.3','fixture',b'synthetic-png')]
     assert len(completed)==1 and completed[0]['pdf_path'].endswith('bone_age_report.pdf')
+    assert completed[0]['predicted_bone_age_months'] == 125.68
+    assert bool(submitted) is use_job_route

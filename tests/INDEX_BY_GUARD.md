@@ -1,5 +1,25 @@
 # AI-PACS Test Inventory ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ Index by Guard
 
+## Eagle Eye lumbar Client/Server compatibility (2026-10-10, OPT-51/55)
+
+`code/ai_imaging/test_lumbar_vision_server_route.py` proves the Server capability
+is derived from the actual protocol, stage map and enforced limits; missing,
+protocol-mismatched, stage-mismatched and malformed contracts are rejected before
+any image read or upload; a compatible contract reaches the authenticated route;
+and a route disappearing after negotiation reports Server drift. The HTTP guard
+in `test_user_access_http.py` proves the capability is present only when the
+handler exists. Synthetic inputs only; active Razi and native GUI acceptance are
+separate gates.
+
+## Lumbar marrow exploratory T1 pilot (2026-10-08)
+
+`code/ai_imaging/test_lumbar_marrow.py` covers the menu, bounded contract, T1
+confirmation/header gates, physical erosion, native DICOM rescaling, signal
+statistics, derived artifact export, clinical input validation and old-server/
+cross-study rejection. `test_lumbar_marrow_stage.py` covers immutable-baseline
+preservation and refused patch drift. All fixtures are synthetic; no live DB.
+24 tests pass. Source GUI and actual model/patient execution remain separate gates.
+
 ## Slicer manual brain review launch (2026-10-06)
 
 `code/ai_imaging/test_manual_brain_review.py` verifies space-free script staging,
@@ -3330,3 +3350,429 @@ Two spec guards failed before enrollment; all three now pass. Frozen artifact
 inventory and installed viewport checks are independent gates.
 
 `code/viewer/test_encapsulation_eof_compatibility.py` covers lossless synthetic RLE pixels with a missing sequence delimiter, truncated/invalid item rejection, offset-table and payload bounds, original preservation, full FAST/worker/legacy backend reads, Advanced GDCM comparison, import conversion and sync classification. See the VTK domains report execution receipt; decoder success is separate from actual viewport acceptance.
+
+- `tests/code/echomind/test_secretary_english_output.py`: English-only company completion instructions and client output preference independent of input language.
+
+- `tests/code/echomind/test_cleanup_terminal_receipt.py`: same-operation completion polling without replay, late disk refresh, changed/missing receipt rejection and warnings retaining deletion counts.
+
+- Home operational updates (2026-10-07): `code/network/test_home_legacy_workflow.py` covers real legacy socket reads, exact identity, no authorization downgrade, active profile resolution, server assignment without INO history and Reception author/latest-study scope. Missing-patient and optional-metadata failure guards preserve successful voice/report updates; framed loopback covers partial batches and known Mongo query modes. `code/ui_services/test_workflow_realtime_ui.py` covers Local binding, the compact connection badge beside Refresh Statuses and replacing the cached report author while preserving table objects/selection. PACS Reception invalidation guard excludes private event bodies.
+
+- Live legacy stream and stable projection (2026-10-07): `code/network/test_home_live_workflow.py` exercises real framed subscription, session verification/revocation, heartbeat, reconnect, bounded bursts, outside-study rejection, independent enrichment, late-result discard and same-center three-node delivery. Home Qt guards cover voice-only sparse patches, unknown-field retention, monotonic observation rejection and separate reporter/assignee presentation. REST assignment guards require the existing assigner criterion. Latest owner semantics supersede historical Report-as-assignee structural tests; the unchanged login identity baseline remains separately recorded.
+
+- Unstable-network ownership (2026-10-07): the same network suite pins immediate caller stop, receiver ownership until slow enrichment exits, silent-stream closure and a total deadline for trickled frames. Home Qt renewal coverage requires a new projection epoch when a session creates a replacement receiver; the valid new observation sequence must not be rejected against the previous receiver's counter. Ownership and renewal guards failed before correction. Source GUI acceptance of the latest correction is separate from the owner's acceptance of the preceding slice.
+
+- Patient Eagle Eye activation discovery (2026-10-07): `code/ai_imaging/test_case_realtime.py::test_open_patient_retries_capability_when_server_is_upgraded` fails when unsupported capability permanently ends the receiver. It requires an interruptible 15-second retry and subsequent same-case snapshot without reopening the tab. Target candidate additionally passes actual framed bridge, paired TLS, same-center shared saved reads and owner-private job mutations. See the case synchronization activation record for separate source GUI/cutover gates.
+
+- Echocardiography reporting: code/echomind/test_echocardiography_reporting.py covers cardiac modality/template aliases, server schema, prompt parity, missing-pathology wording and Report/Turbo server-owned prompt construction with a synthetic mocked provider.
+
+
+## Licensing / additive signed renewal (2026-10-07)
+
+- `code/licensing/test_signed_renewal.py`: preserve previous balance, expired/delayed renewal, duplicate order/request/base rejection, signed device/product isolation, legacy company-record approval, clock rollback, storage denial/corruption, protected-state requirement and explicit company product confirmation.
+- `code/licensing/test_license_process_lock.py`: real second-process exclusion for shared Server licensing state.
+- `code/licensing/test_license_ui.py`: offscreen request/preview/apply, response-edit invalidation, cancellation, bounded-input error, worker thread ownership, startup gate and company inspection-before-issuance. This is not native source GUI acceptance.
+- `code/licensing/test_server_license_gate.py`: authenticated paid-work admission denies missing/expired licensing, renewal takes effect without restart and prior-read routes remain accessible.
+- `code/builder/test_license_security_boundary.py`: read-only runtime import boundary, valid public roots and company issuer exclusion in PyInstaller/Nuitka. Company GUI entrypoints remain in `modules/LicenseGenerator` and are explicitly excluded from customer builds.
+- See [licensing implementation](../docs/modules/LICENSE_RENEWAL.md) and [folder structure](../modules/LicenseGenerator/README.md). Core/build selection: 41 passed, exit 0; live source and frozen acceptance remain separate pending gates.
+
+Final combined licensing/adjacent/build-input receipt (2026-10-07): 109 passed, exit 0, no retries; 513 mirror pairs match. Native source and frozen acceptance remain pending.
+
+- `code/echomind/test_reference_report.py`: official INTERGROWTH cached example agreement, no extrapolation, missing context, cardiac sex/method/age gates, unsupported signed values, exact evidence/bounds, server transport and live/restored bubble callbacks. Synthetic provider/paired-TLS receipts are separate from source GUI acceptance.
+
+- `code/echomind/test_report_attachments.py`: report-source uploads, server parsing/routing, bounded input and clipboard lifecycle.
+
+- `code/echomind/test_reception_correction.py`: exact reception identity, HTML text preservation, deduplication and stale-session callback rejection.
+
+Lumbar marrow review tab: code/ai_imaging/test_lumbar_marrow_workspace.py covers completion placement, reusable tabs, popup hiding and failure/cancellation with synthetic reports.
+
+### FAST empty hint initial centering (2026-10-08)
+
+`code/viewer/test_fast_empty_hint_initial_layout.py` uses actual QtFastContainer widgets to check both panes before activation/drag, hidden-parent resize/reshow and loaded-label hiding. See the VTK domains report for fail-before proof, separate adjacent baseline failures and pending native GUI acceptance.
+
+Marrow review/PDF/correction: code/ai_imaging/test_lumbar_marrow_review.py verifies rounding/colors/PDF generation and synthetic mask remeasurement/hash rejection without model inference.
+
+Automatic saved Eagle Eye result tabs: code/ai_imaging/test_saved_eagle_eye_results.py covers exact-study discovery, complete reports, module tabs and reopening without source loads/jobs. Existing result-tabs guards cover shared viewer retention.
+
+Persistent Lumbar result tab: `code/ai_imaging/test_eagle_eye_lumbar_result_tab.py`,
+`test_saved_eagle_eye_results.py`, and `test_eagle_eye_ui_boundary.py` cover the
+inline final report, organized immutable stage cards, exact-study raw-session
+restoration, completion signal handoff, and read-only Server retrieval without
+submitting a new analysis.
+
+- `code/echomind/test_eagle_eye_correction.py`: saved AI source identity, JSON import, HTML text and unreadable PDF handling.
+
+- `code/echomind/test_server_correction_sources.py`: original-byte transport, server normalization and targeted correction dispatch.
+
+- `code/echomind/test_optional_audio_import.py`: text UI import without a working PortAudio backend; recording backend errors remain visible on use. OPT-01, Developer reconciliation 2026-10-08.
+
+- Breast app-local MSVC packaging: `code/builder/test_eagle_eye_engine_payload.py::test_breast_requires_sealed_app_local_cpp_runtime`. Rejects native payloads that depend on unsealed host C++ DLLs.
+
+- Client AI Connection ownership and role isolation: `code/echomind/test_ai_connection_settings.py`; covers Connection-first navigation, unchanged Server tabs, personal backend visibility and prohibited Client upstream company refresh.
+
+- Connection simplification: `code/echomind/test_ai_connection_simplification.py` and `code/ai_imaging/test_eagle_eye_settings.py`; embedded read-only MCP route, advanced panel ownership and worker-based local PACS preset without silent saving.
+
+
+- AI usage: `code/ai_imaging/test_ai_usage.py`; owner filtering, persistent accounting, unknown counts, actual provider hook and worker-based UI errors.
+
+
+- Named AI usage breakdown: `code/ai_imaging/test_ai_usage.py`; canonical catalog coverage, per-module/workflow/Agent-mode counters, owner isolation and detailed UI rows.
+
+
+- Sender/function usage: `code/ai_imaging/test_ai_usage.py` and `test_ai_usage_requests.py`; server client selector, retained owner attribution, all 29 HTTP request paths for two clients, failed tokens and rejected spoofed identity.
+
+- Automatic separate brain tabs and legacy discovery: tests/code/ai_imaging/test_saved_eagle_eye_results.py; see Eagle Eye HISTORY.md (2026-10-08).
+
+- Saved report readability and red-value preservation: test_report_reader_is_legible_under_dark_application_theme in tests/code/ai_imaging/test_saved_eagle_eye_results.py.
+
+- Brain client presentation standard (volumetry, white matter/SVD, MS): test_all_brain_report_contexts_share_the_client_reader in tests/code/ai_imaging/test_saved_eagle_eye_results.py.
+
+- Breast dual execution, cancellation, source/run binding, stale calcium callbacks and DICOM polarity/padding: `code/ai_imaging/test_breast_dual_delivery.py` (B93).
+
+- Breast sparse-score last-writer equivalence, contextual boundaries, no-candidate zero work and invalid XY: `code/ai_imaging/test_calcium_sparse_scoring.py` (B94, OPT-51).
+
+- `code/ai_imaging/test_calcium_peak_speed.py`: exact accelerated physical peaks against the preserved reference; run with isolated Breast CPU runtime (scipy), using unittest.
+
+
+## Hosted reception CRM (2026-10-08)
+
+code/ai_imaging/test_crm_integration.py covers paired/license boundaries, reception session binding, preserved prompts, read-only routes, server-selected provider, lazy role UI and a real isolated synthetic worker (39 tools). Imported conversation/brain/security/budget guards remain under modules/ai_imaging/eagle_eye_remote/crm/vendor/tests. No clinical data is used.
+
+
+- Secretary/MCP course authoring (OPT-61): `code/education/test_command_authoring.py` and `code/echomind/test_course_authoring_commands.py`; isolated database, atomic/retried save, conflicts, preserved media, shared typed actions, workflow handles and terminal UI receipts.
+
+- Secretary conversation identity: `code/echomind/test_secretary_conversation_metadata.py`; private metadata persistence, New/rollover, server-owned context, explicit mode, stale metadata rejection and Qt presentation.
+
+- Unified Add Item and composed content (OPT-61): `code/education/test_multimedia_content.py`; four choices, formatting/resource boundaries, actual Qt composition, full-width documents, worker conversion, failure handling and shared-command media preservation. Legacy compatibility remains under `code/education/test_build_course_items.py`.
+
+## Secretary session source files (2026-10-09)
+
+`code/echomind/test_secretary_session_files.py` verifies UUID folder isolation, hashes, actual PDF/PPTX/image content, four-mode server delivery, shared typed MCP actions and stale-session refusal. Synthetic inputs only. Native GUI is a separate acceptance gate.
+
+
+- Compact Education viewport and audience output (OPT-61): `code/education/test_presenter_dock.py` and `code/education/test_audience_presentation.py`; ASCII labels, reclaimed height, unchanged selection, one shared media surface, keyboard navigation, Escape and screen-removal restoration, and no stale audience media across the DICOM boundary.
+
+- Education authored background under the workstation theme: `test_slide_background_survives_workstation_parent_theme` in `code/education/test_multimedia_content.py`; the rendered content host must retain the selected background.
+
+- Education presenter identity / composed typography: `tests/code/education/test_presenter_dock.py`, `tests/code/education/test_multimedia_text_zoom.py` cover visible identity inside Items, independent image/text controls, rich typography scaling and reset.
+
+- Education dock readability: `tests/code/education/test_presenter_dock.py` verifies Items receives most width, readable font/rows, non-collapsible adjustable splitter and resource access at two window sizes, alongside preserved selection and collapse.
+
+- Education image zoom: `tests/code/education/test_image_zoom_rendering.py` verifies rendered interpolation, original pixel retention, aspect-preserving fit, high-DPI logical bounds and visible image regions during pan.
+
+- Education responsive slide cards: `tests/code/education/test_slide_selector.py` and `tests/code/education/test_presenter_dock.py` verify two-column layout, narrow reflow, numbered cards, mouse selection, preserved order, and scrolling without horizontal overflow.
+
+- Education arrow navigation: `tests/code/education/test_arrow_navigation.py` sends real Qt key events for slide/resource navigation, boundary stops, modified keys, editable fields, audience shortcut precedence and DICOM pass-through (including pending DICOM selection).
+
+- Secretary content and server web assets: `tests/code/echomind/test_secretary_web_assets.py`, `test_secretary_content_assets.py` and `test_secretary_server.py` cover strict schemas, receipt binding, MCP discovery, isolated artifacts/course edits, public URL restrictions, listener authority and DICOM completeness.
+
+- Windows human sessions: `tests/code/ai_imaging/test_windows_human_session.py` covers device-only refusal, PACS token exchange, all protected headers, expiry, logout/account/profile invalidation, stale in-flight bytes, upstream revocation, local grant denial, durable human binding and version-2 usage rendering. `test_ai_usage_requests.py` preserves separate human access audits and legacy local-admin provider token accounting. Legacy HTTP/TLS fixtures use explicit synthetic approved identity; security gate fixtures remain independent.
+
+- Eagle Eye two-gate human access: `tests/code/ai_imaging/test_user_access.py`, `test_user_access_http.py`, `test_pacs_identity.py`, `test_reception_identity.py`, `test_windows_human_session.py` and `tests/code/licensing/test_server_license_gate.py` cover upstream identity, default-deny local grants, per-module admission, pairing/session separation, revocation/logout, bounded same-host adapters, Reception-only startup, audit deduplication and independent licensing.
+
+- Course cover fit: `tests/code/education/test_course_cover_fit.py` verifies wide/portrait images remain fully inside both card implementations, retain aspect ratio and sit centered inside the card.
+
+- Education selection clearing: `education/test_presentation_navigation.py` covers empty resources/courses, thumbnail retirement, DICOM request invalidation and deferred media selection currency.
+
+- `tests/code/ai_imaging/test_server_speech.py`: synthetic bounded audio, server-owned Whisper/company order, redacted credential failure and quality-result handling. HTTP admission guard is in `test_user_access_http.py`.
+
+- `tests/code/echomind/test_server_report_fallback.py`: single-report capability, Turbo-first/company fallback, personal isolation, no attachment loss and no duplicate hosted replay.
+
+
+- Advanced/EGLI panoramic projections: `code/viewer/test_advanced_presentation_sequence.py` covers exact DX/PX presentation admission, valid-window versus explicit-LUT alternatives, exact native pixels and spacing, processing/mixed-modality refusal and large native VTK rendering. Source GUI and complete Developer parity remain separate gates.
+
+
+## Bone Age metadata-only confirmation identity (2026-10-10)
+
+`code/ai_imaging/test_bone_age_review.py` executes the actual controller identity
+callback with both patient metadata aliases and verifies the review dialog opens.
+`test_bone_age_automatic_pdf.py` exercises the actual worker and job-routing bridge
+with a synthetic Client, physician provenance and returned age/PDF inputs. Existing
+case-switch/cancel guards remain required. Native Razi acceptance is separate.
+
+- Education responsive filter geometry: `education/test_filter_layout.py` checks full checkbox bounds, row separation, short-window scrolling and preserved selection across resize.
+
+
+- Education lifecycle observability: `code/ui_services/test_content_lifecycle_diagnostics.py` covers actual qasync terminal/cancel/invalidation/visibility/native destruction and private-context suppression; `code/education/test_open_diagnostics.py` checks real launcher import/construction/reuse/error and event-loop boundaries with synthetic pages.
+`tests/code/ui_services/test_refresh_animation_result.py`: early success/error must survive scheduled Home refresh animation (synthetic; no DB/network).
+
+## Current-request language and Secretary compatibility (2026-10-10)
+
+`code/echomind/test_request_language.py` covers positive/negative targets, quoted/tool exclusions and concurrent/nested exception cleanup. `code/echomind/test_secretary_request_language.py` covers legacy/new request validation, scoped completion/fallback/errors, compatibility-gated transport and configured capability workflows. `code/echomind/request_language_capability.json` matches the authoritative Android fixture. The focused helper/Secretary suite passes 110 tests; live/native/provider and full Developer parity gates are separate.
+
+## Legacy Eagle Eye first-transition fence (2026-10-10)
+
+`code/ai_imaging/test_legacy_admission_fence.py` covers atomic grant fencing,
+private crash recovery, exact rollback, timeout and uncertain-completion refusal,
+the last-verification race, every protected HTTP route and read-only capability
+availability. A transient uncertain observation resets the complete idle proof
+and may be followed only by a fresh stable-idle interval; persistent uncertainty
+times out and restores grants without transition.
+`code/ai_imaging/test_legacy_activity_observer.py` covers exact
+release/manifest/source/schema checks, stable owned process trees, durable job and
+audit activity (including synchronous imaging), native Windows enumeration of raw
+`CreateFileW` source/job handles, all owned non-listening sockets, unknown
+children, candidate-revision manifest identity, access failure and the outer
+timeout while a child socket remains. `test_user_access_http.py` additionally
+requires successful and connection-interrupted Lumbar requests to terminalize the
+same durable audit event rather than leave `admitted` state behind. The combined
+boundary suite passes 107 tests. The native handle guard permits exactly one
+verified root `.server.lock` lifetime lease, keeps a nested lookalike active and
+rejects a duplicate root lock handle. The TCP guards permit only an explicitly
+configured, bounded, unchanged `ESTABLISHED` loopback PACS pool tuple after it
+outlives the legacy request timeout; changed/excess/wrong-state connections stay
+active. Only the exact reviewed API `service_host` child can qualify (never CRM
+or another owned process); PID reuse resets qualification, and isolated probes
+carry only an opaque bounded age digest.
+`test_server_admission_drain.py` remains the guard for future process-local
+admission accounting. Live Razi transition evidence is separate.
+
+## Server private admission/drain (2026-10-10)
+
+`code/ai_imaging/test_server_admission_drain.py` covers concurrent work, model completion after202, real HTTP refusal, owned private-pipe abort/resume/commit, unknown cleanup, old-child handshake and timeout/invalid command guards. The combined lifecycle/auth/lumbar/language suite passes164 tests; live administrator/workload and full Developer parity gates remain separate.
+
+
+- Education on-demand page construction: `code/education/test_lazy_module_tabs.py` checks no eager factories, selected/reused real widgets, Secretary navigation, deep link/gate, retry, obsolete/hidden/deleted callbacks and loaded-only import refresh without database access.
+
+- Developer calcium payload completeness and seal: `tests/code/ai_imaging/test_developer_model_bindings.py` (missing binding, preserved explicit target, corrupt files, changed manifest and extra inventory).
+
+
+- Server compiled dispatch, certified-idle progress recovery, bounded worker output and installed role isolation: `code/ai_imaging/test_compiled_server_dispatch.py`, `code/ai_imaging/test_server_health_watchdog.py`, `code/ai_imaging/test_bounded_worker_output.py`, `code/builder/test_server_installation_isolation.py`. These source tests do not qualify installed binaries or clinical activation.
+
+
+### Education workspace layout follow-up (2026-10-10, OPT-61)
+
+Library card columns previously used stale pre-layout viewport dimensions. Reflow now
+observes viewport resize and moves existing cards without rebuilding selection state.
+Details width can grow from 340 to 540 pixels; course actions live outside the details
+scroll area, and cover images fit within 360 by 180 pixels without cropping. Build
+Course uses available width up to 1440 pixels and top-aligned form fields instead of
+stretching gaps between controls. No course database migration or viewer changes.
+
+Guard: `tests/code/education/test_workspace_layout.py` (three failures before the fix,
+three passes after). Full Education suite recorded in the protected layout receipt.
+Source GUI control ping unavailable (QLocalSocket invalid name); live GUI acceptance
+and installed ARM acceptance remain pending. No installer produced or activated.
+Developer/Razi reconciliation remains pending; historical lazy-tab candidate is unchanged.
+
+
+### Unified course presentation shell (2026-10-10, OPT-61)
+
+The preflight window was 1280x800 before any content existed. It now opens at
+640x320 with navigation hidden until the live viewer starts. Library Open Course
+uses the same independent viewer shell as Build Course Preview / Present; a clean
+preflight starts it automatically, while missing-resource issues remain reviewable.
+Present offers single-monitor fullscreen or an explicitly selected audience screen.
+The dual-display host moves the existing viewer, retaining the DICOM execution
+session, and keeps the Education item/resource footer on the controller. The viewer's
+imaging tools remain with the viewer. Closing the audience host or removing its
+screen restores the viewer; no duplicate decoding session is created.
+
+Guards in test_presenter_tasks.py: two new failures before implementation; compact
+preflight and single-monitor guards pass after, plus audience-host restoration.
+Synthetic offscreen checks do not establish physical two-monitor or clinical GUI
+acceptance. Source control bridge unavailable; live GUI, physical screen unplug,
+Developer/Razi reconciliation and installed ARM acceptance remain pending. No build,
+activation or installed executable changes performed.
+
+
+### OPT-58 / OPT-60 bounded sidebar preparation overlap (2026-10-10)
+
+Owner authorized implementation after the local 21:03-21:09 log review. Narrow
+runtime scope: thumbnail_batch_runner.py. A single worker producer prepares cards
+while the GUI admits the previous card. Queue size is two, with at most one worker
+result awaiting enqueue and one consumer-owned result. Original row order, complete
+inventory, authoritative identity revalidation, late metadata/readiness replay,
+visibility gate and retired-owner checks are retained. Producer cancellation is
+awaited on all terminal paths; an already-running detached executor read may finish
+but cannot admit a stale card. GUI QPixmap/widget creation remains on the GUI thread.
+The redundant outer grid.activate was removed: the existing atomic card admission
+method already activates layout before paint is enabled. Card visual composition,
+MIME/drag identity, viewer decode and native rendering domains are unchanged.
+
+Fail-before: new test_next_image_prepares_while_first_card_is_admitted failed when
+preparation could not overlap GUI admission. After: sidebar/lifecycle 43 passed.
+Expanded suite: 125 passed, 15 GUI-tier skips, one stale AST packaging guard failure.
+The packaging guard still searched the public wrapper rather than its existing
+_start_sidebar_build implementation; updated that target without weakening the
+async-finally comprehension check. Final packaging result recorded in receipt.
+
+Controlled synthetic comparison: ten real Qt cards, 15 ms simulated worker work
+and 15 ms simulated GUI work per card, five runs each. Before samples ms:
+454.19,447.31,475.19,504.24,510.74; median 475.19. After:
+442.79,364.60,360.80,318.35,338.91; median 360.80 (24.1% lower).
+This measures pipeline overlap under injected costs, not a field speedup or an
+actual DICOM decode benchmark. The earlier real-log baseline remains 419-2245 ms
+for 1-10 series with individual max_apply 41-251 ms. Current running source retains
+old imported code until a human-controlled restart. No comparable new runtime log
+exists yet, so before/after clinical improvement is pending.
+
+Source GUI control ping: unavailable, QLocalSocket invalid name. Actual mouse/OLE
+drag/drop, all-series rendered count, fresh same-case logs, ARM artifact acceptance
+and local/Razi Developer reconciliation remain pending. No installed executable,
+release build or active remote revision was modified. PacsClient runtime has no
+plugin mirror selected by the owned-path mirror dry run. Fix 1 coordination message
+sent under the owner's prior authorization; no concurrent edit was requested.
+
+## Server installed-release transaction foundation (2026-10-10, OPT-51/55/56)
+
+The synthetic source guards in `code/ai_imaging/test_service_inspection_ownership.py`, `test_installed_release_host.py`, `test_installation_startup_barrier.py`, `test_fresh_server_install.py`, `test_fresh_install_driver.py`, `test_server_installer_entry.py`, and `test_installed_server_layout.py`, plus `code/builder/test_server_retained_installer_layout.py`, verify exact SCM ownership, protected startup/commit records, immutable sibling payload selection, official Server-role admission and conservative failure recovery. They do not qualify a frozen installer, external provider, native GUI or live host lifecycle. See the Server installer qualification record for pending gates.
+
+
+### OPT-61 Education manual DICOM viewport admission (2026-10-10)
+
+Owner requested no automatic first-series display when selecting an Education DICOM
+resource. The course shell now starts without resolving/preloading its first future
+DICOM study. Folder, study and explicit-series resources establish the selected
+study identity, activate the existing controller, create empty comparison viewports
+and populate the full shared thumbnail rail. They no longer call the synchronous
+single-series loader or change_series_on_viewer during resource selection. Explicit
+series metadata remains stored but does not trigger display; thumbnail selection or
+drag uses the unchanged viewer route. Existing selection clearing retires old viewer
+requests before building the empty layout, so the prior case cannot remain visible.
+Normal workstation patient-open behavior is outside this Education-only change.
+
+Three changed navigation guards failed before the runtime edit; after it, the full
+Education suite reports 254 passed and one existing quarantined xfail. Source/payload
+mirror verification reports 528 pairs matching. Full series inventory, revisits and
+selection-clearing guards remain green. No field latency claim is made. Fresh source
+GUI observation and actual mouse/OLE drag, local/Razi Developer parity and installed
+artifact acceptance remain pending. No release or remote activation performed.
+
+
+### OPT-58 / OPT-60 overlapping thumbnail diagnostic phase isolation (2026-10-10)
+
+Full Developer review found that a worker could overwrite trace.phase while GUI
+card admission was running. A deterministic interleaving guard enters GUI admission,
+then releases the second worker into completeness, then raises a GUI OSError. Before:
+terminal was incorrectly completeness_worker. The worker now writes a separate local
+phase; worker failure transports that phase with its exception to the GUI consumer.
+Only GUI coroutines write trace.phase. GUI apply failures retain applying even while
+the detached next-card worker proceeds. Numeric error classification, privacy and
+single-terminal behavior are retained. Queue bounds, card inventory/order/identity,
+MIME/drag and decoding behavior are unchanged. No new optimization is included.
+
+Guard: test_overlapping_worker_cannot_relabel_gui_admission_failure in
+ tests/code/ui_services/test_content_lifecycle_diagnostics.py. It failed before the
+runtime correction. Focused receipt includes sidebar/lifecycle and packaging guards.
+Corrected owned runtime/test files are frozen in the protected phase-race handoff;
+root owns full canonical reconciliation/staging. No active Razi source was changed.
+Physical GUI and full Developer parity remain pending; do not infer activation.
+
+The installer cooperative-control guards in code/ai_imaging/test_installer_cooperative_control.py and test_fresh_server_install.py require exact committed private receipt plus owned stopped identity and prove no SCM-stop fallback. Actual Windows SCM qualification is separate.
+
+
+## Total Spine zoom geometry (2026-10-10)
+
+`code/ai_imaging/test_total_spine_zoom_index.py` covers two fail-before scene-local
+geometry invariants, endplate/region hit tests after scale/transform/fit/reset,
+and 40 actual wheel/ToolTip/rebuild/collection cycles. Synthetic fixtures only.
+This does not prove closure of the original native abort or live GUI acceptance.
+
+
+## Total Spine automatic reopening (2026-10-10)
+
+`code/ai_imaging/test_total_spine_saved_restore.py` covers reportless detection,
+automatic native tab dispatch/deduplication/focus, wrong-study/changed-source/
+missing-source rejection, worker-only I/O without inference, portable correction
+geometry and restored coronal/lateral measurements/pedicles/notes. Ten synthetic
+guards; source GUI and controlled Server activation remain separate gates.
+
+
+### Alignment progress and saved-source recovery (2026-10-10)
+
+`tests/code/ai_imaging/test_alignment_saved_workflow.py`: top progress, server stage
+forwarding, no inference on restored load, saved-series session ownership, source
+mismatch rejection, scale/flip/notes/PDF checks, legacy request matching and archive
+review metadata transfer. Synthetic only; no live database or patient fixtures.
+`tests/code/ai_imaging/test_brain_review_views.py`: brain Slicer anatomical grouping, hidden initial segments, paired raw/overlay views and callback teardown.
+`tests/code/ai_imaging/test_brain_atrophy_patterns.py`: regional chart observation/interval integrity, no fabricated percentiles or disease classifier; synthetic fixtures only.
+- Brain review startup visibility: `tests/code/ai_imaging/test_brain_startup_visibility.py` guards early conceal/release, visible initialization errors, and physical script inclusion in both installer backends. Live startup acceptance is separate.
+- Brain correction reopening: `tests/code/ai_imaging/test_brain_review_reopen.py` covers worker dispatch, duplicate-open protection, same-session saved-mask preservation and PID/script identity checks.
+
+
+Brain immediate reopen/readiness guards: `code/ai_imaging/test_brain_review_reopen.py`
+covers bounded prior-process exit, launch-token readiness, stale-state rejection,
+error acknowledgement and worker completion after the visible presentation.
+
+
+Brain initial window-size settling: `code/ai_imaging/test_brain_review_views.py`
+checks off-desktop layout/reveal ordering and a real offscreen Qt window with a
+queued minimum-width change, while retaining user-controlled resizing.
+
+
+Brain editor artwork: `code/ai_imaging/test_brain_review_views.py` verifies unique
+nonempty icons, preserved native clicks/help/selection/disabled state and icon
+refresh retention. `test_brain_startup_visibility.py` checks all three physical
+scripts and exact destination pairs in both PyInstaller and Nuitka inputs.
+# Brain correction chrome (2026-10-11)
+
+`tests/code/ai_imaging/test_brain_review_views.py::test_review_chrome_preserves_navigation_and_explicit_hover_artwork`
+guards explicit hover/checked/disabled artwork, native navigation action identity,
+enabled state, refreshed icons and review-only menu hiding.
+
+
+
+## Dedicated Eagle Eye Server stability guards (2026-10-11)
+
+`code/ai_imaging/test_server_model_stability.py`,
+`code/ai_imaging/test_server_hub_stability.py` and
+`code/ai_imaging/test_server_recovery_stability.py` cover synthetic scheduling,
+parallel admission, owner isolation, hub failure/duplicate-call safety and owned
+Windows child recovery. 23 new cases; no live DB/provider. Evidence and limits:
+`docs/modules/eagle-eye-server-development/docs/SERVER_HARDENING_2026-10-10.md`.
+
+
+## Shared Advanced Viewer chrome (2026-10-11)
+
+- `tests/code/mpr/test_analysis_presentation.py::test_common_chrome_brands_late_editors_and_viewport_controls_without_layout_change`: late editor/header icons and selector/slider state, no Brain layout mutation.
+- `tests/code/mpr/test_slicer_current_title.py::test_space_free_launcher_preserves_presentation_companion_resolution`: direct launch companion resolution.
+- `tests/code/ai_imaging/test_brain_startup_visibility.py::test_both_installer_backends_include_physical_startup_module`: physical shared companion in both backends.
+
+
+`tests/code/mpr/test_analysis_presentation.py::test_common_segment_actions_modules_and_position_readout`
+checks distinct native module artwork, selected item data, source-volume geometry,
+16 px action strip and preserved position values/suffix with explicit contrast.
+
+
+### Windows terminal-exit boundary (2026-10-11, OPT-60)
+
+code/system/test_windows_final_exit.py covers current-process-only termination, exit-code preservation, native failure propagation, non-Windows behavior and an opt-in actual Windows DLL process-detach marker. Compile tools/diagnostics/fixtures/windows_detach_probe.c with MSVC /LD /MD and kernel32.lib into private test output; set AIPACS_EXIT_PROBE_DLL for the native gate. It failed against the actual pre-fix main.py primitive and passed afterward. test_shutdown_startup_cleanup.py still pins cleanup order, download child cleanup, lock release, logging and the escape hatch. See the October 11 crash audit; GUI and Developer parity remain separate gates.
+
+
+### 2026-10-11 host and first-frame responsiveness guards
+
+- system/test_tee_host_disconnect.py: lost host stdout must preserve child draining, durable log and exact exit status.
+- system/test_logo_activation_bounded.py: unchanged active state is a no-op; transitions do not reset stylesheet or synchronously repaint.
+- viewer/test_fast_decode_voi_reuse.py: known VOI presence/absence survives decode/header scan without another read and remains slice-owned.
+- system/test_close_gc_yield_observation.py: capture reclaimed cycles and generation counters; observation does not qualify a reclamation-policy change.
+
+See OPT-21/OPT-60 in the master plan and the dated UI stall/Fast pipeline records. Synthetic scheduler transport is separate from actual host-close and normal-exit GUI acceptance.
+
+
+### 2026-10-11 MPR / Education staged readiness
+
+- `education/test_card_grid_responsiveness.py`: bounded GUI card work, retired filters/covers, off-thread cover decode, stable loading surface until readiness.
+- `education/test_course_cover_fit.py`: asynchronous cover delivery retains fit/aspect assertions.
+- `mpr/test_initial_views_yield.py`: native construction per turn, pending shell, close cancellation and failure restore.
+- `mpr/test_prewarm_yields.py`: one unchanged render per turn and teardown guard.
+- `mpr/test_runtime_prepare.py`: imports only on worker, GUI completion, coalescing and owner deletion.
+
+Follow OPT-48 / OPT-61 and the dated Education/VTK owner records. Unit guards are not fresh GUI or installed acceptance.
+
+
+### Field lifetime regression guards (2026-10-11)
+
+- `code/ui_services/test_retired_toolbar_target.py`: deleted native toolbar target admission.
+- `code/viewer/test_retired_fast_settle.py`: empty/retired bridge, queued settle, cleanup reentrancy and healthy final frame.
+- Evidence and pending gates: `docs/reports/UI_STALL_EVIDENCE_AND_FIX_2026-09-02.md`, dated stability triage appendix.
+
+### CRM connection diagnostics (2026-10-12)
+
+- `code/ai_imaging/test_crm_connection_diagnostics.py`: authenticated API status, fixed local Mongo endpoint, independent folder outcomes, source/frozen worker dispatch, timeout and configuration snapshot preservation.
+
+### Server pairing boundary and usage completeness (2026-10-12)
+
+- `code/ai_imaging/test_server_agent_pairing_boundary.py`: Server UI/startup boundary and preserved Client service installation.
+- `code/ai_imaging/test_usage_catalog_completeness.py`: dynamic imaging catalog and approved native G accounting.
+
+- `code/ai_imaging/test_user_import_reception.py`: verified Reception roster projection, administrator import, duplicate/grant preservation, and explicit log expansion.

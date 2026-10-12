@@ -7,6 +7,22 @@ from PySide6.QtCore import QTimer
 
 
 def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, list_files):
+    """Keep synchronous setup failures as observable as asynchronous terminals."""
+    from PacsClient.utils.diagnostic_logging import ContentDiagnosticTrace
+    trace = ContentDiagnosticTrace('sidebar', owner,
+        token=getattr(owner, '_sidebar_build_token', 0) + 1,
+        item_generation=getattr(owner, '_item_generation', 0))
+    trace.phase = 'setup'
+    trace.emit('scheduled')
+    try:
+        return _start_sidebar_build(owner, loop, files=files, groups=groups,
+            entries=entries, list_files=list_files, trace=trace)
+    except Exception as error:
+        trace.finish('failed', error_kind=trace.error_kind(error))
+        raise
+
+
+def _start_sidebar_build(owner, loop, *, files, groups, entries, list_files, trace):
     """One qasync owner for cached/server-entry/grouped sidebar presentation.
 
     Only primitive metadata and detached read-only helpers enter the executor.
@@ -29,6 +45,7 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
         previous.cancel()
     owner._sidebar_build_token = getattr(owner, '_sidebar_build_token', 0) + 1
     token = owner._sidebar_build_token
+    progress = dict(applied=0, admitted=0, prepared=0, reserved=0)
     study_uid, folder = owner.study_uid, owner.import_folder_path
     grouped = groups is not None
     catalog = {str(k): dict(v) for k, v in dict(owner._server_series_info or {}).items()}
@@ -63,16 +80,53 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
         visibility_gate.set()
 
     def current():
-        return (isValid(owner) and token == getattr(owner, '_sidebar_build_token', None)
-                and not getattr(owner, '_pipeline_prepare_retired', False)
-                and not getattr(owner, '_pw_close_handled', False)
-                and not getattr(owner.thumbnail_manager, '_disposed', False)
-                and owner.study_uid == study_uid and owner.import_folder_path == folder
-                and (grouped or getattr(owner, '_multistudy_thumbnail_fallback', False)
-                     or (not getattr(owner, '_is_multistudy_hint', False)
-                          and len(getattr(owner, '_studies_series', {})) <= 1)))
+        if not isValid(owner):
+            trace.finish('invalidated', owner_deleted=True, **progress)
+            return False
+        flags = dict(token_equal=token == getattr(owner, '_sidebar_build_token', None),
+            not_retired=not getattr(owner, '_pipeline_prepare_retired', False),
+            not_closed=not getattr(owner, '_pw_close_handled', False),
+            not_disposed=not getattr(owner.thumbnail_manager, '_disposed', False),
+            study_equal=owner.study_uid == study_uid,
+            folder_equal=owner.import_folder_path == folder,
+            domain_allowed=(grouped or getattr(owner, '_multistudy_thumbnail_fallback', False)
+                or (not getattr(owner, '_is_multistudy_hint', False)
+                    and len(getattr(owner, '_studies_series', {})) <= 1)))
+        valid = all(flags.values())
+        if not valid:
+            trace.finish('invalidated', **flags, **progress, **presentation_snapshot())
+        return valid
+
+    def presentation_snapshot():
+        try:
+            return read_presentation_snapshot()
+        except (RuntimeError, AttributeError):
+            # Deleted child widgets must never mask cancellation or an original error.
+            return dict(presentation_unavailable=True)
+
+    def read_presentation_snapshot():
+        # GUI-thread only, bounded to one representative card, no pixel readback.
+        if not isValid(owner):
+            return dict(owner_deleted=True)
+        container = owner.thumb_grid.parentWidget()
+        snapshot = dict(owner_visible=owner.isVisible())
+        if container is not None and isValid(container):
+            snapshot.update(container_visible=container.isVisible(),
+                updates_enabled=container.updatesEnabled())
+        stack = getattr(owner, 'thumb_content_stack', None)
+        if stack is not None and isValid(stack):
+            snapshot['panel_index'] = stack.currentIndex()
+        for card in owner.thumbnail_manager.series_widgets.values():
+            if isValid(card):
+                snapshot['representative_visible'] = card.isVisible()
+                break
+        return snapshot
 
     async def wait_until_active():
+        waiting = not visibility_gate.is_set()
+        if waiting:
+            trace.phase = 'visibility'
+            trace.emit('visibility_wait', **progress)
         while current() and not visibility_gate.is_set():
             try:
                 # Native deletion does not necessarily wake an asyncio.Event.
@@ -80,9 +134,14 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                 await asyncio.wait_for(visibility_gate.wait(), timeout=0.05)
             except asyncio.TimeoutError:
                 pass
-        return current()
+        valid = current()
+        if waiting and valid:
+            trace.emit('visibility_resume', **progress)
+        return valid
 
-    def prepare_plan():
+    def prepare_plan(queued):
+        trace.phase = 'plan_worker'
+        trace.emit('plan_worker_started', queue_ms=(perf_counter()-queued)*1000)
         plan = []
         history_first = (os.getenv('AIPACS_HISTORY_SERIES_FIRST', '1') or '1').strip() != '0'
 
@@ -118,7 +177,15 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
         path = snapshot._get_correct_study_path() if hasattr(snapshot, '_get_correct_study_path') else folder
         return plan, path
 
-    def prepare_card(su, key, info, path, study_path):
+    # Only the sequential worker writes this local phase. The GUI trace phase
+    # must not be mutated by a concurrent preparation during card admission.
+    worker_phase = ["image_worker"]
+
+    def prepare_card(su, key, info, path, study_path, queued, first):
+        worker_started = perf_counter()
+        worker_phase[0] = 'image_worker'
+        if first and not trace.terminal:
+            trace.emit('first_card_worker_started', queue_ms=(worker_started-queued)*1000)
         if not info:
             from . import get_quickly_series_info
             series_path = Path(folder) / key
@@ -127,21 +194,33 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
         info.setdefault('series_number', key)
         info.setdefault('study_uid', su)
         storage_key = Path(path).stem if path else str(info.get('folder_key') or key)
+        image_started = perf_counter()
         image = ThumbnailImageSourceService.prepare_image(su, storage_key, str(path))
+        image_ms = (perf_counter()-image_started)*1000
+        worker_phase[0] = 'completeness_worker'
+        completeness_started = perf_counter()
         ready = snapshot._is_series_downloaded(key, study_path=study_path)
+        if first and not trace.terminal:
+            trace.emit('first_card_prepared', image_ms=image_ms,
+                completeness_ms=(perf_counter()-completeness_started)*1000,
+                worker_ms=(perf_counter()-worker_started)*1000, image_null=image.isNull())
         return info, image, ready
 
     async def run():
         started = perf_counter()
         max_apply_ms = 0.0
         applied = 0
+        preparation = None
         try:
             if not await wait_until_active():
                 return
-            plan, study_path = await asyncio.to_thread(prepare_plan)
+            trace.phase = 'plan_queued'
+            plan, study_path = await asyncio.to_thread(prepare_plan, perf_counter())
+            trace.emit('plan_prepared', inventory=sum(len(rows) for _, _, rows in plan))
             if not await wait_until_active():
                 return
             if not any(rows for _, _, rows in plan):
+                trace.finish('completed', empty_plan=True, **progress, **presentation_snapshot())
                 if grouped:
                     owner._multistudy_thumbs_rendered = False
                     owner._multistudy_thumbnail_fallback = True
@@ -216,11 +295,41 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
             owner._log_open_thumbnail_trace('patient_tab_thumb_reserved',
                 series_count=owner._sidebar_expected_count, studies=len(plan),
                 reserve_ms=round((perf_counter()-reservation_started)*1000, 2))
-            for row, spacer, su, key, info, path in pending:
-                if not await wait_until_active():
+            progress['reserved'] = len(pending)
+            trace.emit('reserved', inventory=owner._sidebar_expected_count,
+                reserve_ms=(perf_counter()-reservation_started)*1000, **progress)
+            # One worker at a time, at most two completed images ahead. This
+            # overlaps disk/image preparation with GUI admission without parallel
+            # scans, unbounded images or QObject work in the executor.
+            prepared_cards = asyncio.Queue(maxsize=2)
+            async def prepare_ahead():
+                try:
+                    for index, entry in enumerate(pending):
+                        if not await wait_until_active():
+                            await prepared_cards.put((False, None))
+                            return
+                        row, spacer, su, key, info, path = entry
+                        trace.phase = 'image_worker'
+                        result = await asyncio.to_thread(
+                            prepare_card, su, key, info, path, study_path,
+                            perf_counter(), index == 0)
+                        await prepared_cards.put((True, (entry, result)))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    await prepared_cards.put((False, (error, worker_phase[0])))
+            preparation = loop.create_task(prepare_ahead())
+            for _ in pending:
+                success, payload = await prepared_cards.get()
+                if not success:
+                    if payload is not None:
+                        error, phase = payload
+                        trace.phase = phase
+                        raise error
                     return
-                info, image, ready = await asyncio.to_thread(
-                    prepare_card, su, key, info, path, study_path)
+                (row, spacer, su, key, info, path), result = payload
+                info, image, ready = result
+                progress['prepared'] += 1
                 if not await wait_until_active():
                     return
                 latest = (getattr(owner, '_server_series_info', {}) or {}).get(key)
@@ -240,6 +349,7 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                             or latest.get('series_path') != info.get('series_path')):
                         ready = False  # New expected count needs a fresh completeness check.
                     info = dict(latest)
+                trace.phase = 'applying'
                 before = perf_counter()
                 was_enabled = container.updatesEnabled()
                 container.setUpdatesEnabled(False)
@@ -256,27 +366,43 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                     # snapshot. Never downgrade a completed/downloading card.
                     if ready and manager._get_series_projection_state(key) == 'pending':
                         manager.set_series_ready(key)
-                    grid.activate()
+                    # add_thumbnail_to_thumbnail_layout already activates the
+                    # atomic card commit. Avoid a second layout pass here.
                 finally:
                     container.setUpdatesEnabled(was_enabled)
                 applied += 1
+                progress['applied'] = applied
+                card = manager.series_widgets.get(key)
+                progress['admitted'] += int(card is not None and isValid(card)
+                    and grid.indexOf(card) >= 0)
+                if applied == 1:
+                    trace.emit('first_card_applied', apply_ms=(perf_counter()-before)*1000,
+                        **progress, **presentation_snapshot())
                 max_apply_ms = max(max_apply_ms, (perf_counter() - before) * 1000)
                 # A positive interval gives queued paint/input a turn too.
                 await asyncio.sleep(.001)
             if current():
+                trace.finish('completed', max_apply_ms=max_apply_ms, **progress,
+                    **presentation_snapshot())
                 owner._log_open_thumbnail_trace(
                     'patient_tab_thumb_multistudy_rendered' if grouped else 'patient_tab_thumb_bounded_rendered',
                     studies=len(plan), series_count=owner._sidebar_expected_count,
                     elapsed_ms=round((perf_counter()-started)*1000, 2),
                     max_apply_ms=round(max_apply_ms, 2), applied=applied)
         except asyncio.CancelledError:
+            trace.finish('cancelled', **progress, **presentation_snapshot())
             raise
-        except Exception:
+        except Exception as error:
             if current():
+                trace.finish('failed', error_kind=trace.error_kind(error), **progress,
+                    **presentation_snapshot())
                 owner._thumbnails_shown = False
                 owner._multistudy_thumbs_rendered = False
                 owner.logger.exception('Prepared sidebar build failed')
         finally:
+            if preparation is not None:
+                preparation.cancel()
+                await asyncio.gather(preparation, return_exceptions=True)
             if isValid(owner) and token == getattr(owner, '_sidebar_build_token', None):
                 owner._sidebar_reserved_rows = set()
                 owner._sidebar_expected_count = None
@@ -290,6 +416,25 @@ def start_sidebar_build(owner, loop, *, files=None, groups=None, entries=None, l
                     owner._sidebar_build_visibility = None
 
     task = loop.create_task(run())
+    # A small bounded watchdog also exposes a blocked executor or visibility gate.
+    watchdog = QTimer(owner)
+    watchdog.setInterval(5000)
+    samples = [0]
+    def stalled():
+        if trace.terminal or samples[0] >= 3:
+            watchdog.stop()
+            return
+        samples[0] += 1
+        trace.emit('waiting_' + trace.phase, sample=samples[0], **progress)
+    watchdog.timeout.connect(stalled)
+    watchdog.start()
+    def diagnostic_finished(done):
+        if isValid(watchdog):
+            watchdog.stop()
+            watchdog.deleteLater()
+        # Does not dereference the owner: it may already be natively destroyed.
+        trace.finish('cancelled' if done.cancelled() else 'failed', **progress)
+    task.add_done_callback(diagnostic_finished)
     owner._sidebar_build_task = task
     owner._background_tasks.add(task)
     task.add_done_callback(owner._background_tasks.discard)

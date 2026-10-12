@@ -135,6 +135,8 @@ class StepResult:
     result: Any = None
     error_code: Optional[str] = None
     message: str = ""
+    receipt: dict = field(default_factory=dict)
+    provenance: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -288,6 +290,23 @@ _VERIFIERS: dict[str, Callable[[Any, dict], bool]] = {
 # LLM is NOT asked to emit verify specs (unreliable). `build_plan` enriches a
 # bare action list into a verified WorkflowPlan.
 DEFAULT_CAPTURE: dict[str, dict] = {
+    'server_web_read':{'operation_id':'operation_id'},
+    'server_web_search':{'operation_id':'operation_id'},
+    'server_web_download':{'operation_id':'operation_id'},
+    'server_generate_image':{'operation_id':'operation_id'},
+    'inspect_course_content':{'operation_id':'operation_id'},
+    'attach_course_asset':{'operation_id':'operation_id'},
+    'organize_course_content':{'operation_id':'operation_id'},
+    'find_course_dicom':{'operation_id':'operation_id'},
+    'import_course_dicom':{'operation_id':'operation_id'},
+    'prepare_course_draft': {'draft_id':'draft_id'},
+    'update_course_draft': {'draft_id':'draft_id'},
+    'list_session_files': {'operation_id':'operation_id'},
+    'inspect_session_file': {'operation_id':'operation_id'},
+    'load_course_draft': {'draft_id':'draft_id','operation_id':'operation_id'},
+    'save_course_draft': {'operation_id':'operation_id'},
+    'open_course_editor': {'operation_id':'operation_id'},
+    'preview_course': {'operation_id':'operation_id'},
     'get_ai_settings':{'operation_id':'operation_id'},
     'verify_eagle_eye_connection':{'operation_id':'operation_id'},
     'set_voice_to_text_preferences':{'operation_id':'operation_id'},
@@ -328,13 +347,23 @@ _LOAD_SERIES_ALIASES = ("change_series", "drop_series_to_viewport", "load_series
 
 
 def _default_verify(action: str, entities: dict) -> Optional[VerifySpec]:
+    from modules.ai_imaging.eagle_eye_remote.secretary.validation.content_assets import CONTENT_ASSET_MODELS
+    if action in CONTENT_ASSET_MODELS and action!='content_asset_status':
+        return VerifySpec('operation_complete','content_asset_status',
+            probe_entities={'operation_id':'$operation_id'},retries=600,delay_s=.5)
+    if action in ('list_session_files','inspect_session_file'):
+        return VerifySpec('operation_complete','session_file_status',
+            probe_entities={'operation_id':'$operation_id'},retries=180,delay_s=.5)
+    if action in ('load_course_draft','save_course_draft','open_course_editor','preview_course'):
+        return VerifySpec('operation_complete','course_authoring_status',
+            probe_entities={'operation_id':'$operation_id'},retries=120,delay_s=.5)
     if action == 'request_storage_cleanup':
         return VerifySpec('operation_complete', 'get_storage_cleanup_status', retries=120, delay_s=1.0)
     if action in ('get_ai_settings','verify_eagle_eye_connection','set_voice_to_text_preferences','set_ai_proxy_preferences','set_personal_ai_preferences','set_eagle_eye_connection', 'get_settings_snapshot','verify_settings_server','clone_settings_server','remove_settings_modalities','set_settings_tool_style','set_settings_filter_parameter', 'collect_support_diagnostics', 'diagnose_resources', 'release_memory', 'get_viewer_preferences', 'set_viewer_preferences', 'set_theme'):
         probe = 'support_operation_status' if action=='collect_support_diagnostics' else 'settings_operation_status'
         return VerifySpec('operation_complete', probe,
             probe_entities={'operation_id':'$operation_id'}, retries=120, delay_s=.5)
-    if action in ('advanced_search_patients','read_patients','sort_patients'):
+    if action in ('advanced_search_patients','list_patients','search_patients','advanced_search','read_patients','sort_patients'):
         return VerifySpec('search_ready','read_patients',retries=90,delay_s=.5)
     if action=='download_selection':
         return VerifySpec('operation_complete','download_selection_status',
@@ -436,8 +465,10 @@ class WorkflowExecutor:
         Used between verify retries (inject a no-op in tests).
     """
 
-    def __init__(self, run_step: Callable[[str, dict], dict], sleep: Callable[[float], None] = time.sleep):
+    def __init__(self, run_step: Callable[[str, dict], dict], sleep: Callable[[float], None] = time.sleep,
+                 *, run_step_async=None):
         self._run = run_step
+        self._run_async = run_step_async or run_step
         self._sleep = sleep
 
     def run(self, plan: WorkflowPlan, context: Optional[dict] = None) -> WorkflowResult:
@@ -448,8 +479,13 @@ class WorkflowExecutor:
 
     def _run_steps(self, plan, context=None):
         ctx = dict(context or {})
+        # Execution proof is never imported from a caller or earlier workflow.
+        ctx.pop('_patient_date_boundary', None)
         out = WorkflowResult(ok=True, goal=plan.goal)
         for i, step in enumerate(plan.steps):
+            ctx.pop('_patient_list_receipt', None)
+            if step.tool in ('advanced_search_patients', 'list_patients', 'advanced_search', 'search_patients'):
+                ctx.pop('_patient_date_boundary', None)
             if step.verify is not None and step.verify.kind not in _VERIFIERS:
                 out.ok, out.failed_index = False, i
                 out.message = "Unsupported verification rule; no action was executed."
@@ -497,7 +533,10 @@ class WorkflowExecutor:
                     return out
             verified = True
             if step.verify is not None:
-                if step.verify.kind=='operation_complete' and _verify_operation_complete(res, {}):
+                if step.tool in ('advanced_search_patients','list_patients','search_patients','advanced_search'):
+                    checked = yield from self.verify_executed_patient_search_steps(step.tool, args, d, ctx)
+                    verified = checked.get('ok') is True
+                elif step.verify.kind=='operation_complete' and _verify_operation_complete(res, {}):
                     verified=True
                 else:
                     verified = yield from self._verify_steps(step.verify, ctx)
@@ -512,9 +551,62 @@ class WorkflowExecutor:
                                                 str(d.get("message") or "")))
                     return out
 
-            out.steps.append(StepResult(step.tool, True, verified, res, ec, str(d.get("message") or "")))
+            from .patient_list_receipt import PATIENT_LIST_ACTIONS, safe_receipt, safe_provenance
+            receipt = {}
+            provenance = {}
+            if step.tool in PATIENT_LIST_ACTIONS and verified:
+                receipt = safe_receipt(ctx.get('_patient_list_receipt')) or safe_receipt(_payload(res))
+                list_id = ctx.get('list_id')
+                # Only the actual ready read verification binds dates to a list.
+                if receipt and ctx.get('_patient_list_receipt') and isinstance(list_id, str) and list_id:
+                    if step.tool in ('advanced_search_patients','list_patients','search_patients','advanced_search'):
+                        provenance = safe_provenance(args)
+                        if provenance:
+                            ctx['_patient_date_boundary'] = (list_id, provenance)
+                    elif step.tool == 'read_patients':
+                        boundary = ctx.get('_patient_date_boundary')
+                        if boundary and boundary[0] == list_id:
+                            provenance = safe_provenance(boundary[1])
+                        else:
+                            ctx.pop('_patient_date_boundary', None)
+            out.steps.append(StepResult(step.tool, True, verified, res, ec, str(d.get("message") or ""), receipt, provenance))
         out.message = f"Completed {len(out.steps)} step(s)."
         return out
+
+    def verify_executed_patient_search_steps(self, action, args, result, context=None):
+        """Verify only the task/list bound to this once-executed search."""
+        from uuid import UUID
+        from .patient_list_receipt import safe_receipt, safe_provenance
+        context = context if context is not None else {}
+        context.pop('_patient_ready_payload', None)
+        context.pop('_patient_list_receipt', None)
+        initial = _payload(result)
+        initial = initial if isinstance(initial, dict) else {}
+        source, handle, original_list = initial.get('source'), initial.get('search_id'), initial.get('list_id')
+        probe = {'source': source}
+        bound = source in ('local', 'server')
+        if initial.get('state') == 'searching':
+            try:
+                bound = bound and isinstance(handle, str) and str(UUID(handle)) == handle
+            except (ValueError, TypeError, AttributeError):
+                bound = False
+            probe['search_id'] = handle
+        elif initial.get('state') == 'ready':
+            bound = bound and isinstance(original_list, str) and bool(original_list)
+            probe['list_id'] = original_list
+        else:
+            bound = False
+        verified = False
+        if bound:
+            verified = yield from self._verify_steps(VerifySpec('search_ready', 'read_patients',
+                probe_entities=probe, retries=90, delay_s=.5), context)
+        payload = context.get('_patient_ready_payload', {})
+        if (not verified or not safe_receipt(payload) or payload.get('source') != source
+                or (handle and payload.get('search_id') != handle)
+                or (original_list and payload.get('list_id') != original_list)):
+            return {'ok': False, 'action': action, 'error_code': 'VERIFY_FAILED',
+                    'message': 'The patient search ran but could not be verified.'}
+        return dict(result, action=action, data=payload, provenance=safe_provenance(args))
 
     def _verify(self, spec: VerifySpec, context: dict) -> bool:
         return drive_steps(self._verify_steps(spec, context))
@@ -531,14 +623,24 @@ class WorkflowExecutor:
         attempts = max(1, int(spec.retries))
         for n in range(attempts):
             try:
-                res = yield ExecutionCall(self._run, self._run, (spec.probe_action, probe_entities))
+                res = yield ExecutionCall(self._run, self._run_async, (spec.probe_action, probe_entities))
             except Exception:
                 res = {}
             if _as_dict(res).get("ok") is True and fn(res, expect):
+                if spec.probe_action=='content_asset_status' and isinstance(_payload(res),dict):
+                    payload=_payload(res)
+                    for key,field in (('sha256','sha256'),('expected_digest','content_digest'),('selection_id','selection_id')):
+                        if payload.get(field) is not None:
+                            context[key]=payload[field]
                 if spec.probe_action=="read_patients" and isinstance(_payload(res),dict):
+                    context['_patient_ready_payload'] = dict(_payload(res))
                     context["list_id"]=_payload(res).get("list_id")
+                    from .patient_list_receipt import safe_receipt
+                    context['_patient_list_receipt'] = safe_receipt(_payload(res))
                 return True
             payload = _payload(res)
+            if spec.probe_action == 'read_patients' and _as_dict(res).get('ok') is not True:
+                return False
             if isinstance(payload, dict):
                 if payload.get('state') in ('failed', 'superseded', 'cancelled', 'cancelled_or_blocked', 'completed_with_warnings', 'unknown'):
                     return False

@@ -89,7 +89,10 @@ def test_long_prompt_literals_match_current_workstation_source():
         if not original.is_file():
             continue
         def literals(source):
-            return sorted(n.value for n in ast.walk(ast.parse(source.read_text(encoding='utf-8-sig')))
+            # Migrated core historically strips trailing spaces; preserve comparison
+            # of every prompt word and newline without treating those as semantic drift.
+            return sorted('\n'.join(line.rstrip() for line in n.value.splitlines())
+                          for n in ast.walk(ast.parse(source.read_text(encoding='utf-8-sig')))
                           if isinstance(n, ast.Constant) and isinstance(n.value, str) and len(n.value) > 1000)
         assert literals(path) == literals(original), path.name
 
@@ -102,16 +105,17 @@ def test_web_research_requires_completed_search_and_trusted_citations():
     assert web_search.trusted_url('https://www.acr.org/example')
 
 
-def test_turbo_correction_profile_moves_desktop_modality_to_request(monkeypatch):
+def test_client_correction_has_no_turbo_route_selection(monkeypatch):
     from modules.EchoMind import remote_backend
     monkeypatch.setattr(remote_backend, '_request', lambda *a, **kw: kw)
     monkeypatch.setattr(remote_backend, '_template_for', lambda report: '')
     from modules.EchoMind import normal_templates
     monkeypatch.setattr(normal_templates, 'inherit_report_template', lambda original, value: value)
-    value = remote_backend.correction('Synthetic.', 'Synthetic edit.', turbo=True,
-        study_profile={'modality': 'MRI', 'regions': ['knee']})
-    assert value['study_profile'] == {'regions': ['knee']}
-    assert value['modality'] == 'MRI'
+    value = remote_backend.correction('Synthetic.', 'Synthetic edit.')
+    assert value['correction_note'] == 'Synthetic edit.'
+    assert 'turbo_correction' not in value and 'study_profile' not in value
+    with pytest.raises(TypeError):
+        remote_backend.correction('Synthetic.', 'Synthetic edit.', turbo=True)
 
 
 def test_server_turbo_correction_retains_modality_for_region_context(monkeypatch):

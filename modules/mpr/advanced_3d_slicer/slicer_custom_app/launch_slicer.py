@@ -592,15 +592,16 @@ def build_slicer_command(
         # Still launch, but warn heavily
     else:
         # The CTK launcher binary cannot handle paths with spaces in
-        # --python-script arguments. Copy to a space-free temp path.
+        # --python-script arguments. Bootstrap from a space-free path while
+        # preserving __file__ for presentation companions and numeric styles.
         script_path_str = str(startup_script)
         if " " in script_path_str:
             import tempfile
-            tmp_dir = Path(tempfile.gettempdir()) / "aipacs_slicer"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_dir = Path(tempfile.mkdtemp(prefix="aipacs-viewer-"))
             tmp_script = tmp_dir / "startup_script.py"
-            import shutil
-            shutil.copy2(startup_script, tmp_script)
+            tmp_script.write_text(
+                "import runpy\nrunpy.run_path(" + repr(str(startup_script.resolve())) +
+                ", run_name='__main__')\n", encoding="utf-8")
             script_path_str = str(tmp_script)
             print(f"[NewMPR2Slicer] Copied startup script to space-free path: {script_path_str}")
         cmd.append("--python-script")

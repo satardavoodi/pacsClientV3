@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 from tests.code.ai_imaging.test_eagle_eye_remote import SyntheticSource, synthetic_runner
 from modules.ai_imaging.eagle_eye_remote import client, server, source
-def test_mtls_requires_certificate_bound_to_token_owner(tmp_path, monkeypatch):
+from tests.code.ai_imaging.human_access_fixture import human_access
+def test_mtls_requires_certificate_bound_to_token_owner(tmp_path, monkeypatch, human_access):
+    from types import SimpleNamespace
+    from modules.LicenseGenerator import renewal
+    monkeypatch.setattr(renewal, 'server_manager', lambda cfg: SimpleNamespace(check_license=lambda: (True, 'Synthetic license')))
     from datetime import datetime, timedelta, timezone
     import ipaddress
     import secrets
@@ -31,7 +35,7 @@ def test_mtls_requires_certificate_bound_to_token_owner(tmp_path, monkeypatch):
     monkeypatch.delenv('EAGLE_TLS_FIXTURE_TOKEN', raising=False)
     monkeypatch.setattr(source, 'source_provider', lambda cfg: SyntheticSource())
     http, jobs = server.create_server(dict(host='127.0.0.1', port=0,
-        job_root=str(tmp_path / 'server'), pacs={}, clients={'fixture': str(token_path)},
+        job_root=str(tmp_path / 'server'), center_id='synthetic-center', pacs={'url': 'http://synthetic.invalid'}, clients={'fixture': str(token_path)},
         certificate=str(cert_path), private_key=str(key_path),
         client_ca_file=str(cert_path), client_certificate_sha256={'fixture':certificate.fingerprint(hashes.SHA256()).hex()}))
     jobs.runner = synthetic_runner

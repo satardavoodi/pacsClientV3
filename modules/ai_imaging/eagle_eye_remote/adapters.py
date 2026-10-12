@@ -13,6 +13,15 @@ def execute(request, records, output, cancel=None):
     output.mkdir(parents=True, exist_ok=True)
     module, params = request['module'], request['parameters']
     study = request['study_uid']
+    if module == 'dental-panorama':
+        from ..dental_panorama import execute as dental_execute
+        return dental_execute(request, records, output, cancel)
+    if module == 'lumbar-marrow' and 'correction' in params:
+        from ..lumbar_marrow_revision import calculate
+        return calculate(request, output, cancel)
+    if module == 'lumbar-marrow' and params.get('mode') == 'multiparametric':
+        from ..marrow_multisequence import execute as marrow_execute
+        return marrow_execute(request, records, output, cancel)
     if module in ('brain', 'brain-lesions') and 'correction' in params:
         from .segmentation_review import calculate
         return calculate(request, output, cancel)
@@ -24,9 +33,14 @@ def execute(request, records, output, cancel=None):
         return calculate(request, records, output)
     if module in ('breast', 'bone-age'):
         from ..eagle_eye_engines.service import run
-        result = run(module, [r['path'] for r in records], study, output,
-                     sex=params.get('sex'), sex_provenance=params.get('sex_provenance'),
-                     threshold=params.get('threshold', .45), cancelled=cancel.is_set)
+        if module == 'breast':
+            from ..eagle_eye_engines.breast_dual import run as run_breast
+            result = run_breast([r['path'] for r in records], study, output,
+                               threshold=params.get('threshold', .45), cancelled=cancel.is_set)
+        else:
+            result = run(module, [r['path'] for r in records], study, output,
+                         sex=params.get('sex'), sex_provenance=params.get('sex_provenance'),
+                         threshold=params.get('threshold', .45), cancelled=cancel.is_set)
         result['artifact_directory'] = result['job_directory']
         if module == 'breast':
             from .artifacts import prepare_breast_tables
@@ -76,7 +90,7 @@ def execute(request, records, output, cancel=None):
         result['radiograph_binding'] = image['radiograph_binding']
         result['artifact_directory'] = str(output)
         return result
-    if module == 'lumbar':
+    if module in ('lumbar', 'lumbar-marrow'):
         import numpy as np
         import SimpleITK as sitk
         from ..offline_lumbar.service import run_snapshot
@@ -87,6 +101,9 @@ def execute(request, records, output, cancel=None):
         if len(filenames) != len(records):
             raise ValueError('Lumbar source inventory cannot form one volume.')
         validate_lumbar_geometry(filenames)
+        if module == 'lumbar-marrow':
+            from ..lumbar_marrow import validate_t1_headers
+            validate_t1_headers(filenames)
         reader = sitk.ImageSeriesReader()
         reader.SetFileNames(filenames)
         image = reader.Execute()
@@ -108,6 +125,17 @@ def execute(request, records, output, cancel=None):
         result['labels_file'] = str(directory / 'labels.npy')
         result['shape_kji'] = list(labels.shape)
         result['affine_ras'] = affine.tolist()
+        if module == 'lumbar-marrow':
+            from ..lumbar_marrow import measure
+            result.update(measure(sitk.GetArrayFromImage(image), labels, affine,
+                                  result['segments'], directory, params))
+            sitk.WriteImage(image, str(directory / 'review-image.nii.gz'))
+            mask = sitk.GetImageFromArray(labels)
+            mask.CopyInformation(image)
+            sitk.WriteImage(mask, str(directory / 'labels.nii.gz'))
+            (directory / 'label_names.json').write_text(json.dumps({str(s['label']):s['name'] for s in result['segments']}), encoding='utf-8')
+            result['review_assets'] = {'image':str(directory / 'review-image.nii.gz'),
+                                      'mask':str(directory / 'labels.nii.gz'), 'names':str(directory / 'label_names.json')}
         return result
     raise ValueError('Unknown analysis module.')
 

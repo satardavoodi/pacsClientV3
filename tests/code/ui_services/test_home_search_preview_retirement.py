@@ -48,7 +48,7 @@ def scene(monkeypatch):
         _thumbnail_request_timer=QTimer(), _pending_thumbnail_row=0,
         _current_thumbnail_task=Mock(), _right_panel_fetch_inflight_uid="synthetic-s",
         _right_panel_render_study_uid="synthetic-s", _series_info_loading_active=True,
-        data_access_panel_widget=SimpleNamespace(get_server_selected=lambda: dict(host="synthetic", port=1)),
+        data_access_panel_widget=SimpleNamespace(server_selected="Synthetic server", get_server_selected=lambda: dict(host="synthetic", port=1)),
         patient_search_widget=SimpleNamespace(get_search_data=lambda: {}, set_searching_state=Mock()),
         search_progress=Mock(), connection_indicator=Mock(), show_loading=Mock(), hide_loading=Mock(),
         _update_connection_indicator_by_status=Mock(), _sync_completed_reporting_physicians_after_search=Mock(),

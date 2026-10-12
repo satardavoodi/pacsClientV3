@@ -160,8 +160,11 @@ class SecretaryOrchestrator:
         return self._workflow_result(result)
 
     def _workflow_result(self, result):
+        from .patient_list_receipt import safe_receipt, safe_provenance
         steps_payload = [
-            {"tool": s.tool, "ok": s.ok, "verified": s.verified, "error_code": s.error_code}
+            {"tool": s.tool, "ok": s.ok, "verified": s.verified, "error_code": s.error_code,
+             "receipt": safe_receipt(getattr(s, 'receipt', {})) if s.ok and s.verified else {},
+             "provenance": safe_provenance(getattr(s, 'provenance', {})) if s.ok and s.verified else {}}
             for s in result.steps
         ]
         return {
@@ -242,6 +245,8 @@ class SecretaryOrchestrator:
         if state.get('pending'):
             return None
         _mem = self._get_memory_store_safe()
+        if _mem:
+            _mem.prepare_conversation(cmd.get('interaction_mode', 'act'))
         return self._parse_plan(
             cmd,
             memory_context=(_mem.get_context_for_llm() if _mem else ""),
@@ -268,6 +273,8 @@ class SecretaryOrchestrator:
         # (2026-06-11: a SOCKS-proxy outage on an installed PC surfaced as the
         # misleading "could not map this command" — see _unparsed_result).
         self._last_parse_failure = ""
+        self._last_planning_code = None
+        self._last_planning_diagnostic = None
         self._last_route = {}  # reset; populated below on the brain path
 
         from . import remote_planner
@@ -278,6 +285,12 @@ class SecretaryOrchestrator:
                 resolve_bus = getattr(getattr(self, 'executor', None), '_resolve_bus', None)
                 bus = resolve_bus() if callable(resolve_bus) else None
                 fields = {'memory_context':memory_context, 'interaction_mode':cmd.get('interaction_mode', 'act')}
+                if cmd.get('language_preference') is not None:
+                    fields['language_preference'] = cmd['language_preference']
+                memory = self._get_memory_store_safe()
+                if memory:
+                    fields['conversation'] = memory.prepare_conversation(fields['interaction_mode'])
+                    fields['memory_context'] = memory.get_context_for_llm()
                 if cmd.get('ui_image') is not None:
                     fields['ui_image']=cmd['ui_image']
                     fields['question_context']=cmd.get('question_context',{})
@@ -298,6 +311,8 @@ class SecretaryOrchestrator:
                     if callable(progress_cb):
                         progress_cb('Eagle Eye Server: Retrying answer')
                     response = remote_planner.request('plan', text, language=language, **fields)
+                if memory and response.get('conversation'):
+                    memory.update_conversation(response['conversation'])
                 self._last_route = dict(response['route'])
                 self._last_modules = list(response['route']['modules'])
                 if cmd.get('interaction_mode', 'act') != 'act':
@@ -306,10 +321,16 @@ class SecretaryOrchestrator:
                 return self._ensure_source(proposal, cmd) if proposal else None
             except remote_planner.RemotePlanningError as exc:
                 self._last_parse_failure = f'server_error: {exc}'
+                from .patient_list_receipt import PLANNING_CODES, safe_planning_diagnostic
+                self._last_planning_code = exc.error_code if isinstance(exc.error_code,str) and exc.error_code in PLANNING_CODES else None
+                self._last_planning_diagnostic = (safe_planning_diagnostic(exc.diagnostic)
+                    if exc.diagnostic is not None else None)
                 if cmd.get('interaction_mode','act') != 'act':
                     return {'_mode':cmd['interaction_mode'], '_mode_error':{
-                        'error_code':getattr(exc,'error_code','SERVER_PLANNING_FAILED'),
-                        'message':str(exc)}}
+                        'error_code':self._last_planning_code or 'SERVER_PLANNING_FAILED',
+                        'message':str(exc),
+                        **({'_planning_diagnostic':self._last_planning_diagnostic}
+                           if self._last_planning_diagnostic is not None else {})}}
                 return None
 
         # ── AgentBrain path (two-phase: routing + planning) ───────────────────
@@ -388,8 +409,12 @@ class SecretaryOrchestrator:
         """
         failure = str(getattr(self, "_last_parse_failure", "") or "")
         if failure.startswith('server_error:'):
+            from .patient_list_receipt import PLANNING_CODES, safe_planning_diagnostic
+            code = getattr(self,'_last_planning_code',None)
+            diagnostic = getattr(self,'_last_planning_diagnostic',None)
             return {'ok': False, 'action': 'unknown', 'message': failure.removeprefix('server_error: ').strip(),
-                    'data': None, 'error_code': 'SECRETARY_SERVER_UNAVAILABLE'}
+                    'data': None, 'error_code': code if isinstance(code,str) and code in PLANNING_CODES else 'SECRETARY_SERVER_UNAVAILABLE',
+                    **({'_planning_diagnostic':safe_planning_diagnostic(diagnostic)} if diagnostic is not None else {})}
         low = failure.lower()
         if any(marker in low for marker in (
                 "llm_error", "network error", "connection", "proxy",
@@ -494,7 +519,27 @@ class SecretaryOrchestrator:
         if self._accepts_source(plan.get("action")) and (not source or source in {"active_tab", "active", "current"}):
             entities["source"] = self.adapter.get_active_source()
             plan["entities"] = entities
+        if plan.get('action') == 'list_patients' and not (entities.get('date_from') or entities.get('date_to')):
+            # Bind verification provenance to the exact normalized search dates,
+            # rather than the legacy relative date token sent by the planner.
+            date_from, date_to = SecretaryExecutor._normalize_date_filter(str(entities.get('date') or ''))
+            if date_from and date_to:
+                entities.update(date_from=date_from, date_to=date_to)
+                plan['entities'] = entities
         result = yield ExecutionCall(self.executor.execute, self.executor.execute_async, (plan, state), {"confirmed": confirmed})
+        if (result.get('ok') is True and plan.get('action') in
+                ('advanced_search_patients', 'list_patients', 'search_patients', 'advanced_search')):
+            from .workflow import WorkflowExecutor
+            def probe(action, args):
+                return self.executor.execute({'action': action, 'entities': args}, state, confirmed=True)
+            async def probe_async(action, args):
+                return await self.executor.execute_async(
+                    {'action': action, 'entities': args}, state, confirmed=True)
+            # ExecutionCall selects the async runner on the GUI loop; never
+            # repeat the initiating search or bypass its confirmation checks.
+            verifier = WorkflowExecutor(probe, run_step_async=probe_async)
+            result = yield from verifier.verify_executed_patient_search_steps(
+                plan['action'], entities, result)
         if result.get("ok"):
             # Patient-context capture applies to PATIENT actions only. A
             # successful bus-bridged action (open_module, change_series, …)
@@ -607,6 +652,9 @@ class SecretaryOrchestrator:
                     failure = reply['_mode_error']
                     _result = {'ok':False,'action':'mode_reply','message':failure['message'],
                                'data':None,'error_code':failure['error_code']}
+                    if isinstance(failure.get('_planning_diagnostic'),dict):
+                        from .patient_list_receipt import safe_planning_diagnostic
+                        _result['_planning_diagnostic']=safe_planning_diagnostic(failure['_planning_diagnostic'])
                     return _result
                 if reply.get('_mode') == cmd.get('interaction_mode') and reply.get('_mode_reply'):
                     memory = self._get_memory_store_safe()
@@ -953,6 +1001,7 @@ class SecretaryOrchestrator:
                 repaired = repair_plan_after_execution_failure(
                     user_text=text,
                     language=language,
+                    language_preference=cmd.get('language_preference'),
                     failed_plan=dict(active_plan),
                     execution_result=result,
                     attempt=_exec_attempt,

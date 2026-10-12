@@ -371,6 +371,13 @@ class Presentation:
                 connect(toolbar, 'moduleSelected(QString)', self.schedule_panel)
                 self.schedule_panel('NewMPR2MPR')
         self.refresh_header()
+        # Shared chrome is independent of MPR/Brain layout and imaging logic.
+        spec = importlib.util.spec_from_file_location(
+            'aipacs_viewer_chrome', Path(__file__).with_name('viewer_chrome.py'))
+        chrome_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(chrome_module)
+        self.chrome_module = chrome_module
+        self.common_chrome = chrome_module.install(qt, window)
 
     def schedule_panel(self, name):
         if str(name) in PANEL_LABELS:

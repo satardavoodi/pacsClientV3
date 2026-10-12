@@ -1,0 +1,16 @@
+{
+ "version": "1.32.6",
+ "python": {
+  "version": "3.13.5",
+  "executable": "D:\\RAZI crm\\.venv\\Scripts\\python.exe",
+  "implementation": "CPython"
+ },
+ "optional_packages": {
+  "cryptography": true,
+  "requests": true,
+  "pymongo": true,
+  "win32api": true,
+  "PySide6": true
+ },
+ "note": "Written by scripts/write_build_info.py at build time. `executable` is the interpreter PyInstaller was handed; what it could import is what the build contains."
+}

@@ -151,13 +151,15 @@ modules:
     display_name: "Web Browser"
     category: utility
     description: >
-      Built-in web browser tab.  Supports Google search (the default
+      Server-owned public research, page reading, image/PDF downloads and image generation; also the built-in web browser tab. Supports Google search (the default
       search engine for all voice web searches), opening specific
       URLs, and page navigation (back / forward / refresh).  Opens or
       activates automatically when a web command is issued.
     typical_intents:
       - "search <something> on Google / the web"
       - "open google and search <something>"
+      - "find and download an original image for my slide on Eagle Eye Server"
+      - "generate a professional course cover or slide thumbnail"
       - "open this website / URL"
       - "open the browser"
       - "go back / go forward / refresh the page"
@@ -173,13 +175,19 @@ modules:
       Online Consultation tab (consultant directory, my consultations,
       requests) when the consultation module is enabled.
     typical_intents:
+      - "create a course and slides from my lecture outline"
+      - "correct the author or slide text in my course draft"
+      - "save and preview my course"
+      - "rename, reorder or insert course items and replace their text"
+      - "attach an image, PDF, thumbnail or cover to my course"
+      - "find these exact patients in PACS and import every DICOM series into a course item"
       - "open education"
       - "open consultation / show my consultations"
       - "show consultant profiles"
       - "open courses / my courses"
       - "open case of the day"
       - "search education for <topic>"
-    side_effects: false
+    side_effects: true
     doc_file: "modules/education.md"
 
 # â”€â”€ Routing rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -213,6 +221,16 @@ modules:
       - "record and upload this patient voice"
     doc_file: "modules/support_control.md"
     side_effects: true
+
+  - module_id: session_files
+    display_name: "Secretary Session Files"
+    category: reference
+    description: "Read and inspect this conversation's supplied images, PDF, PPTX, DOCX and TXT references through Eagle Eye."
+    typical_intents:
+      - "use the attached references for a course"
+      - "summarize my session PDF or inspect a supplied image"
+    doc_file: "modules/session_files.md"
+    side_effects: false
 
 routing_hints:
   - pattern: "list|show|search|filter.*patient"

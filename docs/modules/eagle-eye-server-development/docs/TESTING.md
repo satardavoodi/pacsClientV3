@@ -45,3 +45,15 @@ inspect the exit code. The historical run_test.ps1 wrapper is not proof of succe
 Receipt for each test: timestamp, source/model/Slicer hashes, interpreter, account/
 session, synthetic or authorized scope, command, exit code, result, limits, reviewer
 and rollback. Store private artifacts locally and publish only redacted summaries.
+
+
+## Dedicated server stability selection (2026-10-11)
+
+Run the three `tests/code/ai_imaging/test_server_*_stability.py` files with direct
+pytest, `-p no:debugging --reruns 0`, QT_QPA_PLATFORM=offscreen and `PYTHONPATH=.`.
+Use temporary synthetic stores and owned child processes; no live DB/provider.
+Pair with scheduling, watchdog, admission, service-host and remote HTTP guards.
+See SERVER_HARDENING_2026-10-10.md for exact evidence and unpassed gates. Never
+translate a synthetic pass into clinical capacity, native GUI, installed artifact
+or long-soak acceptance. Razi new guards execute from a nonexecuting staging
+overlay against the verified active source; never hotpatch an executing revision.

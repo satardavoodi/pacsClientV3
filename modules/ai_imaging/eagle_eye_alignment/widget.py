@@ -2,13 +2,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import threading
+from functools import partial
+from queue import SimpleQueue, Empty
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal, QUrl
 from PySide6.QtGui import QColor, QImage, QPixmap, QPen, QPainter, QDesktopServices
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,
     QCheckBox,QFileDialog,QDoubleSpinBox,QTableWidget,QTableWidgetItem,QGraphicsView,
-    QGraphicsScene,QGraphicsEllipseItem,QGraphicsItem,QSplitter,QLineEdit,QHeaderView)
+    QGraphicsScene,QGraphicsEllipseItem,QGraphicsItem,QSplitter,QLineEdit,QHeaderView,QProgressBar)
 
 from .geometry import LANDMARKS,MEASUREMENT_LABELS,measure_bilateral
 from . import service
@@ -124,6 +126,7 @@ class AlignmentWidget(QWidget):
         self.image=None;self.points={'R':{},'L':{}};self.metrics=None;self.provenance={}
         self._file_rows=[];self.report_result=None;self._pending_report_handle=None
         self._previous_report=None;self._source_calibration=None
+        self._progress_messages=SimpleQueue()
         self._executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='alignment')
         self._cancel=threading.Event();self._future=None;self._kind='';self._disposed=False
         cancel,executor=self._cancel,self._executor
@@ -131,6 +134,10 @@ class AlignmentWidget(QWidget):
         layout=QVBoxLayout(self)
         heading=QLabel('Eagle Eye Alignment View');heading.setStyleSheet('font-size:22px;font-weight:600')
         layout.addWidget(heading)
+        self.status=QLabel('Select an image from this examination.');self.status.setWordWrap(True)
+        self.status.setAccessibleName('Alignment operation status');layout.addWidget(self.status)
+        self.progress=QProgressBar();self.progress.setRange(0,0)
+        self.progress.setAccessibleName('Alignment operation in progress');layout.addWidget(self.progress)
         series_row=QHBoxLayout();layout.addLayout(series_row)
         series_row.addWidget(QLabel('Primary alignment series'))
         self.series=QComboBox();series_row.addWidget(self.series,1)
@@ -194,12 +201,12 @@ class AlignmentWidget(QWidget):
         self.open_pdf.clicked.connect(self._open_pdf);self.save_pdf.clicked.connect(self._save_pdf)
         self.export.clicked.connect(self.save_report);self.review.toggled.connect(self._refresh_controls)
         self.confirm.toggled.connect(self._invalidate_review)
-        self.status=QLabel('Select an image from this examination.');self.status.setWordWrap(True);layout.addWidget(self.status)
         self._timer=QTimer(self);self._timer.setInterval(100);self._timer.timeout.connect(self._poll)
         self._refresh_controls()
 
     def _submit(self,kind,fn,*args):
         if self._future is not None or self._disposed:return
+        while not self._progress_messages.empty():self._progress_messages.get_nowait()
         self._control_error = None
         self._kind=kind;self._cancel.clear();self._future=self._executor.submit(fn,*args)
         self._timer.start();self._refresh_controls()
@@ -229,9 +236,30 @@ class AlignmentWidget(QWidget):
         if path:self._load_path(path)
 
     def _load_path(self,path):
+        from .saved_review import load
         self.review.setChecked(False)
         self.status.setText('Reading DICOM pixels and calibration...')
-        self._submit('load',service.load_image,path,self.study_uid,self.series.currentData())
+        self._submit('load',load,path,self.study_uid,self.series.currentData())
+
+    def restore_saved_result(self,result):
+        from .saved_review import prepare
+        if self.image is not None or self._future is not None:return
+        self.status.setText('Loading previous Alignment measurements and report...')
+        self._submit('restore',prepare,deepcopy(result),self.study_uid)
+
+    def _apply_saved(self,state):
+        original=self._source_calibration
+        self._apply_image(state['image']);self._source_calibration=original
+        result=state['result'];self.points=deepcopy(result['landmarks'])
+        self.provenance={k:deepcopy(v) for k,v in result.items() if k!='landmarks'}
+        for key in ('indication','comparison','impression'):
+            edit=getattr(self,key);edit.blockSignals(True)
+            edit.setText(state['notes'].get(key,''));edit.blockSignals(False)
+        self._redraw_points()
+        self.report_result=result if result.get('pdf_available') else None
+        self.status.setText('Previous Alignment result loaded. No new analysis was requested. '
+                            'Review points before creating a revised report.')
+        self._refresh_controls()
 
     def _apply_image(self,image):
         self._previous_report=None
@@ -255,8 +283,8 @@ class AlignmentWidget(QWidget):
 
     def start_ai(self, *, automatic=False):
         if self.image is None or (not automatic and not self.confirm.isChecked()):return
-        self.review.setChecked(False);self.status.setText('Local AI is locating hip, knee and ankle landmarks...')
-        self._submit('ai',service.predict,dict(self.image),self._cancel)
+        self.review.setChecked(False);self.status.setText('Requesting hip, knee and ankle landmarks from Eagle Eye Server...')
+        self._submit('ai',partial(service.predict,progress=self._progress_messages.put),dict(self.image),self._cancel)
 
     def _manual_changed(self):self.canvas.manual_target=self.manual.currentData()
 
@@ -322,7 +350,7 @@ class AlignmentWidget(QWidget):
         if self._pending_report_handle:
             from functools import partial
             from ..eagle_eye_remote.routing import resume_alignment_correction
-            self._submit('report', partial(resume_alignment_correction, cancel=self._cancel),
+            self._submit('report', partial(resume_alignment_correction, cancel=self._cancel, progress=self._progress_messages.put),
                          deepcopy(self.image), self._pending_report_handle)
             return
         if self.metrics is None or not self.review.isChecked() or not self.confirm.isChecked():return
@@ -334,7 +362,7 @@ class AlignmentWidget(QWidget):
         notes=dict(indication=self.indication.text(),comparison=self.comparison.text(),impression=self.impression.text())
         provenance=deepcopy(self.provenance);provenance['acquisition_reviewed']=self.confirm.isChecked()
         self.status.setText('Generating the three-page Alignment PDF...')
-        self._submit('report',partial(generate_report, cancel=self._cancel),deepcopy(self.image),deepcopy(self.points),provenance,notes,landmarks_reviewed)
+        self._submit('report',partial(generate_report, cancel=self._cancel, progress=self._progress_messages.put),deepcopy(self.image),deepcopy(self.points),provenance,notes,landmarks_reviewed)
 
     def _open_pdf(self):
         result=self.report_result or self._previous_report
@@ -352,6 +380,11 @@ class AlignmentWidget(QWidget):
         self._submit('export',export_pdf,deepcopy(result),path)
 
     def _poll(self):
+        if self._disposed:return
+        while True:
+            try:message=self._progress_messages.get_nowait()
+            except Empty:break
+            if self._future is not None:self.status.setText(str(message))
         if self._future is None or not self._future.done():return
         future,self._future=self._future,None;self._timer.stop()
         if self._disposed:return
@@ -376,10 +409,20 @@ class AlignmentWidget(QWidget):
                         self.series.setCurrentIndex(index)
                         if self.files.count() == 1:
                             self.load_selected()
-            elif self._kind=='load':
-                self._apply_image(result)
+            elif self._kind in ('load','restore'):
+                image=result['image']
+                if result.get('row'):
+                    row=result['row'];self._file_rows=[row]
+                    self.series.blockSignals(True);self.series.clear()
+                    self.series.addItem(row['series_label'],row['series_uid']);self.series.blockSignals(False)
+                    self.files.clear();self.files.addItem(row['label'],row['path'])
+                self._apply_image(image)
+                if result.get('report') is not None:
+                    self.report_result=result['report'];self.status.setText(result['notice']);return
+                if result.get('saved') is not None:
+                    self._apply_saved(result['saved']);return
                 uid = getattr(self, 'preferred_series_uid', '')
-                if uid and result.get('identity', {}).get('series_uid') == uid:
+                if self._kind=='load' and uid and image.get('identity', {}).get('series_uid') == uid:
                     self.start_ai(automatic=True)
             elif self._kind=='ai':
                 self.points=result['landmarks'];self.provenance={k:v for k,v in result.items() if k!='landmarks'}
@@ -407,6 +450,7 @@ class AlignmentWidget(QWidget):
 
     def _refresh_controls(self):
         busy=self._future is not None or self._pending_report_handle is not None;loaded=self.image is not None
+        self.progress.setVisible(self._future is not None)
         for widget in (self.scan,self.series,self.files):widget.setEnabled(not busy)
         for widget in (self.load,self.browse):widget.setEnabled(not busy and self.series.currentData() is not None)
         for widget in (self.indication,self.comparison,self.impression):widget.setEnabled(loaded and not busy)

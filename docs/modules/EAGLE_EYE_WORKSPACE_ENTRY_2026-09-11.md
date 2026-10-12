@@ -232,3 +232,21 @@ Primary references:
 
 Viewer integration findings are handed off in the existing VTK domains review;
 do not alter the shared download/cache pipeline to implement this tool.
+
+## Automatic saved module result tabs 2026-10-08
+Opening an Eagle Eye workspace now discovers locally retained server result.json
+records in the Eagle Eye artifact root and exact-study attachment root off-thread.
+Latest complete result per server module is restored as a named tab without any
+inference submission or source-series loading. Discovery requires exact study
+identity, owned artifact directory, bounded JSON/report and existing report/PDF;
+foreign studies, escaped artifacts and incomplete results are skipped. Existing
+tabs are reused and the current imaging viewport remains selected. Marrow restores
+its full review/PDF/Slicer page; other server modules restore read-only saved report
+and PDF tabs. Existing native module review/edit workflows remain available through
+their functions; generic saved report tabs do not reconstruct their editor state.
+Scope is locally retained results, not remote-only jobs or another study's history.
+Synthetic missing-discovery guard failed before implementation. 44 focused guards
+passed, including workspace reopening without loading inputs, duplicate suppression,
+exact-study and missing-report exclusion. 515 mirror pairs match; no mirrored source.
+Fresh source live GUI remains pending. This client-only change needs no server restart.
+Both Client build backends include the ai_imaging core; no installer was produced.

@@ -131,6 +131,9 @@ class AiMainWindow(QMainWindow):
         result_signal = getattr(self.imaging_tab, 'analysis_result_ready', None)
         if result_signal is not None:
             result_signal.connect(self.analysis_result_tabs.show_result)
+        lumbar_signal = getattr(self.imaging_tab, 'lumbar_analysis_ready', None)
+        if lumbar_signal is not None:
+            lumbar_signal.connect(self.analysis_result_tabs.show_lumbar_record)
 
         # Sync reception context with PACS-backed imaging widget as soon as possible.
         self._sync_reception_patient_context()

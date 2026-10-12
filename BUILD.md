@@ -712,3 +712,27 @@ Record accepted optimization work under the existing OPT-53 item in
 - `builder/docs/AI_AGENT_BUILD_RUNBOOK.md` — historical PyInstaller details.
 - `builder nuitka/README_NUITKA_BUILD.md` — Nuitka diagnostics and stages.
 - `docs/reports/CODEX_REPOSITORY_READINESS_2026-08-27.md` — repository blockers.
+
+
+## Company license generator management tool
+
+The existing `modules/LicenseGenerator` folder owns the company-only generator.
+Its `run.bat` and the repository `run_license_generator.bat` launch the canonical
+`license_generator.py` with the project interpreter. The folder's `build.bat`
+retains its standalone `AIPacs-License-Generator` management-tool output, explicit
+project import path and local scratch directories. It refuses implicit dependency
+installation. This management-tool helper is not a Client/Server release entrypoint
+or a substitute for the role-selected candidate coordinator above. Do not package
+or copy the external DPAPI signing store or issuance ledger into any executable.
+Customer specs exclude both generator entrypoints and `tools.licensing`; only core
+verification/renewal and public trust roots belong in customer artifacts. See
+[folder map](modules/LicenseGenerator/README.md) and [signed renewal/key custody](docs/modules/LICENSE_RENEWAL.md).
+No company tool or Client/Server artifact was built by the 2026-10-07 source slice.
+
+
+## Function-specific Advanced Image Analysis startup
+
+Candidates containing brain correction must include the physical early startup
+bootstrap in both backend payloads and qualify the first visible frame and taskbar
+behavior on the installed candidate. Follow the [startup profile contract](docs/modules/ADVANCED_IMAGE_ANALYSIS_STARTUP_PROFILES.md).
+The native core is reused; source GUI acceptance does not replace installed QA.

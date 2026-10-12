@@ -125,6 +125,9 @@ def get_privacy_exclude_patterns() -> list[str]:
     detected = runtime.get("must_not_package_detected_paths", []) or []
     baseline = runtime.get("must_not_package_patterns", []) or []
     extra = [
+        "tools/licensing/**",
+        "**/issuer-*.key",
+        "**/issuer-*.sqlite*",
         ".venv/**",
         ".venv_build/**",
         "venv/**",
@@ -305,6 +308,8 @@ def common_app_datas() -> list[tuple[str, str]]:
         "modules/EchoMind/secretary/catalog",
         "modules/EchoMind/secretary/prompts",
         "modules/EchoMind/secretary/module_map.yaml",
+        # Hosted CRM isolates the original package through an on-disk import root.
+        "modules/ai_imaging/eagle_eye_remote/crm/vendor/config/operations.json",
         "modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py",
         "modules/mpr/advanced_3d_slicer/slicer_custom_app/unified_logging.py",
         "modules/mpr/advanced_3d_slicer/slicer_custom_app/branding",
@@ -312,6 +317,8 @@ def common_app_datas() -> list[tuple[str, str]]:
     ]
     for rel in curated:
         datas.extend(collect_tree_datas(rel))
+    datas.extend(collect_tree_datas(
+        "modules/ai_imaging/eagle_eye_remote/crm/vendor/reception_crm", "reception_crm"))
     # Ship the SANITIZED config tree at "config/" (never the developer's config/).
     datas.extend(collect_tree_datas(sanitized_config_rel(), "config", allow_excluded=True))
     return dedupe_datas(datas)
@@ -324,6 +331,10 @@ def app_a_datas() -> list[tuple[str, str]]:
         "modules/ai_imaging/eagle_eye_brain/slicer_worker.py"
     ) + collect_tree_datas(
         "modules/ai_imaging/eagle_eye_brain/manual_slicer.py"
+    ) + collect_tree_datas(
+        "modules/ai_imaging/eagle_eye_brain/AIPacsBrainReviewStartup.py"
+    ) + collect_tree_datas(
+        "modules/mpr/advanced_3d_slicer/slicer_custom_app/viewer_chrome.py"
     ))
 
 

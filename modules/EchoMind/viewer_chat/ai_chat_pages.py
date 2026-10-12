@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
 from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain_text_from_html, style_popup, themed_message_box, themed_input_text
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
-from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET,REPORT_MODALITIES,TURBO_BACKEND
+from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET,REPORT_MODALITIES
 from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
 from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backend, get_openai_model_for_feature, get_openai_settings
@@ -62,10 +62,8 @@ from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backen
 def _resolve_active_ai_identity() -> tuple[str, str | None, str | None]:
     from modules.EchoMind import remote_backend
     if remote_backend.selected():
-        from modules.EchoMind.entitlement import company_entitled
-        if company_entitled():
-            return 'server', 'Eagle Eye Server - EchoMind', Manage.instance().get_irannobat_key()
-        return 'server', None, None
+        from modules.ai_imaging.eagle_eye_remote.user_session import has_login_context
+        return 'server', ('Eagle Eye Server - EchoMind' if has_login_context() else None), None
     if get_llm_backend() == "openai":
         cfg = get_openai_settings()
         api_key = str(cfg.get("api_key") or "").strip()
@@ -83,6 +81,13 @@ def _resolve_active_ai_identity() -> tuple[str, str | None, str | None]:
         return "company", getattr(info, "center_display", None) or "EchoMind", getattr(info, "irannobat_key", None)
     except Exception:
         return "company", None, None
+
+
+def _ai_identity_ready(backend, key):
+    if backend in ('server', 'company'):
+        from modules.ai_imaging.eagle_eye_remote.user_session import has_login_context
+        return has_login_context()
+    return bool(key)
 
 
 def _log_usage_for_ui(api_key: str | None, usage: dict | None) -> None:
@@ -281,7 +286,7 @@ def _ai_module(backend: str | None = None):
     """
     resolved = backend or _ai_backend()
     from modules.EchoMind import remote_backend
-    if resolved == 'server' or remote_backend.selected():
+    if resolved in ('server', 'company') or remote_backend.selected():
         return remote_backend
     return openai_direct if resolved == "openai" else company_direct
 
@@ -429,7 +434,7 @@ class _ImageSourceDialog(QDialog):
 
     def __init__(self, parent=None, current_patient_id: str | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Attach Image Source")
+        self.setWindowTitle("Add attachment")
         self.setMinimumWidth(460)
         # Explicit popup colours (see _ReceptionIdDialog) — readable on any
         # Windows theme; AIPACS_ECHO_POPUP_THEME=0 restores legacy.
@@ -437,11 +442,15 @@ class _ImageSourceDialog(QDialog):
         self.selected_source: str | None = None
 
         layout = QVBoxLayout(self)
-        title = QLabel("Choose image source:")
+        title = QLabel("Choose attachment source:")
         title.setWordWrap(True)
         layout.addWidget(title)
 
-        btn_local = QPushButton("From this system")
+        btn_clipboard = QPushButton("Copy from Clipboard")
+        btn_clipboard.clicked.connect(lambda: self._select("clipboard"))
+        layout.addWidget(btn_clipboard)
+
+        btn_local = QPushButton("From this system (image, TXT, Word, PDF or audio)")
         btn_local.clicked.connect(lambda: self._select("local"))
         layout.addWidget(btn_local)
 
@@ -1142,6 +1151,13 @@ class ModePickerPage(QWidget):
                     self._set_ai_enabled(False, "Please set your OpenAI API key in Settings -> EchoMind.")
                 return
 
+            if backend == 'server':
+                ready = _ai_identity_ready(backend, api_key)
+                self._set_ai_enabled(ready, '' if ready else 'Sign in through the ordinary AI-PACS login before sending.')
+                if ready:
+                    self._show_welcome(center_name or 'Eagle Eye Server', api_key=None)
+                return
+
             manager = APIKeyManager.instance()
 
             # If already validated: unlock UI and show welcome
@@ -1455,11 +1471,6 @@ class OneChatPage(QWidget):
         if OneChatPage.last_selected_modality:
             self._set_modality_text(OneChatPage.last_selected_modality)
         
-        try:
-            self.composer.btn_all_modality_hq.setVisible(self.page_mode in ["Report", "ChatGPT"])
-            self.composer.btn_all_modality_hq.clicked.connect(self._on_hq_all_modality_clicked)
-        except Exception:
-            pass        
         # اتصال سیگنال جدید
         self.composer.modalitySelected.connect(self._on_modality_selected)
         
@@ -1515,6 +1526,9 @@ class OneChatPage(QWidget):
             return
 
         source = dlg.selected_source
+        if source == "clipboard":
+            self.composer.copy_from_clipboard()
+            return
         if source == "local":
             # Preserve legacy local attach behavior (audio/image from system).
             self.composer._choose_file()
@@ -2119,6 +2133,8 @@ class OneChatPage(QWidget):
         """
         sid = getattr(self, "current_session_id", None) or getattr(self.controller, "session_id", None)
         if not sid:
+            self.composer.clear_correction_reports()
+            self._load_reception_correction_reports()
             return
 
         # preserve current selection if any
@@ -2188,7 +2204,7 @@ class OneChatPage(QWidget):
         try:
             self.composer.clear_correction_reports()
             for raw, label in report_items:
-                self.composer.register_correction_report(raw, label=label)
+                self.composer.register_correction_report(raw, label="EchoMind — " + (label or "Report"))
         except Exception:
             return
 
@@ -2203,6 +2219,44 @@ class OneChatPage(QWidget):
             except Exception:
                 pass
 
+        self._load_reception_correction_reports()
+
+
+    def _load_reception_correction_reports(self):
+        """Load the View Reports repository off the GUI thread, scoped to this case."""
+        study_uid = getattr(self, 'study_uid', None)
+        session_id = getattr(self, 'current_session_id', None)
+        if not study_uid or getattr(self, '_busy_count', 0) > 0:
+            return
+
+        def work():
+            from modules.EchoMind import reception_correction, eagle_eye_correction
+            items, errors = [], []
+            for name, source in [('Reception', reception_correction), ('Eagle Eye', eagle_eye_correction)]:
+                try:
+                    items.extend(source.load_for_study(study_uid))
+                except Exception:
+                    errors.append(name)
+            return {'items': items, 'errors': errors}
+
+        def ok(result):
+            if (getattr(self, 'study_uid', None), getattr(self, 'current_session_id', None)) != (study_uid, session_id):
+                return
+            combo = self.composer.cmb_corr_reports
+            previous = self.composer.get_selected_correction_report_text()
+            items = result['items']
+            for raw, label in items:
+                self.composer.register_correction_report(raw, label=label)
+            if not previous:
+                combo.setCurrentIndex(0)
+            if result['errors']:
+                self.composer.lbl_corr_info.setText('Could not load: ' + ', '.join(result['errors']) + '. Reopen Correction to retry.')
+
+        def failed(_message):
+            if getattr(self, 'study_uid', None) == study_uid:
+                self.composer.lbl_corr_info.setText('Saved reports could not be loaded. Reopen Correction to retry.')
+
+        self._run_async(work, ok, failed, typing='Loading saved report sources')
 
     def _session_roles(self):
         """Custom roles for sidebar items."""
@@ -2955,18 +3009,11 @@ class OneChatPage(QWidget):
         worker.start()
 
 
-    def _send_report_correction(self, correction_note: str, *,
-                                system_prompt_prefix: str = "",
-                                force_backend: str = "",
-                                turbo: bool = False):
+    def _send_report_correction(self, correction_note: str):
         """Correction tab: apply user's correction note to a selected report and display corrected report."""
         backend_name = get_active_backend_display_name()
         backend, _center_name, center_key = _resolve_active_ai_identity()
-        if force_backend:
-            # Turbo is pinned to the company pipeline like every other Turbo
-            # action; the llm_backend setting switches Send, not Turbo.
-            backend = force_backend
-        if not center_key:
+        if not _ai_identity_ready(backend, center_key):
             print("[Correction] blocked: AI backend not configured")
             self.controller.bubble("AI ChatBot", f"❌ {backend_name} is not configured. Access denied.")
             return
@@ -2997,8 +3044,7 @@ class OneChatPage(QWidget):
         # highest-signal record we keep.
         self._pending_report_kind = "correction"
         self._pending_corrects_msg_id = self._resolve_corrected_msg_id(report_text)
-        self.controller.bubble(
-            "You (⚡Turbo · ✅ Correction)" if turbo else "You (✅ Correction)", note)
+        self.controller.bubble("You (Correction)", note)
         
         def work():
             # Correction is the final targeted-revision step → use the dedicated (stronger)
@@ -3006,8 +3052,10 @@ class OneChatPage(QWidget):
             # on the OpenAI path it resolves via the "correction" feature in Settings.
             from modules.EchoMind import remote_backend
             if remote_backend.selected():
-                return remote_backend.correction(report_text, note, turbo=turbo,
-                    study_profile=self._correction_gate_profile() if turbo else None)
+                return remote_backend.correction(report_text, note)
+            from modules.EchoMind.correction_source import unpack
+            if unpack(report_text) is not None:
+                raise ValueError('Saved report sources require the authenticated EchoMind Server route.')
             return _ai_module(backend).correction(
                 user_report=report_text,  # Full JSON report
                 correction_note=note,
@@ -3016,7 +3064,7 @@ class OneChatPage(QWidget):
                 # A PREFIX on the shared correction prompt, never an override: the
                 # response is parsed and the shared prompt carries the key contract
                 # (a mammography report has eleven keys, not five).
-                system_prompt_prefix=system_prompt_prefix,
+
             )
         
         def ok(res):
@@ -3159,6 +3207,9 @@ class OneChatPage(QWidget):
             active_tab = ""
 
         if active_tab == "correction":
+            if self.composer.get_report_attachments():
+                self.controller.bubble("AI ChatBot", "Use Transcribe or Standard to send report attachments.")
+                return
             if voices:
                 self.controller.bubble(
                     "AI ChatBot",
@@ -3253,234 +3304,6 @@ class OneChatPage(QWidget):
             self._send_with_mode(txt, "Chat")
 
 
-    def _on_hq_all_modality_clicked(self):
-        from .api_manager import APIKeyManager
-        # ── Turbo is PINNED to the company GapGPT pipeline (owner decision 2026-08-02).
-        # A fixed company-controlled workflow: hardcoded connection (GapGPT), hardcoded
-        # prompts (build_report_system_prompt), authorized centers only (the CENTERS
-        # registry in api_manager.py), company-selected model (PRIMARY_REPORT_MODEL).
-        # `llm_backend` is a SEND-backend switch and must NOT reroute Turbo — switching
-        # Send to the user's OpenAI key no longer moves Turbo onto the user's
-        # key/model/endpoint (it used to; that was the scoping leak).
-        backend = TURBO_BACKEND   # fixed company config — never a Settings value
-        # ── ENTITLEMENT. Turbo is technically separate from the AI-PACS backend now
-        # (its own hardcoded GapGPT configuration, a direct connection), but it must
-        # NOT be separate for licensing: one company authorisation entitles both, and
-        # its absence disables both. The hardcoded credentials Turbo carries are
-        # plumbing, never permission — `company_entitled()` is the permission.
-        from modules.EchoMind.entitlement import company_entitled, ENTITLEMENT_DENIED
-        if not company_entitled():
-            _log.warning("[Turbo] blocked: installation is not company-entitled")
-            self.controller.bubble("AI ChatBot", ENTITLEMENT_DENIED)
-            return
-        manager = APIKeyManager.instance()
-        center_key = manager.get_current_key() or ""
-        if not center_key:
-            _log.warning("[Turbo] blocked: entitled but no centre key resolved")
-            self.controller.bubble("AI ChatBot", ENTITLEMENT_DENIED)
-            return
-
-        if str(getattr(self, "page_mode", "")).lower() not in ("report", "chatgpt"):
-            _log.warning("[Turbo] blocked: invalid page_mode page_mode=%s", getattr(self, "page_mode", None))
-            return
-
-        # ── Correction tab: Turbo EDITS the selected report ─────────────────
-        # Observed 2026-08-09: with the Correction tab active, Turbo fell through
-        # to the `else` branch below, took the correction INSTRUCTION as if it were
-        # a dictation and called reporter(). The physician got a brand-new report
-        # generated from his own edit note, and the report he had selected was
-        # never sent at all. Correction is an EDIT, and it needs a different
-        # function, a different model and a different prompt.
-        try:
-            _tab = str(self.composer.get_active_tab() or "").strip().lower()
-        except Exception:
-            _tab = ""
-        if _tab == "correction":
-            self._turbo_correction(backend, center_key)
-            return
-
-        # متن را مشابه منطق Send انتخاب کن
-        std_text, tr_text = self.composer.get_tab_texts()
-        std_text = (std_text or "").strip()
-        tr_text  = (tr_text  or "").strip()
-        active_tab = self.composer.get_active_tab()
-
-        if active_tab == "standard" and std_text:
-            user_msg = std_text
-        elif active_tab == "transcribe" and tr_text:
-            user_msg = tr_text
-        elif active_tab == "normal_template":
-            # هنگام ادیت Template، متن اصلی را از Transcribe (یا Standard) بگیر
-            if tr_text:
-                user_msg = tr_text
-            elif std_text:
-                user_msg = std_text
-            else:
-                user_msg = ""
-        else:
-            user_msg = (self.composer.box.toPlainText() or "").strip()
-
-        # Always use the persisted modality — no menu anymore
-        modality = getattr(self, "_current_modality", None)
-        if not modality:
-            _log.warning("[Turbo] blocked: modality not selected")
-            self.controller.bubble("AI ChatBot", "⚠️ <i>Please select a modality first.</i>")
-            return
-        try:
-            normal_template = (self.composer.get_normal_template_plain_text() or "").strip() or None
-        except Exception:
-            normal_template = None
-
-        # برای لاگ/تاریخچه
-        self.controller.bubble("You (⚡Turbo Mode)", user_msg or "(session-based)")
-        # 2026-08-06: logger, not print — a Turbo run must be greppable in
-        # app.log. `model` is logged too: verifying the last live run meant
-        # inferring it from the token-usage record.
-        _log.info(
-            "[Turbo] sending backend=%s model=%s text_len=%d modality=%s normal_template=%s",
-            backend, company_direct.PRIMARY_REPORT_MODEL,
-            len((user_msg or "").strip()), modality,
-            # 2026-08-07: which REGISTER the report comes back in — definitive normals
-            # vs hedged "no gross abnormality" — depends entirely on whether a template
-            # was attached. Diagnosing the 53516 report meant inferring that from the
-            # output's wording, because the run itself never recorded it.
-            (f"{len(normal_template)}ch" if normal_template else "none"),
-        )
-
-        def work():
-            # ── Turbo's OWN prompt (owner decision 2026-08-08) ──────────────
-            from modules.EchoMind import remote_backend
-            _gate = self._build_gate_profile(user_msg)
-            if remote_backend.selected():
-                return remote_backend.reporter(user_msg, modality, normal_template,
-                    workflow='turbo', study_profile=_gate)
-            # reporter() is shared: Turbo always, and Send whenever the backend is
-            # `company` (the default). So the Turbo/Send split has to be made HERE —
-            # this is the only place that knows the request is Turbo. Send calls the
-            # same function without an override and keeps the shared prompt.
-            # Fully swallowed: None means "use the shared builder", so a failure in
-            # the Turbo prompt costs a divergence, never a report.
-            _turbo_sys = None
-            try:
-                from .turbo_prompt import build_turbo_system_prompt
-                _turbo_sys = build_turbo_system_prompt(
-                    modality, normal_template or "",
-                    profile=_gate,
-                )
-            except Exception as _tp_exc:
-                _log.warning("[Turbo] own prompt unavailable, using the shared "
-                             "builder: %s", _tp_exc)
-            # 2026-08-09: `ctx=` is the gate indicator, and `_gate` is now the SAME
-            # object the prompt was built from.
-            #
-            # The previous version of this line called _build_gate_profile() a SECOND
-            # time purely to format the message, so it always printed the regions the
-            # run SHOULD have used -- never the ones it did. Every Turbo run on
-            # 2026-08-09 between 14:41 and 16:46 logged a different, correct-looking
-            # region (['brain'], ['pelvis'], ['abdomen'] ...) next to len=35754 every
-            # single time. 35754 is the UNGATED RADIOLOGY prompt: the gate was dead in
-            # that process, and the log read as perfectly healthy.
-            #
-            # So count the artifact instead of restating the intent. The region-major
-            # renderer emits "# REPORTING CONTEXT" only when the gate actually
-            # narrowed, and never on the ungated path. ctx=0 next to a non-empty
-            # regions= is exactly the failure above.
-            _ctx = _turbo_sys.count("# REPORTING CONTEXT") if _turbo_sys else 0
-            _log.info("[Turbo] prompt source=%s len=%s ctx=%d regions=%s",
-                      "turbo" if _turbo_sys else "shared",
-                      len(_turbo_sys) if _turbo_sys else "-",
-                      _ctx,
-                      (_gate or {}).get("regions") or "none")
-
-            return _ai_module(backend).reporter(
-                user_msg=user_msg,
-                modality=modality,
-                normal_template=(normal_template or None),
-                CENTER_Key=center_key,
-                # pinned: Turbo always runs the company report model
-                model=company_direct.PRIMARY_REPORT_MODEL,
-                system_prompt_override=_turbo_sys,
-            )
-
-        def ok(res):
-            try:
-                if isinstance(res, dict) and "usage" in res:
-                    sid_new = res.get("session_id")
-                    if sid_new:
-                        try:
-                            self.controller.switch_session(sid_new)
-                        except Exception:
-                            pass
-
-                rep_raw_clean = self._normalize_report_like_payload(res)
-
-                if not rep_raw_clean.strip():
-                    self.controller.bubble("AI ChatBot", "⚠️ Empty output.")
-                    return
-
-                self._pending_report_raw_en = rep_raw_clean
-                items = self._parse_jsonish_list(rep_raw_clean)
-
-                # ── 2026-08-01: this was a WHITELIST, and it deleted report sections ──
-                # It kept ONLY the keys named below. "Report Title" is in every
-                # report, so `any(k in d for k in keep_keys)` was always true, so
-                # the whitelist branch ALWAYS ran — and every key not on the list
-                # was dropped before rendering.
-                #
-                # The keys it dropped are the ones that carry the clinical answer:
-                #   mammography → "BI-RADS Category", "Breast Composition",
-                #                 "Axillary Evaluation"
-                #   obstetric   → "Gestational Age & Dating", "Biometry",
-                #                 "Amniotic Fluid", "Placenta & Umbilical Cord",
-                #                 "Fetal Presentation", "Anatomy Survey", "Doppler"
-                # A mammogram rendered with no BI-RADS category at all, and
-                # `_send_to_reception` builds its payload from the rendered bubble,
-                # so the referring clinician received it that way too. The raw JSON
-                # stored in the DB was complete, which is why this was invisible.
-                #
-                # The intent was only ever to strip reasoning/meta keys, and the
-                # blacklist below already did that. So: blacklist only, anchored so
-                # a legitimate section (e.g. "Clinical Correlation") cannot be eaten
-                # by a loose substring.
-                try:
-                    import re
-                    noisy_pat = re.compile(
-                        r"(?i)^(step_\d+.*|reasoning.*|knowledge.*|mode|clinical|"
-                        r"primary diagnoses.*|terminology.*|differential.*|"
-                        r"note|notes|changes|changes made|explanation|"
-                        r"summary of changes|what i did)$"
-                    )
-                    filtered_items = []
-                    for d in (items or []):
-                        if not isinstance(d, dict):
-                            continue
-                        nd = {k: v for k, v in d.items()
-                              if not noisy_pat.match(str(k).strip())}
-                        filtered_items.append(nd if nd else d)
-                    items = filtered_items or items
-                except Exception as exc:
-                    _log.warning("[REPORT] section filter failed, rendering unfiltered: %s", exc)
-                html = self._render_kv_report_html(items)
-                self._bubble_origin_hint = "report"
-                self.controller.bubble("AI ChatBot", html)
-
-            except Exception as e:
-                self.controller.bubble("AI ChatBot", f"❌ Render error: {e}")
-
-        def er(msg: str):
-            # msg از _run_async از قبل امن شده
-            self.controller.bubble("AI ChatBot", msg)
-
-
-
-        QTimer.singleShot(
-            0,
-            lambda: self._run_async(
-                work, ok, er,
-                lock_btn=getattr(self.composer, "btn_send", None),
-                typing="HQ Model…"
-            )
-        )
 
 
     def _assist_menu_icon(self, kind: str):
@@ -4179,7 +4002,7 @@ class OneChatPage(QWidget):
 
         def work():
             backend, _center_name, center_key = _resolve_active_ai_identity()
-            if not center_key:
+            if not _ai_identity_ready(backend, center_key):
                 print("[Standardize] blocked: AI backend not configured")
                 raise RuntimeError("❌ AI backend is not configured. Please complete EchoMind Settings.")
 
@@ -4428,7 +4251,7 @@ class OneChatPage(QWidget):
                 # Enable send_to_reception for all non-user messages that have content
                 on_send_reception = self._send_to_reception if (not is_user and html) else None
 
-                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None, created_at=created_at)
+                b = self.history.add_bubble(who, html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None, on_add_reference=self._add_reference if (origin == 'report' and not is_user) else None, created_at=created_at)
                 b._origin = origin 
                 try:
                     b._msg_id = int(msg_id)
@@ -5187,7 +5010,7 @@ class OneChatPage(QWidget):
         
         def work():
             backend, _center_name, center_key = _resolve_active_ai_identity()
-            if not center_key:
+            if not _ai_identity_ready(backend, center_key):
                 # 2026-07-31 — this used to call `self.history.add_bubble(...)`
                 # RIGHT HERE, inside `work()`, which `ApiWorker.run` executes on
                 # the QThread. That builds a MessageBubble (a QLabel, six
@@ -5296,6 +5119,80 @@ class OneChatPage(QWidget):
             self.controller.bubble("AI ChatBot", f"❌ Persian translation failed: {msg}")
 
         self._run_async(work, ok, er, typing="Translating to Persian…")
+
+    def _add_reference(self, bubble):
+        """Capture an edited report and physician-confirmed context before scheduling."""
+        from PySide6.QtGui import QTextDocument
+        from PySide6.QtWidgets import QFormLayout, QComboBox, QSpinBox, QLabel
+        from modules.EchoMind import remote_backend
+        document = QTextDocument()
+        document.setHtml(bubble.get_html() or '')
+        text = document.toPlainText().strip()
+        if not text:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Add Reference - comparison context')
+        style_popup(dialog)
+        form = QFormLayout(dialog)
+        notice = QLabel('Confirm context for this report. Unknown values remain unclassified.\n'
+                        'A new referenced report will be created; the original stays unchanged.')
+        notice.setWordWrap(True)
+        form.addRow(notice)
+        modality = QComboBox(dialog)
+        modality.addItems(['Select report type', 'OBSTETRIC ULTRASOUND', 'ECHOCARDIOGRAPHY'])
+        form.addRow('Report type', modality)
+        weeks, days, age = QSpinBox(dialog), QSpinBox(dialog), QSpinBox(dialog)
+        weeks.setRange(0,45); weeks.setSpecialValueText('Unknown')
+        days.setRange(0,6)
+        age.setRange(0,120); age.setSpecialValueText('Unknown / under 1 year')
+        singleton, bpd, efw, sex, method = [QComboBox(dialog) for _ in range(5)]
+        singleton.addItems(['Unknown', 'Confirmed singleton', 'Multiple pregnancy'])
+        bpd.addItems(['unknown', 'outer-to-outer', 'outer-to-inner'])
+        efw.addItems(['unknown', 'Hadlock HC/AC/FL'])
+        sex.addItems(['unknown', 'male', 'female'])
+        method.addItems(['unknown', 'biplane', '3D', 'visual'])
+        fields = [('Established GA: weeks',weeks), ('Additional days (0-6)',days),
+                  ('Pregnancy',singleton), ('BPD caliper method',bpd), ('EFW formula',efw),
+                  ('Age in years',age), ('Recorded sex',sex), ('LV EF / volume method',method)]
+        for label, widget in fields:
+            form.addRow(label,widget)
+        def visibility():
+            for i, (_,widget) in enumerate(fields):
+                visible = modality.currentIndex() == (1 if i < 5 else 2)
+                widget.setVisible(visible)
+                form.labelForField(widget).setVisible(visible)
+        modality.currentIndexChanged.connect(visibility)
+        visibility()
+        form.addRow(QLabel('Use established obstetric dating, not the age estimated from current biometry.'))
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
+        buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+        buttons.button(QDialogButtonBox.Ok).setEnabled(False)
+        modality.currentIndexChanged.connect(lambda index: buttons.button(QDialogButtonBox.Ok).setEnabled(index > 0))
+        form.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        selected = modality.currentText()
+        context = ({'ga_days':weeks.value()*7+days.value() if weeks.value() else None,
+                    'singleton':None if singleton.currentIndex()==0 else singleton.currentIndex()==1,
+                    'bpd_method':bpd.currentText(), 'efw_method':efw.currentText()}
+                   if selected == 'OBSTETRIC ULTRASOUND' else
+                   {'age_years':age.value() or None, 'sex':sex.currentText(), 'ef_method':method.currentText()})
+        session = self.current_session_id
+        def ok(result):
+            if self.current_session_id != session:
+                return
+            content = result.get('content', {})
+            from html import escape
+            html = ''.join('<h3>'+escape(str(k))+'</h3><p>'+escape(str(v)).replace('\n','<br>')+'</p>'
+                           for k,v in content.items())
+            self._bubble_origin_hint = 'report'
+            self.controller.bubble('AI ChatBot - Reference Review', html)
+        def error(_):
+            if self.current_session_id == session:
+                self.controller.bubble('AI ChatBot', 'Reference comparison failed. Check server support and measurement context.')
+        self._run_async(lambda: remote_backend.add_reference(text,selected,context), ok,
+                        error,
+                        lock_btn=getattr(bubble,'btnAddReference',None), typing='Comparing verified references...')
 
     def _medical_consult(self, bubble):
         """Consult the displayed revision, including manual edits, not stale raw JSON."""
@@ -5607,7 +5504,7 @@ class OneChatPage(QWidget):
             on_edit=on_edit,
             on_persian=on_persian,
             on_send_reception=on_send_reception,
-            on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None,
+            on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None, on_add_reference=self._add_reference if (origin == 'report' and not is_user) else None,
         )
         # ── 2026-07-31: the Retry chip could never appear ────────────────────
         # `_send_with_mode` seeds `_pending_retry` with {"bubble": None} and
@@ -5933,36 +5830,6 @@ class OneChatPage(QWidget):
             prof["modality"] = getattr(self, "_current_modality", None) or ""
         return prof or None
 
-    def _turbo_correction(self, backend, center_key) -> None:
-        """Turbo in the Correction tab: edit the SELECTED report, never write a new one.
-
-        Delegates to _send_report_correction, which already owns the report lookup, the
-        two guards, the correction-history bookkeeping and the result rendering. Turbo
-        differs in exactly two ways and passes exactly two arguments: it is pinned to the
-        company backend, and it prepends its editing frame to the shared correction prompt.
-
-        Observed 2026-08-09: with the Correction tab active, Turbo fell through to the
-        report branch, took the correction INSTRUCTION as if it were a dictation and
-        called reporter(). The physician got a brand-new report generated from his own
-        edit note, and the report he had selected was never sent at all.
-        """
-        from modules.EchoMind import remote_backend
-        if remote_backend.selected():
-            note = (self.composer.box.toPlainText() or '').strip()
-            self._send_report_correction(note, force_backend='server', turbo=True)
-            return
-        prefix = ""
-        try:
-            from .turbo_prompt import build_turbo_correction_prefix
-            prefix = build_turbo_correction_prefix(self._correction_gate_profile()) or ""
-        except Exception as exc:                      # pragma: no cover - defensive
-            _log.warning("[Turbo-correction] frame unavailable, shared prompt only: %s",
-                         exc)
-        note = (self.composer.box.toPlainText() or "").strip()
-        _log.info("[Turbo-correction] note_len=%d frame=%s backend=%s",
-                  len(note), "turbo" if prefix else "shared", backend)
-        self._send_report_correction(note, system_prompt_prefix=prefix,
-                                     force_backend=backend, turbo=True)
 
     def _prefetch_reception(self) -> None:
         """Warm the reception cache while the physician dictates.
@@ -6181,7 +6048,7 @@ class OneChatPage(QWidget):
                 on_edit=on_edit,
                 on_persian=on_persian,
                 on_send_reception=on_send_reception,
-                on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None,
+                on_medical_consult=self._medical_consult if (origin == 'report' and not is_user) else None, on_add_reference=self._add_reference if (origin == 'report' and not is_user) else None,
                 created_at=created_at,
             )
             try:
@@ -6708,10 +6575,16 @@ class OneChatPage(QWidget):
             if not is_active_backend_configured():
                 self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Access denied.")
                 return
-        images_b64 = list(retry_images or []) if retry_images is not None else self._collect_request_images_base64()
+        from modules.EchoMind import remote_backend
+        report_files = self.composer.get_report_attachments()
+        images_b64 = ([] if remote_backend.selected() and mode == "Report" else
+                      list(retry_images or []) if retry_images is not None else self._collect_request_images_base64())
         has_images = bool(images_b64)
         from modules.EchoMind import remote_backend
         remote_route = remote_backend.selected()
+        if report_files and (not remote_route or mode != "Report"):
+            self.controller.bubble("AI ChatBot", "Send attachments in Report using Eagle Eye Server.")
+            return
         if remote_route and (has_images or mode not in ('Report', 'Chat', 'Assistant', 'Search', 'Web Search')):
             self.controller.bubble('AI ChatBot', 'The server route supports text Report, Chat, Assistant and Search requests.')
             return
@@ -6818,6 +6691,8 @@ class OneChatPage(QWidget):
 
         # ---------- REPORT ----------
         def ok_report(resp: dict):
+            if report_files:
+                self.composer.clear_image_attachments()
             _dbg_response("REPORT-parsed", None)
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
             _clear_retry_if("Report")
@@ -6846,6 +6721,8 @@ class OneChatPage(QWidget):
 
         if mode == "Report":
             report_user_line = sent_text or "(session-based)"
+            if report_files:
+                report_user_line += f"\nAttached files: {len(report_files)}"
             if has_images:
                 report_user_line = f"{report_user_line}\n🖼️ Attached image(s): {len(images_b64)}"
             self.controller.bubble("You (Report)", report_user_line)
@@ -6855,7 +6732,8 @@ class OneChatPage(QWidget):
             # Inside the if mode == "Report": section of _send_with_mode
             def work():
                 if remote_route:
-                    return remote_backend.reporter(sent_text, modality, remote_template)
+                    return remote_backend.reporter(sent_text, modality, remote_template,
+                        study_profile=self._build_gate_profile(sent_text), attachment_paths=report_files)
                 payload = {}
                 if sent_text:
                     payload["text"] = sent_text
@@ -8364,8 +8242,6 @@ class ChatGPTPage(OneChatPage):
             show_modality = (mode == "report")
             if hasattr(self.composer, "btn_modality"):
                 self.composer.btn_modality.setVisible(show_modality)
-            if hasattr(self.composer, "btn_all_modality_hq"):
-                self.composer.btn_all_modality_hq.setVisible(show_modality)
         except Exception:
             pass
 
@@ -8526,7 +8402,7 @@ class ChatGPTPage(OneChatPage):
         self.controller.bubble("You (✅ Correction)", note)
 
         backend, _center_name, center_key = _resolve_active_ai_identity()
-        if not center_key:
+        if not _ai_identity_ready(backend, center_key):
             self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings.")
             return
         # Correction is the final targeted-revision step; default to the dedicated (stronger)
@@ -8638,7 +8514,7 @@ class ChatGPTPage(OneChatPage):
         )
 
         backend, center_name, center_key = _resolve_active_ai_identity()
-        if not center_key:
+        if not _ai_identity_ready(backend, center_key):
             print("[ChatGPT] blocked: AI backend not configured")
             self.history.add_bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings first.")
             return
@@ -8911,7 +8787,7 @@ class ChatGPTPage(OneChatPage):
                     on_persian = getattr(self, "_persian_bubble", None)
                     on_send_reception = getattr(self, "_send_to_reception", None)
 
-                    bub = self.history.add_bubble("ChatGPT", html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult)
+                    bub = self.history.add_bubble("ChatGPT", html, on_edit=on_edit, on_persian=on_persian, on_send_reception=on_send_reception, on_medical_consult=self._medical_consult, on_add_reference=self._add_reference)
                     try:
                         bub.raw_report_json = rep_raw_clean
                     except Exception:

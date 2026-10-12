@@ -356,6 +356,20 @@ def summarize_models(stage_models) -> str:
     return names[0] if len(set(names)) == 1 else " -> ".join(names)
 
 
+def _stage_worker_count(backend: str, requested: int) -> int:
+    """Respect the authenticated Server's per-human inference admission.
+
+    The company route sends every model stage through Eagle Eye Server. A
+    single lumbar analysis may contain several logically parallel branches,
+    but issuing them concurrently races the Server's per-human admission and
+    turns valid sibling stages into HTTP 429 failures. Keep the pipeline and
+    its task-specific requests unchanged while scheduling those remote stages
+    serially. Personal OpenAI mode does not use that Server admission boundary
+    and retains the requested parallelism.
+    """
+    return 1 if backend == BACKEND_COMPANY else max(1, int(requested))
+
+
 def _backend_module(backend: str):
     if backend == BACKEND_OPENAI:
         from modules.EchoMind.viewer_chat import openai_parallel_backend as module
@@ -373,6 +387,21 @@ def _dispatch(package, backend: str, model: str, stage, header: str) -> Dict[str
     MRI stages receive the capture package. The clinical-context branch receives
     its bounded document package. The header carries stage-specific context.
     """
+    if backend == BACKEND_COMPANY:
+        from modules.ai_imaging.eagle_eye_remote.lumbar_vision_client import analyze
+
+        server_package = llm_package.AnalysisPackage(
+            package.session_dir,
+            package.session_id,
+            package.protocol_id,
+            package.analysis,
+            header,
+            package.images,
+            study_instance_uid=package.study_instance_uid,
+            source_series=package.source_series,
+            evidence_audit=package.evidence_audit,
+        )
+        return analyze(server_package, stage)
     module = _backend_module(backend)
     return module.EagleEyeImageAnalysis(
         system_prompt=stage.text,
@@ -1248,7 +1277,7 @@ def run_analysis(
                 failures = []
                 failed_usages = []
                 with ThreadPoolExecutor(
-                    max_workers=len(jobs),
+                    max_workers=_stage_worker_count(resolved_backend, len(jobs)),
                     thread_name_prefix="eagle-eye-atomic-screen",
                 ) as executor:
                     futures = [
@@ -1496,7 +1525,7 @@ def run_analysis(
             return {"failed": False, "outcome": outcome, "package": local_package}
 
         with ThreadPoolExecutor(
-            max_workers=2,
+            max_workers=_stage_worker_count(resolved_backend, 2),
             thread_name_prefix="eagle-eye-branches",
         ) as executor:
             # Submit screening first so the model request can begin before the
@@ -1721,7 +1750,9 @@ def run_analysis(
             failed_jobs = []
             contract_warnings = []
             with ThreadPoolExecutor(
-                max_workers=min(3, len(jobs)),
+                max_workers=_stage_worker_count(
+                    resolved_backend, min(3, len(jobs)),
+                ),
                 thread_name_prefix="eagle-eye-atomic-diagnosis",
             ) as executor:
                 futures = [

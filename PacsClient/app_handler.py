@@ -27,8 +27,10 @@ from PacsClient.utils import IMAGES_LOGIN_PATH
 from modules.network.socket_service import SocketService
 from modules.network.socket_config import get_socket_config
 from modules.network.socket_token_manager import get_socket_token_manager
-from modules.LicenseGenerator.license_manager import LicenseManager
+from modules.LicenseGenerator.renewal import create_manager
+from modules.LicenseGenerator.async_ui import LicenseOperation
 from PacsClient.utils.theme_manager import get_theme_manager
+from modules.ai_imaging.eagle_eye_remote.administration import settings_role
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,18 @@ class AppHandler(QDialog):
         self.socket_service = SocketService()
         self.auth_token = None
         self.auth_user = None
+        self._server_session = None
+        from modules.ai_imaging.eagle_eye_remote.user_session import ConsoleLoginContext
+        self._server_login_context = ConsoleLoginContext()
+        self._server_auth_operation = LicenseOperation(self)
+        self._server_auth_operation.completed.connect(self._server_login_ready)
+        self._server_auth_operation.failed.connect(self._server_login_failed)
+        self._server_recovery_operation = LicenseOperation(self)
+        self._server_recovery_operation.completed.connect(self._server_recovery_ready)
+        self._server_recovery_operation.failed.connect(
+            lambda message: self._server_recovery_failed(self._server_recovery_operation.operation, message))
+        self._server_recovery_consumed = set()
+        self._server_recovery_pending = None
         self.theme_manager = get_theme_manager()
         self._active_theme = self.theme_manager.current_theme()
 
@@ -387,6 +401,10 @@ class AppHandler(QDialog):
         local_login_layout.addWidget(local_login_label)
         local_login_layout.addStretch()
         form_layout.addWidget(local_login_container)
+        if settings_role() == 'server':
+            self.btn_local_login.setChecked(False)
+            self.btn_local_login.setEnabled(False)
+            local_login_container.hide()
 
         # Remember me + Forgot password
         options_row = QHBoxLayout()
@@ -409,6 +427,9 @@ class AppHandler(QDialog):
             }
         """)
         self.checkbox_button.clicked.connect(self._toggle_checkbox)
+        if settings_role() == 'server':
+            self.checkbox_button.setChecked(False)
+            self.checkbox_button.setEnabled(False)
         
         # Label
         checkbox_label = QLabel("Remember me")
@@ -421,7 +442,10 @@ class AppHandler(QDialog):
         self.checkbox_container.addStretch()
         
         # License info label
-        self.license_info_label = QLabel()
+        self.license_info_label = QPushButton('Manage License')
+        self.license_info_label.setCursor(Qt.PointingHandCursor)
+        self.license_info_label.setToolTip('View your license, request an extension, or apply a company response.')
+        self.license_info_label.clicked.connect(self._open_license_manager)
         self.license_info_label.setStyleSheet("""
             color: #10b981; 
             font-weight: 600; 
@@ -431,15 +455,10 @@ class AppHandler(QDialog):
             border-radius: 4px;
             padding: 4px 8px;
         """)
-        self.license_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        
-        # Update license info. OPT-01 (startup main-thread): LicenseManager.check_license()
-        # is LOCAL (hardware id via uuid.getnode() + SHA256, no network) but cost ~1.7 s on
-        # the GUI thread here, and it only drives a cosmetic "N days left" label — nothing
-        # downstream depends on it running synchronously. Deferred to the idle event loop so
-        # the login window appears immediately; the label fills in a beat later. Live-verified
-        # (2026-07-04) and promoted to default 2026-07-05 (flag AIPACS_DEFER_LICENSE_INFO
-        # retired — the synchronous path is never desirable).
+        self._license_operation = LicenseOperation(self)
+        self._license_operation.completed.connect(self._license_info_ready)
+        self._license_operation.failed.connect(lambda message: self.license_info_label.setText('Manage License'))
+        # Hardware/storage work belongs to the owned worker, even for the badge.
         QTimer.singleShot(0, self._update_license_info)
 
         # Set initial icon
@@ -730,6 +749,8 @@ class AppHandler(QDialog):
         return os.path.join(base_dir, "login_config.json")
 
     def _load_saved_credentials(self) -> None:
+        if settings_role() == 'server':
+            return
         try:
             config_file = self._get_login_config_path()
             if not os.path.exists(config_file):
@@ -757,6 +778,8 @@ class AppHandler(QDialog):
             self._update_checkbox_icon()
 
     def _save_credentials(self, username: str, password: str) -> None:
+        if settings_role() == 'server':
+            return
         try:
             config_file = self._get_login_config_path()
             if self.checkbox_button.isChecked():
@@ -774,54 +797,25 @@ class AppHandler(QDialog):
             logger.warning("Error saving credentials: %s", e)
     
     def _update_license_info(self):
-        """Update license information display"""
-        try:
-            license_manager = LicenseManager()
-            is_valid, message = license_manager.check_license()
-            
-            if is_valid and "days remaining" in message.lower():
-                # Extract days from message
-                import re
-                days_match = re.search(r'(\d+)\s+days?\s+remaining', message, re.IGNORECASE)
-                if days_match:
-                    days = int(days_match.group(1))
-                    
-                    # Color based on days remaining
-                    if days > 30:
-                        color = "#10b981"  # Green
-                        bg_color = "rgba(16, 185, 129, 0.1)"
-                        border_color = "rgba(16, 185, 129, 0.3)"
-                        icon = "✓"
-                    elif days > 7:
-                        color = "#f59e0b"  # Orange
-                        bg_color = "rgba(245, 158, 11, 0.1)"
-                        border_color = "rgba(245, 158, 11, 0.3)"
-                        icon = "⚠"
-                    else:
-                        color = "#ef4444"  # Red
-                        bg_color = "rgba(239, 68, 68, 0.1)"
-                        border_color = "rgba(239, 68, 68, 0.3)"
-                        icon = "⚠"
-                    
-                    self.license_info_label.setText(f"{icon} License: {days} days left")
-                    self.license_info_label.setStyleSheet(f"""
-                        color: {color}; 
-                        font-weight: 600; 
-                        font-size: 12px;
-                        background: {bg_color};
-                        border: 1px solid {border_color};
-                        border-radius: 4px;
-                        padding: 4px 10px;
-                    """)
-                    self.license_info_label.setVisible(True)
-                else:
-                    self.license_info_label.setVisible(False)
-            else:
-                self.license_info_label.setVisible(False)
-        except Exception as e:
-            logger.warning("Error updating license info: %s", e)
-            self.license_info_label.setVisible(False)
-    
+        self._license_operation.start('status', lambda: create_manager().status())
+
+    def _license_info_ready(self, operation, status):
+        days = status['days_remaining']
+        color = '#10b981' if status['valid'] and days > 30 else '#f59e0b' if status['valid'] and days > 7 else '#ef4444'
+        text = f'License: {days} days left' if status['valid'] else 'Manage License'
+        self.license_info_label.setText(text)
+        self.license_info_label.setStyleSheet(
+            f'color:{color}; font-weight:600; font-size:12px; background:rgba(16,185,129,0.1); '
+            f'border:1px solid {color}; border-radius:4px; padding:4px 10px;')
+        self.license_info_label.setVisible(True)
+
+    def _open_license_manager(self):
+        from modules.LicenseGenerator.manage_dialog import ManageLicenseDialog
+        dialog = ManageLicenseDialog(self)
+        dialog.license_activated.connect(self._update_license_info)
+        dialog.exec()
+        dialog.deleteLater()
+
     def _toggle_password(self):
         if self.btn_toggle_password.isChecked():
             self.line_edit_password.setEchoMode(QLineEdit.Normal)
@@ -910,7 +904,7 @@ class AppHandler(QDialog):
 
     def login(self):
         username = self.line_edit_username.text().strip()
-        password = self.line_edit_password.text().strip()
+        password = self.line_edit_password.text()
 
         # Hide any existing errors
         if self.error_label.isVisible():
@@ -919,12 +913,33 @@ class AppHandler(QDialog):
         # Set loading state
         self._set_loading_state(True)
 
+        if settings_role() == 'server':
+            from modules.ai_imaging.eagle_eye_remote.admin_auth import authenticate_console, invalidate_session
+            if self._server_auth_operation.future is not None:
+                return
+            invalidate_session(self._server_session)
+            operation = self._server_login_context.begin(username,password)
+            self._server_session = None
+            QApplication.instance().setProperty('eagleEyeConsoleSession', None)
+            self.auth_token = None
+            self.auth_user = None
+            if not self._server_auth_operation.start(operation, authenticate_console, username, password):
+                self._server_login_context.cancel()
+                self._server_login_failed('')
+            return
+
+        get_socket_token_manager().clear_token()
+        self.auth_token = None
+        self.auth_user = None
         # Simulate login process with timer (replace with actual authentication)
         QTimer.singleShot(1500, lambda: self._complete_login(username, password))
 
     def _complete_login(self, username, password):
         """Complete the login process after authentication"""
         self._set_loading_state(False)
+        if settings_role() == 'server':
+            self._show_error('Server offline login is disabled. Use authenticated Server sign-in.')
+            return
 
         # Local login mode — skip server authentication entirely
         if self.btn_local_login.isChecked():
@@ -972,6 +987,63 @@ class AppHandler(QDialog):
             # Show error
             self._show_error(f"Login failed: {message}")
     
+    def _server_login_failed(self, message):
+        self._server_login_context.cancel()
+        self._set_loading_state(False)
+        self.line_edit_password.clear()
+        self._show_error('Server authentication failed. Check credentials, provisioning and retry delay.')
+
+    def _server_login_ready(self, operation, result):
+        from modules.ai_imaging.eagle_eye_remote.admin_auth import valid_session, invalidate_session
+        if not self._server_login_context.is_current(operation):
+            if isinstance(result,dict):
+                invalidate_session(result.get('session'))
+            return
+        self._set_loading_state(False)
+        self.line_edit_password.clear()
+        if (settings_role() != 'server'
+                or not self._server_login_context.accept(operation,result,valid_session)):
+            if isinstance(result,dict):
+                invalidate_session(result.get('session'))
+            self._server_login_failed('')
+            return
+        self._server_session = result['session']
+        QApplication.instance().setProperty('eagleEyeConsoleSession', self._server_session)
+        self.auth_user = result['user']
+        self.auth_token = None
+        if operation in self._server_recovery_consumed:
+            return
+        self._server_recovery_consumed.add(operation)
+        self._server_recovery_pending = (operation, self._server_session)
+        self._set_loading_state(True)
+        from modules.ai_imaging.eagle_eye_remote.login_restart import recover_after_login
+        if not self._server_recovery_operation.start(operation, recover_after_login, operation):
+            self._server_recovery_failed(operation, '')
+
+    def _server_recovery_ready(self, operation, result):
+        from modules.ai_imaging.eagle_eye_remote.admin_auth import valid_session
+        pending = self._server_recovery_pending
+        if (pending is None or pending != (operation, self._server_session)
+                or not valid_session(self._server_session)):
+            return
+        if not isinstance(result, dict) or result.get('service_restarted') is not True:
+            self._server_recovery_failed(operation, '')
+            return
+        self._server_recovery_pending = None
+        self._set_loading_state(False)
+        self._open_main_window()
+
+    def _server_recovery_failed(self, operation, message):
+        from modules.ai_imaging.eagle_eye_remote.admin_auth import invalidate_session
+        if self._server_recovery_pending != (operation, self._server_session):
+            return
+        self._server_recovery_pending = None
+        invalidate_session(self._server_session)
+        self._server_session = None
+        self._server_login_context.cancel()
+        self._set_loading_state(False)
+        self._show_error('Eagle Eye service recovery failed. Ask an operator to verify service access; no automatic retry was sent.')
+
     def _authenticate_with_socket(self, username: str, password: str) -> tuple:
         """
         Authenticate user with Socket server
@@ -999,7 +1071,9 @@ class AppHandler(QDialog):
                 
                 # Store token in TokenManager for use in all socket requests
                 token_manager = get_socket_token_manager()
-                token_manager.set_token(token, user)
+                login_generation = token_manager.set_token(token, user)
+                from modules.ai_imaging.eagle_eye_remote.user_session import capture_login
+                capture_login(username, password, token_generation=login_generation)
                 
                 logger.info("Authenticated as: %s (%s)", user.get('full_name'), user.get('role'))
                 logger.info("Token stored in TokenManager for socket requests")
@@ -1013,6 +1087,8 @@ class AppHandler(QDialog):
     
     def _authenticate_user(self, username, password):
         """Authenticate user credentials - Replace with actual authentication logic"""
+        if settings_role() == 'server':
+            return False
         
         # Demo mode: Allow empty credentials for testing
         if username.strip() == "" and password.strip() == "":
@@ -1047,8 +1123,14 @@ class AppHandler(QDialog):
     def _open_main_window(self):
         """Open the main application window"""
         try:
+            server_console = settings_role() == 'server'
+            if server_console:
+                from modules.ai_imaging.eagle_eye_remote.admin_auth import valid_session
+                if not valid_session(getattr(self, '_server_session', None)):
+                    self._show_error('Server authentication is required.')
+                    return
             is_local = self.btn_local_login.isChecked()
-            if not is_local and not self.auth_token:
+            if not server_console and not is_local and not self.auth_token:
                 self._show_error("Login required: authentication did not complete")
                 return
             # [STARTUP_STAGE] pure-logging phase timers (no behaviour change).

@@ -73,6 +73,7 @@ def repair_plan_after_execution_failure(
     attempt: int,
     max_attempts: int,
     runtime_capabilities: dict | None = None,
+    language_preference: str | None = None,
 ) -> SecretaryActionPlan | None:
     """
     Ask the LLM to produce a corrected plan based on the execution error.
@@ -86,6 +87,8 @@ def repair_plan_after_execution_failure(
     if remote_planner.uses_server():
         try:
             fields = {'runtime_capabilities':runtime_capabilities} if runtime_capabilities is not None else {}
+            if language_preference is not None:
+                fields['language_preference'] = language_preference
             return remote_planner.request('repair', user_text, language=language, invalid_plan=failed_plan,
                 execution_error={'code':error_code,'message':error_message},
                 attempt=attempt, max_attempts=max_attempts, **fields)['plan']
@@ -138,4 +141,9 @@ def is_repairable(result: SecretaryResult) -> bool:
     if result.get("ok"):
         return False
     code = result.get("error_code") or ""
+    # The initiating search has already executed. Missing completion evidence
+    # must never be repaired into another search with new side effects.
+    if code == 'VERIFY_FAILED' and result.get('action') in (
+            'advanced_search_patients', 'list_patients', 'search_patients', 'advanced_search'):
+        return False
     return code not in _TERMINAL_CODES and code not in _PENDING_CODES

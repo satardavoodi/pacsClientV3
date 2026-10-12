@@ -113,6 +113,25 @@ class CaseService:
         with self.lock:
             return tuple(self.watched)
 
+    def watch_map(self):
+        """Only identities already verified through center-scoped case access."""
+        with self.lock:
+            return dict(self.watched)
+
+    def workflow_invalidate(self, data):
+        if not isinstance(data, dict):
+            return
+        uid, pid = data.get('study_uid'), data.get('patient_id')
+        with self.lock:
+            if uid:
+                targets = [uid] if uid in self.watched and (not pid or self.watched[uid] == pid) else []
+            elif pid:
+                targets = [key for key, value in self.watched.items() if value == pid]
+            else:
+                targets = list(self.watched)
+        for target in targets:
+            self.events.publish(target, 'workflow')
+
     def owners(self):
         return tuple(k for k, v in self.memberships.items() if v == self.center)
 
@@ -143,7 +162,7 @@ class CaseService:
                 workflow = {}
         bridge = getattr(self.jobs, 'case_bridge', None)
         workflow_status = bridge.status if bridge else 'connected'
-        if workflow_status != 'connected':
+        if workflow_status not in ('connected', 'connected_legacy'):
             workflow = {}
         source_config = getattr(self.jobs.source, 'config', {})
         host = source_config.get('client_host') or urllib.parse.urlsplit(source_config.get('url', '')).hostname
